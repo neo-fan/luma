@@ -3,6 +3,7 @@
 pub mod bridge;
 pub mod config;
 pub mod error;
+pub mod http;
 
 pub use error::{code, AppError};
 
@@ -17,6 +18,7 @@ pub fn run() {
             config::config_import,
             config::config_list,
             config::config_remove,
+            http::http_fetch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

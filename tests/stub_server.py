@@ -14,6 +14,7 @@ import argparse
 import base64
 import gzip
 import json
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 KEY = b"tvbox-stub-key"
@@ -213,6 +214,33 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
+
+        if path == "/echo":
+            payload = json.dumps(
+                {
+                    "method": self.command,
+                    "path": self.path,
+                    "headers": {k.lower(): v for k, v in self.headers.items()},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
+        if path == "/slow":
+            time.sleep(2)
+            payload = b"slow"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
         routes = self.server.routes  # type: ignore[attr-defined]
         body, ctype = routes.get(path, (b"not found", "text/plain; charset=utf-8"))
         self.send_response(200 if path in routes else 404)
