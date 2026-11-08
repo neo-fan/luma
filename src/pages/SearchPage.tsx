@@ -24,7 +24,7 @@ interface SearchHit {
 
 /** 搜索页：单站点或全部 CMS 站点串行检索。 */
 export default function SearchPage({ sites, siteKey, navigate }: SearchPageProps) {
-  const cmsSites = sites.filter((item) => item.runtime === "cms" && item.enabled);
+  const cmsSites = sites.filter((item) => item.runtime !== "jvm" && item.enabled);
   const [keyword, setKeyword] = useState("");
   const [target, setTarget] = useState(siteKey || ALL_SITES);
   const [hits, setHits] = useState<SearchHit[]>([]);

@@ -104,7 +104,7 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
             aria-label="选择站点"
           >
             {sites.map((item) => {
-              const unsupported = item.runtime !== "cms";
+              const unsupported = item.runtime === "jvm";
               const suffix = unsupported ? "（暂不支持）" : item.enabled ? "" : "（已禁用）";
               return (
                 <option key={item.key} value={item.key} disabled={unsupported || !item.enabled}>

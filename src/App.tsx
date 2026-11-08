@@ -69,16 +69,17 @@ export default function App() {
   const [preferredSite, setPreferredSite] = useState("");
 
   const sites = cache?.sites ?? [];
-  const cmsSites = useMemo(
-    () => sites.filter((item) => item.runtime === "cms" && item.enabled),
+  // py / js 运行时已在 P1 落地，只有 jvm（P2）暂时不可用。
+  const usableSites = useMemo(
+    () => sites.filter((item) => item.runtime !== "jvm" && item.enabled),
     [sites],
   );
   const siteKey = useMemo(() => {
-    if (preferredSite && cmsSites.some((item) => item.key === preferredSite)) {
+    if (preferredSite && usableSites.some((item) => item.key === preferredSite)) {
       return preferredSite;
     }
-    return cmsSites[0]?.key ?? "";
-  }, [preferredSite, cmsSites]);
+    return usableSites[0]?.key ?? "";
+  }, [preferredSite, usableSites]);
 
   const view = stack[stack.length - 1];
 
