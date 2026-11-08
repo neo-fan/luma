@@ -1,0 +1,12 @@
+# 开发期手工抓取的真实配置样本与抓取记录：含外部 TVBox 配置地址，禁止入库
+tests/fixtures/manual/
+docs/verification-config.md
+
+# 构建产物 / 依赖 / 本地环境
+node_modules/
+dist/
+target/
+src-tauri/target/
+*.log
+.DS_Store
+Thumbs.db
