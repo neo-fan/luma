@@ -5,6 +5,10 @@ docs/verification-config.md
 # 上游源码镜像与工具临时目录（只读参考，不作为本仓库内容）
 .workbuddy/upstream/
 
+# 联调产物：UI 截图与临时日志（.workbuddy/memory 仍需入库）
+.workbuddy/*.png
+.workbuddy/*.txt
+
 # 构建产物 / 依赖 / 本地环境
 node_modules/
 dist/

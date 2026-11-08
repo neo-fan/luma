@@ -1,0 +1,129 @@
+import { useEffect, useState } from "react";
+import type { Navigate } from "../App";
+import Empty from "../components/Empty";
+import ErrorBar from "../components/ErrorBar";
+import Spinner from "../components/Spinner";
+import VodCard from "../components/VodCard";
+import { api, toAppError } from "../lib/invoke";
+import type { FavoriteItem, VodRef } from "../types/tvbox";
+
+interface FavoritesPageProps {
+  navigate: Navigate;
+}
+
+/** 收藏页：列表 + 取消收藏。 */
+export default function FavoritesPage({ navigate }: FavoritesPageProps) {
+  const [items, setItems] = useState<FavoriteItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [busyKey, setBusyKey] = useState("");
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    const run = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const list = await api.favoritesList();
+        if (alive) {
+          setItems(list);
+        }
+      } catch (err) {
+        if (alive) {
+          setItems([]);
+          setError(toAppError(err).message);
+        }
+      } finally {
+        if (alive) {
+          setLoading(false);
+        }
+      }
+    };
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [reload]);
+
+  const remove = async (item: FavoriteItem) => {
+    const key = `${item.siteKey}-${item.vodId}`;
+    if (busyKey) {
+      return;
+    }
+    setBusyKey(key);
+    setError("");
+    const ref: VodRef = {
+      siteKey: item.siteKey,
+      vodId: item.vodId,
+      name: item.name,
+      pic: item.pic,
+      remarks: item.remarks,
+      siteName: item.siteName,
+    };
+    try {
+      await api.favoritesToggle(ref);
+      setItems((list) => list.filter((one) => !(one.siteKey === item.siteKey && one.vodId === item.vodId)));
+    } catch (err) {
+      setError(`取消收藏失败：${toAppError(err).message}`);
+    } finally {
+      setBusyKey("");
+    }
+  };
+
+  return (
+    <section className="page">
+      <header className="page-head">
+        <h1 className="page-title">收藏</h1>
+        <span className="page-meta">共 {items.length} 条</span>
+      </header>
+
+      {error ? <ErrorBar message={error} onRetry={() => setReload((value) => value + 1)} /> : null}
+
+      {loading && items.length === 0 ? <Spinner label="正在加载收藏…" /> : null}
+
+      {!loading && !error && items.length === 0 ? (
+        <Empty
+          title="还没有收藏任何影片"
+          description="在影片详情页点右上角的星标即可加入收藏。"
+          action={
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => navigate({ name: "home" })}
+            >
+              去逛逛
+            </button>
+          }
+        />
+      ) : null}
+
+      {items.length > 0 ? (
+        <div className="vod-grid">
+          {items.map((item) => (
+            <div className="fav-item" key={`${item.siteKey}-${item.vodId}`}>
+              <VodCard
+                title={item.name}
+                pic={item.pic}
+                remarks={item.remarks}
+                sub={item.siteName}
+                onOpen={() =>
+                  navigate({ name: "detail", siteKey: item.siteKey, vodId: item.vodId })
+                }
+              />
+              <button
+                type="button"
+                className="fav-remove"
+                title="取消收藏"
+                disabled={busyKey === `${item.siteKey}-${item.vodId}`}
+                onClick={() => void remove(item)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}

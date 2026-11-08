@@ -10,11 +10,19 @@ import type {
   ConfigMeta,
   ConfigSnapshot,
   ConfigSource,
+  FavoriteItem,
   FetchRequest,
   FetchResponse,
+  HistoryItem,
+  HomeResult,
   PlayRequest,
-  PlayTarget,
+  PlayResolved,
+  ProxyStatus,
+  ResultPage,
+  SpiderMethod,
   SpiderRequest,
+  VodInfo,
+  VodRef,
 } from "../types/tvbox";
 
 /** 把 invoke 抛出的任意错误收敛成 AppError。 */
@@ -36,7 +44,12 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   }
 }
 
-/** 7.1 的 7 个 command，一一对应，不额外暴露能力。 */
+function spider<T>(siteKey: string, method: SpiderMethod, args: unknown[]): Promise<T> {
+  const req: SpiderRequest = { siteKey, method, args };
+  return call<T>("spider_invoke", { request: req });
+}
+
+/** 7.1 的 command 面：一一对应，不额外暴露能力。 */
 export const api = {
   configImport(source: ConfigSource): Promise<ConfigSnapshot> {
     return call("config_import", { source });
@@ -51,19 +64,59 @@ export const api = {
   },
 
   spiderInvoke(req: SpiderRequest): Promise<unknown> {
-    return call("spider_invoke", { req });
+    return call("spider_invoke", { request: req });
+  },
+
+  home(siteKey: string): Promise<HomeResult> {
+    return spider<HomeResult>(siteKey, "homeContent", []);
+  },
+
+  category(siteKey: string, tid: string, page: number): Promise<ResultPage> {
+    return spider<ResultPage>(siteKey, "categoryContent", [tid, page]);
+  },
+
+  search(siteKey: string, keyword: string, page: number): Promise<ResultPage> {
+    return spider<ResultPage>(siteKey, "searchContent", [keyword, page]);
+  },
+
+  detail(siteKey: string, vodId: string): Promise<VodInfo[]> {
+    return spider<VodInfo[]>(siteKey, "detailContent", [vodId]);
   },
 
   httpFetch(req: FetchRequest): Promise<FetchResponse> {
     return call("http_fetch", { req });
   },
 
-  resolvePlay(req: PlayRequest): Promise<PlayTarget> {
-    return call("resolve_play", { req });
+  proxyStatus(): Promise<ProxyStatus> {
+    return call("proxy_status");
   },
 
-  openExternal(target: PlayTarget): Promise<void> {
-    return call("open_external", { target });
+  resolvePlay(req: PlayRequest): Promise<PlayResolved> {
+    return call("resolve_play", { request: req });
+  },
+
+  openExternal(url: string): Promise<void> {
+    return call("open_external", { url });
+  },
+
+  favoritesList(): Promise<FavoriteItem[]> {
+    return call("favorites_list");
+  },
+
+  favoritesToggle(vod: VodRef): Promise<boolean> {
+    return call("favorites_toggle", { vod });
+  },
+
+  historyList(): Promise<HistoryItem[]> {
+    return call("history_list");
+  },
+
+  historyUpsert(item: HistoryItem): Promise<void> {
+    return call("history_upsert", { item });
+  },
+
+  historyClear(): Promise<void> {
+    return call("history_clear");
   },
 };
 

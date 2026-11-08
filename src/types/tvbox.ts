@@ -146,9 +146,56 @@ export interface FetchResponse {
   body: string;
 }
 
-/** 播放地址解析请求 */
+/** 播放地址解析请求（T-09） */
 export interface PlayRequest {
+  siteKey: string;
   url: string;
-  headers?: Record<string, string>;
-  siteKey?: string;
+  ua?: string;
+  referer?: string;
+  cookie?: string;
 }
+
+/** 播放目标（T-09 resolve_play 返回） */
+export interface PlayResolved {
+  url: string;
+  proxyUrl: string;
+  /** hls / flv / file / page */
+  kind: string;
+  headers: [string, string][];
+}
+
+/** 本地反代状态（7.5） */
+export interface ProxyStatus {
+  port: number;
+  baseUrl: string;
+  allowLocal: boolean;
+}
+
+/** 收藏 / 历史共用的条目引用（T-12） */
+export interface VodRef {
+  siteKey: string;
+  vodId: string;
+  name: string;
+  pic?: string;
+  remarks?: string;
+  siteName?: string;
+}
+
+export interface FavoriteItem extends VodRef {
+  addedAt: number;
+}
+
+export interface HistoryItem extends VodRef {
+  playUrl?: string;
+  positionMs?: number;
+  durationMs?: number;
+  updatedAt: number;
+}
+
+/** 单个站点的首页结果（8.2） */
+export interface HomeResult {
+  classes: { type_id: string; type_name: string }[];
+  list: VodInfo[];
+  filters: ResultPage["filters"];
+}
+

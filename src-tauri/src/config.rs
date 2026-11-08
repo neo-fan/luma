@@ -49,6 +49,7 @@ pub struct ConfigMeta {
     pub imported_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredConfig {
     snapshot: ConfigSnapshot,
     source: ConfigSource,
@@ -60,10 +61,51 @@ pub struct ConfigStore {
 }
 
 impl ConfigStore {
+    /// Restore snapshots persisted under `<data dir>/configs` (T-12).
+    pub fn load() -> Self {
+        let dir = crate::store::data_dir().join("configs");
+        let mut entries = Vec::new();
+        if let Ok(read_dir) = std::fs::read_dir(&dir) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                    continue;
+                }
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    if let Ok(stored) = serde_json::from_str::<StoredConfig>(&text) {
+                        entries.push(stored);
+                    }
+                }
+            }
+        }
+        Self {
+            entries: RwLock::new(entries),
+        }
+    }
+
+    fn dir() -> std::path::PathBuf {
+        crate::store::data_dir().join("configs")
+    }
+
+    fn persist(&self, stored: &StoredConfig) {
+        let dir = Self::dir();
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(text) = serde_json::to_string(stored) {
+            let _ = std::fs::write(dir.join(format!("{}.json", stored.snapshot.id)), text);
+        }
+    }
+
     pub fn insert(&self, snapshot: ConfigSnapshot, source: ConfigSource) {
-        let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.retain(|entry| entry.snapshot.id != snapshot.id);
-        guard.push(StoredConfig { snapshot, source });
+        let stored = StoredConfig {
+            snapshot: snapshot.clone(),
+            source,
+        };
+        {
+            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.retain(|entry| entry.snapshot.id != snapshot.id);
+            guard.push(stored.clone());
+        }
+        self.persist(&stored);
     }
 
     pub fn list(&self) -> Vec<ConfigMeta> {
@@ -86,6 +128,7 @@ impl ConfigStore {
         if guard.len() == before {
             return Err(AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found")));
         }
+        let _ = std::fs::remove_file(Self::dir().join(format!("{id}.json")));
         Ok(())
     }
 

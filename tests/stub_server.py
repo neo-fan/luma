@@ -104,9 +104,24 @@ PLAYLIST = """#EXTM3U
 #EXT-X-TARGETDURATION:2
 #EXT-X-MEDIA-SEQUENCE:0
 #EXTINF:2.0,
-seg0.ts
+/hls/seg0.ts
 #EXT-X-ENDLIST
 """
+
+# 4 KiB of deterministic bytes so Range requests can be asserted.
+SEGMENT = bytes(range(256)) * 16
+
+# Served as image/svg+xml under a .jpg path: keeps offline posters visible in
+# screenshots without shipping a binary asset.
+POSTER_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="300" height="420" viewBox="0 0 300 420">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#2a1b2e"/><stop offset="1" stop-color="#123040"/></linearGradient></defs>
+<rect width="300" height="420" fill="url(#g)"/>
+<circle cx="150" cy="170" r="58" fill="none" stroke="#e50914" stroke-width="6"/>
+<polygon points="134,140 134,200 184,170" fill="#e50914"/>
+<text x="150" y="300" font-family="Segoe UI,sans-serif" font-size="26" fill="#e6e6ee" text-anchor="middle">STUB POSTER</text>
+<text x="150" y="332" font-family="Segoe UI,sans-serif" font-size="15" fill="#8c8c9a" text-anchor="middle">127.0.0.1:8787</text>
+</svg>""".encode("utf-8")
 
 
 def standard(port: int) -> dict:
@@ -206,7 +221,7 @@ def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
         "/parse": as_json({"code": 200, "url": f"http://127.0.0.1:{port}/play.m3u8"}),
         "/wallpaper.jpg": (b"\xff\xd8\xff\xd9", "image/jpeg"),
         "/logo.png": (b"\x89PNG\r\n\x1a\n", "image/png"),
-        "/poster.jpg": (b"\xff\xd8\xff\xd9", "image/jpeg"),
+        "/poster.jpg": (POSTER_SVG, "image/svg+xml; charset=utf-8"),
     }
 
 
@@ -307,6 +322,56 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+
+        if path == "/hls/index.m3u8":
+            referer = self.headers.get("Referer") or ""
+            if "127.0.0.1" not in referer:
+                body = b"anti-leech: referer required"
+                self.send_response(403)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            body = PLAYLIST.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path == "/hls/seg0.ts":
+            total = len(SEGMENT)
+            range_header = self.headers.get("Range") or ""
+            if range_header.startswith("bytes="):
+                spec = range_header[len("bytes="):].split(",", 1)[0]
+                start_text, _, end_text = spec.partition("-")
+                start = int(start_text or 0)
+                end = int(end_text) if end_text else total - 1
+                end = min(end, total - 1)
+                if start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{total}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                chunk = SEGMENT[start : end + 1]
+                self.send_response(206)
+                self.send_header("Content-Type", "video/mp2t")
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+                self.send_header("Content-Length", str(len(chunk)))
+                self.end_headers()
+                self.wfile.write(chunk)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp2t")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(total))
+            self.end_headers()
+            self.wfile.write(SEGMENT)
             return
 
         routes = self.server.routes  # type: ignore[attr-defined]
