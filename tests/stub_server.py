@@ -289,6 +289,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
+        if len(path) > 1 and path.endswith("/"):
+            path = path.rstrip("/")
 
         if path == "/echo":
             payload = json.dumps(

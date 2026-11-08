@@ -21,6 +21,7 @@ pub async fn invoke(
     }
 
     let (url, sidecar_method, extra) = build(api, method, args)?;
+    tracing::debug!(method = method.as_str(), %url, "cms request");
 
     let headers = site.get("headers").and_then(Value::as_object).map(|map| {
         map.iter()
@@ -52,12 +53,15 @@ fn build(
     method: SpiderMethod,
     args: &[Value],
 ) -> Result<(String, &'static str, Value), AppError> {
-    let separator = if api.contains('?') { '&' } else { '?' };
-    let arg_str = |index: usize| {
-        args.get(index)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
+    let separator = separator_for(api);
+    // CMS payloads carry `vod_id` as a JSON number; stringifying keeps
+    // `ac=detail&ids=` from being sent empty (which makes the site fall back to
+    // an unrelated default item).
+    let arg_str = |index: usize| match args.get(index) {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::Bool(flag)) => flag.to_string(),
+        _ => String::new(),
     };
     let arg_page = |index: usize| args.get(index).and_then(Value::as_u64).unwrap_or(1);
 
@@ -103,6 +107,22 @@ fn build(
     }
 }
 
+/// Some CMS deployments route on the trailing slash: `.../vod?ac=detail` silently
+/// falls back to the default list, while `.../vod/?ac=detail` honours it. So a
+/// path whose last segment has no extension gets `/` before the query string.
+fn separator_for(api: &str) -> &'static str {
+    if api.contains('?') {
+        return "&";
+    }
+    let path = api.split("://").nth(1).unwrap_or(api);
+    let last = path.rsplit('/').next().unwrap_or("");
+    if last.is_empty() || last.contains('.') {
+        "?"
+    } else {
+        "/?"
+    }
+}
+
 fn encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.as_bytes() {
@@ -114,4 +134,17 @@ fn encode(value: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn separator_keeps_trailing_slash_for_extensionless_paths() {
+        assert_eq!(separator_for("https://x.com/api.php/provide/vod"), "/?");
+        assert_eq!(separator_for("https://x.com/api.php"), "?");
+        assert_eq!(separator_for("https://x.com/api.php/provide/vod?token=1"), "&");
+        assert_eq!(separator_for("http://127.0.0.1:8787/cms/vod"), "/?");
+    }
 }

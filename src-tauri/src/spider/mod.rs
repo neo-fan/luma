@@ -288,8 +288,14 @@ mod tests {
     }
 
     #[test]
-    fn normalizer_runtime_wins_over_heuristics() {
-        let site = json!({ "runtime": "jvm", "api": "http://127.0.0.1/x.py" });
-        assert_eq!(route(&site), RuntimeKind::Jvm);
+    fn raw_fields_beat_stale_runtime_hint() {
+        // Persisted snapshots may carry a `runtime` from an older normalizer; the
+        // raw fields must win so misrouted sites get corrected on next invoke.
+        let stale = json!({ "runtime": "jvm", "api": "http://127.0.0.1/x.py" });
+        assert_eq!(route(&stale), RuntimeKind::Python);
+
+        // With no conflicting signal the hint is still honoured.
+        let hinted = json!({ "runtime": "python", "api": "http://127.0.0.1/api.php/provide/vod" });
+        assert_eq!(route(&hinted), RuntimeKind::Python);
     }
 }

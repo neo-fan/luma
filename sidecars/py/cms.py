@@ -48,7 +48,8 @@ def _vod(raw: dict[str, Any]) -> dict[str, Any]:
     for alias, field in JSON_ALIASES.items():
         if field not in item and alias in raw:
             item[field] = raw[alias]
-    item.setdefault("vod_id", str(raw.get("vod_id") or raw.get("id") or ""))
+    # The contract keeps ids as strings; CMS payloads often send numbers.
+    item["vod_id"] = str(item.get("vod_id") or raw.get("id") or "")
     item.setdefault("vod_name", str(raw.get("vod_name") or raw.get("name") or ""))
     item.setdefault("vod_pic", str(raw.get("vod_pic") or raw.get("pic") or ""))
     item.setdefault("vod_play_from", str(raw.get("vod_play_from") or ""))
