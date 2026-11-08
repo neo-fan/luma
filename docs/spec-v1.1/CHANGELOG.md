@@ -73,11 +73,10 @@
 
 ---
 
-## 五、状态说明（本版未开工、未建代码）
+## 五、状态说明（2026-11-08 收尾后）
 
-- 本轮产出**仅为本地修订稿与归档**：`docs/spec-v1.0/`（v1.0 原文归档 + README）与 `docs/spec-v1.1/`（本 CHANGELOG + `replacements.md`）。
-- **未联网、未改写云端规格书**；云端文档仍为 v1.0，待主 Agent 依据 `replacements.md` 写入 v1.1。
-- **仍未开工、未建代码**：无源码、无构建脚本、无 Git 仓库、无 `tests/` 落地代码；`AGENTS.md` 的「开工前待澄清」段待主 Agent 在云端 v1.1 落定后同步更新。
-- 用户另提出的「拉取真实配置做本地验证」「需求文档落盘」「注意目录结构与代码编码」由另一个 Agent 处理，涉及 `tests/`、`docs/project-layout.md`、`docs/verification-config.md`、`.gitignore`，本任务未触碰。
-- 边界：未修改 `SPEC_REVIEW.md`、`AGENTS.md` 及 `.workbuddy/` 下任何文件；`docs/spec-v1.0/spec-v1.0-raw.md` 为逐字节复制，未改动一个字符。
-- 下一步：主 Agent 按 `replacements.md` 末尾的「建议写入顺序」把最终文本写入云端资料库，版本号改为 v1.1 后，才按 P0 / T-01 起建工程。
+- **全部在本地**：用户明确「不用改云端规格书，全部在本地」。本目录（`CHANGELOG.md` + `replacements.md`）即为 v1.1 的**唯一实现依据**；云端 doc 节点在历史流程中曾被写入 v1.1（40/40 条直接编辑、无待接受卡片），但只读参考、不再写入、不作为依据。是否回滚云端由用户决定。
+- v1.0 原文逐字节归档在 `docs/spec-v1.0/spec-v1.0-raw.md`（161426 字节）；`cloud-actions.json` 为那次云端写入的审计记录，只作留档。
+- 已用 Git 管理（`main` 分支，初始基线已提交）；真实配置样本与抓取记录不入库；目录与编码约定见 `docs/project-layout.md`；`AGENTS.md` 已同步为本地基线。
+- **仍未开工、未建代码**：只有文档、目录骨架与 `tools/inspect_config.py` 一个离线脚本；无源码、无构建脚本、无依赖。
+- 下一步：按 P0 / T-01 起建工程；按 `docs/verification-report.md` 第 5 节构造 6 类脱敏 fixture（全部指向 `127.0.0.1`）。
