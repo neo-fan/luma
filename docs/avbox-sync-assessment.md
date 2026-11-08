@@ -89,7 +89,11 @@
 - 若只「参考行为、不复制代码」（方案 B），不受 AGPL 传染，但需在 README 声明参考来源。
 - 无论哪个方案，都保持「空壳、不内置源、不提供内容」的边界。
 
-## 6. 下一步（待确认方向后执行）
+## 6. 决策（2026-11-08）
+
+**用户选定方案 B**：保留 Tauri 路线，AVBox 仅作行为/字段/交互参考，不引入其代码，不改 AGPL。上游同步靠 `diff` 脚本 + 人工移植，不承诺代码级自动同步。
+
+## 7. 下一步（按方案 B 执行）
 
 - 方案 A：初始化 `desktopApp`（Compose Desktop）→ 引入 `upstream/avbox` 子树 → 打通 bean/net 编译 → 用 VLCJ 播一个 127.0.0.1 的 stub 流 → 再接 UI。
 - 方案 B：继续 T-02（tauri.conf.json Windows/WebView2）→ T-03 capabilities → T-04 契约 → T-05 配置解析。
