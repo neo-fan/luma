@@ -137,6 +137,14 @@ fn resolve_runner() -> Option<PathBuf> {
     None
 }
 
+/// drpy2 and friends start with `import ... from "assets://..."`, which plain
+/// QuickJS cannot resolve; fail fast with a readable reason instead of a
+/// SyntaxError.
+fn looks_like_es_module(source: &str) -> bool {
+    let head = source.trim_start();
+    head.starts_with("import ") || head.starts_with("import{") || head.starts_with("import\"")
+}
+
 fn cache() -> &'static StdMutex<HashMap<String, (String, Instant)>> {
     static CACHE: OnceLock<StdMutex<HashMap<String, (String, Instant)>>> = OnceLock::new();
     CACHE.get_or_init(|| StdMutex::new(HashMap::new()))
@@ -173,6 +181,13 @@ async fn source_for(site: &Value) -> Result<String, AppError> {
         timeout_ms: Some(10_000),
     })
     .await?;
+    if looks_like_es_module(&response.body) {
+        return Err(AppError::new(
+            code::RUNTIME_UNAVAILABLE,
+            "该 js 源是 ES 模块（drpy2 等），需要 cheerio/import 加载器，暂不支持",
+        ));
+    }
+
     let mut guard = cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if guard.len() >= 64 {
         guard.clear();

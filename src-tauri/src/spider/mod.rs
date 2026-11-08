@@ -93,17 +93,12 @@ pub trait SpiderRuntime: Send + Sync {
 }
 
 pub fn route(site: &Value) -> RuntimeKind {
-    if let Some(runtime) = site.get("runtime").and_then(Value::as_str) {
-        return match runtime {
-            "python" => RuntimeKind::Python,
-            "quickjs" => RuntimeKind::QuickJs,
-            "jvm" => RuntimeKind::Jvm,
-            _ => RuntimeKind::Cms,
-        };
-    }
     let jar = site.get("jar").and_then(Value::as_str).unwrap_or("");
     let api = site.get("api").and_then(Value::as_str).unwrap_or("");
     let key = site.get("key").and_then(Value::as_str).unwrap_or("");
+
+    // Heuristics first: persisted snapshots may carry a `runtime` computed by an
+    // older normalizer, so the raw fields stay authoritative.
     if jar == "py" || api.ends_with(".py") {
         return RuntimeKind::Python;
     }
@@ -113,7 +108,17 @@ pub fn route(site: &Value) -> RuntimeKind {
     if key.starts_with("csp_") || jar.ends_with(".jar") {
         return RuntimeKind::Jvm;
     }
-    RuntimeKind::Cms
+    // A bare identifier (not a URL) means "spider class", which needs the jar.
+    if api.starts_with("csp_") || (!api.is_empty() && !api.starts_with("http") && !api.contains('/')) {
+        return RuntimeKind::Jvm;
+    }
+
+    match site.get("runtime").and_then(Value::as_str) {
+        Some("python") => RuntimeKind::Python,
+        Some("quickjs") => RuntimeKind::QuickJs,
+        Some("jvm") => RuntimeKind::Jvm,
+        _ => RuntimeKind::Cms,
+    }
 }
 
 struct CmsRuntimeAdapter;

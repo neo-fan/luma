@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 FIXTURES = pathlib.Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "spiders"
+MEDIA = FIXTURES.parent / "media"
 
 KEY = b"tvbox-stub-key"
 SPIDER_JAR = "http://127.0.0.1:{port}/spider.jar"
@@ -254,7 +255,7 @@ def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
                         "vod_pic": f"http://127.0.0.1:{port}/poster.jpg",
                         "vod_remarks": "HD",
                         "vod_play_from": "stub",
-                        "vod_play_url": "第1集$http://127.0.0.1:{port}/play.m3u8".format(port=port),
+                        "vod_play_url": "第1集$http://127.0.0.1:{port}/media/index.m3u8".format(port=port),
                     }
                 ],
                 "page": 1,
@@ -330,7 +331,7 @@ class Handler(BaseHTTPRequestHandler):
                             "vod_remarks": "HD",
                             "type_name": "Stub",
                             "vod_play_from": "stub",
-                            "vod_play_url": "第1集$http://127.0.0.1:8787/play.m3u8",
+                            "vod_play_url": "第1集$http://127.0.0.1:8787/media/index.m3u8",
                         }
                     ],
                     "page": page,
@@ -350,7 +351,7 @@ class Handler(BaseHTTPRequestHandler):
                             "vod_remarks": "HD",
                             "type_name": "Stub",
                             "vod_play_from": "stub",
-                            "vod_play_url": "第1集$http://127.0.0.1:8787/play.m3u8",
+                            "vod_play_url": "第1集$http://127.0.0.1:8787/media/index.m3u8",
                         }
                     ],
                     "page": 1,
@@ -372,7 +373,7 @@ class Handler(BaseHTTPRequestHandler):
                 '<rss version="2.0"><list page="1" pagecount="1" pagesize="20" recordcount="1">'
                 "<video><id>1</id><name>Stub XML Movie</name>"
                 "<pic>http://127.0.0.1:8787/poster.jpg</pic><des>stub</des>"
-                '<dl><dd flag="stub">第1集$http://127.0.0.1:8787/play.m3u8</dd></dl>'
+                '<dl><dd flag="stub">第1集$http://127.0.0.1:8787/media/index.m3u8</dd></dl>'
                 "</video></list></rss>"
             ).encode("utf-8")
             self.send_response(200)
@@ -398,6 +399,50 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+
+        if path.startswith("/media/"):
+            target = MEDIA / path[len("/media/"):]
+            if not target.is_file():
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            payload = target.read_bytes()
+            total = len(payload)
+            ctype = {
+                ".m3u8": "application/vnd.apple.mpegurl",
+                ".ts": "video/mp2t",
+                ".mp4": "video/mp4",
+            }.get(target.suffix, "application/octet-stream")
+            range_header = self.headers.get("Range") or ""
+            if range_header.startswith("bytes="):
+                spec = range_header[len("bytes="):].split(",", 1)[0]
+                start_text, _, end_text = spec.partition("-")
+                start = int(start_text or 0)
+                end = int(end_text) if end_text else total - 1
+                end = min(end, total - 1)
+                if start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{total}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                chunk = payload[start : end + 1]
+                self.send_response(206)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+                self.send_header("Content-Length", str(len(chunk)))
+                self.end_headers()
+                self.wfile.write(chunk)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(total))
+            self.end_headers()
+            self.wfile.write(payload)
             return
 
         if path == "/hls/seg0.ts":

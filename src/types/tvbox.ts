@@ -199,3 +199,32 @@ export interface HomeResult {
   filters: ResultPage["filters"];
 }
 
+
+/** 直播源（lives[] 条目，7.x） */
+export interface LiveSource {
+  name: string;
+  url: string;
+  type?: number;
+  ua?: string;
+  playerType?: number | string;
+  timeZone?: string;
+  timeout?: number;
+}
+
+export interface LiveChannel {
+  name: string;
+  url: string;
+  logo?: string;
+  epg?: string;
+}
+
+export interface LiveGroup {
+  name: string;
+  channels: LiveChannel[];
+}
+
+export interface LiveListResult {
+  groups: LiveGroup[];
+  source?: string;
+  count?: number;
+}

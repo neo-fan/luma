@@ -124,17 +124,28 @@ export default function PlayerPage({
     let hls: Hls | null = null;
 
     if (resolved.kind === "hls") {
-      if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = source;
-      } else if (Hls.isSupported()) {
-        hls = new Hls({ enableWorker: true });
+      // Prefer hls.js: WebView2 的 canPlayType 会对 mpegurl 返回 "maybe"，但真正
+      // 把 m3u8 塞给 <video> 会以 MEDIA_ERR_SRC_NOT_SUPPORTED 失败。
+      if (Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, lowLatencyMode: true });
         hls.loadSource(source);
         hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          void video.play().catch(() => {
+            // 自动播放被拦截时保留控件，用户点一下即可。
+          });
+        });
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (data.fatal) {
-            setVideoError(`HLS 播放失败：${data.details}`);
+            const reason = data.details ? String(data.details) : "未知错误";
+            setVideoError(`HLS 播放失败：${reason}`);
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              hls?.startLoad();
+            }
           }
         });
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = source;
       } else {
         setVideoError("当前环境不支持 HLS 内置播放，请使用外部播放。");
       }

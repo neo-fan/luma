@@ -22,7 +22,7 @@ interface SearchHit {
   vod: VodInfo;
 }
 
-/** 搜索页：单站点或全部 CMS 站点串行检索。 */
+/** 搜索页：单站点或全部站点串行检索。 */
 export default function SearchPage({ sites, siteKey, navigate }: SearchPageProps) {
   const cmsSites = sites.filter((item) => item.runtime !== "jvm" && item.enabled);
   const [keyword, setKeyword] = useState("");
@@ -107,7 +107,7 @@ export default function SearchPage({ sites, siteKey, navigate }: SearchPageProps
           onChange={(event) => setTarget(event.target.value)}
           aria-label="选择搜索站点"
         >
-          <option value={ALL_SITES}>全部 CMS 站点</option>
+          <option value={ALL_SITES}>全部站点</option>
           {cmsSites.map((site) => (
             <option key={site.key} value={site.key}>
               {site.name}

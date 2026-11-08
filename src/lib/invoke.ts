@@ -17,6 +17,7 @@ import type {
   HomeResult,
   PlayRequest,
   PlayResolved,
+  LiveListResult,
   ProxyStatus,
   ResultPage,
   SpiderMethod,
@@ -85,6 +86,10 @@ export const api = {
 
   httpFetch(req: FetchRequest): Promise<FetchResponse> {
     return call("http_fetch", { req });
+  },
+
+  liveParse(url: string, ua?: string): Promise<LiveListResult> {
+    return call("live_parse", { url, ua });
   },
 
   proxyStatus(): Promise<ProxyStatus> {

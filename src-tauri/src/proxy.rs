@@ -188,14 +188,21 @@ async fn handle_proxy(
         return deny(StatusCode::FORBIDDEN, &reason);
     }
 
+    let fwd = Fwd {
+        ua: query.ua.clone(),
+        referer: query.referer.clone(),
+        cookie: query.cookie.clone(),
+        extra: query.h.clone(),
+    };
+
     let mut request = state.client.get(target.clone());
-    if let Some(ua) = query.ua.as_deref() {
+    if let Some(ua) = fwd.ua.as_deref() {
         request = request.header(reqwest::header::USER_AGENT, ua);
     }
-    if let Some(referer) = query.referer.as_deref() {
+    if let Some(referer) = fwd.referer.as_deref() {
         request = request.header(reqwest::header::REFERER, referer);
     }
-    if let Some(cookie) = query.cookie.as_deref() {
+    if let Some(cookie) = fwd.cookie.as_deref() {
         request = request.header(reqwest::header::COOKIE, cookie);
     }
     for (name, value) in extra_headers(query.h.as_deref()) {
@@ -222,6 +229,35 @@ async fn handle_proxy(
     };
 
     let status = upstream.status();
+    let content_type = upstream
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let is_playlist = target.path().to_ascii_lowercase().ends_with(".m3u8")
+        || content_type.to_ascii_lowercase().contains("mpegurl");
+
+    if is_playlist && status.is_success() {
+        // Relative segment URIs must be rewritten, otherwise hls.js resolves
+        // them against 127.0.0.1:9978 and every segment 404s.
+        let body = match upstream.bytes().await {
+            Ok(bytes) => bytes,
+            Err(err) => return deny(StatusCode::BAD_GATEWAY, &format!("playlist read failed: {err}")),
+        };
+        let text = String::from_utf8_lossy(&body);
+        let rewritten = rewrite_playlist(&text, &target, state.port(), &fwd);
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/vnd.apple.mpegurl")
+            .header("cache-control", "no-store")
+            .header("access-control-allow-origin", "*")
+            .header("access-control-expose-headers", "*")
+            .header("x-tvbox-proxy", "playlist")
+            .body(Body::from(rewritten))
+            .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"));
+    }
+
     let mut builder = Response::builder().status(status);
     for name in DOWNSTREAM {
         if let Some(value) = upstream.headers().get(name) {
@@ -238,6 +274,88 @@ async fn handle_proxy(
         .header("x-tvbox-proxy", "1")
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"))
+}
+
+/// Headers/params that must travel with every rewritten playlist URI.
+#[derive(Clone, Default)]
+struct Fwd {
+    ua: Option<String>,
+    referer: Option<String>,
+    cookie: Option<String>,
+    extra: Option<String>,
+}
+
+impl Fwd {
+    fn suffix(&self) -> String {
+        let mut out = String::new();
+        for (key, value) in [
+            ("ua", self.ua.as_deref()),
+            ("referer", self.referer.as_deref()),
+            ("cookie", self.cookie.as_deref()),
+            ("h", self.extra.as_deref()),
+        ] {
+            if let Some(value) = value.filter(|text| !text.is_empty()) {
+                out.push_str(&format!("&{key}={}", urlencode(value)));
+            }
+        }
+        out
+    }
+}
+
+fn wrap_url(port: u16, target: &str, fwd: &Fwd) -> String {
+    format!("http://127.0.0.1:{port}/proxy?url={}{}", urlencode(target), fwd.suffix())
+}
+
+fn absolutize(base: &Url, uri: &str) -> String {
+    let trimmed = uri.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return trimmed.to_string();
+    }
+    base.join(trimmed)
+        .map(|url| url.to_string())
+        .unwrap_or_else(|_| trimmed.to_string())
+}
+
+fn rewrite_playlist(text: &str, base: &Url, port: u16, fwd: &Fwd) -> String {
+    let mut out = String::with_capacity(text.len() + 256);
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            out.push('\n');
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            if trimmed.contains("URI=\"") {
+                out.push_str(&rewrite_tag_uris(trimmed, base, port, fwd));
+            } else {
+                out.push_str(trimmed);
+            }
+            out.push('\n');
+            continue;
+        }
+        out.push_str(&wrap_url(port, &absolutize(base, trimmed), fwd));
+        out.push('\n');
+    }
+    out
+}
+
+fn rewrite_tag_uris(line: &str, base: &Url, port: u16, fwd: &Fwd) -> String {
+    let mut out = String::with_capacity(line.len() + 64);
+    let mut rest = line;
+    while let Some(position) = rest.find("URI=\"") {
+        let (head, tail) = rest.split_at(position + 5);
+        out.push_str(head);
+        if let Some(end) = tail.find('"') {
+            let uri = &tail[..end];
+            out.push_str(&wrap_url(port, &absolutize(base, uri), fwd));
+            rest = &tail[end..];
+        } else {
+            rest = tail;
+            break;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn extra_headers(payload: Option<&str>) -> Vec<(HeaderName, String)> {
@@ -411,6 +529,24 @@ mod tests {
         for ip in ["8.8.8.8", "1.1.1.1"] {
             assert!(!is_blocked(ip.parse().unwrap()), "{ip} should be allowed");
         }
+    }
+
+    #[test]
+    fn playlist_rewrites_relative_segments_and_key_uris() {
+        let base = Url::parse("https://cdn.example/x/playlist.m3u8").unwrap();
+        let fwd = Fwd {
+            ua: Some("okhttp/3.15".into()),
+            referer: Some("https://ref.example/".into()),
+            cookie: None,
+            extra: None,
+        };
+        let source = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXTINF:2,\nseg0.ts\n#EXTINF:2,\nhttps://other.example/seg1.ts\n";
+        let out = rewrite_playlist(source, &base, 9978, &fwd);
+        assert!(out.contains("http://127.0.0.1:9978/proxy?url=https%3A%2F%2Fcdn.example%2Fx%2Fseg0.ts"), "{out}");
+        assert!(out.contains("URI=\"http://127.0.0.1:9978/proxy?url=https%3A%2F%2Fcdn.example%2Fx%2Fkey.bin"), "{out}");
+        assert!(out.contains("url=https%3A%2F%2Fother.example%2Fseg1.ts"), "{out}");
+        assert!(out.contains("ua=okhttp%2F3.15"), "{out}");
+        assert!(out.contains("#EXTM3U"), "{out}");
     }
 
     #[test]

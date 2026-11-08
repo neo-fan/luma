@@ -67,6 +67,9 @@ def route(site: dict[str, Any], global_spider: str | None) -> str:
         return "quickjs"
     if key.startswith("csp_") or jar.endswith(".jar"):
         return "jvm"
+    # Spider class names are passed as bare identifiers (`api: "csp_Xxx"`).
+    if api.startswith("csp_") or (api and not api.startswith(("http://", "https://")) and "/" not in api):
+        return "jvm"
     if global_spider and not api:
         return "jvm"
     if type_no in (0, 1, 4):

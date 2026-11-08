@@ -77,6 +77,12 @@ const cdp = new Cdp(page.webSocketDebuggerUrl);
 const invoke = (cmd, args) =>
   `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args || {})})`;
 
+// 0. isolate: drop previously imported configs so fan-out only sees this fixture
+const cleaned = await cdp.eval(
+  `(async () => { const list = await ${invoke("config_list")}; for (const item of list) { try { await window.__TAURI_INTERNALS__.invoke('config_remove', { id: item.id }); } catch (e) {} } return list.length; })()`,
+);
+console.log(`[info] removed configs: ${cleaned}`);
+
 // 1. import the py-focused config
 const imported = await cdp.eval(
   `(async () => { const r = await ${invoke("config_import", {

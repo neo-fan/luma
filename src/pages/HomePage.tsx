@@ -92,6 +92,20 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
     );
   }
 
+  if (sites.length > 0 && !siteKey) {
+    return (
+      <section className="page">
+        <header className="page-head">
+          <h1 className="page-title">首页</h1>
+        </header>
+        <Empty
+          title={`当前配置的 ${sites.length} 个站点都需要 jar 运行时`}
+          description="这些是 csp_/jar 源，依赖 Android 运行时（P2）。可以先用「直播」页，或导入含 CMS / py / js 站点的配置。"
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="page">
       <header className="page-head">

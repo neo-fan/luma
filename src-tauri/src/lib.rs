@@ -4,6 +4,7 @@ pub mod bridge;
 pub mod config;
 pub mod error;
 pub mod http;
+pub mod live;
 pub mod play;
 pub mod process;
 pub mod proxy;
@@ -40,6 +41,7 @@ pub fn run() {
             config::config_remove,
             http::http_fetch,
             spider::spider_invoke,
+            live::live_parse,
             proxy::proxy_status,
             play::resolve_play,
             play::open_external,

@@ -3,10 +3,11 @@ import CategoryPage from "./pages/CategoryPage";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
 import HomePage from "./pages/HomePage";
+import LivePage from "./pages/LivePage";
 import PlayerPage from "./pages/PlayerPage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
-import type { ConfigSnapshot, Site } from "./types/tvbox";
+import type { ConfigSnapshot, LiveSource, Site } from "./types/tvbox";
 
 /** 单窗口内的视图联合类型；不使用 react-router。 */
 export type View =
@@ -22,6 +23,7 @@ export type View =
       playUrl: string;
       episodeName: string;
     }
+  | { name: "live" }
   | { name: "favorites" }
   | { name: "settings" };
 
@@ -33,10 +35,12 @@ const SITE_CACHE_KEY = "tvbox:sites:v1";
 interface SiteCache {
   configId: string;
   sites: Site[];
+  lives: LiveSource[];
 }
 
-const NAV_ITEMS: { key: "home" | "search" | "favorites" | "settings"; label: string }[] = [
+const NAV_ITEMS: { key: "home" | "live" | "search" | "favorites" | "settings"; label: string }[] = [
   { key: "home", label: "首页" },
+  { key: "live", label: "直播" },
   { key: "search", label: "搜索" },
   { key: "favorites", label: "收藏" },
   { key: "settings", label: "设置" },
@@ -53,11 +57,15 @@ function readSiteCache(): SiteCache | null {
     if (typeof parsed !== "object" || parsed === null) {
       return null;
     }
-    const cache = parsed as { configId?: unknown; sites?: unknown };
+    const cache = parsed as { configId?: unknown; sites?: unknown; lives?: unknown };
     if (typeof cache.configId !== "string" || !Array.isArray(cache.sites)) {
       return null;
     }
-    return { configId: cache.configId, sites: cache.sites as Site[] };
+    return {
+      configId: cache.configId,
+      sites: cache.sites as Site[],
+      lives: Array.isArray(cache.lives) ? (cache.lives as LiveSource[]) : [],
+    };
   } catch {
     return null;
   }
@@ -69,6 +77,7 @@ export default function App() {
   const [preferredSite, setPreferredSite] = useState("");
 
   const sites = cache?.sites ?? [];
+  const lives = cache?.lives ?? [];
   // py / js 运行时已在 P1 落地，只有 jvm（P2）暂时不可用。
   const usableSites = useMemo(
     () => sites.filter((item) => item.runtime !== "jvm" && item.enabled),
@@ -98,7 +107,11 @@ export default function App() {
   }, []);
 
   const handleImported = useCallback((snapshot: ConfigSnapshot) => {
-    const next: SiteCache = { configId: snapshot.id, sites: snapshot.sites };
+    const next: SiteCache = {
+      configId: snapshot.id,
+      sites: snapshot.sites,
+      lives: (snapshot.lives ?? []) as LiveSource[],
+    };
     setCache(next);
     try {
       window.localStorage.setItem(SITE_CACHE_KEY, JSON.stringify(next));
@@ -171,6 +184,8 @@ export default function App() {
             onBack={back}
           />
         );
+      case "live":
+        return <LivePage lives={lives} navigate={navigate} />;
       case "favorites":
         return <FavoritesPage navigate={navigate} />;
       case "settings":
