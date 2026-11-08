@@ -67,6 +67,20 @@ def dispatch(method: str, params: dict) -> dict:
             raise ValueError("snapshots must be an array")
         return merge_repos([s for s in snapshots if isinstance(s, dict)])
 
+    if method.startswith("site.parse"):
+        from cms import parse_category, parse_detail, parse_home, parse_search
+
+        handlers = {
+            "site.parseHome": parse_home,
+            "site.parseCategory": parse_category,
+            "site.parseDetail": parse_detail,
+            "site.parseSearch": parse_search,
+        }
+        handler = handlers.get(method)
+        if handler is None:
+            raise ValueError(f"unknown method: {method}")
+        return handler(params)
+
     raise ValueError(f"unknown method: {method}")
 
 

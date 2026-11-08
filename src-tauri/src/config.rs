@@ -88,6 +88,21 @@ impl ConfigStore {
         }
         Ok(())
     }
+
+    pub fn find_site(&self, site_key: &str) -> Result<Value, AppError> {
+        let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        for entry in guard.iter() {
+            for site in &entry.snapshot.sites {
+                if site.get("key").and_then(Value::as_str) == Some(site_key) {
+                    return Ok(site.clone());
+                }
+            }
+        }
+        Err(AppError::new(
+            code::INVALID_ARGUMENT,
+            format!("site {site_key} not found"),
+        ))
+    }
 }
 
 async fn fetch_text(url: &str) -> Result<String, AppError> {

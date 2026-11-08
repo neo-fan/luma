@@ -16,6 +16,7 @@ import gzip
 import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 KEY = b"tvbox-stub-key"
 SPIDER_JAR = "http://127.0.0.1:{port}/spider.jar"
@@ -239,6 +240,73 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+            return
+
+        if path == "/cms/vod":
+            query = parse_qs(urlparse(self.path).query)
+            ac = (query.get("ac") or ["list"])[0]
+            page = int((query.get("pg") or ["1"])[0])
+            if (query.get("wd") or [""])[0] or ac in ("videolist", "detail"):
+                payload = {
+                    "code": 1,
+                    "list": [
+                        {
+                            "vod_id": "1",
+                            "vod_name": "Stub Movie",
+                            "vod_pic": "http://127.0.0.1:8787/poster.jpg",
+                            "vod_remarks": "HD",
+                            "type_name": "Stub",
+                            "vod_play_from": "stub",
+                            "vod_play_url": "第1集$http://127.0.0.1:8787/play.m3u8",
+                        }
+                    ],
+                    "page": page,
+                    "pagecount": 1,
+                    "limit": 20,
+                    "total": 1,
+                }
+            else:
+                payload = {
+                    "code": 1,
+                    "class": [{"type_id": "1", "type_name": "Stub"}],
+                    "list": [
+                        {
+                            "vod_id": "1",
+                            "vod_name": "Stub Home Movie",
+                            "vod_pic": "http://127.0.0.1:8787/poster.jpg",
+                            "vod_remarks": "HD",
+                            "type_name": "Stub",
+                            "vod_play_from": "stub",
+                            "vod_play_url": "第1集$http://127.0.0.1:8787/play.m3u8",
+                        }
+                    ],
+                    "page": 1,
+                    "pagecount": 1,
+                    "limit": 20,
+                    "total": 1,
+                }
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path == "/cms/xml":
+            body = (
+                '<?xml version="1.0" encoding="utf-8"?>'
+                '<rss version="2.0"><list page="1" pagecount="1" pagesize="20" recordcount="1">'
+                "<video><id>1</id><name>Stub XML Movie</name>"
+                "<pic>http://127.0.0.1:8787/poster.jpg</pic><des>stub</des>"
+                '<dl><dd flag="stub">第1集$http://127.0.0.1:8787/play.m3u8</dd></dl>'
+                "</video></list></rss>"
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/xml; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         routes = self.server.routes  # type: ignore[attr-defined]
