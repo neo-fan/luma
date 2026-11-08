@@ -115,3 +115,40 @@ export interface FetchRequest {
   body?: string;
   timeoutMs?: number;
 }
+
+/**
+ * 以下类型在 6.2 中未给出字段，T-04 先给最小定义，T-05/T-06 按实际实现补全。
+ * 变更时须同步 contracts/tvbox.schema.json 与 Rust serde 结构。
+ */
+
+/** 归一化后的配置快照（T-05 补全 lives/parses 的精确结构） */
+export interface ConfigSnapshot {
+  id: string;
+  name: string;
+  importedAt: string;
+  sites: Site[];
+  lives: unknown[];
+  parses: unknown[];
+}
+
+/** 配置管理列表项 */
+export interface ConfigMeta {
+  id: string;
+  name: string;
+  source: ConfigSource;
+  importedAt: string;
+}
+
+/** HTTP 拉取结果（T-06 落地） */
+export interface FetchResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/** 播放地址解析请求 */
+export interface PlayRequest {
+  url: string;
+  headers?: Record<string, string>;
+  siteKey?: string;
+}
