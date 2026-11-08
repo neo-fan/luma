@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
 import type { Navigate } from "../App";
 import ErrorBar from "../components/ErrorBar";
@@ -6,7 +6,7 @@ import Spinner from "../components/Spinner";
 import { formatDuration, parsePlayLines } from "../lib/format";
 import type { PlayLine } from "../lib/format";
 import { api, toAppError } from "../lib/invoke";
-import type { HistoryItem, PlayResolved } from "../types/tvbox";
+import type { HistoryItem, PlayResolved, ResultPage } from "../types/tvbox";
 
 interface PlayerPageProps {
   siteKey: string;
@@ -38,6 +38,10 @@ export default function PlayerPage({
   const [videoError, setVideoError] = useState("");
   const [timeMs, setTimeMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
+
+  const [switchTip, setSwitchTip] = useState("");
+  const triedSites = useRef<string[]>([]);
+  const failoverStarted = useRef(false);
 
   const [lines, setLines] = useState<PlayLine[]>([]);
   const [lineIndex, setLineIndex] = useState(0);
@@ -111,6 +115,99 @@ export default function PlayerPage({
 
   const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
 
+  useEffect(() => {
+    triedSites.current = [siteKey];
+    failoverStarted.current = false;
+    // 换源跳转会重建本页，提示通过 sessionStorage 带过来一次。
+    const carried = window.sessionStorage.getItem("tvbox:autoSwitch");
+    if (carried) {
+      window.sessionStorage.removeItem("tvbox:autoSwitch");
+      setSwitchTip(carried);
+    } else {
+      setSwitchTip("");
+    }
+  }, [siteKey, playUrl]);
+
+  /**
+   * 自动换源：当前源取不到流时，用片名在全部站点里搜同名条目，逐个探测，
+   * 只有真正返回 200 的流才切过去（避免把一个死源换成另一个死源）。
+   */
+  const tryFailover = useCallback(async () => {
+    if (failoverStarted.current) {
+      return;
+    }
+    failoverStarted.current = true;
+    const name = vodName.trim();
+    if (!name) {
+      return;
+    }
+    setSwitchTip("当前源无法播放，正在寻找其它可用源…");
+    try {
+      const agg = (await api.spiderInvoke({
+        siteKey: "all",
+        method: "searchContent",
+        args: [name, false, 1],
+        timeoutMs: 6000,
+      })) as { results?: { siteKey: string; ok: boolean; data?: ResultPage }[] };
+
+      const candidates = (agg.results ?? [])
+        .filter((item) => item.ok && item.data)
+        .flatMap((item) =>
+          (item.data?.list ?? [])
+            .filter((vod) => vod.vod_name && (vod.vod_name.includes(name) || name.includes(vod.vod_name)))
+            .slice(0, 1)
+            .map((vod) => ({ siteKey: item.siteKey, vod })),
+        )
+        .filter((item) => !triedSites.current.includes(item.siteKey));
+
+      for (const candidate of candidates.slice(0, 4)) {
+        triedSites.current.push(candidate.siteKey);
+        try {
+          const detail = await api.detail(candidate.siteKey, String(candidate.vod.vod_id));
+          const vod = detail[0];
+          if (!vod) {
+            continue;
+          }
+          const nextLines = parsePlayLines(vod.vod_play_from, vod.vod_play_url);
+          const episode = nextLines[0]?.episodes[0];
+          if (!episode) {
+            continue;
+          }
+          const probe = await api.resolvePlay({ siteKey: candidate.siteKey, url: episode.url });
+          if (probe.kind === "page") {
+            continue;
+          }
+          const response = await fetch(probe.proxyUrl, { headers: { Range: "bytes=0-0" } });
+          if (!response.ok) {
+            continue;
+          }
+          const tip = `已自动切换到「${candidate.siteKey}」`;
+          window.sessionStorage.setItem("tvbox:autoSwitch", tip);
+          setSwitchTip(tip);
+          navigate(
+            {
+              name: "player",
+              siteKey: candidate.siteKey,
+              vodId: String(candidate.vod.vod_id),
+              vodName: vod.vod_name || candidate.vod.vod_name,
+              episodeName: episode.name,
+              playUrl: episode.url,
+            },
+            true,
+          );
+          return;
+        } catch {
+          continue;
+        }
+      }
+      setSwitchTip("");
+      setVideoError("所有源都无法播放该影片，可尝试外部播放。");
+    } catch (err) {
+      setSwitchTip("");
+      setVideoError(`换源失败：${toAppError(err).message}`);
+    }
+  }, [navigate, vodName]);
+
   // 挂载 / 销毁播放内核。
   useEffect(() => {
     const video = videoRef.current;
@@ -118,7 +215,10 @@ export default function PlayerPage({
       return;
     }
     const source = resolved.proxyUrl;
-    const onError = () => setVideoError("播放器加载失败，可尝试外部播放。");
+    const onError = () => {
+      setVideoError("播放器加载失败，可尝试外部播放。");
+      void tryFailover();
+    };
     video.addEventListener("error", onError);
 
     let hls: Hls | null = null;
@@ -139,9 +239,7 @@ export default function PlayerPage({
           if (data.fatal) {
             const reason = data.details ? String(data.details) : "未知错误";
             setVideoError(`HLS 播放失败：${reason}`);
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              hls?.startLoad();
-            }
+            void tryFailover();
           }
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -163,7 +261,7 @@ export default function PlayerPage({
       }
       // 不主动清空 src：保留 currentTime 供卸载前的历史写入读取。
     };
-  }, [resolved]);
+  }, [resolved, tryFailover]);
 
   // 播放进度 → 历史记录（5 秒节流，播放/暂停立即写）。
   useEffect(() => {
@@ -278,6 +376,7 @@ export default function PlayerPage({
         <span className="page-meta">{progressLabel}</span>
       </header>
 
+      {switchTip ? <p className="tip">{switchTip}</p> : null}
       {videoError ? <ErrorBar message={videoError} /> : null}
       {resolveError ? <ErrorBar message={`播放地址解析失败：${resolveError}`} /> : null}
 

@@ -229,6 +229,26 @@ def py_config(port: int) -> dict:
     }
 
 
+def failover_config(port: int) -> dict:
+    """Two sites with the same title: the first one points at a dead stream."""
+    return {
+        "sites": [
+            {
+                "key": "stub_bad",
+                "name": "Stub Dead Source",
+                "type": 1,
+                "api": f"http://127.0.0.1:{port}/cms/dead",
+            },
+            {
+                "key": "stub_json",
+                "name": "Stub JSON CMS",
+                "type": 1,
+                "api": f"http://127.0.0.1:{port}/cms/vod",
+            },
+        ]
+    }
+
+
 def fixture(name: str, ctype: str) -> tuple[bytes, str]:
     path = FIXTURES / name
     if not path.is_file():
@@ -272,6 +292,31 @@ def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
         "/play.m3u8": (PLAYLIST.encode("utf-8"), "application/vnd.apple.mpegurl"),
         "/spider.jar": (b"PK\x03\x04stub", "application/java-archive"),
         "/config-py.json": as_json(py_config(port)),
+        "/config-failover.json": as_json(failover_config(port)),
+        "/cms/dead": (
+            json.dumps(
+                {
+                    "code": 1,
+                    "list": [
+                        {
+                            "vod_id": "dead-1",
+                            "vod_name": "Stub Movie",
+                            "vod_pic": f"http://127.0.0.1:{port}/poster.jpg",
+                            "vod_remarks": "DEAD",
+                            "type_name": "Stub",
+                            "vod_play_from": "dead",
+                            "vod_play_url": f"第1集$http://127.0.0.1:{port}/media/missing.m3u8",
+                        }
+                    ],
+                    "page": 1,
+                    "pagecount": 1,
+                    "limit": 20,
+                    "total": 1,
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            "application/json; charset=utf-8",
+        ),
         "/spider/template.py": fixture("template.py", "text/x-python; charset=utf-8"),
         "/spider/broken.py": fixture("broken.py", "text/x-python; charset=utf-8"),
         "/spider/slow.py": fixture("slow.py", "text/x-python; charset=utf-8"),
