@@ -1,0 +1,117 @@
+/**
+ * 归一化数据契约（规格书 6.2 + 7.1）。
+ *
+ * 本文件是前端唯一的数据形状来源；字段变更须同步：
+ *   contracts/tvbox.schema.json（真源）
+ *   src-tauri/src/error.rs 等 serde 结构
+ *   sidecars/py 的输出 JSON
+ * 三者由 tests/e2e/contract_check.py 比对（v1.1 R8）。
+ */
+
+/** 站点运行时分派结果（6.2） */
+export type RuntimeKind = "cms" | "python" | "quickjs" | "jvm";
+
+/** 统一错误码（6.3 表格 + v1.1 补充字段） */
+export interface AppError {
+  code: string;
+  message: string;
+  cause?: string;
+  /** 原始配置是否已留存，便于诊断（7.2 错误帧） */
+  rawSaved?: boolean;
+  details?: Record<string, unknown>;
+}
+
+/** 归一化后的站点（6.2） */
+export interface Site {
+  key: string;
+  name: string;
+  runtime: RuntimeKind;
+  api: string;
+  jar?: string;
+  type?: number;
+  /** 原样透传，常为加密 jar 参数；丢失会导致大批 jar 源失效（8.5） */
+  ext?: string;
+  headers: Record<string, string>;
+  searchable: boolean;
+  quickSearch: boolean;
+  filterable: boolean;
+  categories: { type_id: string; type_name: string }[];
+  timeoutMs: number;
+  /** 崩溃/超时次数超阈值后置 false */
+  enabled: boolean;
+}
+
+/** 点播条目（6.2，保留 TVBox 原始字段名） */
+export interface VodInfo {
+  vod_id: string;
+  vod_name: string;
+  vod_pic: string;
+  vod_remarks?: string;
+  vod_content?: string;
+  vod_year?: string;
+  vod_area?: string;
+  vod_actor?: string;
+  vod_director?: string;
+  type_name?: string;
+  /** 线路名，$$$ 分隔 */
+  vod_play_from: string;
+  /** 剧集，"名称$地址#..."，$$$ 分隔线路 */
+  vod_play_url: string;
+}
+
+/** 聚合结果页（6.2） */
+export interface ResultPage {
+  list: VodInfo[];
+  filters: Record<
+    string,
+    { key: string; name: string; value: { n: string; v: string }[] }[]
+  >;
+  pagecount: number;
+  page: number;
+  limit: number;
+  total: number;
+  classes?: { type_id: string; type_name: string }[];
+}
+
+/** 对外暴露的 6 个 spider 方法（6.2；与 8.4 的 12 个 jar 反射方法不是同一集合） */
+export type SpiderMethod =
+  | "homeContent"
+  | "categoryContent"
+  | "detailContent"
+  | "searchContent"
+  | "playerContent"
+  | "liveContent";
+
+/** 播放目标（6.2） */
+export interface PlayTarget {
+  kind: "webview" | "proxy" | "mpv" | "external";
+  url: string;
+  headers: Record<string, string>;
+  parse?: "hls" | "mpegts" | "direct";
+}
+
+/** 配置来源（7.1） */
+export interface ConfigSource {
+  kind: "url" | "file" | "text";
+  value: string;
+}
+
+/** spider 调用请求（7.1） */
+export interface SpiderRequest {
+  /** 'all' 表示聚合所有启用站点 */
+  siteKey: string;
+  method: SpiderMethod;
+  /** 原样透传给底层方法 */
+  args: unknown[];
+  /** 默认 15000，墙钟 */
+  timeoutMs?: number;
+}
+
+/** HTTP 拉取请求（7.1） */
+export interface FetchRequest {
+  url: string;
+  method?: "GET" | "POST";
+  headers?: Record<string, string>;
+  body?: string;
+  timeoutMs?: number;
+}

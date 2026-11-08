@@ -1,0 +1,60 @@
+{
+  "sites": [
+    {
+      "key": "stub_probe_a",
+      "name": "示例站 X1",
+      "type": 3,
+      "api": "http://127.0.0.1:8787/probe",
+      "ext": "stub=opaque;token=epsilon;revision=1",
+      "style": "rect",
+      "indexs": 1,
+      "timeout": 15,
+      "playerType": 1,
+      "changeable": true,
+      "quickSearch": true
+    },
+    {
+      "key": "stub_probe_b",
+      "name": "示例站 X2",
+      "type": 3,
+      "api": "http://127.0.0.1:8787/probe",
+      "ext": "stub=opaque;token=zeta;revision=2",
+      "style": "list",
+      "indexs": 0,
+      "timeout": 20,
+      "playerType": 2,
+      "changeable": false,
+      "quickSearch": true
+    }
+  ],
+  "hosts": [
+    {
+      "name": "示例镜像",
+      "url": "http://127.0.0.1:8787"
+    }
+  ],
+  "rules": [
+    {
+      "name": "示例规则",
+      "host": "127.0.0.1",
+      "regex": "127\\.0\\.0\\.1/cms/",
+      "replace": "http://127.0.0.1:8787"
+    }
+  ],
+  "logo": "http://127.0.0.1:8787/logo.png",
+  "wallpaper": "http://127.0.0.1:8787/wallpaper.jpg",
+  "lives": [
+    {
+      "name": "示例直播",
+      "type": 0,
+      "url": "http://127.0.0.1:8787/live/list.m3u",
+      "timeZone": "Asia/Shanghai",
+      "playerType": 1
+    }
+  ],
+  "customFlag": {
+    "enabled": true,
+    "note": "spec-undefined key for tolerance"
+  },
+  "vendorNote": "desensitized fixture; unknown top-level key must not fail normalization"
+}

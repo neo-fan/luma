@@ -1,0 +1,23 @@
+{
+  "sites": [
+    {
+      "key": "stub_js_jar",
+      "name": "示例站 J1",
+      "type": 3,
+      "jar": "js",
+      "api": "http://127.0.0.1:8787/site.js",
+      "ext": "stub-token=alpha;mode=js",
+      "searchable": 1,
+      "quickSearch": 1
+    },
+    {
+      "key": "stub_js_api",
+      "name": "示例站 J2",
+      "type": 3,
+      "api": "http://127.0.0.1:8787/spider/template.js",
+      "ext": "stub-token=beta;mode=plain-js",
+      "searchable": 0,
+      "quickSearch": 0
+    }
+  ]
+}

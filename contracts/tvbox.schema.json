@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tvbox.local/contracts/tvbox.schema.json",
+  "title": "TVBox normalized contract",
+  "description": "归一化数据契约的单一真源（规格书 6.2 / 7.1；v1.1 R8）。前端 src/types/tvbox.ts、Rust serde 结构与 Python 输出必须与本文件对齐，由 tests/e2e/contract_check.py 比对。",
+  "$defs": {
+    "RuntimeKind": {
+      "type": "string",
+      "enum": ["cms", "python", "quickjs", "jvm"]
+    },
+    "SpiderMethod": {
+      "type": "string",
+      "enum": [
+        "homeContent",
+        "categoryContent",
+        "detailContent",
+        "searchContent",
+        "playerContent",
+        "liveContent"
+      ]
+    },
+    "AppError": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "cause": { "type": "string" },
+        "rawSaved": { "type": "boolean" },
+        "details": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "Category": {
+      "type": "object",
+      "required": ["type_id", "type_name"],
+      "properties": {
+        "type_id": { "type": "string" },
+        "type_name": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "Site": {
+      "type": "object",
+      "required": [
+        "key",
+        "name",
+        "runtime",
+        "api",
+        "headers",
+        "searchable",
+        "quickSearch",
+        "filterable",
+        "categories",
+        "timeoutMs",
+        "enabled"
+      ],
+      "properties": {
+        "key": { "type": "string" },
+        "name": { "type": "string" },
+        "runtime": { "$ref": "#/$defs/RuntimeKind" },
+        "api": { "type": "string" },
+        "jar": { "type": "string" },
+        "type": { "type": "integer" },
+        "ext": { "type": "string" },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "searchable": { "type": "boolean" },
+        "quickSearch": { "type": "boolean" },
+        "filterable": { "type": "boolean" },
+        "categories": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Category" }
+        },
+        "timeoutMs": { "type": "integer", "minimum": 1 },
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "VodInfo": {
+      "type": "object",
+      "required": ["vod_id", "vod_name", "vod_pic", "vod_play_from", "vod_play_url"],
+      "properties": {
+        "vod_id": { "type": "string" },
+        "vod_name": { "type": "string" },
+        "vod_pic": { "type": "string" },
+        "vod_remarks": { "type": "string" },
+        "vod_content": { "type": "string" },
+        "vod_year": { "type": "string" },
+        "vod_area": { "type": "string" },
+        "vod_actor": { "type": "string" },
+        "vod_director": { "type": "string" },
+        "type_name": { "type": "string" },
+        "vod_play_from": { "type": "string" },
+        "vod_play_url": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "FilterValue": {
+      "type": "object",
+      "required": ["n", "v"],
+      "properties": {
+        "n": { "type": "string" },
+        "v": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "FilterGroup": {
+      "type": "object",
+      "required": ["key", "name", "value"],
+      "properties": {
+        "key": { "type": "string" },
+        "name": { "type": "string" },
+        "value": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FilterValue" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResultPage": {
+      "type": "object",
+      "required": ["list", "filters", "pagecount", "page", "limit", "total"],
+      "properties": {
+        "list": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/VodInfo" }
+        },
+        "filters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/FilterGroup" }
+          }
+        },
+        "pagecount": { "type": "integer", "minimum": 0 },
+        "page": { "type": "integer", "minimum": 1 },
+        "limit": { "type": "integer", "minimum": 1 },
+        "total": { "type": "integer", "minimum": 0 },
+        "classes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Category" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PlayTarget": {
+      "type": "object",
+      "required": ["kind", "url", "headers"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["webview", "proxy", "mpv", "external"]
+        },
+        "url": { "type": "string" },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "parse": {
+          "type": "string",
+          "enum": ["hls", "mpegts", "direct"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ConfigSource": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["url", "file", "text"] },
+        "value": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "SpiderRequest": {
+      "type": "object",
+      "required": ["siteKey", "method", "args"],
+      "properties": {
+        "siteKey": { "type": "string" },
+        "method": { "$ref": "#/$defs/SpiderMethod" },
+        "args": { "type": "array" },
+        "timeoutMs": { "type": "integer", "minimum": 1, "default": 15000 }
+      },
+      "additionalProperties": false
+    },
+    "FetchRequest": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string" },
+        "method": { "type": "string", "enum": ["GET", "POST"] },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "body": { "type": "string" },
+        "timeoutMs": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

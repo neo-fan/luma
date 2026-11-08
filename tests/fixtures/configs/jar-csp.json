@@ -1,0 +1,22 @@
+{
+  "sites": [
+    {
+      "key": "csp_stub",
+      "name": "示例站 K1",
+      "type": 3,
+      "api": "csp_stub",
+      "jar": "http://127.0.0.1:8787/spider.jar",
+      "ext": "stub-flag=csp;token=gamma;rev=1",
+      "searchable": 1
+    },
+    {
+      "key": "stub_jar_url",
+      "name": "示例站 K2",
+      "type": 3,
+      "api": "http://127.0.0.1:8787/cms/json",
+      "jar": "http://127.0.0.1:8787/spider.jar",
+      "ext": "stub-flag=jar-url;token=delta;rev=2",
+      "searchable": 1
+    }
+  ]
+}

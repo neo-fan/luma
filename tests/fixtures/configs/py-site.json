@@ -1,0 +1,23 @@
+{
+  "sites": [
+    {
+      "key": "stub_py_jar",
+      "name": "示例站 P1",
+      "type": 3,
+      "jar": "py",
+      "api": "http://127.0.0.1:8787/site.py",
+      "ext": "stub-token=alpha;mode=py",
+      "searchable": 1,
+      "quickSearch": 1
+    },
+    {
+      "key": "stub_py_api",
+      "name": "示例站 P2",
+      "type": 3,
+      "api": "http://127.0.0.1:8787/spider/template.py",
+      "ext": "stub-token=beta;mode=plain-py",
+      "searchable": 0,
+      "quickSearch": 0
+    }
+  ]
+}

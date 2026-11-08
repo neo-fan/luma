@@ -1,0 +1,51 @@
+{
+  "sites": [
+    {
+      "key": "stub_xml",
+      "name": "示例站 A",
+      "type": 0,
+      "api": "http://127.0.0.1:8787/cms/xml",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 1
+    },
+    {
+      "key": "stub_json",
+      "name": "示例站 B",
+      "type": 1,
+      "api": "http://127.0.0.1:8787/cms/json",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 1
+    },
+    {
+      "key": "stub_remote",
+      "name": "示例站 C",
+      "type": 4,
+      "api": "http://127.0.0.1:8787/cms/remote",
+      "searchable": 1,
+      "quickSearch": 0,
+      "filterable": 0
+    }
+  ],
+  "lives": [
+    {
+      "name": "示例直播",
+      "type": 0,
+      "url": "http://127.0.0.1:8787/live/list.m3u",
+      "playerType": 1,
+      "ua": "stub-ua"
+    }
+  ],
+  "parses": [
+    {
+      "name": "示例解析",
+      "type": 1,
+      "url": "http://127.0.0.1:8787/parse"
+    }
+  ],
+  "flags": [
+    "stub",
+    "demo"
+  ]
+}

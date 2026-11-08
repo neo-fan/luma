@@ -1,0 +1,10 @@
+{
+  "identifier": "main-access",
+  "description": "主窗口最小权限：仅核心能力与打开外部链接；不授予任何进程拉起权限（v1.1 决策：sidecar 统一由 Rust process.rs 拉起）",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-title",
+    "shell:allow-open"
+  ]
+}
