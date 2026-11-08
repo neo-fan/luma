@@ -5,6 +5,7 @@ pub mod config;
 pub mod error;
 pub mod http;
 pub mod play;
+pub mod process;
 pub mod proxy;
 pub mod spider;
 pub mod store;

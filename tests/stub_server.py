@@ -14,9 +14,12 @@ import argparse
 import base64
 import gzip
 import json
+import pathlib
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+FIXTURES = pathlib.Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "spiders"
 
 KEY = b"tvbox-stub-key"
 SPIDER_JAR = "http://127.0.0.1:{port}/spider.jar"
@@ -50,6 +53,7 @@ SITES = [
         "name": "Stub JS",
         "jar": "js",
         "api": "http://127.0.0.1:{port}/spider/template.js",
+        "ext": "stub-ext-js",
     },
     {
         "key": "csp_stub",
@@ -182,6 +186,55 @@ def gzip_b64_config(port: int) -> bytes:
     return base64.b64encode(gzip.compress(raw, 9))
 
 
+def py_config(port: int) -> dict:
+    """Config used by P1 tests: one healthy py site plus broken and slow ones."""
+    return {
+        "sites": [
+            {
+                "key": "stub_py",
+                "name": "Stub Python",
+                "jar": "py",
+                "api": f"http://127.0.0.1:{port}/spider/template.py",
+                "ext": "stub-ext-py",
+            },
+            {
+                "key": "stub_py_broken",
+                "name": "Stub Python Broken",
+                "jar": "py",
+                "api": f"http://127.0.0.1:{port}/spider/broken.py",
+                "ext": "",
+            },
+            {
+                "key": "stub_py_slow",
+                "name": "Stub Python Slow",
+                "jar": "py",
+                "api": f"http://127.0.0.1:{port}/spider/slow.py",
+                "ext": "",
+            },
+            {
+                "key": "stub_js2",
+                "name": "Stub JS (P1)",
+                "jar": "js",
+                "api": f"http://127.0.0.1:{port}/spider/template.js",
+                "ext": "stub-ext-js",
+            },
+            {
+                "key": "stub_json",
+                "name": "Stub JSON CMS",
+                "type": 1,
+                "api": f"http://127.0.0.1:{port}/cms/vod",
+            },
+        ]
+    }
+
+
+def fixture(name: str, ctype: str) -> tuple[bytes, str]:
+    path = FIXTURES / name
+    if not path.is_file():
+        return b"missing fixture", "text/plain; charset=utf-8"
+    return path.read_bytes(), ctype
+
+
 def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
     as_json = lambda obj: (json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
     return {
@@ -217,6 +270,11 @@ def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
         "/live/list.m3u": (M3U.format(port=port).encode("utf-8"), "audio/x-mpegurl"),
         "/play.m3u8": (PLAYLIST.encode("utf-8"), "application/vnd.apple.mpegurl"),
         "/spider.jar": (b"PK\x03\x04stub", "application/java-archive"),
+        "/config-py.json": as_json(py_config(port)),
+        "/spider/template.py": fixture("template.py", "text/x-python; charset=utf-8"),
+        "/spider/broken.py": fixture("broken.py", "text/x-python; charset=utf-8"),
+        "/spider/slow.py": fixture("slow.py", "text/x-python; charset=utf-8"),
+        "/spider/template.js": fixture("template.js", "application/javascript; charset=utf-8"),
         "/probe": as_json({"code": 1, "list": []}),
         "/parse": as_json({"code": 200, "url": f"http://127.0.0.1:{port}/play.m3u8"}),
         "/wallpaper.jpg": (b"\xff\xd8\xff\xd9", "image/jpeg"),

@@ -146,6 +146,23 @@ impl ConfigStore {
             format!("site {site_key} not found"),
         ))
     }
+
+    /// Every site across imported configs, de-duplicated by key (first wins).
+    pub fn all_sites(&self) -> Vec<Value> {
+        let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for entry in guard.iter() {
+            for site in &entry.snapshot.sites {
+                let key = site.get("key").and_then(Value::as_str).unwrap_or("").to_string();
+                if key.is_empty() || !seen.insert(key) {
+                    continue;
+                }
+                out.push(site.clone());
+            }
+        }
+        out
+    }
 }
 
 async fn fetch_text(url: &str) -> Result<String, AppError> {

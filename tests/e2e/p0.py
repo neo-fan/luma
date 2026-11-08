@@ -113,14 +113,14 @@ def main() -> int:
     check_proxy(online)
 
     # 12.2: capabilities that only land in P1/P2 are N/A at P0.
-    for name in [
-        "py runtime isolation",
-        "js runtime isolation",
-        "jar runtime isolation",
-        "ext passthrough to sidecars",
-        "crash isolation / no zombie process",
+    for name, note in [
+        ("py runtime isolation", "asserted by tests/e2e/p1.py"),
+        ("js runtime isolation", "asserted by tests/e2e/p1.py"),
+        ("jar runtime isolation", "scheduled for P2"),
+        ("ext passthrough to sidecars", "asserted by tests/e2e/p1.py"),
+        ("crash isolation / no zombie process", "asserted by tests/e2e/p1.py"),
     ]:
-        record("12.2 matrix", name, "N/A", "scheduled for P1/P2")
+        record("12.2 matrix", name, "N/A", note)
 
     total = len(results)
     passed = sum(1 for _, _, status in results if status == "PASS")

@@ -1,139 +1,300 @@
-//! Minimal stdio JSON-RPC client for the Python adapter (spec 7.2).
+//! Rust ↔ Python adapter stdio JSON-RPC client (spec 7.2 / T-13).
 //!
-//! Parsing logic lives in `sidecars/py/` only; Rust forwards raw payloads and
-//! consumes normalized results. Concurrency is serialized here on purpose —
-//! T-13 replaces this with the full `bridge.rs` (id matching, cancel frames,
-//! crash restart, epoch handling).
+//! One JSON frame per line. Requests carry an `id`; responses may arrive out of
+//! order because the adapter dispatches onto a thread pool, so a dedicated
+//! reader task routes frames by id instead of assuming request/response order.
+//!
+//! Failure handling:
+//! * non-JSON line  → logged and ignored (junk is not fatal, a partial frame is)
+//! * unknown id     → dropped (late frame of a timed-out call)
+//! * EOF / IO error → every in-flight call fails with `SPIDER_CRASH`, the
+//!   connection is marked dead and respawned on the next call
+//! * per-call wall clock → `SITE_TIMEOUT`, pending entry removed
 
 use crate::error::{code, AppError};
+use crate::process::{self, Guarded};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Stdio;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::Mutex;
+use tokio::process::ChildStdin;
+use tokio::sync::{oneshot, Mutex};
 
-const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+type Pending = std::sync::Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, AppError>>>>>;
 
-struct Sidecar {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
+struct Conn {
+    stdin: Mutex<ChildStdin>,
+    pending: Pending,
+    next_id: AtomicU64,
+    child: StdMutex<Option<Guarded>>,
+    alive: AtomicBool,
+    pid: AtomicU32,
 }
 
-impl Sidecar {
-    fn spawn() -> Result<Self, AppError> {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_default();
-        let script = root.join("sidecars").join("py").join("main.py");
-        if !script.is_file() {
-            return Err(AppError::new(code::RUNTIME_UNAVAILABLE, "python adapter not found")
-                .with_details(json!({ "path": script })));
-        }
-        let python = std::env::var("TVBOX_PYTHON").unwrap_or_else(|_| "python".to_string());
-        let mut child = Command::new(&python)
-            .arg(&script)
-            .current_dir(&root)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|err| {
-                AppError::new(code::RUNTIME_UNAVAILABLE, format!("spawn {python} failed"))
-                    .with_cause(err.to_string())
-            })?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| AppError::new(code::INTERNAL, "adapter stdin unavailable"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AppError::new(code::INTERNAL, "adapter stdout unavailable"))?;
-        Ok(Self {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_id: 0,
-        })
+impl Conn {
+    fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    async fn call(&mut self, method: &str, params: Value) -> Result<Value, AppError> {
-        self.next_id += 1;
-        let request_id = self.next_id;
-        let mut line = serde_json::to_string(&json!({
-            "id": request_id,
-            "method": method,
-            "params": params,
-        }))?;
-        line.push('\n');
-
-        self.stdin.write_all(line.as_bytes()).await.map_err(|err| {
-            AppError::new(code::SPIDER_CRASH, "write to adapter failed").with_cause(err.to_string())
-        })?;
-        self.stdin.flush().await.map_err(|err| {
-            AppError::new(code::SPIDER_CRASH, "flush adapter failed").with_cause(err.to_string())
-        })?;
-
-        let mut buffer = String::new();
-        let read = tokio::time::timeout(CALL_TIMEOUT, self.stdout.read_line(&mut buffer)).await;
-        let bytes = match read {
-            Ok(Ok(n)) => n,
-            Ok(Err(err)) => {
-                return Err(AppError::new(code::SPIDER_CRASH, "read adapter failed")
-                    .with_cause(err.to_string()))
-            }
-            Err(_) => {
-                return Err(AppError::new(code::SITE_TIMEOUT, format!("adapter {method} timed out")))
-            }
-        };
-        if bytes == 0 {
-            return Err(AppError::new(code::SPIDER_CRASH, "adapter exited unexpectedly"));
+    fn fail_all(&self, message: &str) {
+        let pending = self.pending.clone();
+        // Short critical section; no await needed while draining.
+        let mut guard = pending.blocking_lock();
+        for (_, sender) in guard.drain() {
+            let _ = sender.send(Err(AppError::new(code::SPIDER_CRASH, message)));
         }
-
-        let response: Value = serde_json::from_str(&buffer)?;
-        if response.get("ok").and_then(Value::as_bool) != Some(true) {
-            let error = response.get("error").cloned().unwrap_or_else(|| json!({}));
-            let error_code = error
-                .get("code")
-                .and_then(Value::as_str)
-                .unwrap_or(code::INTERNAL);
-            let message = error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("adapter error");
-            return Err(AppError::new(error_code, message).with_details(error));
-        }
-        Ok(response.get("result").cloned().unwrap_or(Value::Null))
     }
 }
 
-static SIDECAR: OnceLock<Mutex<Option<Sidecar>>> = OnceLock::new();
+fn adapter_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_default()
+}
 
-/// Send one request to the adapter, spawning it on first use.
+fn python_bin() -> String {
+    std::env::var("TVBOX_PYTHON").unwrap_or_else(|_| "python".to_string())
+}
+
+fn spawn_conn() -> Result<std::sync::Arc<Conn>, AppError> {
+    let root = adapter_root();
+    let script = root.join("sidecars").join("py").join("main.py");
+    if !script.is_file() {
+        return Err(
+            AppError::new(code::RUNTIME_UNAVAILABLE, "python adapter not found")
+                .with_details(json!({ "path": script })),
+        );
+    }
+
+    let python = python_bin();
+    let mut guarded = Guarded::spawn(
+        &python,
+        &[script.to_string_lossy().to_string()],
+        Some(root.as_path()),
+    )?;
+    let pid = guarded.id().unwrap_or(0);
+    let stdin = guarded
+        .take_stdin()
+        .ok_or_else(|| AppError::new(code::INTERNAL, "adapter stdin unavailable"))?;
+    let stdout = guarded.take_stdout();
+
+    let conn = std::sync::Arc::new(Conn {
+        stdin: Mutex::new(stdin),
+        pending: std::sync::Arc::new(Mutex::new(HashMap::new())),
+        next_id: AtomicU64::new(0),
+        child: StdMutex::new(Some(guarded)),
+        alive: AtomicBool::new(true),
+        pid: AtomicU32::new(pid),
+    });
+
+    if let Some(stdout) = stdout {
+        let reader_conn = conn.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        let text = line.trim();
+                        if text.is_empty() {
+                            continue;
+                        }
+                        match serde_json::from_str::<Value>(text) {
+                            Ok(frame) => route_frame(&reader_conn, frame).await,
+                            Err(err) => {
+                                tracing::warn!(error = %err, "adapter emitted a non-json frame");
+                            }
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "adapter stdout read failed");
+                        break;
+                    }
+                }
+            }
+            reader_conn.alive.store(false, Ordering::SeqCst);
+            reader_conn.fail_all("adapter exited unexpectedly");
+            tracing::warn!(
+                pid = reader_conn.pid.load(Ordering::Relaxed),
+                "adapter reader stopped"
+            );
+        });
+    }
+
+    tracing::info!(pid, "python adapter spawned");
+    Ok(conn)
+}
+
+async fn route_frame(conn: &std::sync::Arc<Conn>, frame: Value) {
+    let Some(id) = frame.get("id").and_then(Value::as_u64) else {
+        tracing::warn!("adapter frame without id, dropped");
+        return;
+    };
+    let sender = {
+        let mut guard = conn.pending.lock().await;
+        guard.remove(&id)
+    };
+    let Some(sender) = sender else {
+        tracing::debug!(id, "late frame for a finished call, dropped");
+        return;
+    };
+    let outcome = if frame.get("ok").and_then(Value::as_bool) == Some(true) {
+        Ok(frame.get("result").cloned().unwrap_or(Value::Null))
+    } else {
+        let error = frame.get("error").cloned().unwrap_or_else(|| json!({}));
+        let error_code = error
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or(code::INTERNAL);
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("adapter error");
+        Err(AppError::new(error_code, message).with_details(error))
+    };
+    let _ = sender.send(outcome);
+}
+
+struct BridgeState {
+    conn: Mutex<Option<std::sync::Arc<Conn>>>,
+    restarts: AtomicU64,
+}
+
+fn state() -> &'static BridgeState {
+    static STATE: OnceLock<BridgeState> = OnceLock::new();
+    STATE.get_or_init(|| BridgeState {
+        conn: Mutex::new(None),
+        restarts: AtomicU64::new(0),
+    })
+}
+
+async fn connection() -> Result<std::sync::Arc<Conn>, AppError> {
+    let bridge = state();
+    let mut guard = bridge.conn.lock().await;
+    if let Some(existing) = guard.as_ref() {
+        if existing.alive.load(Ordering::SeqCst) {
+            return Ok(existing.clone());
+        }
+        tracing::warn!("adapter connection is dead, respawning");
+        bridge.restarts.fetch_add(1, Ordering::Relaxed);
+        *guard = None;
+    }
+    let fresh = spawn_conn()?;
+    *guard = Some(fresh.clone());
+    Ok(fresh)
+}
+
+/// Send one request with the default wall-clock budget.
 pub async fn call(method: &str, params: Value) -> Result<Value, AppError> {
-    let lock = SIDECAR.get_or_init(|| Mutex::new(None));
-    let mut guard = lock.lock().await;
-    if guard.is_none() {
-        *guard = Some(Sidecar::spawn()?);
-    }
-    let sidecar = guard
-        .as_mut()
-        .ok_or_else(|| AppError::new(code::INTERNAL, "adapter unavailable"))?;
-    sidecar.call(method, params).await
+    call_with_timeout(method, params, process::call_timeout()).await
 }
 
-/// Stop the adapter (tests and app shutdown).
+/// Send one request with an explicit wall-clock budget.
+pub async fn call_with_timeout(
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, AppError> {
+    let conn = connection().await?;
+    let id = conn.next_id();
+    let (tx, rx) = oneshot::channel();
+    {
+        let mut pending = conn.pending.lock().await;
+        pending.insert(id, tx);
+    }
+
+    let mut line = serde_json::to_string(&json!({
+        "id": id,
+        "method": method,
+        "params": params,
+    }))?;
+    line.push('\n');
+
+    {
+        let mut stdin = conn.stdin.lock().await;
+        if let Err(err) = stdin.write_all(line.as_bytes()).await {
+            drop(stdin);
+            conn.pending.lock().await.remove(&id);
+            conn.alive.store(false, Ordering::SeqCst);
+            return Err(AppError::new(code::SPIDER_CRASH, "write to adapter failed")
+                .with_cause(err.to_string()));
+        }
+        if let Err(err) = stdin.flush().await {
+            drop(stdin);
+            conn.pending.lock().await.remove(&id);
+            return Err(AppError::new(code::SPIDER_CRASH, "flush adapter failed")
+                .with_cause(err.to_string()));
+        }
+    }
+
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(Ok(value))) => Ok(value),
+        Ok(Ok(Err(err))) => Err(err),
+        Ok(Err(_)) => Err(AppError::new(code::SPIDER_CRASH, "adapter channel closed")),
+        Err(_) => {
+            conn.pending.lock().await.remove(&id);
+            Err(AppError::new(
+                code::SITE_TIMEOUT,
+                format!("adapter {method} exceeded {}ms", timeout.as_millis()),
+            ))
+        }
+    }
+}
+
+/// Best-effort cancel frame for an in-flight request id.
+pub async fn cancel(target_id: u64) -> Result<Value, AppError> {
+    let conn = connection().await?;
+    let id = conn.next_id();
+    let mut line = serde_json::to_string(&json!({
+        "id": id,
+        "method": "__cancel__",
+        "params": { "targetId": target_id },
+    }))?;
+    line.push('\n');
+    let mut stdin = conn.stdin.lock().await;
+    stdin.write_all(line.as_bytes()).await.map_err(|err| {
+        AppError::new(code::SPIDER_CRASH, "write cancel failed").with_cause(err.to_string())
+    })?;
+    stdin.flush().await.map_err(|err| {
+        AppError::new(code::SPIDER_CRASH, "flush cancel failed").with_cause(err.to_string())
+    })?;
+    Ok(json!({ "cancelled": target_id }))
+}
+
+pub async fn ping() -> Result<Value, AppError> {
+    call("ping", json!({})).await
+}
+
+/// Number of respawns since start; surfaced for diagnostics and tests.
+pub fn restart_count() -> u64 {
+    state().restarts.load(Ordering::Relaxed)
+}
+
+pub fn adapter_pid() -> Option<u32> {
+    let bridge = state();
+    let guard = bridge.conn.try_lock().ok()?;
+    let pid = guard.as_ref()?.pid.load(Ordering::Relaxed);
+    (pid != 0).then_some(pid)
+}
+
+/// Stop the adapter; the next call spawns a fresh one.
 pub async fn shutdown() {
-    if let Some(lock) = SIDECAR.get() {
-        let mut guard = lock.lock().await;
-        if let Some(mut sidecar) = guard.take() {
-            let _ = sidecar.child.kill().await;
+    let bridge = state();
+    let mut guard = bridge.conn.lock().await;
+    if let Some(conn) = guard.take() {
+        conn.alive.store(false, Ordering::SeqCst);
+        conn.fail_all("adapter shut down");
+        let child = conn
+            .child
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        if let Some(mut child) = child {
+            child.kill().await;
         }
     }
 }

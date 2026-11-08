@@ -9,8 +9,10 @@ is handled by a child process in later tasks, not here.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -80,6 +82,64 @@ def dispatch(method: str, params: dict) -> dict:
         if handler is None:
             raise ValueError(f"unknown method: {method}")
         return handler(params)
+
+    if method == "site.route":
+        from normalize import route as route_site
+
+        site = params.get("site")
+        if not isinstance(site, dict):
+            raise ValueError("site must be an object")
+        runtime = route_site(site, params.get("globalSpider"))
+        return {"runtime": runtime, "reason": "8.3 priority order"}
+
+    if method == "live.parseM3u":
+        from live import parse_m3u
+
+        raw = params.get("raw")
+        if not isinstance(raw, str):
+            raise ValueError("raw must be a string")
+        return parse_m3u(raw, str(params.get("url") or ""))
+
+    if method == "parse.resolve":
+        from parse import resolve
+
+        url = str(params.get("url") or "")
+        if not url:
+            raise ValueError("url is required")
+        rule = params.get("rule") if isinstance(params.get("rule"), dict) else {}
+        headers = params.get("headers") if isinstance(params.get("headers"), dict) else {}
+        return resolve(url, rule, headers)
+
+    if method == "spider.py":
+        from pyspider import run as run_py_spider
+
+        return run_py_spider(params)
+
+    if method.startswith("debug."):
+        if os.environ.get("TVBOX_ADAPTER_DEBUG") != "1":
+            raise ValueError(f"unknown method: {method}")
+        return debug_handler(method, params)
+
+    raise ValueError(f"unknown method: {method}")
+
+
+def debug_handler(method: str, params: dict) -> dict:
+    """Fault injection used by tests/e2e/p1.py; gated behind an env flag."""
+    if method == "debug.echo":
+        delay = float(params.get("delayMs") or 0) / 1000.0
+        if delay > 0:
+            time.sleep(delay)
+        return {"value": params.get("value"), "pid": os.getpid()}
+
+    if method == "debug.junk":
+        # Write a deliberately malformed frame before the real one; the Rust
+        # reader must ignore it instead of breaking the connection.
+        sys.stdout.write("this is not json\n")
+        sys.stdout.flush()
+        return {"junk": True}
+
+    if method == "debug.crash":
+        os._exit(int(params.get("code") or 3))
 
     raise ValueError(f"unknown method: {method}")
 
