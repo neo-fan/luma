@@ -1,0 +1,6 @@
+# 项目约定：全部文本文件 UTF-8 无 BOM + LF；本地 core.autocrlf=false。
+# text=auto 让 Git 自动识别二进制，提交时统一规范化为 LF，检出时也写 LF。
+* text=auto eol=lf
+
+# v1.0 规格书是逐字节归档，禁止任何换行/编码规范化。
+docs/spec-v1.0/spec-v1.0-raw.md -text
