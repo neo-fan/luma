@@ -161,7 +161,7 @@ export default function App() {
           />
         );
       case "search":
-        return <SearchPage sites={sites} siteKey={siteKey} navigate={navigate} />;
+        return <SearchPage sites={sites} navigate={navigate} />;
       case "detail":
         return (
           <DetailPage

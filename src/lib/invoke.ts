@@ -77,7 +77,8 @@ export const api = {
   },
 
   search(siteKey: string, keyword: string, page: number): Promise<ResultPage> {
-    return spider<ResultPage>(siteKey, "searchContent", [keyword, page]);
+    // TVBox 统一签名是 (key, quick, pg)；CMS 兼容两参数，py/js 需要三参数。
+    return spider<ResultPage>(siteKey, "searchContent", [keyword, false, page]);
   },
 
   detail(siteKey: string, vodId: string): Promise<VodInfo[]> {

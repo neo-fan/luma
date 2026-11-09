@@ -8,12 +8,46 @@ from __future__ import annotations
 
 import hashlib
 import json
+from urllib.parse import urljoin
 from datetime import datetime, timezone
 from typing import Any
 
 TOP_ALIASES = {"list": "sites", "parse": "parses", "jar": "spider"}
 SITE_ALIASES = {"title": "name"}
 BOOL_FIELDS = ("searchable", "quickSearch", "filterable")
+
+
+def _base_dir(origin: str) -> str:
+    """Directory part of the config source, used to resolve `./py/x.py` refs."""
+    origin = (origin or "").strip()
+    for scheme in ("http://", "https://", "file://"):
+        if origin.startswith(scheme):
+            head, _, tail = origin.rpartition("/")
+            return head + "/" if tail else origin
+    return ""
+
+
+def _resolve(origin: str, value: Any) -> Any:
+    """Resolve a relative spider/asset path against the config origin.
+
+    TVBox configs commonly ship as `<dir>/box.json` plus `./py/*.py`,
+    `./jar/*.jar`, `./lib/*.m3u`, `./js/*.js`. Without this, every relative
+    site degrades to an unfetchable path and the whole config looks broken.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text or text.startswith(("http://", "https://", "data:")):
+        return value
+    if not text.startswith(("./", "../", "/")):
+        # Bare spider class names (`csp_XBPQ`) and inline JSON stay untouched.
+        return value
+    base = _base_dir(origin)
+    if not base:
+        return value
+    # urljoin keeps `https://` intact; posixpath.normpath would collapse it.
+    joined = urljoin(base, text)
+    return joined if joined.startswith(("http://", "https://", "file://")) else value
 
 
 def _bool(value: Any) -> bool:
@@ -79,11 +113,21 @@ def route(site: dict[str, Any], global_spider: str | None) -> str:
     return "cms"
 
 
-def normalize_site(raw: dict[str, Any], global_spider: str | None = None) -> dict[str, Any]:
+def normalize_site(
+    raw: dict[str, Any],
+    global_spider: str | None = None,
+    origin: str = "",
+) -> dict[str, Any]:
     site = dict(raw)
     for alias, canonical in SITE_ALIASES.items():
         if canonical not in site and alias in site:
             site[canonical] = site[alias]
+
+    # Resolve relative references before routing so `./py/x.py` is recognized as
+    # a real URL and can actually be fetched.
+    for field in ("api", "jar", "logo", "ext"):
+        if field in site:
+            site[field] = _resolve(origin, site[field])
 
     known = {
         "key",
@@ -143,12 +187,26 @@ def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
             config[canonical] = config[alias]
 
     spider = config.get("spider") or config.get("jar")
-    spider_value = spider if isinstance(spider, str) else None
+    spider_value = _resolve(origin, spider) if isinstance(spider, str) else None
 
     sites_raw = config.get("sites") or []
     if not isinstance(sites_raw, list):
         sites_raw = []
-    sites = [normalize_site(s, spider_value) for s in sites_raw if isinstance(s, dict)]
+    sites = [normalize_site(s, spider_value, origin) for s in sites_raw if isinstance(s, dict)]
+
+    lives_raw = config.get("lives") or []
+    lives = []
+    for item in lives_raw if isinstance(lives_raw, list) else []:
+        if isinstance(item, dict) and "url" in item:
+            item = {**item, "url": _resolve(origin, item.get("url"))}
+        lives.append(item)
+
+    parses_raw = config.get("parses") or config.get("parse") or []
+    parses = []
+    for item in parses_raw if isinstance(parses_raw, list) else []:
+        if isinstance(item, dict) and "url" in item:
+            item = {**item, "url": _resolve(origin, item.get("url"))}
+        parses.append(item)
 
     known_top = {
         "sites",
@@ -173,8 +231,8 @@ def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
         "name": str(config.get("name") or "stub"),
         "importedAt": datetime.now(timezone.utc).isoformat(),
         "sites": sites,
-        "lives": config.get("lives") or [],
-        "parses": config.get("parses") or config.get("parse") or [],
+        "lives": lives,
+        "parses": parses,
         "spider": spider_value,
         "wallpaper": config.get("wallpaper"),
         "flags": config.get("flags") or [],

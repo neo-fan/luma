@@ -2,8 +2,9 @@
 //!
 //! `route()` maps a normalized site to one runtime; every runtime implements
 //! `SpiderRuntime` and returns TVBox-shaped JSON. `spider_invoke` with
-//! `siteKey = "all"` fans out over the enabled CMS sites with a per-source wall
-//! clock, so a single dead source never blocks the home page.
+//! `siteKey = "all"` fans out over the usable sites of the active config with
+//! a bounded concurrency and a shared wall clock, so a single dead source
+//! never blocks the home page.
 
 pub mod cms;
 pub mod python;
@@ -203,34 +204,56 @@ async fn aggregate(
         // Runtimes that are not implemented yet are skipped instead of failing
         // the whole home page.
         .filter(|site| runtime_for(route(site)).is_some())
+        // Divider entries (`-- 1 --`) carry no api and would only produce noise.
+        .filter(|site| {
+            let api = site.get("api").and_then(Value::as_str).unwrap_or("");
+            !api.is_empty() || route(site) == RuntimeKind::Jvm
+        })
         .collect();
 
     if sites.is_empty() {
-        return Ok(json!({ "results": [], "ok": 0, "failed": 0, "tookMs": 0 }));
+        return Ok(json!({
+            "results": [],
+            "ok": 0,
+            "failed": 0,
+            "skipped": 0,
+            "total": 0,
+            "tookMs": 0,
+        }));
     }
 
     let started = Instant::now();
     let semaphore = std::sync::Arc::new(Semaphore::new(MAX_FANOUT));
     let mut set = tokio::task::JoinSet::new();
 
-    for site in sites.into_iter().take(MAX_FANOUT) {
-        let permit = semaphore.clone().acquire_owned().await;
+    // Queue every site at once. Acquiring the permit *before* spawning would
+    // serialize waves of MAX_FANOUT sites (100 sources = 5 sequential rounds),
+    // so the tail would never get a fair share of the wall-clock budget.
+    for site in sites.iter() {
+        let site = site.clone();
+        let semaphore = semaphore.clone();
         let args = args.to_vec();
         set.spawn(async move {
-            let _permit = permit;
             let key = site
                 .get("key")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let outcome = tokio::time::timeout(timeout, invoke_one(&site, method, &args, timeout))
+            let outcome = match semaphore.acquire_owned().await {
+                Ok(_permit) => tokio::time::timeout(
+                    timeout,
+                    invoke_one(&site, method, &args, timeout),
+                )
                 .await
                 .unwrap_or_else(|_| {
                     Err(AppError::new(
                         code::SITE_TIMEOUT,
                         format!("site {key} exceeded {}ms", timeout.as_millis()),
                     ))
-                });
+                }),
+                Err(err) => Err(AppError::new(code::INTERNAL, "fan-out semaphore closed")
+                    .with_cause(err.to_string())),
+            };
             (key, outcome)
         });
     }
@@ -238,27 +261,43 @@ async fn aggregate(
     let mut results = Vec::new();
     let mut ok = 0usize;
     let mut failed = 0usize;
-    while let Some(joined) = set.join_next().await {
-        match joined {
-            Ok((site_key, Ok(data))) => {
-                ok += 1;
-                results.push(json!({ "siteKey": site_key, "ok": true, "data": data }));
-            }
-            Ok((site_key, Err(err))) => {
-                failed += 1;
-                results.push(json!({
-                    "siteKey": site_key,
-                    "ok": false,
-                    "error": { "code": err.code, "message": err.message },
-                }));
-            }
-            Err(err) => {
-                failed += 1;
-                results.push(json!({
-                    "siteKey": "",
-                    "ok": false,
-                    "error": { "code": code::SPIDER_CRASH, "message": err.to_string() },
-                }));
+    // Honour the caller's wall clock instead of a hardcoded constant. Clamp so
+    // neither a tiny nor an absurd timeout can wreck the UI, and abort the
+    // slow tail when the budget expires.
+    let budget = timeout.clamp(Duration::from_millis(8_000), Duration::from_millis(30_000));
+    loop {
+        let remaining = budget.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            set.abort_all();
+            break;
+        }
+        match tokio::time::timeout(remaining, set.join_next()).await {
+            Ok(Some(joined)) => match joined {
+                Ok((site_key, Ok(data))) => {
+                    ok += 1;
+                    results.push(json!({ "siteKey": site_key, "ok": true, "data": data }));
+                }
+                Ok((site_key, Err(err))) => {
+                    failed += 1;
+                    results.push(json!({
+                        "siteKey": site_key,
+                        "ok": false,
+                        "error": { "code": err.code, "message": err.message },
+                    }));
+                }
+                Err(err) => {
+                    failed += 1;
+                    results.push(json!({
+                        "siteKey": "",
+                        "ok": false,
+                        "error": { "code": code::SPIDER_CRASH, "message": err.to_string() },
+                    }));
+                }
+            },
+            Ok(None) => break,
+            Err(_) => {
+                set.abort_all();
+                break;
             }
         }
     }
@@ -267,6 +306,8 @@ async fn aggregate(
         "results": results,
         "ok": ok,
         "failed": failed,
+        "skipped": sites.len().saturating_sub(ok + failed),
+        "total": sites.len(),
         "tookMs": started.elapsed().as_millis() as u64,
     }))
 }

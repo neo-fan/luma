@@ -13,6 +13,13 @@ import json
 import sys
 import types
 import traceback
+from pathlib import Path
+
+# `base.spider` ships inside this directory (vendored framework), and spiders
+# also do `sys.path.append('..')`; keeping our own dir first wins either way.
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 SIGNATURES = {
     "homeContent": 1,
@@ -60,20 +67,27 @@ def main() -> int:
     sys.stdout = sys.stderr  # protect the protocol stream
 
     try:
-        source = str(payload.get("source") or "")
+        # Community sources are frequently saved with a UTF-8 BOM, which makes
+        # `compile` fail with "invalid non-printable character".
+        source = str(payload.get("source") or "").lstrip("\ufeff")
         if not source.strip():
             raise ValueError("empty spider source")
 
         module = types.ModuleType("tvbox_py_spider")
         module.__dict__["__name__"] = "tvbox_py_spider"
-        exec(compile(source, "<spider>", "exec"), module.__dict__)  # noqa: S102
+        filename = str(payload.get("filename") or "<spider>")
+        exec(compile(source, filename, "exec"), module.__dict__)  # noqa: S102
 
         class_name = str(payload.get("className") or "Spider")
         spider_cls = getattr(module, class_name, None)
         if spider_cls is None:
             raise ValueError(f"class {class_name} not found in source")
 
-        instance = spider_cls(str(payload.get("ext") or ""))
+        # Some configs override `__init__(self)` without accepting ext.
+        try:
+            instance = spider_cls(str(payload.get("ext") or ""))
+        except TypeError:
+            instance = spider_cls()
         method = str(payload.get("method") or "")
         if method not in SIGNATURES:
             raise ValueError(f"unsupported method: {method}")

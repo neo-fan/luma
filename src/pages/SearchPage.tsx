@@ -6,13 +6,30 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, toAppError } from "../lib/invoke";
-import type { Site, VodInfo } from "../types/tvbox";
+import type { ResultPage, Site, VodInfo } from "../types/tvbox";
 
 const ALL_SITES = "__all__";
+/** 全站聚合的墙钟：与后端每源超时一致，超时后返回已完成的源。 */
+const ALL_TIMEOUT_MS = 20_000;
+
+interface AggregateRow {
+  siteKey: string;
+  ok: boolean;
+  data?: ResultPage;
+  error?: { code?: string; message?: string };
+}
+
+interface AggregateResult {
+  results: AggregateRow[];
+  ok: number;
+  failed: number;
+  total: number;
+  skipped?: number;
+  tookMs: number;
+}
 
 interface SearchPageProps {
   sites: Site[];
-  siteKey: string;
   navigate: Navigate;
 }
 
@@ -22,13 +39,16 @@ interface SearchHit {
   vod: VodInfo;
 }
 
-/** 搜索页：单站点或全部站点串行检索。 */
-export default function SearchPage({ sites, siteKey, navigate }: SearchPageProps) {
+/** 搜索页：单站点直连，全部站点走后端一次并发聚合。 */
+export default function SearchPage({ sites, navigate }: SearchPageProps) {
   const cmsSites = sites.filter((item) => item.runtime !== "jvm" && item.enabled);
   const [keyword, setKeyword] = useState("");
-  const [target, setTarget] = useState(siteKey || ALL_SITES);
+  // A 100-site config makes single-site search the wrong default: users expect
+  // one keyword to cover the whole active config.
+  const [target, setTarget] = useState<string>(ALL_SITES);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [failures, setFailures] = useState(0);
+  const [progress, setProgress] = useState("");
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -39,40 +59,62 @@ export default function SearchPage({ sites, siteKey, navigate }: SearchPageProps
       setError("请输入搜索关键词");
       return;
     }
-    const targets =
-      target === ALL_SITES
-        ? cmsSites
-        : cmsSites.filter((item) => item.key === target);
-
-    if (targets.length === 0) {
-      setError("请选择可用的 CMS 站点");
-      return;
-    }
-
     setLoading(true);
     setError("");
     setSearched(false);
     setFailures(0);
     setHits([]);
+    setProgress("");
 
     try {
       const merged: SearchHit[] = [];
-      let failed = 0;
-      for (const site of targets) {
-        try {
-          const result = await api.search(site.key, word, 1);
-          for (const vod of result.list ?? []) {
-            merged.push({ siteKey: site.key, siteName: site.name, vod });
-          }
-        } catch {
-          // 单站点失败不打断整体检索，只计数。
-          failed += 1;
+
+      if (target !== ALL_SITES) {
+        const site = cmsSites.find((item) => item.key === target);
+        if (!site) {
+          setError("所选站点不可用，请重新选择");
+          return;
         }
+        const result = await api.search(site.key, word, 1);
+        for (const vod of result.list ?? []) {
+          merged.push({ siteKey: site.key, siteName: site.name, vod });
+        }
+      } else {
+        if (cmsSites.length === 0) {
+          setError("请先导入一份配置");
+          return;
+        }
+        setProgress(`正在并发检索 ${cmsSites.length} 个站点（最长 ${ALL_TIMEOUT_MS / 1000} 秒）…`);
+        // 一次 IPC 让 Rust 并发扇出；串行逐站调用在 100+ 站点的配置下要等几分钟。
+        const agg = (await api.spiderInvoke({
+          siteKey: "all",
+          method: "searchContent",
+          args: [word, false, 1],
+          timeoutMs: ALL_TIMEOUT_MS,
+        })) as AggregateResult;
+        const names = new Map(cmsSites.map((item) => [item.key, item.name]));
+        for (const row of agg.results ?? []) {
+          if (!row.ok) {
+            continue;
+          }
+          for (const vod of row.data?.list ?? []) {
+            merged.push({
+              siteKey: row.siteKey,
+              siteName: names.get(row.siteKey) ?? row.siteKey,
+              vod,
+            });
+          }
+        }
+        setProgress(
+          `${agg.ok}/${agg.total} 个站点响应，耗时 ${(agg.tookMs / 1000).toFixed(1)} 秒`,
+        );
+        setFailures(agg.failed + (agg.skipped ?? 0));
       }
+
       setHits(merged);
-      setFailures(failed);
       setSearched(true);
     } catch (err) {
+      setFailures(1);
       setError(toAppError(err).message);
     } finally {
       setLoading(false);
@@ -121,12 +163,12 @@ export default function SearchPage({ sites, siteKey, navigate }: SearchPageProps
 
       {error ? <ErrorBar message={error} /> : null}
 
-      {loading ? <Spinner label="正在检索…" /> : null}
+      {loading ? <Spinner label={progress || "正在检索…"} /> : null}
 
       {!loading && searched ? (
         <p className="result-meta">
-          共 {hits.length} 条结果
-          {failures > 0 ? `；${failures} 个站点检索失败，已跳过` : ""}
+          {progress ? `${progress}；` : ""}共 {hits.length} 条结果
+          {failures > 0 ? `；${failures} 个站点失败或超时，已跳过` : ""}
         </p>
       ) : null}
 

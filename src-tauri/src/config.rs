@@ -58,6 +58,8 @@ struct StoredConfig {
 #[derive(Default)]
 pub struct ConfigStore {
     entries: RwLock<Vec<StoredConfig>>,
+    /// The config last imported by the user; fan-out only uses its sites.
+    active: RwLock<Option<String>>,
 }
 
 impl ConfigStore {
@@ -78,8 +80,10 @@ impl ConfigStore {
                 }
             }
         }
+        let active = entries.last().map(|entry| entry.snapshot.id.clone());
         Self {
             entries: RwLock::new(entries),
+            active: RwLock::new(active),
         }
     }
 
@@ -105,6 +109,10 @@ impl ConfigStore {
             guard.retain(|entry| entry.snapshot.id != snapshot.id);
             guard.push(stored.clone());
         }
+        // Importing a config switches the active one, otherwise stale sites
+        // (fixtures, dead repos) keep showing up in every fan-out search.
+        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some(snapshot.id.clone());
         self.persist(&stored);
     }
 
@@ -128,6 +136,16 @@ impl ConfigStore {
         if guard.len() == before {
             return Err(AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found")));
         }
+        if self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_deref()
+            == Some(id)
+        {
+            let next = guard.last().map(|entry| entry.snapshot.id.clone());
+            *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
+        }
         let _ = std::fs::remove_file(Self::dir().join(format!("{id}.json")));
         Ok(())
     }
@@ -147,12 +165,30 @@ impl ConfigStore {
         ))
     }
 
-    /// Every site across imported configs, de-duplicated by key (first wins).
+    /// Sites of the active config, de-duplicated by key (first wins).
+    ///
+    /// Old snapshots must not leak into the current config's fan-out: a
+    /// previously imported stub/dead config would otherwise add dozens of
+    /// doomed requests to every search. Falls back to all configs only when
+    /// the active id is missing (e.g. hand-written test fixtures).
     pub fn all_sites(&self) -> Vec<Value> {
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let has_active = active
+            .as_ref()
+            .map(|id| guard.iter().any(|entry| &entry.snapshot.id == id))
+            .unwrap_or(false);
+
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
         for entry in guard.iter() {
+            if has_active && active.as_deref() != Some(entry.snapshot.id.as_str()) {
+                continue;
+            }
             for site in &entry.snapshot.sites {
                 let key = site.get("key").and_then(Value::as_str).unwrap_or("").to_string();
                 if key.is_empty() || !seen.insert(key) {
@@ -291,4 +327,47 @@ pub fn config_list(state: tauri::State<'_, ConfigStore>) -> Result<Vec<ConfigMet
 #[tauri::command]
 pub fn config_remove(state: tauri::State<'_, ConfigStore>, id: String) -> Result<(), AppError> {
     state.remove(&id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot(id: &str, keys: &[&str]) -> ConfigSnapshot {
+        let sites: Vec<Value> = keys
+            .iter()
+            .map(|key| json!({ "key": key, "name": key }))
+            .collect();
+        serde_json::from_value(json!({
+            "id": id,
+            "name": id,
+            "importedAt": "2026-01-01T00:00:00Z",
+            "sites": sites,
+        }))
+        .expect("snapshot fixture")
+    }
+
+    #[test]
+    fn fanout_is_scoped_to_the_active_config() {
+        let store = ConfigStore::default();
+        let source = ConfigSource {
+            kind: "text".into(),
+            value: String::new(),
+        };
+        store.insert(snapshot("old", &["stub_a"]), source.clone());
+        assert_eq!(store.all_sites().len(), 1);
+
+        store.insert(snapshot("new", &["real_a", "real_b"]), source);
+        let keys: Vec<String> = store
+            .all_sites()
+            .iter()
+            .filter_map(|site| site.get("key").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        assert_eq!(keys, vec!["real_a".to_string(), "real_b".to_string()]);
+        // Detail/playback lookups stay global: an old favourite must still open.
+        assert!(store.find_site("stub_a").is_ok());
+
+        store.remove("new").expect("remove active config");
+        assert_eq!(store.all_sites().len(), 1, "active falls back to the remaining config");
+    }
 }

@@ -42,6 +42,10 @@ export default function PlayerPage({
   const [switchTip, setSwitchTip] = useState("");
   const triedSites = useRef<string[]>([]);
   const failoverStarted = useRef(false);
+  /** 已经自动处理过的地址，避免切线路 / 换源之间来回跳转。 */
+  const handledUrls = useRef<Set<string>>(new Set());
+  /** 同一轮播放只允许一次「找下一条线路」，防止多个失败信号并发触发。 */
+  const lineSwitchStarted = useRef(false);
 
   const [lines, setLines] = useState<PlayLine[]>([]);
   const [lineIndex, setLineIndex] = useState(0);
@@ -118,6 +122,7 @@ export default function PlayerPage({
   useEffect(() => {
     triedSites.current = [siteKey];
     failoverStarted.current = false;
+    lineSwitchStarted.current = false;
     // 换源跳转会重建本页，提示通过 sessionStorage 带过来一次。
     const carried = window.sessionStorage.getItem("tvbox:autoSwitch");
     if (carried) {
@@ -160,7 +165,7 @@ export default function PlayerPage({
         )
         .filter((item) => !triedSites.current.includes(item.siteKey));
 
-      for (const candidate of candidates.slice(0, 4)) {
+      for (const candidate of candidates.slice(0, 8)) {
         triedSites.current.push(candidate.siteKey);
         try {
           const detail = await api.detail(candidate.siteKey, String(candidate.vod.vod_id));
@@ -169,29 +174,58 @@ export default function PlayerPage({
             continue;
           }
           const nextLines = parsePlayLines(vod.vod_play_from, vod.vod_play_url);
-          const episode = nextLines[0]?.episodes[0];
-          if (!episode) {
-            continue;
+          // 第一个候选常是分享页；把同片前几条线路都探一遍再决定。
+          const ordered = [...nextLines.flatMap((line) => line.episodes)].sort(
+            (a, b) => Number(b.name === episodeName) - Number(a.name === episodeName),
+          );
+          let picked: { name: string; url: string } | null = null;
+          for (const item of ordered.slice(0, 8)) {
+            if (!item.url || handledUrls.current.has(item.url)) {
+              continue;
+            }
+            let probe: PlayResolved;
+            try {
+              probe = await api.resolvePlay({ siteKey: candidate.siteKey, url: item.url });
+            } catch {
+              continue;
+            }
+            if (probe.kind === "page") {
+              continue;
+            }
+            const controller = new AbortController();
+            const timer = window.setTimeout(() => controller.abort(), 5000);
+            let reachable = false;
+            try {
+              const response = await fetch(probe.proxyUrl, {
+                headers: probe.kind === "hls" ? undefined : { Range: "bytes=0-0" },
+                signal: controller.signal,
+              });
+              reachable = response.ok || response.status === 405 || response.status === 416;
+            } catch {
+              reachable = false;
+            } finally {
+              window.clearTimeout(timer);
+            }
+            if (reachable) {
+              picked = item;
+              break;
+            }
           }
-          const probe = await api.resolvePlay({ siteKey: candidate.siteKey, url: episode.url });
-          if (probe.kind === "page") {
-            continue;
-          }
-          const response = await fetch(probe.proxyUrl, { headers: { Range: "bytes=0-0" } });
-          if (!response.ok) {
+          if (!picked) {
             continue;
           }
           const tip = `已自动切换到「${candidate.siteKey}」`;
           window.sessionStorage.setItem("tvbox:autoSwitch", tip);
           setSwitchTip(tip);
+          handledUrls.current.add(picked.url);
           navigate(
             {
               name: "player",
               siteKey: candidate.siteKey,
               vodId: String(candidate.vod.vod_id),
               vodName: vod.vod_name || candidate.vod.vod_name,
-              episodeName: episode.name,
-              playUrl: episode.url,
+              episodeName: picked.name,
+              playUrl: picked.url,
             },
             true,
           );
@@ -206,7 +240,110 @@ export default function PlayerPage({
       setSwitchTip("");
       setVideoError(`换源失败：${toAppError(err).message}`);
     }
-  }, [navigate, vodName]);
+  }, [episodeName, navigate, vodName]);
+
+  /**
+   * 真实配置里同一部剧常有多条线路：第一条是「分享页」，第二条才是直链
+   * m3u8；也有线路 HTTP 探活 200 但 manifest 永远拉不出来。两条路径
+   * （kind=page、HLS 长时间 stalled）都先切同片线路，找不到再跨站换源。
+   */
+  const tryNextLine = useCallback(async (): Promise<boolean> => {
+    if (lineSwitchStarted.current) {
+      return false;
+    }
+    lineSwitchStarted.current = true;
+    handledUrls.current.add(playUrl);
+
+    let episodes = lines.flatMap((line) => line.episodes);
+    if (episodes.length === 0) {
+      try {
+        const detail = await api.detail(siteKey, vodId);
+        const vod = detail[0];
+        if (vod) {
+          episodes = parsePlayLines(vod.vod_play_from, vod.vod_play_url).flatMap(
+            (line) => line.episodes,
+          );
+        }
+      } catch {
+        // 详情拿不到就直接走跨站换源。
+      }
+    }
+
+    // 先试同名剧集（同一集的不同线路），再退而求其次试其它集。
+    const ordered = [...episodes].sort(
+      (a, b) => Number(b.name === episodeName) - Number(a.name === episodeName),
+    );
+    for (const episode of ordered.slice(0, 12)) {
+      if (!episode.url || handledUrls.current.has(episode.url)) {
+        continue;
+      }
+      try {
+        const probe = await api.resolvePlay({ siteKey, url: episode.url });
+        if (probe.kind === "page") {
+          continue;
+        }
+        // 别把死 CDN 当成「可播放线路」：先探一次，失败就继续找下一条。
+        // m3u8 manifest 很小可直接 GET；mp4/flv 用 Range 避免整片下载。
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 5000);
+        let reachable = false;
+        try {
+          const response = await fetch(probe.proxyUrl, {
+            headers: probe.kind === "hls" ? undefined : { Range: "bytes=0-0" },
+            signal: controller.signal,
+          });
+          reachable = response.ok || response.status === 405 || response.status === 416;
+        } catch {
+          reachable = false;
+        } finally {
+          window.clearTimeout(timer);
+        }
+        if (!reachable) {
+          continue;
+        }
+        handledUrls.current.add(episode.url);
+        setSwitchTip(`已自动切换到可播放线路「${episode.name}」`);
+        navigate(
+          {
+            name: "player",
+            siteKey,
+            vodId,
+            vodName,
+            episodeName: episode.name,
+            playUrl: episode.url,
+          },
+          true,
+        );
+        return true;
+      } catch {
+        continue;
+      }
+    }
+    return false;
+  }, [episodeName, lines, navigate, playUrl, siteKey, vodId, vodName]);
+
+  /** 线路切换失败后的兜底：整站找同名影片。 */
+  const switchOrFailover = useCallback(async () => {
+    const switched = await tryNextLine();
+    if (!switched) {
+      await tryFailover();
+    }
+  }, [tryNextLine, tryFailover]);
+
+  // tryNextLine 依赖异步加载的剧集列表；用 ref 转发，避免播放内核 effect
+  // 因 lines 到达而被重新挂载（那会从头开始缓冲）。
+  const switchOrFailoverRef = useRef(switchOrFailover);
+  switchOrFailoverRef.current = switchOrFailover;
+
+  useEffect(() => {
+    if (resolving || resolveError || !resolved || resolved.kind !== "page") {
+      return;
+    }
+    if (handledUrls.current.has(playUrl)) {
+      return;
+    }
+    void switchOrFailover();
+  }, [resolved, resolving, resolveError, playUrl, switchOrFailover]);
 
   // 挂载 / 销毁播放内核。
   useEffect(() => {
@@ -217,11 +354,12 @@ export default function PlayerPage({
     const source = resolved.proxyUrl;
     const onError = () => {
       setVideoError("播放器加载失败，可尝试外部播放。");
-      void tryFailover();
+      void switchOrFailoverRef.current();
     };
     video.addEventListener("error", onError);
 
     let hls: Hls | null = null;
+    let stallTimer: number | undefined;
 
     if (resolved.kind === "hls") {
       // Prefer hls.js: WebView2 的 canPlayType 会对 mpegurl 返回 "maybe"，但真正
@@ -239,7 +377,7 @@ export default function PlayerPage({
           if (data.fatal) {
             const reason = data.details ? String(data.details) : "未知错误";
             setVideoError(`HLS 播放失败：${reason}`);
-            void tryFailover();
+            void switchOrFailoverRef.current();
           }
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -253,15 +391,30 @@ export default function PlayerPage({
       setVideoError("该地址需要外部播放器。");
     }
 
+    // 死 CDN 会让 hls.js 无限重试却不触发 fatal，画面永远停在 00:00。
+    // 12 秒仍没拿到首帧就视作线路不可用，主动切线路 / 换源。
+    if (BUILTIN_KINDS.includes(resolved.kind)) {
+      stallTimer = window.setTimeout(() => {
+        if (video.readyState >= 2 || failoverStarted.current || lineSwitchStarted.current) {
+          return;
+        }
+        setVideoError("当前线路长时间无法加载，正在尝试其它线路…");
+        void switchOrFailoverRef.current();
+      }, 12_000);
+    }
+
     return () => {
       video.removeEventListener("error", onError);
+      if (stallTimer !== undefined) {
+        window.clearTimeout(stallTimer);
+      }
       video.pause();
       if (hls) {
         hls.destroy();
       }
       // 不主动清空 src：保留 currentTime 供卸载前的历史写入读取。
     };
-  }, [resolved, tryFailover]);
+  }, [resolved]);
 
   // 播放进度 → 历史记录（5 秒节流，播放/暂停立即写）。
   useEffect(() => {

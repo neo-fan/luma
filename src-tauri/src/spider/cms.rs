@@ -82,14 +82,23 @@ fn build(
         }
         SpiderMethod::SearchContent => {
             let keyword = arg_str(0);
-            let page = arg_page(1);
+            // Unified TVBox signature is (key, quick, pg); older callers still
+            // pass the two-argument (key, pg) form.
+            let (quick, page) = if args.len() >= 3 {
+                (
+                    args.get(1).and_then(Value::as_bool).unwrap_or(false),
+                    arg_page(2),
+                )
+            } else {
+                (false, arg_page(1))
+            };
             Ok((
                 format!(
                     "{api}{separator}wd={}&ac=videolist&pg={page}",
                     encode(&keyword)
                 ),
                 "site.parseSearch",
-                json!({ "wd": keyword, "quick": false, "pg": page }),
+                json!({ "wd": keyword, "quick": quick, "pg": page }),
             ))
         }
         SpiderMethod::DetailContent => {
@@ -146,5 +155,28 @@ mod tests {
         assert_eq!(separator_for("https://x.com/api.php"), "?");
         assert_eq!(separator_for("https://x.com/api.php/provide/vod?token=1"), "&");
         assert_eq!(separator_for("http://127.0.0.1:8787/cms/vod"), "/?");
+    }
+
+    #[test]
+    fn search_accepts_both_tvbox_and_legacy_arg_shapes() {
+        let (url, method, extra) = build(
+            "https://x.com/api.php/provide/vod",
+            SpiderMethod::SearchContent,
+            &[json!("庆余年"), json!(false), json!(3)],
+        )
+        .expect("three-arg search must build");
+        assert_eq!(method, "site.parseSearch");
+        assert!(url.contains("pg=3"), "{url}");
+        assert_eq!(extra["quick"], false);
+        assert_eq!(extra["pg"], 3);
+
+        let (legacy, _, extra) = build(
+            "https://x.com/api.php",
+            SpiderMethod::SearchContent,
+            &[json!("庆余年"), json!(2)],
+        )
+        .expect("two-arg search must still build");
+        assert!(legacy.contains("pg=2"), "{legacy}");
+        assert_eq!(extra["pg"], 2);
     }
 }

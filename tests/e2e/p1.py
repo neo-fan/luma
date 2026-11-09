@@ -255,7 +255,11 @@ def adapter_phase() -> None:
     crashed = Adapter()
     try:
         crashed.send("debug.crash", {"code": 7})
-        time.sleep(0.6)
+        # A loaded machine (desktop app + many sidecar children) can delay the
+        # child's exit past a fixed sleep; poll instead of flaking.
+        deadline = time.time() + 3.0
+        while crashed.proc.poll() is None and time.time() < deadline:
+            time.sleep(0.1)
         exited = crashed.proc.poll() is not None
     finally:
         crashed.close()
