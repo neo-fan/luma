@@ -1,0 +1,39 @@
+{
+  "version": "p2",
+  "note": "T-20 符号守恒基线。签名以规格书 7.4 catvod 桩基线为准，由本仓库自编桩/模板的 javap -p -s 实测固化。成员为 [方法名, JVM 描述符]，构造器记作 <init>；字段描述符不含 '('，守恒脚本自动跳过。source=stubs 表示取自 stubs.jar 的桩基类；source=jar 表示取自模板 jar（class 形态的 .class 条目，或 dex 形态的等价 .bin 资源）。",
+  "classes": {
+    "com.github.catvod.crawler.Spider": {
+      "source": "stubs",
+      "members": [
+        ["<init>", "()V"],
+        ["init", "(Landroid/content/Context;Ljava/lang/String;)V"],
+        ["homeContent", "(Z)Ljava/lang/String;"],
+        ["homeVideoContent", "()Ljava/lang/String;"],
+        ["categoryContent", "(Ljava/lang/String;Ljava/lang/String;ZLjava/util/HashMap;)Ljava/lang/String;"],
+        ["detailContent", "(Ljava/util/List;)Ljava/lang/String;"],
+        ["searchContent", "(Ljava/lang/String;Z)Ljava/lang/String;"],
+        ["playerContent", "(Ljava/lang/String;Ljava/lang/String;Ljava/util/List;)Ljava/lang/String;"],
+        ["liveContent", "(Ljava/lang/String;)Ljava/lang/String;"],
+        ["proxy", "(Ljava/util/Map;)[Ljava/lang/Object;"],
+        ["isVideoFormat", "(Ljava/lang/String;)Z"],
+        ["manualVideoCheck", "()Z"],
+        ["destroy", "()V"]
+      ]
+    },
+    "com.tvbox.fixture.TemplateSpider": {
+      "source": "jar",
+      "members": [
+        ["<init>", "()V"],
+        ["init", "(Landroid/content/Context;Ljava/lang/String;)V"],
+        ["wrap", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"],
+        ["q", "(Ljava/lang/String;)Ljava/lang/String;"],
+        ["homeContent", "(Z)Ljava/lang/String;"],
+        ["categoryContent", "(Ljava/lang/String;Ljava/lang/String;ZLjava/util/HashMap;)Ljava/lang/String;"],
+        ["detailContent", "(Ljava/util/List;)Ljava/lang/String;"],
+        ["searchContent", "(Ljava/lang/String;Z)Ljava/lang/String;"],
+        ["playerContent", "(Ljava/lang/String;Ljava/lang/String;Ljava/util/List;)Ljava/lang/String;"],
+        ["liveContent", "(Ljava/lang/String;)Ljava/lang/String;"]
+      ]
+    }
+  }
+}

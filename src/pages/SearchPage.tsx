@@ -41,13 +41,17 @@ interface SearchHit {
 
 /** 搜索页：单站点直连，全部站点走后端一次并发聚合。 */
 export default function SearchPage({ sites, navigate }: SearchPageProps) {
-  const cmsSites = sites.filter((item) => item.runtime !== "jvm" && item.enabled);
+  // P2: jar sites are dispatchable now. Keep them selectable so a failing
+  // source shows its reason instead of silently disappearing from the list.
+  const selectableSites = sites.filter((item) => item.enabled);
   const [keyword, setKeyword] = useState("");
   // A 100-site config makes single-site search the wrong default: users expect
   // one keyword to cover the whole active config.
   const [target, setTarget] = useState<string>(ALL_SITES);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [failures, setFailures] = useState(0);
+  /** 源级降级原因（规格 14 节）：按出现次数取前三条，避免刷屏。 */
+  const [failureReasons, setFailureReasons] = useState<string[]>([]);
   const [progress, setProgress] = useState("");
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -63,6 +67,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
     setError("");
     setSearched(false);
     setFailures(0);
+    setFailureReasons([]);
     setHits([]);
     setProgress("");
 
@@ -70,7 +75,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
       const merged: SearchHit[] = [];
 
       if (target !== ALL_SITES) {
-        const site = cmsSites.find((item) => item.key === target);
+        const site = selectableSites.find((item) => item.key === target);
         if (!site) {
           setError("所选站点不可用，请重新选择");
           return;
@@ -80,11 +85,11 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
           merged.push({ siteKey: site.key, siteName: site.name, vod });
         }
       } else {
-        if (cmsSites.length === 0) {
+        if (selectableSites.length === 0) {
           setError("请先导入一份配置");
           return;
         }
-        setProgress(`正在并发检索 ${cmsSites.length} 个站点（最长 ${ALL_TIMEOUT_MS / 1000} 秒）…`);
+        setProgress(`正在并发检索 ${selectableSites.length} 个站点（最长 ${ALL_TIMEOUT_MS / 1000} 秒）…`);
         // 一次 IPC 让 Rust 并发扇出；串行逐站调用在 100+ 站点的配置下要等几分钟。
         const agg = (await api.spiderInvoke({
           siteKey: "all",
@@ -92,7 +97,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
           args: [word, false, 1],
           timeoutMs: ALL_TIMEOUT_MS,
         })) as AggregateResult;
-        const names = new Map(cmsSites.map((item) => [item.key, item.name]));
+        const names = new Map(selectableSites.map((item) => [item.key, item.name]));
         for (const row of agg.results ?? []) {
           if (!row.ok) {
             continue;
@@ -107,6 +112,22 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         }
         setProgress(
           `${agg.ok}/${agg.total} 个站点响应，耗时 ${(agg.tookMs / 1000).toFixed(1)} 秒`,
+        );
+        // Group identical failures so 28 csp_* sites sharing one Android dex
+        // jar produce one readable reason instead of 28 identical lines.
+        const reasons = new Map<string, number>();
+        for (const row of agg.results ?? []) {
+          if (row.ok) {
+            continue;
+          }
+          const message = row.error?.message || row.error?.code || "未知错误";
+          reasons.set(message, (reasons.get(message) ?? 0) + 1);
+        }
+        setFailureReasons(
+          [...reasons.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([message, count]) => `${message}（${count} 个站点）`),
         );
         setFailures(agg.failed + (agg.skipped ?? 0));
       }
@@ -150,9 +171,10 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
           aria-label="选择搜索站点"
         >
           <option value={ALL_SITES}>全部站点</option>
-          {cmsSites.map((site) => (
+          {selectableSites.map((site) => (
             <option key={site.key} value={site.key}>
               {site.name}
+              {site.runtime === "jvm" ? "（jar 源）" : ""}
             </option>
           ))}
         </select>
@@ -169,6 +191,12 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         <p className="result-meta">
           {progress ? `${progress}；` : ""}共 {hits.length} 条结果
           {failures > 0 ? `；${failures} 个站点失败或超时，已跳过` : ""}
+        </p>
+      ) : null}
+
+      {!loading && searched && failureReasons.length > 0 ? (
+        <p className="result-meta" style={{ opacity: 0.72, fontSize: 12 }}>
+          未响应源的原因：{failureReasons.join("；")}
         </p>
       ) : null}
 

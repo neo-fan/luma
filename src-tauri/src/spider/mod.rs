@@ -1,12 +1,15 @@
 //! Spider runtime dispatch (spec 7.3 / 8.3 / T-17).
 //!
 //! `route()` maps a normalized site to one runtime; every runtime implements
-//! `SpiderRuntime` and returns TVBox-shaped JSON. `spider_invoke` with
-//! `siteKey = "all"` fans out over the usable sites of the active config with
-//! a bounded concurrency and a shared wall clock, so a single dead source
-//! never blocks the home page.
+//! `SpiderRuntime` and returns TVBox-shaped JSON. CMS lives in-process while
+//! py / js / jar are isolated sidecars. `spider_invoke` with `siteKey = "all"`
+//! fans out over the usable sites of the active config with bounded
+//! concurrency and a shared wall clock, so a single dead source never blocks
+//! the home page. P2 adds the JVM/jar runtime; unsupported Android dex jars
+//! fail fast with a reason instead of being silently skipped.
 
 pub mod cms;
+pub mod jvm;
 pub mod python;
 pub mod quickjs;
 
@@ -148,14 +151,14 @@ impl SpiderRuntime for CmsRuntimeAdapter {
 static CMS_RUNTIME: CmsRuntimeAdapter = CmsRuntimeAdapter;
 static PY_RUNTIME: python::PythonRuntime = python::PythonRuntime;
 static QJS_RUNTIME: quickjs::QuickJsRuntime = quickjs::QuickJsRuntime;
+static JVM_RUNTIME: jvm::JvmRuntime = jvm::JvmRuntime;
 
 pub fn runtime_for(kind: RuntimeKind) -> Option<&'static dyn SpiderRuntime> {
     match kind {
         RuntimeKind::Cms => Some(&CMS_RUNTIME),
         RuntimeKind::Python => Some(&PY_RUNTIME),
         RuntimeKind::QuickJs => Some(&QJS_RUNTIME),
-        // Lands in P2 (JVM sidecar).
-        RuntimeKind::Jvm => None,
+        RuntimeKind::Jvm => Some(&JVM_RUNTIME),
     }
 }
 
@@ -338,5 +341,15 @@ mod tests {
         // With no conflicting signal the hint is still honoured.
         let hinted = json!({ "runtime": "python", "api": "http://127.0.0.1/api.php/provide/vod" });
         assert_eq!(route(&hinted), RuntimeKind::Python);
+    }
+
+    #[test]
+    fn jvm_runtime_is_registered() {
+        // Before P2 `runtime_for(Jvm)` returned None, which made aggregate()
+        // silently drop every csp_* site. It must now be dispatchable.
+        assert_eq!(
+            runtime_for(RuntimeKind::Jvm).map(|r| r.kind()),
+            Some(RuntimeKind::Jvm)
+        );
     }
 }

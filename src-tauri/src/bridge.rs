@@ -25,13 +25,17 @@ use tokio::sync::{oneshot, Mutex};
 
 type Pending = std::sync::Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, AppError>>>>>;
 
-struct Conn {
+/// A long-lived stdio sidecar connection. `pub(crate)` so the P2 JVM runner
+/// can reuse the exact same frame routing / crash detection / Job Object
+/// lifetime instead of growing a second, subtly different implementation.
+pub(crate) struct Conn {
     stdin: Mutex<ChildStdin>,
     pending: Pending,
     next_id: AtomicU64,
     child: StdMutex<Option<Guarded>>,
     alive: AtomicBool,
     pid: AtomicU32,
+    label: &'static str,
 }
 
 impl Conn {
@@ -60,26 +64,23 @@ fn python_bin() -> String {
     std::env::var("TVBOX_PYTHON").unwrap_or_else(|_| "python".to_string())
 }
 
-fn spawn_conn() -> Result<std::sync::Arc<Conn>, AppError> {
-    let root = adapter_root();
-    let script = root.join("sidecars").join("py").join("main.py");
-    if !script.is_file() {
-        return Err(
-            AppError::new(code::RUNTIME_UNAVAILABLE, "python adapter not found")
-                .with_details(json!({ "path": script })),
-        );
-    }
-
-    let python = python_bin();
-    let mut guarded = Guarded::spawn(
-        &python,
-        &[script.to_string_lossy().to_string()],
-        Some(root.as_path()),
-    )?;
+/// Spawn any long-lived one-frame-per-line JSON-RPC sidecar.
+///
+/// `program`/`args` are resolved by the caller; the `Guarded` child (and its
+/// Windows Job Object) stays owned by the connection, so a crash or shutdown
+/// reaps the whole process tree. Used by both `spawn_conn` (Python adapter)
+/// and `spider::jvm` (P2 JVM runner).
+pub(crate) fn spawn_stdio(
+    program: &str,
+    args: &[String],
+    cwd: Option<&std::path::Path>,
+    label: &'static str,
+) -> Result<std::sync::Arc<Conn>, AppError> {
+    let mut guarded = Guarded::spawn(program, args, cwd)?;
     let pid = guarded.id().unwrap_or(0);
     let stdin = guarded
         .take_stdin()
-        .ok_or_else(|| AppError::new(code::INTERNAL, "adapter stdin unavailable"))?;
+        .ok_or_else(|| AppError::new(code::INTERNAL, "sidecar stdin unavailable"))?;
     let stdout = guarded.take_stdout();
 
     let conn = std::sync::Arc::new(Conn {
@@ -89,6 +90,7 @@ fn spawn_conn() -> Result<std::sync::Arc<Conn>, AppError> {
         child: StdMutex::new(Some(guarded)),
         alive: AtomicBool::new(true),
         pid: AtomicU32::new(pid),
+        label,
     });
 
     if let Some(stdout) = stdout {
@@ -105,28 +107,50 @@ fn spawn_conn() -> Result<std::sync::Arc<Conn>, AppError> {
                         match serde_json::from_str::<Value>(text) {
                             Ok(frame) => route_frame(&reader_conn, frame).await,
                             Err(err) => {
-                                tracing::warn!(error = %err, "adapter emitted a non-json frame");
+                                tracing::warn!(
+                                    error = %err,
+                                    sidecar = reader_conn.label,
+                                    "sidecar emitted a non-json frame"
+                                );
                             }
                         }
                     }
                     Ok(None) => break,
                     Err(err) => {
-                        tracing::warn!(error = %err, "adapter stdout read failed");
+                        tracing::warn!(error = %err, "sidecar stdout read failed");
                         break;
                     }
                 }
             }
             reader_conn.alive.store(false, Ordering::SeqCst);
-            reader_conn.fail_all("adapter exited unexpectedly");
+            reader_conn.fail_all("sidecar exited unexpectedly");
             tracing::warn!(
                 pid = reader_conn.pid.load(Ordering::Relaxed),
-                "adapter reader stopped"
+                sidecar = reader_conn.label,
+                "sidecar reader stopped"
             );
         });
     }
 
-    tracing::info!(pid, "python adapter spawned");
+    tracing::info!(pid, sidecar = label, "sidecar spawned");
     Ok(conn)
+}
+
+fn spawn_conn() -> Result<std::sync::Arc<Conn>, AppError> {
+    let root = adapter_root();
+    let script = root.join("sidecars").join("py").join("main.py");
+    if !script.is_file() {
+        return Err(
+            AppError::new(code::RUNTIME_UNAVAILABLE, "python adapter not found")
+                .with_details(json!({ "path": script })),
+        );
+    }
+    spawn_stdio(
+        &python_bin(),
+        &[script.to_string_lossy().to_string()],
+        Some(root.as_path()),
+        "python adapter",
+    )
 }
 
 async fn route_frame(conn: &std::sync::Arc<Conn>, frame: Value) {
@@ -200,6 +224,18 @@ pub async fn call_with_timeout(
     timeout: Duration,
 ) -> Result<Value, AppError> {
     let conn = connection().await?;
+    call_on(&conn, method, params, timeout).await
+}
+
+/// Send one frame over an arbitrary shared connection. The Python adapter and
+/// the P2 JVM runner both use this, so their timeout / crash semantics stay
+/// identical.
+pub(crate) async fn call_on(
+    conn: &std::sync::Arc<Conn>,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, AppError> {
     let id = conn.next_id();
     let (tx, rx) = oneshot::channel();
     {
@@ -220,13 +256,13 @@ pub async fn call_with_timeout(
             drop(stdin);
             conn.pending.lock().await.remove(&id);
             conn.alive.store(false, Ordering::SeqCst);
-            return Err(AppError::new(code::SPIDER_CRASH, "write to adapter failed")
+            return Err(AppError::new(code::SPIDER_CRASH, "write to sidecar failed")
                 .with_cause(err.to_string()));
         }
         if let Err(err) = stdin.flush().await {
             drop(stdin);
             conn.pending.lock().await.remove(&id);
-            return Err(AppError::new(code::SPIDER_CRASH, "flush adapter failed")
+            return Err(AppError::new(code::SPIDER_CRASH, "flush sidecar failed")
                 .with_cause(err.to_string()));
         }
     }
@@ -234,14 +270,37 @@ pub async fn call_with_timeout(
     match tokio::time::timeout(timeout, rx).await {
         Ok(Ok(Ok(value))) => Ok(value),
         Ok(Ok(Err(err))) => Err(err),
-        Ok(Err(_)) => Err(AppError::new(code::SPIDER_CRASH, "adapter channel closed")),
+        Ok(Err(_)) => Err(AppError::new(code::SPIDER_CRASH, "sidecar channel closed")),
         Err(_) => {
             conn.pending.lock().await.remove(&id);
             Err(AppError::new(
                 code::SITE_TIMEOUT,
-                format!("adapter {method} exceeded {}ms", timeout.as_millis()),
+                format!("{} {method} exceeded {}ms", conn.label, timeout.as_millis()),
             ))
         }
+    }
+}
+
+pub(crate) fn conn_alive(conn: &std::sync::Arc<Conn>) -> bool {
+    conn.alive.load(Ordering::SeqCst)
+}
+
+pub(crate) fn conn_pid(conn: &std::sync::Arc<Conn>) -> Option<u32> {
+    let pid = conn.pid.load(Ordering::Relaxed);
+    (pid != 0).then_some(pid)
+}
+
+/// Kill a dead/retired sidecar together with its Job Object.
+pub(crate) async fn kill_conn(conn: &std::sync::Arc<Conn>) {
+    conn.alive.store(false, Ordering::SeqCst);
+    conn.fail_all("sidecar shut down");
+    let child = conn
+        .child
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    if let Some(mut child) = child {
+        child.kill().await;
     }
 }
 

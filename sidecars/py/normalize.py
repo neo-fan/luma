@@ -194,6 +194,15 @@ def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
         sites_raw = []
     sites = [normalize_site(s, spider_value, origin) for s in sites_raw if isinstance(s, dict)]
 
+    # Spec 8.3 / T-24: `csp_*` sites carry no per-site jar; the config-level
+    # `spider` is the jar that supplies their classes. Attach it at import time
+    # so the JVM runtime can probe/load it without another IPC round trip, and
+    # so a stale snapshot still routes to jvm.
+    if spider_value:
+        for site in sites:
+            if site.get("runtime") == "jvm" and not site.get("jar"):
+                site["jar"] = spider_value
+
     lives_raw = config.get("lives") or []
     lives = []
     for item in lives_raw if isinstance(lives_raw, list) else []:
