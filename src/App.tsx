@@ -24,6 +24,8 @@ export type View =
       episodeName: string;
       /** TVBox 线路名（vod_play_from），playerContent 的第一个参数。 */
       playFrom?: string;
+      /** 直播源声明的 UA；`lives[].ua` 只在拉列表时用过，播放也要带。 */
+      ua?: string;
     }
   | { name: "live" }
   | { name: "favorites" }
@@ -183,6 +185,7 @@ export default function App() {
             episodeName={view.episodeName}
             playUrl={view.playUrl}
             playFrom={view.playFrom}
+            liveUa={view.ua}
             navigate={navigate}
             onBack={back}
           />

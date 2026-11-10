@@ -225,12 +225,20 @@ export interface HomeResult {
 /** 直播源（lives[] 条目，7.x） */
 export interface LiveSource {
   name: string;
-  url: string;
+  /** 列表地址；`channels` 型分组容器没有 url。 */
+  url?: string;
   type?: number;
   ua?: string;
   playerType?: number | string;
   timeZone?: string;
   timeout?: number;
+  /** EPG 模板，形如 `https://epg/...?ch={name}&date={date}`。 */
+  epg?: string;
+  logo?: string;
+  pass?: string;
+  /** 分组容器：`{"group": "x", "channels": [{"name", "urls": []}]}`。 */
+  group?: string;
+  channels?: { name?: string; urls?: string[] }[];
 }
 
 export interface LiveChannel {

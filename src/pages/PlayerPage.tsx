@@ -16,6 +16,8 @@ interface PlayerPageProps {
   playUrl: string;
   /** TVBox 线路名；有值时先走 playerContent 解析，再交给本地代理。 */
   playFrom?: string;
+  /** 直播源声明的 UA，直接用于播放请求（没有 playerContent 可问）。 */
+  liveUa?: string;
   navigate: Navigate;
   onBack: () => void;
 }
@@ -30,6 +32,7 @@ export default function PlayerPage({
   episodeName,
   playUrl,
   playFrom,
+  liveUa,
   navigate,
   onBack,
 }: PlayerPageProps) {
@@ -70,7 +73,8 @@ export default function PlayerPage({
         // （weiguan://、PAN1-…、6105_0_1），必须让 spider 的 playerContent
         // 解析出真实直链再交给本地代理。CMS 未实现该方法时直接回退。
         let targetUrl = playUrl;
-        let ua: string | undefined;
+        // 直播没有 playerContent 可问，UA 只能来自 lives[].ua。
+        let ua: string | undefined = liveUa;
         let referer: string | undefined;
         let cookie: string | undefined;
         if (playFrom) {
@@ -156,10 +160,15 @@ export default function PlayerPage({
     return () => {
       alive = false;
     };
-  }, [siteKey, playUrl, playFrom]);
+  }, [siteKey, playUrl, playFrom, liveUa]);
 
   // 拉详情只为拿剧集列表做上/下集，失败不影响当前播放。
   useEffect(() => {
+    // 直播没有剧集概念，去拿 detailContent 只会多一次必败请求。
+    if (siteKey === "live") {
+      setLines([]);
+      return;
+    }
     let alive = true;
     const run = async () => {
       try {
@@ -312,12 +321,16 @@ export default function PlayerPage({
         }
       }
       setSwitchTip("");
-      setVideoError("所有源都无法播放该影片，可尝试外部播放。");
+      setVideoError(
+        siteKey === "live"
+          ? "该频道暂时无法播放，可尝试外部播放。"
+          : "所有源都无法播放该影片，可尝试外部播放。",
+      );
     } catch (err) {
       setSwitchTip("");
       setVideoError(`换源失败：${toAppError(err).message}`);
     }
-  }, [episodeName, navigate, vodName]);
+  }, [episodeName, navigate, vodName, siteKey]);
 
   /**
    * 真实配置里同一部剧常有多条线路：第一条是「分享页」，第二条才是直链
@@ -646,23 +659,29 @@ export default function PlayerPage({
       </div>
 
       <div className="player-bar">
-        <button
-          type="button"
-          className="btn"
-          onClick={() => goEpisode(-1)}
-          disabled={!canPrev}
-        >
-          上一集
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => goEpisode(1)}
-          disabled={!canNext}
-        >
-          下一集
-        </button>
-        {currentLine ? (
+        {siteKey === "live" ? null : (
+          <>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => goEpisode(-1)}
+              disabled={!canPrev}
+            >
+              上一集
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => goEpisode(1)}
+              disabled={!canNext}
+            >
+              下一集
+            </button>
+          </>
+        )}
+        {siteKey === "live" ? (
+          <span className="player-bar__info">直播 · {vodName}</span>
+        ) : currentLine ? (
           <span className="player-bar__info">
             {currentLine.name} · 第 {episodeIndex + 1} / {currentLine.episodes.length} 集
           </span>

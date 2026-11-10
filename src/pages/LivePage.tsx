@@ -11,6 +11,31 @@ interface LivePageProps {
   navigate: Navigate;
 }
 
+/** 分组容器型源（只有 `channels`，没有 `url`）直接展开，无需请求网络。 */
+function expandChannels(source: LiveSource): LiveGroup[] {
+  const channels = (source.channels ?? []).flatMap((channel) =>
+    (channel.urls ?? [])
+      // `proxy://do=live...` 这类内部伪协议本机播放器无法处理，直接略过。
+      .filter((url) => /^https?:\/\//i.test(url))
+      .map((url) => ({ name: channel.name || url, url })),
+  );
+  if (channels.length === 0) {
+    return [];
+  }
+  return [{ name: source.group || source.name || "未分组", channels }];
+}
+
+/** 有列表地址，或能从分组容器里展开出至少一个可播放频道。 */
+function isListable(source: LiveSource): boolean {
+  if (source.url) {
+    return true;
+  }
+  return expandChannels(source).length > 0;
+}
+
+/** 单个分组一次渲染的上限：真实配置的第一条源就有 5700 个频道。 */
+const CHANNEL_LIMIT = 300;
+
 /** 直播：配置里的 lives[] 列表 → 分组频道 → 播放。 */
 export default function LivePage({ lives, navigate }: LivePageProps) {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -27,12 +52,25 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       setGroups([]);
       return;
     }
+    const sourceUrl = active.url;
+    if (!sourceUrl) {
+      // 分组容器：本地展开即可，别拿 undefined 去请求接口。
+      const local = expandChannels(active);
+      setGroups(local);
+      setLoading(false);
+      setError(
+        local.length === 0
+          ? "该直播源是分组容器，没有可直接播放的地址。"
+          : "",
+      );
+      return;
+    }
     let alive = true;
     const run = async () => {
       setLoading(true);
       setError("");
       try {
-        const result = await api.liveParse(active.url, active.ua);
+        const result = await api.liveParse(sourceUrl, active.ua);
         if (alive) {
           setGroups(result.groups ?? []);
         }
@@ -112,9 +150,11 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
             key={`${item.name}-${index}`}
             type="button"
             className={index === activeIndex ? "chip is-active" : "chip"}
+            disabled={!isListable(item)}
+            title={isListable(item) ? undefined : "该源没有列表地址（分组容器且无可用频道）"}
             onClick={() => setActiveIndex(index)}
           >
-            {item.name}
+            {item.name || `源 ${index + 1}`}
           </button>
         ))}
       </div>
@@ -127,9 +167,16 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
 
       {visible.map((group) => (
         <div className="section" key={group.name}>
-          <h2 className="section-title">{group.name}</h2>
+          <h2 className="section-title">
+            {group.name}
+            {group.channels.length > CHANNEL_LIMIT ? (
+              <span className="page-meta" style={{ marginLeft: 8, fontWeight: 400 }}>
+                共 {group.channels.length} 个，仅显示前 {CHANNEL_LIMIT} 个
+              </span>
+            ) : null}
+          </h2>
           <div className="chip-row">
-            {group.channels.map((channel) => (
+            {group.channels.slice(0, CHANNEL_LIMIT).map((channel) => (
               <button
                 key={`${group.name}-${channel.name}-${channel.url}`}
                 type="button"
@@ -143,6 +190,8 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
                     vodName: channel.name,
                     episodeName: channel.name,
                     playUrl: channel.url,
+                    // lives[].ua 只用于拉列表；播放 CDN 往往也要同一个 UA。
+                    ua: active.ua,
                   })
                 }
               >
