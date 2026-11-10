@@ -228,6 +228,22 @@ textarea {
   font-size: 13px;
 }
 
+/* 聚合搜索：精确命中的片名被源站推荐列表淹没时的一键收敛开关 */
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.filter-toggle input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* ---------- 控件 ---------- */
 
 .btn {

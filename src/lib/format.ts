@@ -116,3 +116,59 @@ export function toVodRef(
 export function canFailover(site?: { changeable?: boolean }): boolean {
   return site?.changeable !== false;
 }
+
+/**
+ * 聚合搜索的片名相关度（0..3），只用于展示排序。
+ *
+ * 真实配置里踩过的坑：部分站点无匹配时不返回空列表，而是回退整页推荐；
+ * 另一些站点做单字模糊匹配。于是搜「嫁金钗」会混进 86 条无关短剧和大量
+ * 「三嫁公主 / 彼岸之嫁」，真正命中的 20+ 条被淹没在后面。这里**不删除**
+ * 任何结果，避免误伤「嫁金钗 田曦薇」这类带演员后缀的合法片名。
+ *
+ * 归一化只做小写 + 去空白/常见分隔符；不做繁简或同义词转换。
+ *   3 完全相等 · 2 片名包含完整关键词 · 1 命中过半关键字 · 0 不相关
+ */
+export function titleMatchScore(
+  name: string | null | undefined,
+  keyword: string,
+): number {
+  const normalize = (value: string) =>
+    value.toLowerCase().replace(/[\s:：·・\-—_.,，。!！?？\[\]【】()（）]/g, "");
+  const title = normalize(String(name ?? ""));
+  const key = normalize(keyword);
+  if (!title || !key) {
+    return 0;
+  }
+  if (title === key) {
+    return 3;
+  }
+  if (title.includes(key)) {
+    return 2;
+  }
+  // 逐字覆盖仅在过半命中时给分：只沾一个「嫁」字的片名不算相关。
+  const chars = [...new Set([...key])];
+  const covered = chars.filter((char) => title.includes(char)).length;
+  return covered * 2 >= chars.length ? 1 : 0;
+}
+
+/**
+ * 按片名相关度稳定排序，返回新数组（不修改入参）。同分保持后端返回顺序，
+ * 因此同一站点内部的结果次序不会被打乱。
+ */
+export function rankByTitle<T>(
+  items: T[],
+  keyword: string,
+  titleOf: (item: T) => string | null | undefined,
+): T[] {
+  if (!keyword.trim() || items.length < 2) {
+    return items.slice();
+  }
+  return items
+    .map((item, index) => ({
+      item,
+      index,
+      score: titleMatchScore(titleOf(item), keyword),
+    }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ item }) => item);
+}

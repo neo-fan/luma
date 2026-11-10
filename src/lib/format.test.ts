@@ -4,7 +4,9 @@ import {
   formatDuration,
   parseEpisodes,
   parsePlayLines,
+  rankByTitle,
   splitFlag,
+  titleMatchScore,
   toVodRef,
 } from "./format";
 
@@ -93,5 +95,69 @@ describe("canFailover", () => {
 
   it("allows sources that explicitly enabled it", () => {
     expect(canFailover({ changeable: true })).toBe(true);
+  });
+});
+
+describe("titleMatchScore", () => {
+  const word = "嫁金钗";
+
+  it("ranks an exact title highest", () => {
+    expect(titleMatchScore("嫁金钗", word)).toBe(3);
+  });
+
+  it("keeps titles containing the whole keyword (suffixes and near-matches)", () => {
+    expect(titleMatchScore("嫁金钗田曦薇闫桉", word)).toBe(2);
+    expect(titleMatchScore("替嫁金钗", word)).toBe(2);
+  });
+
+  it("separates partial-character hits from unrelated recommendations", () => {
+    expect(titleMatchScore("金钗谍影", word)).toBe(1);
+    expect(titleMatchScore("三嫁公主", word)).toBe(0);
+    expect(titleMatchScore("石匠的耳朵", word)).toBe(0);
+  });
+
+  it("normalizes whitespace, punctuation and case", () => {
+    expect(titleMatchScore("嫁 金钗", word)).toBe(3);
+    expect(titleMatchScore("Avengers: Endgame", "avengers endgame")).toBe(3);
+  });
+
+  it("returns 0 for a missing title or an empty keyword", () => {
+    expect(titleMatchScore(undefined, word)).toBe(0);
+    expect(titleMatchScore("嫁金钗", "")).toBe(0);
+  });
+});
+
+describe("rankByTitle", () => {
+  it("moves exact matches to the front without dropping unrelated rows", () => {
+    const rows = [
+      { name: "三嫁公主" },
+      { name: "嫁金钗", tag: "first-exact" },
+      { name: "石匠的耳朵" },
+      { name: "替嫁金钗" },
+      { name: "嫁金钗", tag: "second-exact" },
+      { name: "金钗谍影" },
+    ];
+    const ranked = rankByTitle(rows, "嫁金钗", (row) => row.name);
+    expect(ranked.map((row) => row.name)).toEqual([
+      "嫁金钗",
+      "嫁金钗",
+      "替嫁金钗",
+      "金钗谍影",
+      "三嫁公主",
+      "石匠的耳朵",
+    ]);
+    // Same-score rows stay in the backend order, and the input is untouched.
+    expect(ranked.slice(0, 2).map((row) => ("tag" in row ? row.tag : ""))).toEqual([
+      "first-exact",
+      "second-exact",
+    ]);
+    expect(rows[0].name).toBe("三嫁公主");
+  });
+
+  it("returns a copy in original order for an empty keyword", () => {
+    const rows = [{ name: "b" }, { name: "a" }];
+    const ranked = rankByTitle(rows, "  ", (row) => row.name);
+    expect(ranked.map((row) => row.name)).toEqual(["b", "a"]);
+    expect(ranked).not.toBe(rows);
   });
 });

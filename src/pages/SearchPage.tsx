@@ -6,6 +6,7 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { rankByTitle, titleMatchScore } from "../lib/format";
 import type { ResultPage, Site, VodInfo } from "../types/tvbox";
 
 const ALL_SITES = "__all__";
@@ -37,6 +38,8 @@ interface SearchHit {
   siteKey: string;
   siteName: string;
   vod: VodInfo;
+  /** 片名与关键词的相关度，见 titleMatchScore；用于置顶和「只看匹配」。 */
+  matchScore: number;
 }
 
 /** 搜索页：单站点直连，全部站点走后端一次并发聚合。 */
@@ -49,6 +52,9 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
   // one keyword to cover the whole active config.
   const [target, setTarget] = useState<string>(ALL_SITES);
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [matchCount, setMatchCount] = useState(0);
+  /** 视图偏好，跨搜索保留；不改后端返回，只影响渲染哪些卡片。 */
+  const [onlyMatches, setOnlyMatches] = useState(false);
   const [failures, setFailures] = useState(0);
   /** 源级降级原因（规格 14 节）：按出现次数取前三条，避免刷屏。 */
   const [failureReasons, setFailureReasons] = useState<string[]>([]);
@@ -69,6 +75,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
     setFailures(0);
     setFailureReasons([]);
     setHits([]);
+    setMatchCount(0);
     setProgress("");
 
     try {
@@ -82,7 +89,12 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         }
         const result = await api.search(site.key, word, 1);
         for (const vod of result.list ?? []) {
-          merged.push({ siteKey: site.key, siteName: site.name, vod });
+          merged.push({
+            siteKey: site.key,
+            siteName: site.name,
+            vod,
+            matchScore: titleMatchScore(vod.vod_name, word),
+          });
         }
       } else {
         if (selectableSites.length === 0) {
@@ -118,6 +130,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
               siteKey: row.siteKey,
               siteName: names.get(row.siteKey) ?? row.siteKey,
               vod,
+              matchScore: titleMatchScore(vod.vod_name, word),
             });
           }
         }
@@ -148,7 +161,11 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         setFailures(agg.failed + (agg.skipped ?? 0));
       }
 
-      setHits(merged);
+      // 源站回退推荐列表 / 单字模糊匹配会把精确命中冲到几十条之后。
+      // 先按片名相关度稳定置顶，再交给 UI；不丢弃任何结果。
+      const ranked = rankByTitle(merged, word, (hit) => hit.vod.vod_name);
+      setHits(ranked);
+      setMatchCount(ranked.filter((hit) => hit.matchScore >= 2).length);
       setSearched(true);
     } catch (err) {
       setFailures(1);
@@ -165,6 +182,10 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
     }
     void runSearch();
   };
+
+  const visibleHits = onlyMatches
+    ? hits.filter((hit) => hit.matchScore >= 2)
+    : hits;
 
   return (
     <section className="page">
@@ -206,6 +227,8 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
       {!loading && searched ? (
         <p className="result-meta">
           {progress ? `${progress}；` : ""}共 {hits.length} 条结果
+          {matchCount > 0 ? `；其中 ${matchCount} 条片名匹配` : ""}
+          {onlyMatches ? `；当前显示 ${visibleHits.length} 条` : ""}
           {failures > 0 ? `；${failures} 个站点失败或超时，已跳过` : ""}
         </p>
       ) : null}
@@ -216,13 +239,34 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         </p>
       ) : null}
 
-      {!loading && searched && hits.length === 0 ? (
-        <Empty title="没有找到相关内容" description="换个关键词，或选择其它站点再试。" />
+      {!loading && searched &&
+      hits.length > 0 &&
+      matchCount > 0 &&
+      matchCount < hits.length ? (
+        <label className="filter-toggle">
+          <input
+            type="checkbox"
+            checked={onlyMatches}
+            onChange={(event) => setOnlyMatches(event.target.checked)}
+          />
+          只看片名匹配（{matchCount} 条）
+        </label>
       ) : null}
 
-      {hits.length > 0 ? (
+      {!loading && searched && visibleHits.length === 0 ? (
+        <Empty
+          title={hits.length === 0 ? "没有找到相关内容" : "没有片名匹配的结果"}
+          description={
+            hits.length === 0
+              ? "换个关键词，或选择其它站点再试。"
+              : "关闭「只看片名匹配」可查看其它站点返回的结果。"
+          }
+        />
+      ) : null}
+
+      {visibleHits.length > 0 ? (
         <div className="vod-grid">
-          {hits.map((hit, index) => (
+          {visibleHits.map((hit, index) => (
             <VodCard
               key={`${hit.siteKey}-${hit.vod.vod_id}-${index}`}
               title={hit.vod.vod_name}
