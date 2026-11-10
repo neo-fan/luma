@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration, parseEpisodes, parsePlayLines, splitFlag, toVodRef } from "./format";
+import {
+  canFailover,
+  formatDuration,
+  parseEpisodes,
+  parsePlayLines,
+  splitFlag,
+  toVodRef,
+} from "./format";
 
 describe("splitFlag", () => {
   it("splits on $$$ and drops empty segments", () => {
@@ -71,5 +78,20 @@ describe("toVodRef", () => {
     });
     expect(ref).toMatchObject({ siteKey: "stub", vodId: "7", name: "Movie" });
     expect(ref.pic).toBeUndefined();
+  });
+});
+
+describe("canFailover", () => {
+  it("allows sources that never declared the field", () => {
+    expect(canFailover(undefined)).toBe(true);
+    expect(canFailover({})).toBe(true);
+  });
+
+  it("blocks sources that opted out", () => {
+    expect(canFailover({ changeable: false })).toBe(false);
+  });
+
+  it("allows sources that explicitly enabled it", () => {
+    expect(canFailover({ changeable: true })).toBe(true);
   });
 });

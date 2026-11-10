@@ -146,6 +146,9 @@ def test_real_config() -> None:
     check(counts.get("none") == 8, "real", "8 dividers detected", json.dumps(counts))
     check(counts.get("jvm") == 20, "real", "jvm count excludes dividers", str(counts.get("jvm")))
     check(enabled == 93, "real", "93 enabled sites", str(enabled))
+    # `changeable: 0` 的站点禁止跨站换源；数据必须真的到达前端。
+    blocked = [site for site in sites if site.get("changeable") is False]
+    check(len(blocked) > 0, "real", "changeable:false reaches the snapshot", f"{len(blocked)} sites")
     record("real", "runtime census", json.dumps(counts, sort_keys=True))
 
 

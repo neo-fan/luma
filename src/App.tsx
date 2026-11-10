@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { canFailover } from "./lib/format";
 import CategoryPage from "./pages/CategoryPage";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
@@ -176,7 +177,9 @@ export default function App() {
             onBack={back}
           />
         );
-      case "player":
+      case "player": {
+        // `changeable: 0` 的源不允许跨站换源，别再对它发起搜索。
+        const site = sites.find((item) => item.key === view.siteKey);
         return (
           <PlayerPage
             siteKey={view.siteKey}
@@ -186,10 +189,12 @@ export default function App() {
             playUrl={view.playUrl}
             playFrom={view.playFrom}
             liveUa={view.ua}
+            allowFailover={canFailover(site)}
             navigate={navigate}
             onBack={back}
           />
         );
+      }
       case "live":
         return <LivePage lives={lives} navigate={navigate} />;
       case "favorites":

@@ -39,6 +39,12 @@ export interface Site {
   timeoutMs: number;
   /** 崩溃/超时次数超阈值后置 false */
   enabled: boolean;
+  /** TVBox `changeable`：false 表示该源不允许跨站换源。 */
+  changeable?: boolean;
+  /** TVBox `playerType`：源建议的播放内核（原样透传）。 */
+  playerType?: number | string;
+  /** TVBox `order_num`：站点排序权重。 */
+  orderNum?: number;
 }
 
 /** 点播条目（6.2，保留 TVBox 原始字段名） */

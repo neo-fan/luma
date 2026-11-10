@@ -106,3 +106,13 @@ export function toVodRef(
     siteName,
   };
 }
+
+/**
+ * TVBox `changeable: 0` 表示该源明确不允许换源。
+ *
+ * 自动换源会对其它站点发起搜索与探测，对声明了不可换源的源既不尊重配置，
+ * 也白白多打一轮请求。字段缺失时按「允许」处理（老配置没有这个字段）。
+ */
+export function canFailover(site?: { changeable?: boolean }): boolean {
+  return site?.changeable !== false;
+}

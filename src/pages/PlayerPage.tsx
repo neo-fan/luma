@@ -18,6 +18,8 @@ interface PlayerPageProps {
   playFrom?: string;
   /** 直播源声明的 UA，直接用于播放请求（没有 playerContent 可问）。 */
   liveUa?: string;
+  /** 站点 `changeable: 0` 时禁止跨站换源；缺省允许。 */
+  allowFailover?: boolean;
   navigate: Navigate;
   onBack: () => void;
 }
@@ -33,6 +35,7 @@ export default function PlayerPage({
   playUrl,
   playFrom,
   liveUa,
+  allowFailover = true,
   navigate,
   onBack,
 }: PlayerPageProps) {
@@ -228,6 +231,12 @@ export default function PlayerPage({
       return;
     }
     failoverStarted.current = true;
+    // `changeable: 0`：配置明确不允许换源，别再对其它站点发搜索。
+    if (!allowFailover) {
+      setSwitchTip("");
+      setVideoError("该源不允许换源，可尝试外部播放。");
+      return;
+    }
     const name = vodName.trim();
     if (!name) {
       return;
@@ -330,7 +339,7 @@ export default function PlayerPage({
       setSwitchTip("");
       setVideoError(`换源失败：${toAppError(err).message}`);
     }
-  }, [episodeName, navigate, vodName, siteKey]);
+  }, [episodeName, navigate, vodName, siteKey, allowFailover]);
 
   /**
    * 真实配置里同一部剧常有多条线路：第一条是「分享页」，第二条才是直链
