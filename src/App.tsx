@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { canFailover } from "./lib/format";
+import { api } from "./lib/invoke";
 import CategoryPage from "./pages/CategoryPage";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
@@ -137,6 +138,42 @@ export default function App() {
       }
       return null;
     });
+  }, []);
+
+  // 后端 active 配置与 localStorage 缓存可能不一致（重启后后端换了配置、
+  // 外部删了配置文件等）。启动时以 Rust 的 ConfigStore 为准刷新一次，
+  // 否则会出现「界面列着 101 个站点、聚合搜索却跑 0 个站点」。
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const snapshot = await api.configActive();
+        if (!alive || !snapshot) {
+          return;
+        }
+        setCache((current) => {
+          if (current?.configId === snapshot.id) {
+            return current;
+          }
+          const next: SiteCache = {
+            configId: snapshot.id,
+            sites: snapshot.sites,
+            lives: (snapshot.lives ?? []) as LiveSource[],
+          };
+          try {
+            window.localStorage.setItem(SITE_CACHE_KEY, JSON.stringify(next));
+          } catch {
+            // 本地缓存失败不影响本次会话。
+          }
+          return next;
+        });
+      } catch {
+        // 后端没有该命令时保留本地缓存，不打断启动。
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const section =

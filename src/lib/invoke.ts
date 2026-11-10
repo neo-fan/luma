@@ -67,6 +67,11 @@ export const api = {
     return call("config_list");
   },
 
+  /** 后端当前启用的配置；启动时用它对齐前端的站点缓存。 */
+  configActive(): Promise<ConfigSnapshot | null> {
+    return call("config_active");
+  },
+
   configRemove(id: string): Promise<void> {
     return call("config_remove", { id });
   },

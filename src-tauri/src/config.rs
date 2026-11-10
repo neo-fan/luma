@@ -12,6 +12,11 @@ use std::time::Duration;
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPOS: usize = 20;
+/// Persisted id of the config the user last imported. Without this a restart
+/// guesses "last entry in read_dir order", which is filesystem-dependent and
+/// can silently select an empty test config while the UI still shows the
+/// previously cached site list (fan-out then searches zero sites).
+const ACTIVE_FILE: &str = "active.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSource {
@@ -84,7 +89,16 @@ impl ConfigStore {
                 }
             }
         }
-        let active = entries.last().map(|entry| entry.snapshot.id.clone());
+        // `active.json` is authoritative. For data written before it existed,
+        // fall back to the most recently imported snapshot: `read_dir` order is
+        // filesystem-dependent and can land on an empty test config, making
+        // every fan-out search run zero sites while the UI shows cached sites.
+        let active = std::fs::read_to_string(Self::active_path())
+            .ok()
+            .map(|text| text.trim().to_string())
+            .filter(|id| entries.iter().any(|entry| entry.snapshot.id == *id))
+            .or_else(|| newest_id(&entries));
+        Self::persist_active(active.as_deref());
         let store = Self {
             entries: RwLock::new(entries),
             active: RwLock::new(active),
@@ -99,6 +113,25 @@ impl ConfigStore {
 
     fn dir() -> std::path::PathBuf {
         crate::store::data_dir().join("configs")
+    }
+
+    fn active_path() -> std::path::PathBuf {
+        crate::store::data_dir().join(ACTIVE_FILE)
+    }
+
+    fn persist_active(id: Option<&str>) {
+        let path = Self::active_path();
+        match id {
+            Some(id) => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&path, id);
+            }
+            None => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
     }
 
     fn persist(&self, stored: &StoredConfig) {
@@ -124,7 +157,8 @@ impl ConfigStore {
         }
         // Importing a config switches the active one, otherwise stale sites
         // (fixtures, dead repos) keep showing up in every fan-out search.
-        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id);
+        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.clone());
+        Self::persist_active(Some(&id));
         crate::netrules::replace(&headers);
     }
 
@@ -160,6 +194,7 @@ impl ConfigStore {
             .as_deref()
             == Some(id);
         if was_active {
+            Self::persist_active(next_active.as_deref());
             *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = next_active;
         }
         let _ = std::fs::remove_file(Self::dir().join(format!("{id}.json")));
@@ -249,6 +284,15 @@ impl ConfigStore {
         }
         out
     }
+}
+
+/// Fallback for data written before `active.json` existed: the most recently
+/// imported snapshot wins, not the last entry returned by `read_dir`.
+fn newest_id(entries: &[StoredConfig]) -> Option<String> {
+    entries
+        .iter()
+        .max_by(|a, b| a.snapshot.imported_at.cmp(&b.snapshot.imported_at))
+        .map(|entry| entry.snapshot.id.clone())
 }
 
 /// Pick the active entry, or the most recently imported one when the active id
@@ -385,6 +429,13 @@ pub fn config_list(state: tauri::State<'_, ConfigStore>) -> Result<Vec<ConfigMet
     Ok(state.list())
 }
 
+/// The active snapshot as the Rust side sees it. The frontend calls this on
+/// startup so its localStorage site cache can never disagree with fan-out.
+#[tauri::command]
+pub fn config_active(state: tauri::State<'_, ConfigStore>) -> Option<ConfigSnapshot> {
+    state.active_snapshot()
+}
+
 #[tauri::command]
 pub fn config_remove(state: tauri::State<'_, ConfigStore>, id: String) -> Result<(), AppError> {
     state.remove(&id)
@@ -408,8 +459,17 @@ mod tests {
         .expect("snapshot fixture")
     }
 
+    /// `insert`/`remove` persist to `data_dir()`. Point that at a temp dir so
+    /// unit tests never leave an `old.json` (or a bogus active marker) in the
+    /// user's real config directory.
+    fn isolate_data_dir() {
+        let dir = std::env::temp_dir().join(format!("tvbox-config-test-{}", std::process::id()));
+        std::env::set_var("TVBOX_DATA_DIR", &dir);
+    }
+
     #[test]
     fn fanout_is_scoped_to_the_active_config() {
+        isolate_data_dir();
         let store = ConfigStore::default();
         let source = ConfigSource {
             kind: "text".into(),
@@ -430,5 +490,30 @@ mod tests {
 
         store.remove("new").expect("remove active config");
         assert_eq!(store.all_sites().len(), 1, "active falls back to the remaining config");
+    }
+
+    #[test]
+    fn newest_import_wins_over_read_dir_order() {
+        let source = ConfigSource {
+            kind: "text".into(),
+            value: String::new(),
+        };
+        let mut stale = snapshot("old", &["stub_a"]);
+        stale.imported_at = "2026-01-01T00:00:00Z".into();
+        let mut current = snapshot("box", &["real_a", "real_b"]);
+        current.imported_at = "2026-11-10T09:14:17Z".into();
+        // Deliberately put the stale entry last: that is exactly how read_dir
+        // ordered `old.json` after the real config on this machine.
+        let entries = vec![
+            StoredConfig {
+                snapshot: current,
+                source: source.clone(),
+            },
+            StoredConfig {
+                snapshot: stale,
+                source,
+            },
+        ];
+        assert_eq!(newest_id(&entries).as_deref(), Some("box"));
     }
 }

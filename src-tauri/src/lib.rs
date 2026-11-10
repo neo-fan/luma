@@ -72,6 +72,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             config::config_import,
             config::config_list,
+            config::config_active,
             config::config_remove,
             http::http_fetch,
             spider::spider_invoke,

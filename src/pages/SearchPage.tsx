@@ -124,6 +124,11 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         setProgress(
           `${agg.ok}/${agg.total} 个站点响应，耗时 ${(agg.tookMs / 1000).toFixed(1)} 秒`,
         );
+        // 后端可能一个站点都没跑（active 配置为空 / 站点全被过滤）。
+        // 静默显示空结果会让人以为是片源没搜到，明确提示去重新导入。
+        if (agg.total === 0) {
+          setError("当前配置没有可搜索的站点，请到「设置」重新导入配置");
+        }
         // Group identical failures so 28 csp_* sites sharing one Android dex
         // jar produce one readable reason instead of 28 identical lines.
         const reasons = new Map<string, number>();
