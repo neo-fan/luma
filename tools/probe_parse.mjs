@@ -102,11 +102,15 @@ async function main() {
   // 记住用户原本的配置，结束时导回来。必须跳过探针自己导入的 fixture，
   // 否则第二次运行会把上次的坏配置当「用户配置」恢复回去。
   const before = await attempt(cdp, "config_list", {});
-  const previous = (Array.isArray(before.value) ? before.value : []).find((item) => {
-    const value = String(item?.source?.value || "");
-    if (!value) return false;
-    return !value.includes("127.0.0.1:8787") && !value.includes("broken-parsers");
-  });
+  // Skip anything this probe (or a sibling probe) imported: inline text configs
+  // and the local stub server. Otherwise a second run "restores" the fixture.
+  const configs = Array.isArray(before.value) ? before.value : [];
+  const isUserConfig = (item) => {
+    const source = item?.source || {};
+    if (!source.value || source.kind === "text") return false;
+    return !String(source.value).includes("127.0.0.1:8787");
+  };
+  const previous = configs.find(isUserConfig);
 
   const imported = await attempt(cdp, "config_import", {
     source: { kind: "url", value: `${STUB}/config.json` },

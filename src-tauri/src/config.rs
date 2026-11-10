@@ -30,6 +30,10 @@ pub struct ConfigSnapshot {
     pub lives: Vec<Value>,
     #[serde(default)]
     pub parses: Vec<Value>,
+    /// Per-host request headers (TVBox top-level `headers`), used by the local
+    /// proxy and playback so anti-leech CDNs see their expected UA/Referer.
+    #[serde(default)]
+    pub headers: Vec<Value>,
     #[serde(default)]
     pub spider: Option<String>,
     #[serde(default)]
@@ -81,10 +85,16 @@ impl ConfigStore {
             }
         }
         let active = entries.last().map(|entry| entry.snapshot.id.clone());
-        Self {
+        let store = Self {
             entries: RwLock::new(entries),
             active: RwLock::new(active),
+        };
+        // Publish the restored config's host header table; otherwise the first
+        // playback after a restart loses the anti-leech headers.
+        if let Some(snapshot) = store.active_snapshot() {
+            crate::netrules::replace(&snapshot.headers);
         }
+        store
     }
 
     fn dir() -> std::path::PathBuf {
@@ -114,6 +124,7 @@ impl ConfigStore {
         *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) =
             Some(snapshot.id.clone());
         self.persist(&stored);
+        crate::netrules::replace(&snapshot.headers);
     }
 
     pub fn list(&self) -> Vec<ConfigMeta> {
@@ -136,17 +147,24 @@ impl ConfigStore {
         if guard.len() == before {
             return Err(AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found")));
         }
-        if self
+        let next_active = guard.last().map(|entry| entry.snapshot.id.clone());
+        drop(guard);
+        // Only now touch `active`, and only if it pointed at the removed entry.
+        // `all_sites` acquires active then entries; taking them in the opposite
+        // order (or overlapping) lets the two callers deadlock.
+        let was_active = self
             .active
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_deref()
-            == Some(id)
-        {
-            let next = guard.last().map(|entry| entry.snapshot.id.clone());
-            *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
+            == Some(id);
+        if was_active {
+            *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = next_active;
         }
         let _ = std::fs::remove_file(Self::dir().join(format!("{id}.json")));
+        if let Some(snapshot) = self.active_snapshot() {
+            crate::netrules::replace(&snapshot.headers);
+        }
         Ok(())
     }
 

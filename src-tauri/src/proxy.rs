@@ -22,6 +22,9 @@ use url::Url;
 
 pub const DEFAULT_PORT: u16 = 9978;
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(20);
+/// Same fallback the TVBox clients send. Some CDNs answer garbage (or a 403
+/// body that hls.js reports as `fragParsingError`) when no UA is present.
+const DEFAULT_UA: &str = "okhttp/3.15";
 const ALLOW_LOCAL_ENV: &str = "TVBOX_PROXY_ALLOW_LOCAL";
 
 /// Headers copied from the browser to the upstream request.
@@ -226,14 +229,47 @@ async fn handle_proxy(
     };
 
     let mut request = state.client.get(target.clone());
+    // Config-level host headers (TVBox `headers[]`) come first so an explicit
+    // ua/referer/cookie from the spider still wins. Building one list keeps
+    // `RequestBuilder::header` from appending a duplicate User-Agent.
+    let mut forwarded: Vec<(String, String)> = crate::netrules::headers_for(target.as_str());
+    fn put(list: &mut Vec<(String, String)>, name: &str, value: &str) {
+        match list
+            .iter_mut()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        {
+            Some(slot) => slot.1 = value.to_string(),
+            None => list.push((name.to_string(), value.to_string())),
+        }
+    }
     if let Some(ua) = fwd.ua.as_deref() {
-        request = request.header(reqwest::header::USER_AGENT, ua);
+        put(&mut forwarded, "User-Agent", ua);
     }
     if let Some(referer) = fwd.referer.as_deref() {
-        request = request.header(reqwest::header::REFERER, referer);
+        put(&mut forwarded, "Referer", referer);
     }
     if let Some(cookie) = fwd.cookie.as_deref() {
-        request = request.header(reqwest::header::COOKIE, cookie);
+        put(&mut forwarded, "Cookie", cookie);
+    }
+    // Defaults come last so the config table and the spider both win, but the
+    // upstream still always sees a UA and an origin Referer — dropping them
+    // makes some CDNs return an error page that surfaces as fragParsingError.
+    if !forwarded
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("user-agent"))
+    {
+        forwarded.push(("User-Agent".to_string(), DEFAULT_UA.to_string()));
+    }
+    if !forwarded
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("referer"))
+    {
+        if let Some(host) = target.host_str() {
+            forwarded.push(("Referer".to_string(), format!("{}://{host}/", target.scheme())));
+        }
+    }
+    for (name, value) in forwarded {
+        request = request.header(name, value);
     }
     for (name, value) in extra_headers(query.h.as_deref()) {
         request = request.header(name, value);

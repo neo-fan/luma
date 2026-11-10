@@ -118,6 +118,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 | CMS 采集（`api.php/provide/vod`） | ✅ 支持 | 主流配置的主体，直链 m3u8 |
 | Python（TVBox `base.spider` 框架） | ✅ 支持 | 含直链型与 `proxy?do=py` 型 |
 | `parses[]` 通用解析池 | ✅ 支持 | type 0 嗅探 / type 1 JSON 接口 / type 4 并行竞速 |
+| 配置级 `headers[]` | ✅ 支持 | 按 host 注入 UA/Referer，防盗链 CDN 必需 |
 | 直播（`lives`） | ✅ 支持 | m3u8 经本地代理重写后播放 |
 | jar（`csp_*` / `spider` 全局 jar） | ⚠️ 仅纯 class jar | 见下方说明 |
 | js（drpy2） | ⚠️ 不支持 | 需要 ES 模块加载器与 cheerio |

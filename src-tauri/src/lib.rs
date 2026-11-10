@@ -6,6 +6,7 @@ pub mod error;
 pub mod http;
 pub mod live;
 pub mod mpv;
+pub mod netrules;
 pub mod parse;
 pub mod paths;
 pub mod play;

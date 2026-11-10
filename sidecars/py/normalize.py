@@ -243,6 +243,7 @@ def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
         "jar",
         "wallpaper",
         "flags",
+        "headers",
         "ua",
         "urls",
         "home",
@@ -258,11 +259,30 @@ def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
         "sites": sites,
         "lives": lives,
         "parses": parses,
+        # Host -> header table for anti-leech CDNs (`media.example.com` etc).
+        "headers": _host_rules(config.get("headers")),
         "spider": spider_value,
         "wallpaper": config.get("wallpaper"),
         "flags": config.get("flags") or [],
         "_raw": {k: v for k, v in config.items() if k not in known_top},
     }
+
+
+def _host_rules(value: Any) -> list[dict[str, Any]]:
+    """Normalise the top-level `headers` table (TVBox host → header)."""
+    out: list[dict[str, Any]] = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        host = str(item.get("host") or "").strip()
+        header = item.get("header") or item.get("headers") or {}
+        if not host or not isinstance(header, dict):
+            continue
+        pairs = {str(k): str(v) for k, v in header.items() if v not in (None, "")}
+        if not pairs:
+            continue
+        out.append({"host": host, "header": pairs})
+    return out
 
 
 def _config_name(config: dict[str, Any], origin: str) -> str:

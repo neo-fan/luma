@@ -16,6 +16,8 @@ use url::Url;
 /// re-entering the player for the same page does not open a window again.
 const SNIFF_TIMEOUT: Duration = Duration::from_secs(15);
 const SNIFF_TTL: Duration = Duration::from_secs(600);
+/// Fallback UA when neither the spider nor the config table supplies one.
+const DEFAULT_UA: &str = "okhttp/3.15";
 
 struct SniffHit {
     media: String,
@@ -114,11 +116,6 @@ pub async fn resolve_play(
     let Some(host) = parsed.host_str() else {
         return Err(AppError::new(code::INVALID_ARGUMENT, "play url has no host"));
     };
-    let referer = request
-        .referer
-        .clone()
-        .or_else(|| Some(format!("{}://{host}/", parsed.scheme())));
-    let ua = request.ua.clone().or_else(|| Some("okhttp/3.15".to_string()));
     let port = state.port();
 
     // Levels 1-3 already ran inside the spider (the URL we get here is either a
@@ -151,24 +148,42 @@ pub async fn resolve_play(
         }
     }
 
+    // Only what the spider actually supplied counts as explicit. Defaults are
+    // applied after the config table, otherwise `okhttp/3.15` would overwrite
+    // the per-host UA a config ships for anti-leech CDNs.
+    let mut explicit: Vec<(String, String)> = Vec::new();
+    if let Some(ua) = request.ua.clone() {
+        explicit.push(("User-Agent".to_string(), ua));
+    }
+    if let Some(referer) = request.referer.clone() {
+        explicit.push(("Referer".to_string(), referer));
+    }
+    if let Some(cookie) = request.cookie.clone() {
+        explicit.push(("Cookie".to_string(), cookie));
+    }
+    // Config host rules fill in what the spider did not: a few CDNs only accept
+    // their own UA/Referer (`media.example.com`, `*.example.com`), and without
+    // them a perfectly valid m3u8 still answers 403.
+    let mut headers = crate::netrules::merged_for(&effective_url, &explicit);
+    let has = |list: &[(String, String)], name: &str| {
+        list.iter().any(|(key, _)| key.eq_ignore_ascii_case(name))
+    };
+    if !has(&headers, "User-Agent") {
+        headers.push(("User-Agent".to_string(), DEFAULT_UA.to_string()));
+    }
+    if !has(&headers, "Referer") {
+        headers.push(("Referer".to_string(), format!("{}://{host}/", parsed.scheme())));
+    }
+
+    // The proxy re-applies the same rules, so only forward what the spider
+    // explicitly asked for — otherwise the query string pins the default UA.
     let proxy_url = proxy::build_proxy_url(
         port,
         &effective_url,
-        ua.as_deref(),
-        referer.as_deref(),
+        request.ua.as_deref(),
+        request.referer.as_deref(),
         request.cookie.as_deref(),
     );
-
-    let mut headers = Vec::new();
-    if let Some(ua) = ua.clone() {
-        headers.push(("User-Agent".to_string(), ua));
-    }
-    if let Some(referer) = referer.clone() {
-        headers.push(("Referer".to_string(), referer));
-    }
-    if let Some(cookie) = request.cookie.clone() {
-        headers.push(("Cookie".to_string(), cookie));
-    }
 
     tracing::debug!(site = %request.site_key, kind, "resolved play url");
     Ok(PlayResolved {
