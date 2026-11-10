@@ -4,7 +4,7 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
-import { api, toAppError } from "../lib/invoke";
+import { api, errorMessage } from "../lib/invoke";
 import type { HomeResult, Site } from "../types/tvbox";
 
 interface HomePageProps {
@@ -52,11 +52,14 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
           }
           if (attempt === 1) {
             setHome(null);
-            setError(toAppError(err).message);
+            setError(errorMessage(err));
             setLoading(false);
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 600));
+          if (!alive) {
+            return;
+          }
         }
       }
       if (alive) {

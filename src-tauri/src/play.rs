@@ -16,8 +16,6 @@ use url::Url;
 /// re-entering the player for the same page does not open a window again.
 const SNIFF_TIMEOUT: Duration = Duration::from_secs(15);
 const SNIFF_TTL: Duration = Duration::from_secs(600);
-/// Fallback UA when neither the spider nor the config table supplies one.
-const DEFAULT_UA: &str = "okhttp/3.15";
 
 struct SniffHit {
     media: String,
@@ -113,9 +111,9 @@ pub async fn resolve_play(
         });
     }
 
-    let Some(host) = parsed.host_str() else {
+    if parsed.host_str().is_none() {
         return Err(AppError::new(code::INVALID_ARGUMENT, "play url has no host"));
-    };
+    }
     let port = state.port();
 
     // Levels 1-3 already ran inside the spider (the URL we get here is either a
@@ -164,16 +162,10 @@ pub async fn resolve_play(
     // Config host rules fill in what the spider did not: a few CDNs only accept
     // their own UA/Referer (`media.example.com`, `*.example.com`), and without
     // them a perfectly valid m3u8 still answers 403.
-    let mut headers = crate::netrules::merged_for(&effective_url, &explicit);
-    let has = |list: &[(String, String)], name: &str| {
-        list.iter().any(|(key, _)| key.eq_ignore_ascii_case(name))
-    };
-    if !has(&headers, "User-Agent") {
-        headers.push(("User-Agent".to_string(), DEFAULT_UA.to_string()));
-    }
-    if !has(&headers, "Referer") {
-        headers.push(("Referer".to_string(), format!("{}://{host}/", parsed.scheme())));
-    }
+    let headers = crate::netrules::with_defaults(
+        &parsed,
+        crate::netrules::merged_for(&effective_url, &explicit),
+    );
 
     // The proxy re-applies the same rules, so only forward what the spider
     // explicitly asked for — otherwise the query string pins the default UA.

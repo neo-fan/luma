@@ -110,21 +110,22 @@ impl ConfigStore {
     }
 
     pub fn insert(&self, snapshot: ConfigSnapshot, source: ConfigSource) {
-        let stored = StoredConfig {
-            snapshot: snapshot.clone(),
-            source,
-        };
+        // Keep only the small fields we still need, then move the snapshot into
+        // the store. It used to be cloned twice here (raw config JSON included),
+        // which is expensive for configs with hundreds of sites.
+        let id = snapshot.id.clone();
+        let headers = snapshot.headers.clone();
+        let stored = StoredConfig { snapshot, source };
+        self.persist(&stored);
         {
             let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-            guard.retain(|entry| entry.snapshot.id != snapshot.id);
-            guard.push(stored.clone());
+            guard.retain(|entry| entry.snapshot.id != id);
+            guard.push(stored);
         }
         // Importing a config switches the active one, otherwise stale sites
         // (fixtures, dead repos) keep showing up in every fan-out search.
-        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) =
-            Some(snapshot.id.clone());
-        self.persist(&stored);
-        crate::netrules::replace(&snapshot.headers);
+        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id);
+        crate::netrules::replace(&headers);
     }
 
     pub fn list(&self) -> Vec<ConfigMeta> {
@@ -194,11 +195,22 @@ impl ConfigStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
         let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard
-            .iter()
-            .find(|entry| active.as_deref() == Some(entry.snapshot.id.as_str()))
-            .or_else(|| guard.last())
-            .map(|entry| entry.snapshot.clone())
+        pick(active.as_deref(), guard.as_slice()).map(|entry| entry.snapshot.clone())
+    }
+
+    /// Just the config-level `parses[]` pool. `parse_resolve` runs on every
+    /// play attempt; cloning the whole snapshot there would also copy the raw
+    /// config JSON (hundreds of KB) for a field nobody looks at.
+    pub fn active_parses(&self) -> Vec<Value> {
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        pick(active.as_deref(), guard.as_slice())
+            .map(|entry| entry.snapshot.parses.clone())
+            .unwrap_or_default()
     }
 
     /// Sites of the active config, de-duplicated by key (first wins).
@@ -219,14 +231,16 @@ impl ConfigStore {
             .map(|id| guard.iter().any(|entry| &entry.snapshot.id == id))
             .unwrap_or(false);
 
-        let mut seen = std::collections::HashSet::new();
+        // Borrow the keys for de-duplication: no need to allocate a String per
+        // site just to test membership in the set.
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut out = Vec::new();
         for entry in guard.iter() {
             if has_active && active.as_deref() != Some(entry.snapshot.id.as_str()) {
                 continue;
             }
             for site in &entry.snapshot.sites {
-                let key = site.get("key").and_then(Value::as_str).unwrap_or("").to_string();
+                let key = site.get("key").and_then(Value::as_str).unwrap_or("");
                 if key.is_empty() || !seen.insert(key) {
                     continue;
                 }
@@ -237,18 +251,29 @@ impl ConfigStore {
     }
 }
 
+/// Pick the active entry, or the most recently imported one when the active id
+/// is missing (hand-written fixtures). `active_snapshot` and `active_parses`
+/// must agree on this rule.
+fn pick<'a>(active: Option<&str>, entries: &'a [StoredConfig]) -> Option<&'a StoredConfig> {
+    entries
+        .iter()
+        .find(|entry| active == Some(entry.snapshot.id.as_str()))
+        .or_else(|| entries.last())
+}
+
 async fn fetch_text(url: &str) -> Result<String, AppError> {
-    let client = reqwest::Client::builder()
+    // Reuse the process-wide client so config imports share the same redirect
+    // policy and connection pool as every other outbound request.
+    let response = crate::http::shared_client()?
+        .get(url)
         .timeout(FETCH_TIMEOUT)
-        .user_agent("okhttp/3.15")
-        .build()
+        .header(reqwest::header::USER_AGENT, crate::netrules::DEFAULT_UA)
+        .send()
+        .await
         .map_err(|err| {
-            AppError::new(code::CONFIG_FETCH_FAIL, "http client init failed").with_cause(err.to_string())
+            AppError::new(code::CONFIG_FETCH_FAIL, format!("fetch {url} failed"))
+                .with_cause(err.to_string())
         })?;
-    let response = client.get(url).send().await.map_err(|err| {
-        AppError::new(code::CONFIG_FETCH_FAIL, format!("fetch {url} failed"))
-            .with_cause(err.to_string())
-    })?;
     if !response.status().is_success() {
         return Err(AppError::new(
             code::CONFIG_FETCH_FAIL,

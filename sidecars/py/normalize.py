@@ -123,6 +123,16 @@ def normalize_site(
     global_spider: str | None = None,
     origin: str = "",
 ) -> dict[str, Any]:
+    """Normalize one site and route it to a runtime (`cms` / `py` / ...).
+
+    Relative references in `api`, `jar`, `spider` and `ext` are resolved against
+    `origin` *before* routing. Every field not in `known` is preserved in
+    `site["_raw"]`, but config-level fields such as `changeable`, `orderNum` and
+    `playerType` still need an explicit copy here: listing them in `known` only
+    keeps them out of `_raw`, it does not keep them in the normalized site.
+    Group dividers return `"none"` and are disabled so they do not inherit the
+    global spider (which used to burn one doomed jvm call per divider).
+    """
     site = dict(raw)
     for alias, canonical in SITE_ALIASES.items():
         if canonical not in site and alias in site:
@@ -197,6 +207,14 @@ def normalize_site(
 
 
 def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
+    """Normalize a whole config: aliases, top-level `headers[]`, and the
+    relative paths in `spider`, `lives[].url` / `channels` and `parses[].url`.
+
+    `origin` is the URL the config was imported from; every relative reference
+    is resolved against it (never against a bare `./` path). Sites are
+    normalized one by one with `normalize_site`, and config-level fields are
+    kept even when a site-level counterpart exists.
+    """
     config = dict(raw)
     for alias, canonical in TOP_ALIASES.items():
         if canonical not in config and alias in config:

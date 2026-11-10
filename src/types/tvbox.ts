@@ -123,11 +123,11 @@ export interface FetchRequest {
 }
 
 /**
- * 以下类型在 6.2 中未给出字段，T-04 先给最小定义，T-05/T-06 按实际实现补全。
- * 变更时须同步 contracts/tvbox.schema.json 与 Rust serde 结构。
+ * 下列类型对应 Rust 侧 serde 结构与 contracts/tvbox.schema.json（契约真源）。
+ * 字段随真实配置兼容需求增补，改动时三处须同步。
  */
 
-/** 归一化后的配置快照（T-05 补全 lives/parses 的精确结构） */
+/** 归一化后的配置快照，含 sites / lives / parses / flags 等配置级字段。 */
 export interface ConfigSnapshot {
   id: string;
   name: string;
@@ -145,14 +145,14 @@ export interface ConfigMeta {
   importedAt: string;
 }
 
-/** HTTP 拉取结果（T-06 落地） */
+/** HTTP 拉取结果（http_fetch 返回） */
 export interface FetchResponse {
   status: number;
   headers: Record<string, string>;
   body: string;
 }
 
-/** 播放地址解析请求（T-09） */
+/** 播放地址解析请求（resolve_play 入参） */
 export interface PlayRequest {
   siteKey: string;
   url: string;
@@ -161,7 +161,7 @@ export interface PlayRequest {
   cookie?: string;
 }
 
-/** 播放目标（T-09 resolve_play 返回） */
+/** 播放目标（resolve_play 返回） */
 export interface PlayResolved {
   url: string;
   proxyUrl: string;
@@ -199,7 +199,7 @@ export interface ProxyStatus {
   allowLocal: boolean;
 }
 
-/** 收藏 / 历史共用的条目引用（T-12） */
+/** 收藏 / 历史共用的条目引用 */
 export interface VodRef {
   siteKey: string;
   vodId: string;

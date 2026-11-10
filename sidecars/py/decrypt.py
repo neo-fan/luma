@@ -67,6 +67,23 @@ def strip_jsonc(text: str) -> str:
     return re.sub(r",(\s*[}\]])", r"\1", cleaned)
 
 
+def _validated(text: str) -> str | None:
+    """Return JSONC-cleaned text once it parses as an object, else None.
+
+    `decrypt` used to call `_try_json` (which scans for comments) and then
+    `strip_jsonc` again to build its return value. On a large config that is
+    two full character scans of the same text.
+    """
+    for candidate in (text, strip_jsonc(text)):
+        try:
+            parsed = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(parsed, dict):
+            return candidate
+    return None
+
+
 def _try_json(text: str) -> dict | None:
     for candidate in (text, strip_jsonc(text)):
         try:
@@ -133,15 +150,15 @@ def decrypt(raw: str) -> tuple[str, str]:
     if seeded is not None:
         return seeded, "image-seed"
 
-    if _try_json(text) is not None:
-        return strip_jsonc(text), "plain"
+    if (plain := _validated(text)) is not None:
+        return plain, "plain"
 
     if text.startswith("****"):
         data = _decode_b64(text[4:])
         if data is not None:
             plain = _xor(data, KEY).decode("utf-8", errors="strict")
-            if _try_json(plain) is not None:
-                return strip_jsonc(plain), "xor-base64"
+            if (cleaned := _validated(plain)) is not None:
+                return cleaned, "xor-base64"
 
     match = DIGIT_PREFIX.match(text)
     if match:
@@ -149,21 +166,21 @@ def decrypt(raw: str) -> tuple[str, str]:
         if data is not None:
             inflated = _maybe_gunzip(data) or data
             plain = inflated.decode("utf-8", errors="strict")
-            if _try_json(plain) is not None:
-                return strip_jsonc(plain), "digit-gzip"
+            if (cleaned := _validated(plain)) is not None:
+                return cleaned, "digit-gzip"
 
     data = _decode_b64(text)
     if data is not None:
         inflated = _maybe_gunzip(data)
         if inflated is not None:
             plain = inflated.decode("utf-8", errors="strict")
-            if _try_json(plain) is not None:
-                return strip_jsonc(plain), "gzip+base64"
+            if (cleaned := _validated(plain)) is not None:
+                return cleaned, "gzip+base64"
         try:
             plain = data.decode("utf-8", errors="strict")
         except UnicodeDecodeError:
             plain = ""
-        if plain and _try_json(plain) is not None:
-            return strip_jsonc(plain), "base64"
+        if plain and (cleaned := _validated(plain)) is not None:
+            return cleaned, "base64"
 
     raise DecryptError("all decrypt stages failed")

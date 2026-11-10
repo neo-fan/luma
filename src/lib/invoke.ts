@@ -39,6 +39,11 @@ export function toAppError(err: unknown): AppError {
   return { code: "INTERNAL", message: "unknown IPC error", cause: String(err) };
 }
 
+/** 页面只需展示 message；集中在此，避免各处重复 `toAppError(err).message`。 */
+export function errorMessage(err: unknown): string {
+  return toAppError(err).message;
+}
+
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
     return await invoke<T>(cmd, args);

@@ -5,7 +5,7 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import { formatDuration, parsePlayLines } from "../lib/format";
 import type { PlayLine } from "../lib/format";
-import { api, toAppError } from "../lib/invoke";
+import { api, errorMessage } from "../lib/invoke";
 import type { HistoryItem, PlayResolved, ResultPage } from "../types/tvbox";
 
 interface PlayerPageProps {
@@ -151,7 +151,7 @@ export default function PlayerPage({
         }
       } catch (err) {
         if (alive) {
-          setResolveError(toAppError(err).message);
+          setResolveError(errorMessage(err));
         }
       } finally {
         if (alive) {
@@ -337,7 +337,7 @@ export default function PlayerPage({
       );
     } catch (err) {
       setSwitchTip("");
-      setVideoError(`换源失败：${toAppError(err).message}`);
+      setVideoError(`换源失败：${errorMessage(err)}`);
     }
   }, [episodeName, navigate, vodName, siteKey, allowFailover]);
 
@@ -352,6 +352,11 @@ export default function PlayerPage({
     }
     lineSwitchStarted.current = true;
     handledUrls.current.add(playUrl);
+
+    // 直播没有剧集概念，detailContent("live", ...) 只会多一次必败 IPC。
+    if (siteKey === "live") {
+      return false;
+    }
 
     let episodes = lines.flatMap((line) => line.episodes);
     if (episodes.length === 0) {
@@ -441,8 +446,8 @@ export default function PlayerPage({
     if (handledUrls.current.has(playUrl)) {
       return;
     }
-    void switchOrFailover();
-  }, [resolved, resolving, resolveError, playUrl, switchOrFailover]);
+    void switchOrFailoverRef.current();
+  }, [resolved, resolving, resolveError, playUrl]);
 
   // 挂载 / 销毁播放内核。
   useEffect(() => {
@@ -462,7 +467,7 @@ export default function PlayerPage({
         void api
           .mpvPlay(resolved.url, vodName, resolved.headers)
           .catch((err) => {
-            setVideoError(`mpv 启动失败：${toAppError(err).message}`);
+            setVideoError(`mpv 启动失败：${errorMessage(err)}`);
             void switchOrFailoverRef.current();
           });
         return;
@@ -567,7 +572,11 @@ export default function PlayerPage({
       void write(true);
     };
     const onTimeUpdate = () => {
-      setTimeMs(video.currentTime * 1000);
+      // `timeupdate` fires ~4x/s but the progress label only shows whole
+      // seconds. Skip the state write (and the whole player re-render) when
+      // the second has not changed. History uses video.currentTime directly.
+      const second = Math.floor(video.currentTime);
+      setTimeMs((prev) => (Math.floor(prev / 1000) === second ? prev : second * 1000));
       void write(false);
     };
     const onMeta = () => {
@@ -620,7 +629,7 @@ export default function PlayerPage({
     try {
       await api.openExternal(target);
     } catch (err) {
-      setVideoError(`打开外部播放器失败：${toAppError(err).message}`);
+      setVideoError(`打开外部播放器失败：${errorMessage(err)}`);
     }
   };
 

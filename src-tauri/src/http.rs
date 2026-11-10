@@ -2,17 +2,18 @@
 //!
 //! One shared entry point for all outbound requests. Headers from the config
 //! are passed through verbatim; a default TVBox-style UA is added only when the
-//! caller did not supply one.
+//! caller did not supply one. A single `reqwest::Client` is reused so the
+//! connection pool survives across requests.
 
 use crate::error::{code, AppError};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
-const DEFAULT_UA: &str = "okhttp/3.15";
 const MAX_REDIRECTS: usize = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,27 +37,37 @@ pub struct FetchResponse {
     pub body: String,
 }
 
-fn build_client(timeout_ms: u64) -> Result<reqwest::Client, AppError> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_millis(timeout_ms.clamp(1, MAX_TIMEOUT_MS)))
-        .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
-        .build()
-        .map_err(|err| {
+/// One client for the whole process so TCP/TLS connections and DNS are reused.
+/// Building a fresh `reqwest::Client` per request (as this used to do) throws
+/// away the pool on every call — painful during a 20-site fan-out.
+pub(crate) fn shared_client() -> Result<&'static reqwest::Client, AppError> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    match CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
+            .build()
+            .map_err(|err| err.to_string())
+    }) {
+        Ok(client) => Ok(client),
+        Err(cause) => Err(
             AppError::new(code::CONFIG_FETCH_FAIL, "http client init failed")
-                .with_cause(err.to_string())
-        })
+                .with_cause(cause.clone()),
+        ),
+    }
 }
 
 pub async fn fetch(request: FetchRequest) -> Result<FetchResponse, AppError> {
-    let timeout_ms = request
-        .timeout_ms
-        .unwrap_or(DEFAULT_TIMEOUT_MS)
-        .clamp(1, MAX_TIMEOUT_MS);
-    let client = build_client(timeout_ms)?;
+    let timeout = Duration::from_millis(
+        request
+            .timeout_ms
+            .unwrap_or(DEFAULT_TIMEOUT_MS)
+            .clamp(1, MAX_TIMEOUT_MS),
+    );
+    let client = shared_client()?;
 
-    let method = match request.method.as_deref().unwrap_or("GET").to_ascii_uppercase().as_str() {
-        "GET" => reqwest::Method::GET,
-        "POST" => reqwest::Method::POST,
+    let method = match request.method.as_deref().unwrap_or("GET") {
+        name if name.eq_ignore_ascii_case("GET") => reqwest::Method::GET,
+        name if name.eq_ignore_ascii_case("POST") => reqwest::Method::POST,
         other => {
             return Err(AppError::new(
                 code::INVALID_ARGUMENT,
@@ -80,10 +91,18 @@ pub async fn fetch(request: FetchRequest) -> Result<FetchResponse, AppError> {
         }
     }
     if !headers.contains_key(USER_AGENT) {
-        headers.insert(USER_AGENT, HeaderValue::from_static(DEFAULT_UA));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static(crate::netrules::DEFAULT_UA),
+        );
     }
 
-    let mut builder = client.request(method, &request.url).headers(headers);
+    // The shared client has no global timeout: each caller's budget is applied
+    // per request, otherwise one slow source would set the policy for all.
+    let mut builder = client
+        .request(method, &request.url)
+        .headers(headers)
+        .timeout(timeout);
     if let Some(body) = request.body {
         builder = builder.body(body);
     }

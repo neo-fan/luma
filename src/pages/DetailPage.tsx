@@ -4,7 +4,7 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import { parsePlayLines, toVodRef } from "../lib/format";
-import { api, toAppError } from "../lib/invoke";
+import { api, errorMessage } from "../lib/invoke";
 import type { VodInfo } from "../types/tvbox";
 
 interface DetailPageProps {
@@ -49,7 +49,7 @@ export default function DetailPage({ siteKey, vodId, siteName, navigate, onBack 
       } catch (err) {
         if (alive) {
           setVod(null);
-          setError(toAppError(err).message);
+          setError(errorMessage(err));
         }
       } finally {
         if (alive) {
@@ -101,7 +101,7 @@ export default function DetailPage({ siteKey, vodId, siteName, navigate, onBack 
       setFavorite(next);
       setFavTip(next ? "已加入收藏" : "已取消收藏");
     } catch (err) {
-      setFavTip(`收藏操作失败：${toAppError(err).message}`);
+      setFavTip(`收藏操作失败：${errorMessage(err)}`);
     } finally {
       setFavBusy(false);
     }

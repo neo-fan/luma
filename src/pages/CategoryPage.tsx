@@ -4,7 +4,7 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
-import { api, toAppError } from "../lib/invoke";
+import { api, errorMessage } from "../lib/invoke";
 import type { ResultPage } from "../types/tvbox";
 
 interface CategoryPageProps {
@@ -36,7 +36,7 @@ export default function CategoryPage({ siteKey, tid, title, onBack, navigate }: 
       } catch (err) {
         if (alive) {
           setData(null);
-          setError(toAppError(err).message);
+          setError(errorMessage(err));
         }
       } finally {
         if (alive) {

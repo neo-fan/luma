@@ -377,10 +377,7 @@ pub async fn parse_resolve(
     config: tauri::State<'_, ConfigStore>,
     request: ParseRequest,
 ) -> Result<ParseResolved, AppError> {
-    let parses = config
-        .active_snapshot()
-        .map(|snapshot| snapshot.parses)
-        .unwrap_or_default();
+    let parses = config.active_parses();
     resolve_with(&app, &parses, &request).await
 }
 

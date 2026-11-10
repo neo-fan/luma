@@ -2,8 +2,9 @@
 """Python adapter layer: stdio JSON-RPC (spec 7.2 / 7.2.1).
 
 One JSON frame per line on stdin/stdout. stdout carries protocol frames only;
-logs go to stderr. Pure-compute methods run on a thread pool of 8; `spider.py`
-is handled by a child process in later tasks, not here.
+logs go to stderr. Requests run on a thread pool of 8. Python spiders
+(`spider.py`) are dispatched to a short-lived child process by `pyspider.run`,
+so a broken third-party script cannot take down this bridge.
 """
 
 from __future__ import annotations

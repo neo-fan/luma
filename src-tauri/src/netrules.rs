@@ -13,6 +13,11 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
+/// Single source of truth for the fallback UA. `http::fetch`, `play`,
+/// `proxy` and config import all send it; keeping the constant next to the
+/// header rules means a change cannot leave one of those paths behind.
+pub const DEFAULT_UA: &str = "okhttp/3.15";
+
 #[derive(Debug, Clone, Default)]
 struct HostHeaders {
     /// Lowercase host (or `*.suffix` / `.suffix`) → header name/value pairs.
@@ -86,7 +91,14 @@ pub fn headers_for(url: &str) -> Vec<(String, String)> {
             .strip_prefix("*.")
             .or_else(|| pattern.strip_prefix('.'));
         if let Some(suffix) = suffix {
-            if host == suffix || host.ends_with(&format!(".{suffix}")) {
+            // `strip_suffix` + trailing-dot check is the allocation-free
+            // equivalent of `host.ends_with(&format!(".{suffix}"))`. This runs
+            // for every proxied request, including each HLS segment.
+            if host == suffix
+                || host
+                    .strip_suffix(suffix)
+                    .is_some_and(|head| head.ends_with('.'))
+            {
                 return pairs.clone();
             }
         }
@@ -99,8 +111,10 @@ pub fn headers_for(url: &str) -> Vec<(String, String)> {
 pub fn merged_for(url: &str, explicit: &[(String, String)]) -> Vec<(String, String)> {
     let mut out = headers_for(url);
     for (name, value) in explicit {
-        let lower = name.to_ascii_lowercase();
-        if let Some(slot) = out.iter_mut().find(|(key, _)| key.to_ascii_lowercase() == lower) {
+        if let Some(slot) = out
+            .iter_mut()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        {
             slot.1 = value.clone();
         } else {
             out.push((name.clone(), value.clone()));
@@ -109,10 +123,67 @@ pub fn merged_for(url: &str, explicit: &[(String, String)]) -> Vec<(String, Stri
     out
 }
 
+/// Fill in the fallback UA / Referer only when neither the config table nor the
+/// spider supplied one. `play` probes the source while `proxy` actually fetches
+/// it; both must apply the same defaults or a stream can probe OK and then 403.
+pub fn with_defaults(target: &url::Url, mut headers: Vec<(String, String)>) -> Vec<(String, String)> {
+    if !headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("User-Agent"))
+    {
+        headers.push(("User-Agent".into(), DEFAULT_UA.into()));
+    }
+    if !headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("Referer"))
+    {
+        if let Some(host) = target.host_str() {
+            headers.push(("Referer".into(), format!("{}://{host}/", target.scheme())));
+        }
+    }
+    headers
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use url::Url;
+
+    /// `with_defaults` is shared by play and proxy: it must never overwrite a
+    /// UA/Referer supplied by the config table or by the spider.
+    #[test]
+    fn defaults_fill_only_missing_headers() {
+        let url = Url::parse("https://cdn.example.com/live/a.m3u8").unwrap();
+        let filled = with_defaults(&url, Vec::new());
+        assert_eq!(filled.len(), 2);
+        assert!(filled
+            .iter()
+            .any(|(key, value)| key == "User-Agent" && value == DEFAULT_UA));
+        assert!(filled
+            .iter()
+            .any(|(key, value)| key == "Referer" && value == "https://cdn.example.com/"));
+    }
+
+    #[test]
+    fn defaults_never_override_existing_headers() {
+        let url = Url::parse("https://cdn.example.com/live/a.m3u8").unwrap();
+        let filled = with_defaults(
+            &url,
+            vec![
+                ("user-agent".into(), "bingcha/1.1".into()),
+                ("Referer".into(), "https://spider.example/".into()),
+                ("X-Custom".into(), "1".into()),
+            ],
+        );
+        assert_eq!(filled.len(), 3, "no defaults appended");
+        assert!(filled
+            .iter()
+            .any(|(key, value)| key == "user-agent" && value == "bingcha/1.1"));
+        assert!(filled
+            .iter()
+            .any(|(key, value)| key == "Referer" && value == "https://spider.example/"));
+    }
 
     fn load(rules: Value) {
         replace(rules.as_array().map(Vec::as_slice).unwrap_or(&[]));

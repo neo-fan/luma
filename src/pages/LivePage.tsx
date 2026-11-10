@@ -3,7 +3,7 @@ import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
-import { api, toAppError } from "../lib/invoke";
+import { api, errorMessage } from "../lib/invoke";
 import type { LiveGroup, LiveSource } from "../types/tvbox";
 
 interface LivePageProps {
@@ -77,7 +77,7 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       } catch (err) {
         if (alive) {
           setGroups([]);
-          setError(`直播列表加载失败：${toAppError(err).message}`);
+          setError(`直播列表加载失败：${errorMessage(err)}`);
         }
       } finally {
         if (alive) {
@@ -145,18 +145,23 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       </div>
 
       <div className="chip-row">
-        {lives.map((item, index) => (
-          <button
-            key={`${item.name}-${index}`}
-            type="button"
-            className={index === activeIndex ? "chip is-active" : "chip"}
-            disabled={!isListable(item)}
-            title={isListable(item) ? undefined : "该源没有列表地址（分组容器且无可用频道）"}
-            onClick={() => setActiveIndex(index)}
-          >
-            {item.name || `源 ${index + 1}`}
-          </button>
-        ))}
+        {lives.map((item, index) => {
+          // Container sources can hold thousands of channels; `isListable`
+          // expands them, so compute it once per chip rather than twice.
+          const listable = isListable(item);
+          return (
+            <button
+              key={`${item.name}-${index}`}
+              type="button"
+              className={index === activeIndex ? "chip is-active" : "chip"}
+              disabled={!listable}
+              title={listable ? undefined : "该源没有列表地址（分组容器且无可用频道）"}
+              onClick={() => setActiveIndex(index)}
+            >
+              {item.name || `源 ${index + 1}`}
+            </button>
+          );
+        })}
       </div>
 
       {error ? <ErrorBar message={error} onRetry={() => setReload((value) => value + 1)} /> : null}

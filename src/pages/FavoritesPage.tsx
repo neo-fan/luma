@@ -4,7 +4,7 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
-import { api, toAppError } from "../lib/invoke";
+import { api, errorMessage } from "../lib/invoke";
 import type { FavoriteItem, VodRef } from "../types/tvbox";
 
 interface FavoritesPageProps {
@@ -32,7 +32,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
       } catch (err) {
         if (alive) {
           setItems([]);
-          setError(toAppError(err).message);
+          setError(errorMessage(err));
         }
       } finally {
         if (alive) {
@@ -65,7 +65,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
       await api.favoritesToggle(ref);
       setItems((list) => list.filter((one) => !(one.siteKey === item.siteKey && one.vodId === item.vodId)));
     } catch (err) {
-      setError(`取消收藏失败：${toAppError(err).message}`);
+      setError(`取消收藏失败：${errorMessage(err)}`);
     } finally {
       setBusyKey("");
     }

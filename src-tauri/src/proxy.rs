@@ -22,9 +22,9 @@ use url::Url;
 
 pub const DEFAULT_PORT: u16 = 9978;
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(20);
-/// Same fallback the TVBox clients send. Some CDNs answer garbage (or a 403
-/// body that hls.js reports as `fragParsingError`) when no UA is present.
-const DEFAULT_UA: &str = "okhttp/3.15";
+// The fallback UA and the "fill in defaults" helper live in `netrules` so the
+// resolver and the proxy cannot drift apart. Some CDNs answer garbage (or a
+// 403 body that hls.js reports as `fragParsingError`) when no UA is present.
 const ALLOW_LOCAL_ENV: &str = "TVBOX_PROXY_ALLOW_LOCAL";
 
 /// Headers copied from the browser to the upstream request.
@@ -232,42 +232,24 @@ async fn handle_proxy(
     // Config-level host headers (TVBox `headers[]`) come first so an explicit
     // ua/referer/cookie from the spider still wins. Building one list keeps
     // `RequestBuilder::header` from appending a duplicate User-Agent.
-    let mut forwarded: Vec<(String, String)> = crate::netrules::headers_for(target.as_str());
-    fn put(list: &mut Vec<(String, String)>, name: &str, value: &str) {
-        match list
-            .iter_mut()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-        {
-            Some(slot) => slot.1 = value.to_string(),
-            None => list.push((name.to_string(), value.to_string())),
-        }
-    }
+    // Config-level host rules come first, explicit ua/referer/cookie win, and
+    // defaults fill only the gaps. `netrules` owns all three steps so the
+    // resolver (play.rs) and this proxy cannot disagree about the UA; keeping
+    // one list also stops `RequestBuilder::header` appending a second UA.
+    let mut explicit: Vec<(String, String)> = Vec::with_capacity(3);
     if let Some(ua) = fwd.ua.as_deref() {
-        put(&mut forwarded, "User-Agent", ua);
+        explicit.push(("User-Agent".into(), ua.into()));
     }
     if let Some(referer) = fwd.referer.as_deref() {
-        put(&mut forwarded, "Referer", referer);
+        explicit.push(("Referer".into(), referer.into()));
     }
     if let Some(cookie) = fwd.cookie.as_deref() {
-        put(&mut forwarded, "Cookie", cookie);
+        explicit.push(("Cookie".into(), cookie.into()));
     }
-    // Defaults come last so the config table and the spider both win, but the
-    // upstream still always sees a UA and an origin Referer — dropping them
-    // makes some CDNs return an error page that surfaces as fragParsingError.
-    if !forwarded
-        .iter()
-        .any(|(key, _)| key.eq_ignore_ascii_case("user-agent"))
-    {
-        forwarded.push(("User-Agent".to_string(), DEFAULT_UA.to_string()));
-    }
-    if !forwarded
-        .iter()
-        .any(|(key, _)| key.eq_ignore_ascii_case("referer"))
-    {
-        if let Some(host) = target.host_str() {
-            forwarded.push(("Referer".to_string(), format!("{}://{host}/", target.scheme())));
-        }
-    }
+    let forwarded = crate::netrules::with_defaults(
+        &target,
+        crate::netrules::merged_for(target.as_str(), &explicit),
+    );
     for (name, value) in forwarded {
         request = request.header(name, value);
     }
@@ -439,6 +421,9 @@ fn wrap_url(port: u16, target: &str, fwd: &Fwd) -> String {
     format!("http://127.0.0.1:{port}/proxy?url={}{}", urlencode(target), fwd.suffix())
 }
 
+/// Resolve a playlist URI against the manifest URL. Absolute http(s) URLs are
+/// already final and must pass through unchanged (they often carry signed query
+/// parameters); everything else is joined with the manifest's base.
 fn absolutize(base: &Url, uri: &str) -> String {
     let trimmed = uri.trim();
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
@@ -449,6 +434,9 @@ fn absolutize(base: &Url, uri: &str) -> String {
         .unwrap_or_else(|_| trimmed.to_string())
 }
 
+/// Wrap every media line of an HLS playlist into the local proxy. Without this
+/// the webview would request segments (and `#EXT-X-KEY` URIs) directly from the
+/// CDN, losing the anti-leech headers and hitting CORS.
 fn rewrite_playlist(text: &str, base: &Url, port: u16, fwd: &Fwd) -> String {
     let mut out = String::with_capacity(text.len() + 256);
     for line in text.lines() {
@@ -472,10 +460,14 @@ fn rewrite_playlist(text: &str, base: &Url, port: u16, fwd: &Fwd) -> String {
     out
 }
 
+/// Rewrite every `URI="..."` in an HLS tag (e.g. `#EXT-X-KEY`) to point at the
+/// local proxy. One tag can carry more than one URI, so the scan resumes at the
+/// closing quote instead of returning after the first hit.
 fn rewrite_tag_uris(line: &str, base: &Url, port: u16, fwd: &Fwd) -> String {
     let mut out = String::with_capacity(line.len() + 64);
     let mut rest = line;
     while let Some(position) = rest.find("URI=\"") {
+        // +5 skips the literal `URI="`; `tail` now starts at the value.
         let (head, tail) = rest.split_at(position + 5);
         out.push_str(head);
         if let Some(end) = tail.find('"') {
@@ -483,6 +475,8 @@ fn rewrite_tag_uris(line: &str, base: &Url, port: u16, fwd: &Fwd) -> String {
             out.push_str(&wrap_url(port, &absolutize(base, uri), fwd));
             rest = &tail[end..];
         } else {
+            // Unterminated quote: keep the original tail verbatim rather than
+            // emitting a broken playlist.
             rest = tail;
             break;
         }

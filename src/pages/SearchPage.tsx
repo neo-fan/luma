@@ -5,7 +5,7 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
-import { api, toAppError } from "../lib/invoke";
+import { api, errorMessage } from "../lib/invoke";
 import type { ResultPage, Site, VodInfo } from "../types/tvbox";
 
 const ALL_SITES = "__all__";
@@ -98,11 +98,22 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
           timeoutMs: ALL_TIMEOUT_MS,
         })) as AggregateResult;
         const names = new Map(selectableSites.map((item) => [item.key, item.name]));
+        const seen = new Set<string>();
         for (const row of agg.results ?? []) {
           if (!row.ok) {
             continue;
           }
           for (const vod of row.data?.list ?? []) {
+            // A site can appear in several aggregate rows, and some sources
+            // repeat an id. De-duplicate before rendering so no duplicate
+            // cards show up; entries without an id are left untouched.
+            const id = vod.vod_id ? `${row.siteKey}:${vod.vod_id}` : "";
+            if (id && seen.has(id)) {
+              continue;
+            }
+            if (id) {
+              seen.add(id);
+            }
             merged.push({
               siteKey: row.siteKey,
               siteName: names.get(row.siteKey) ?? row.siteKey,
@@ -136,7 +147,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
       setSearched(true);
     } catch (err) {
       setFailures(1);
-      setError(toAppError(err).message);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }

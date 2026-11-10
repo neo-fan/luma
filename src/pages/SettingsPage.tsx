@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
-import { api, toAppError } from "../lib/invoke";
+import { api, errorMessage } from "../lib/invoke";
 import type { ConfigMeta, ConfigSnapshot, ProxyStatus } from "../types/tvbox";
 
 interface SettingsPageProps {
@@ -36,15 +36,19 @@ export default function SettingsPage({
     const run = async () => {
       setLoadingConfigs(true);
       setListError("");
+      // Two independent commands: start both before awaiting either, so the
+      // page does not pay two serial IPC round trips.
+      const listPromise = api.configList();
+      const proxyPromise = api.proxyStatus();
       try {
-        const list = await api.configList();
+        const list = await listPromise;
         if (alive) {
           setConfigs(list);
         }
       } catch (err) {
         if (alive) {
           setConfigs([]);
-          setListError(toAppError(err).message);
+          setListError(errorMessage(err));
         }
       } finally {
         if (alive) {
@@ -53,7 +57,7 @@ export default function SettingsPage({
       }
 
       try {
-        const status = await api.proxyStatus();
+        const status = await proxyPromise;
         if (alive) {
           setProxy(status);
           setProxyError("");
@@ -61,7 +65,7 @@ export default function SettingsPage({
       } catch (err) {
         if (alive) {
           setProxy(null);
-          setProxyError(toAppError(err).message);
+          setProxyError(errorMessage(err));
         }
       }
     };
@@ -90,7 +94,7 @@ export default function SettingsPage({
       }
       setReload((current) => current + 1);
     } catch (err) {
-      setError(`导入失败：${toAppError(err).message}`);
+      setError(`导入失败：${errorMessage(err)}`);
     } finally {
       setImporting(false);
     }
@@ -108,7 +112,7 @@ export default function SettingsPage({
       setNotice(`已删除配置「${meta.name}」`);
       setReload((current) => current + 1);
     } catch (err) {
-      setError(`删除失败：${toAppError(err).message}`);
+      setError(`删除失败：${errorMessage(err)}`);
     }
   };
 
@@ -122,7 +126,7 @@ export default function SettingsPage({
       await api.historyClear();
       setNotice("已清空观看历史");
     } catch (err) {
-      setError(`清空历史失败：${toAppError(err).message}`);
+      setError(`清空历史失败：${errorMessage(err)}`);
     }
   };
 

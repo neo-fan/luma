@@ -130,8 +130,13 @@ impl LibraryStore {
     }
 
     pub fn list_favorites(&self) -> Vec<FavoriteItem> {
-        let guard = self.favorites.read().unwrap_or_else(|p| p.into_inner());
-        let mut items = guard.clone();
+        // Clone under the lock, sort outside it: a long read lock here would
+        // needlessly block `toggle_favorite` while the list is sorted.
+        let mut items = self
+            .favorites
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
         items.sort_by(|a, b| b.added_at.cmp(&a.added_at));
         items
     }
@@ -166,8 +171,12 @@ impl LibraryStore {
     }
 
     pub fn list_history(&self) -> Vec<HistoryItem> {
-        let guard = self.history.read().unwrap_or_else(|p| p.into_inner());
-        let mut items = guard.clone();
+        // Same as `list_favorites`: sort the copy outside the read lock.
+        let mut items = self
+            .history
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
         items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         items
     }
