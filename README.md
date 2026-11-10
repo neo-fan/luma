@@ -110,10 +110,31 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 
 阶段脚本采用累积断言：未交付能力标 `N/A`（不计 PASS、不计 FAIL），`FAIL = 0` 即通过。
 
+## 支持范围
+
+| 源类型 | 状态 | 说明 |
+|---|---|---|
+| CMS 采集（`api.php/provide/vod`） | ✅ 支持 | 主流配置的主体，直链 m3u8 |
+| Python（TVBox `base.spider` 框架） | ✅ 支持 | 含直链型与 `proxy?do=py` 型 |
+| 直播（`lives`） | ✅ 支持 | m3u8 经本地代理重写后播放 |
+| jar（`csp_*` / `spider` 全局 jar） | ⚠️ 仅纯 class jar | 见下方说明 |
+| js（drpy2） | ⚠️ 不支持 | 需要 ES 模块加载器与 cheerio |
+
+本项目**以 CMS + Python 两类源为交付目标**。实测用户配置 101 个站点中，这两类占 67 个，且覆盖了实际可播的绝大部分内容。
+
+### 为什么 jar 源基本不可用
+
+社区配置里的 jar 绝大多数是 **Android dex jar**，把它跑起来在 Windows x64 上不是「实现代价大」，而是走不通：
+
+- jar 内只有 `classes.dex`，而它继承的 `com.github.catvod.crawler.Spider` **不在 jar 里**（属于 Android 客户端本体）；
+- 还依赖 ART、OkHttp、gson、NanoHTTPD、QuickJS binding 与整套 `android.util.*`，桩类无法补全；
+- 这些站点的差异全在 jar 内部的 XPath 规则引擎里，无法绕开。
+
+所以 jar 源会**快速失败并给出原因**，不会拖慢搜索。纯 class jar 仍可正常加载，行为由 `SpiderRunner` 反射分发。
+
 ## 已知限制
 
 - py 源若返回 TVBox 本地代理地址（`127.0.0.1:9978/proxy?do=py&…`），宿主已实现该路由并转发给 `Spider.proxy()`；但返回自有本地服务地址（如 `127.0.0.1:10010`）的源仍不可用。
-- 第三方 **Android dex jar** 在 Win x64 无法加载（jar 内是 `classes.dex`，依赖 ART / okhttp / QuickJS 等）。这类源会快速失败并给出原因；jar 运行时只对纯 class jar 与仓库内自编模板 jar 作保证。
 - T-31（`tvbox://` 协议关联、JumpList、全屏勿扰）未实现。
 - `mpv` 默认不随 zip 分发（单文件约 117MB），需要时放入 `sidecars/mpv/`，或用 `--with-mpv` 重新打包。
 - 公开源失效频繁，属正常现象；自动换源与源级原因提示是必需能力。
