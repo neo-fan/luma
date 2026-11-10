@@ -1,7 +1,7 @@
 [package]
 name = "tvbox-desktop"
 version = "0.1.0"
-description = "TVBox desktop shell (config-compatible player framework)"
+description = "Luma - TVBox-compatible desktop player framework"
 edition = "2021"
 rust-version = "1.77.2"
 

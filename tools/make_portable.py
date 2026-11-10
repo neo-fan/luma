@@ -4,8 +4,8 @@
 The user does not want an installer: the deliverable is a folder/zip that runs
 in place. Layout produced:
 
-    TVBox Desktop/
-      TVBox Desktop.exe          release binary (frontend embedded)
+    Luma/
+      Luma.exe                   release binary (frontend embedded)
       sidecars/py/               Python adapter sources
       sidecars/python-embed/     embedded CPython + third-party packages
       sidecars/jre/              jlink-trimmed JDK 17
@@ -36,9 +36,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_EXE = ROOT / "src-tauri" / "target" / "release" / "tvbox-desktop.exe"
+# Tauri 的 productName 影响窗口标题与 bundle 产物名，但 cargo 二进制名由
+# [package] name 决定（仍是 tvbox-desktop.exe）；这里只把交付文件名换成品牌名。
+APP_NAME = "Luma"
 OUT_DIR = ROOT / "release" / "portable"
-APP_DIR = OUT_DIR / "TVBox Desktop"
-ZIP_PATH = ROOT / "release" / "TVBox-Desktop-0.1.0-portable.zip"
+APP_DIR = OUT_DIR / APP_NAME
+ZIP_PATH = ROOT / "release" / f"{APP_NAME}-0.1.0-portable.zip"
 CONF = ROOT / "src-tauri" / "tauri.conf.json"
 
 # Build-time-only Python bits: safe to omit from the portable copy.
@@ -91,7 +94,7 @@ def prepare_app_dir() -> None:
     APP_DIR.mkdir(parents=True)
 
     log("== copying executable ==")
-    shutil.copy2(RELEASE_EXE, APP_DIR / "TVBox Desktop.exe")
+    shutil.copy2(RELEASE_EXE, APP_DIR / f"{APP_NAME}.exe")
 
     log("== copying sidecars ==")
     shutil.copytree(
@@ -115,9 +118,9 @@ def prepare_app_dir() -> None:
     conf = json.loads(CONF.read_text(encoding="utf-8"))
     version = conf.get("version", "0.1.0")
     (APP_DIR / "使用说明.txt").write_text(
-        f"""TVBox Desktop {version}（便携版）
+        f"""{APP_NAME} {version}（便携版）
 
-1. 双击「TVBox Desktop.exe」启动，无需安装。
+1. 双击「{APP_NAME}.exe」启动，无需安装。
 2. 配置、收藏、历史都保存在本目录的 data\\ 下；整个文件夹可随意移动或删除。
 3. 软件不内置任何源，请在「设置」中导入你自己的 TVBox 配置。
 4. 需要 mpv 兜底时，把 mpv.exe 放到 sidecars\\mpv\\ 下即可。
@@ -158,8 +161,9 @@ def report() -> None:
         path = APP_DIR / name
         if path.exists():
             log(f"  {name:28} {human(tree_size(path)):>10}")
-    exe = APP_DIR / "TVBox Desktop.exe"
-    log(f"  {'TVBox Desktop.exe':28} {human(tree_size(exe)):>10}")
+    exe_name = f"{APP_NAME}.exe"
+    exe = APP_DIR / exe_name
+    log(f"  {exe_name:28} {human(tree_size(exe)):>10}")
     log(f"  {'folder total':28} {human(tree_size(APP_DIR)):>10}")
     log(f"  {'zip':28} {human(tree_size(ZIP_PATH)):>10}  {ZIP_PATH.relative_to(ROOT)}")
 

@@ -1,6 +1,6 @@
-# TVBox Desktop
+# Luma
 
-Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架）。软件本身不内置、不硬编码任何配置地址、影视源、直播源或 API Key；所有内容由用户自行导入的 TVBox 配置（`api.json` / `box.json` 及常见变体）提供。
+Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架）。`Luma` 是产品名，副标 `TVBox Desktop` 保留生态识别；代码仓、Rust crate 与数据目录仍叫 `tvbox-desktop`，改名不影响已有配置/收藏/历史。软件本身不内置、不硬编码任何配置地址、影视源、直播源或 API Key；所有内容由用户自行导入的 TVBox 配置（`api.json` / `box.json` 及常见变体）提供。
 
 ## 免责声明
 
@@ -17,6 +17,7 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架
 - 播放：ArtPlayer + hls.js；清晰度 / 倍速 / 画中画 / 快捷键等完整控件；同一剧集多线路自动切换；HLS 卡死 12 秒看门狗；跨站自动换源。
 - 详情与选源：手动换源（一次聚合列出其它站点的同名影片，可选 20/35 秒检索）、任意线路/剧集直达、剧集筛选与正倒序、继续播放（读 SQLite 历史）、收藏与简介展开。
 - 页面缓存：详情 / 播放 / 首页 / 分类 / 搜索 / 直播读结果按配置作用域做内存缓存（TTL + LRU + 并发请求去重）；播放页返回详情不再重拉播放列表，线路、筛选、页码、搜索结果与滚动位置一并保留；详情页「↻ 刷新」可强制更新。
+- 界面与性能：现代简约暗色主题（蓝紫强调色、渐变主按钮、离屏卡片跳过渲染、遵循系统「减弱动效」）；**播放页按需加载**，首屏 JS 从 289.6 kB gzip 降到 60.1 kB（-79%），ArtPlayer / hls.js 只在打开播放页时下载并拆为独立可缓存块。
 - 第 4 级嗅探：前三级都拿不到直链时，用隔离的隐藏 WebView2 加载播放页并拦截网络请求取真实地址（该窗口不在 capabilities 授权列表内，零 command 权限）。
 - mpv 兜底：WebView2 无法解码（如 HEVC）时自动交给随包 mpv；找不到 `mpv.exe` 时退回外部播放器提示。
 - 直播：m3u/m3u8 解析，代理内重写相对分片。
@@ -37,12 +38,18 @@ corepack pnpm install
 corepack pnpm tauri dev                     # 开发
 python tools/make_portable.py               # 绿色版：release/portable + zip
 python tools/make_portable.py --with-mpv    # 连 mpv 一起打（体积 +40MB）
+python tools/build_icons.py                 # 重生成全套应用图标（需 Pillow）
+node tools/bundle_report.mjs               # 构建产物体积 / gzip 报告
 ```
+
+## 品牌资源
+
+产品名 **Luma**，图标是深墨圆角底 + 细圆环 + 蓝紫渐变播放三角。`tools/build_icons.py` 从同一套几何常量生成 `src-tauri/icons/` 下的 ICO（16~256）与各尺寸 PNG、以及前端用的 `public/icon.svg`；修改品牌色时同步 `src/styles.css` 的 `--accent` / `--accent-2`。`tauri.conf.json` 的 `identifier` 保持 `dev.tvbox.desktop` 不变，避免换名导致 SQLite 数据目录迁移。
 
 产物：
 
-- `release/portable/TVBox Desktop/` —— 解压即用的文件夹；
-- `release/TVBox-Desktop-0.1.0-portable.zip` —— 分发包（约 41MB）。
+- `release/portable/Luma/` —— 解压即用的文件夹；
+- `release/Luma-0.1.0-portable.zip` —— 分发包（约 41MB，SQLite bundled 后需重测体积）。
 
 不需要安装程序；整个文件夹可以放在任意目录、U 盘或移动硬盘。
 
@@ -78,8 +85,8 @@ $env:TVBOX_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 
 ## 运行（便携版）
 
-1. 解压 `TVBox-Desktop-0.1.0-portable.zip` 到任意目录；
-2. 双击 `TVBox Desktop.exe`。
+1. 解压 `Luma-0.1.0-portable.zip` 到任意目录；
+2. 双击 `Luma.exe`。
 
 配置、收藏、历史都写在 **exe 同级 `data/tvbox.db`**（单个 SQLite 文件，运行时另有 `-wal` / `-shm` 辅助文件）；`data/` 存在即自动进入便携模式，不会写 `%APPDATA%`。删除整个文件夹即完成卸载。
 
@@ -88,8 +95,8 @@ $env:TVBOX_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 便携版布局：
 
 ```text
-TVBox Desktop/
-  TVBox Desktop.exe
+Luma/
+  Luma.exe
   sidecars/
     py/               适配层源码
     python-embed/     嵌入式 Python 3.11 + 第三方包

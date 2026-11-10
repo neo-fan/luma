@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Luma">
+  <defs>
+    <linearGradient id="lumaGrad" gradientUnits="userSpaceOnUse" x1="153.6" y1="153.6" x2="320" y2="320">
+      <stop offset="0" stop-color="#6E8BFF"/>
+      <stop offset="1" stop-color="#9A8CFF"/>
+    </linearGradient>
+  </defs>
+  <rect x="12.8" y="12.8" width="486.4" height="486.4" rx="112.64" fill="#10131A"/>
+  <rect x="13.3" y="13.3" width="485.4" height="485.4" rx="112.14" fill="none" stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="1"/>
+  <circle cx="256" cy="256" r="174.08" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="10.24"/>
+  <path d="M 191.68 164.21 Q 158.72 148.48 158.72 185.01 L 158.72 326.99 Q 158.72 363.52 191.68 347.79 L 340.43 276.79 Q 384 256 340.43 235.21 L 191.68 164.21 Z" fill="url(#lumaGrad)"/>
+</svg>

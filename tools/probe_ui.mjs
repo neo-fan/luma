@@ -130,8 +130,16 @@ await cdp.send("Runtime.enable");
 await cdp.send("Page.enable");
 console.log(`target: ${page.url}`);
 
-// 1. shell renders
-const shell = await cdp.eval(WAIT_TEXT("TVBox", 30000));
+// 1. shell renders。按结构判断而不是等某个品牌文案：产品改名后旧文案
+// （"TVBox"）已不在页面上，用文案做就绪判断会把正常窗口误报成 TIMEOUT。
+const shell = await cdp.eval(`(async () => {
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    if (document.querySelector('.nav__item') && document.querySelector('.content')) return 'FOUND';
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return 'TIMEOUT';
+})()`);
 assert(shell === "FOUND", "shell rendered", shell);
 
 // 2. settings + config import through the real UI

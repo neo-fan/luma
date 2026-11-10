@@ -381,7 +381,14 @@ try {
   c3 = await readCount("c3/after-refresh");
   assert(c3 >= c2 + 1, "↻ 刷新 forced a new detailContent request (c3 >= c2 + 1)", `c2=${c2} c3=${c3} expected>=${c2 + 1}`);
   if (c3 < c2 + 1) await diag("c3-no-refresh");
-  const epCount3 = Number(await cdp.eval(`document.querySelectorAll('.episode').length`));
+  // 强制刷新会重新拉源站，慢源可能十几秒后才把剧集渲染回来；等它出现再断言，
+  // 而不是在固定尾随等待后立刻读一次 DOM（那样会把加载中误判成数据丢失）。
+  const epCount3 = Number(
+    (await cdp.eval(WAIT(`
+    const n = document.querySelectorAll('.episode').length;
+    return n > 0 ? String(n) : null;
+  `, 30000))) || 0,
+  );
   assert(epCount3 > 0, ".episode still rendered after refresh", `episodes=${epCount3}`);
 } catch (err) {
   console.log(`[diag] unexpected error: ${String((err && err.stack) || err)}`);

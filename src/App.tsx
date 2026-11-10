@@ -1,17 +1,33 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { canFailover } from "./lib/format";
-import { api } from "./lib/invoke";
-import { pageCache } from "./lib/pageCache";
-import { clearPageStates } from "./lib/usePageState";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import Spinner from "./components/Spinner";
 import CategoryPage from "./pages/CategoryPage";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
 import HomePage from "./pages/HomePage";
 import LivePage from "./pages/LivePage";
-import PlayerPage from "./pages/PlayerPage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
+import { canFailover } from "./lib/format";
+import { api } from "./lib/invoke";
+import { pageCache } from "./lib/pageCache";
+import { clearPageStates } from "./lib/usePageState";
 import type { ConfigSnapshot, LiveSource, Site } from "./types/tvbox";
+
+/**
+ * 只有播放页走按需加载：ArtPlayer + hls.js 约 750 kB 全在它里面，占首屏体积
+ * 的八成以上。其余页面每个只有几 kB，静态导入让导航同步直出——既不会有
+ * chunk 加载空窗，也不会破坏窗口探针「点完侧栏立即操作 DOM」的时序。
+ */
+const PlayerPage = lazy(() => import("./pages/PlayerPage"));
 
 /** 单窗口内的视图联合类型；不使用 react-router。 */
 export type View =
@@ -310,10 +326,12 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand__mark">TV</span>
+          <span className="brand__mark">
+            <img src="/icon.svg" alt="" />
+          </span>
           <span className="brand__text">
-            TVBox
-            <small>Desktop</small>
+            Luma
+            <small>TVBox Desktop</small>
           </span>
         </div>
         <nav className="nav">
@@ -330,10 +348,20 @@ export default function App() {
         </nav>
         <div className="sidebar__foot">
           <span>本地播放框架</span>
-          <span>v0.1.0</span>
+          <span>Luma · v0.1.0</span>
         </div>
       </aside>
-      <main className="content" ref={contentRef}>{content}</main>
+      <main className="content" ref={contentRef}>
+        <Suspense
+          fallback={
+            <section className="page">
+              <Spinner label="正在打开页面…" />
+            </section>
+          }
+        >
+          {content}
+        </Suspense>
+      </main>
     </div>
   );
 }

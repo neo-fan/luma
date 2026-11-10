@@ -211,14 +211,43 @@ if (!mounted) {
   console.log(`[diag] exceptions: ${cdp.errors.slice(0, 5).join(" | ").slice(0, 1200)}`);
 }
 
-const playing = mounted
-  ? await cdp.eval(WAIT(`
+// 真实源里死链很常见：ArtPlayer 挂载成功但 hls.js 报 manifestLoadError。
+// 保持「必须真实解码出画」的断言强度，但给多条线路机会，避免把某个源站
+// 的临时故障误判成播放器退化。每轮都重新确认挂载，因为换集会重建实例。
+const PLAYING_EXPR = `
   const v = document.querySelector('.player-art video');
   return v && v.readyState >= 2 && v.videoWidth > 0
     ? JSON.stringify({ w: v.videoWidth, h: v.videoHeight, t: v.currentTime, paused: v.paused })
     : null;
-`, 90000))
-  : null;
+`;
+let playing = null;
+let lineAttempts = 0;
+for (let attempt = 0; attempt < 6 && mounted && !playing; attempt += 1) {
+  lineAttempts = attempt + 1;
+  if (attempt > 0) {
+    const next = await cdp.eval(`(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => (x.innerText || '').trim() === '下一集');
+      if (!b || b.disabled) return 'MISSING';
+      b.click();
+      return 'CLICKED';
+    })()`);
+    if (next !== "CLICKED") {
+      console.log(`[info] no more episodes after ${attempt} line attempt(s)`);
+      break;
+    }
+    mounted = await cdp.eval(WAIT(MOUNTED, 22000));
+    if (!mounted) {
+      console.log(`[info] ArtPlayer not remounted on attempt ${lineAttempts}`);
+      break;
+    }
+  }
+  playing = await cdp.eval(WAIT(PLAYING_EXPR, 20000));
+  if (!playing) {
+    const reason = await cdp.eval(`document.querySelector('.error-bar')?.innerText || 'no frames in 20s'`);
+    console.log(`[info] line ${lineAttempts} not playable: ${String(reason).slice(0, 120)}`);
+  }
+}
+console.log(`[info] real frames after ${lineAttempts} line attempt(s)`);
 assert(!!playing, "video decoded real frames", String(playing));
 
 const controls = await cdp.eval(`(() => {

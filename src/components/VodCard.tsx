@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 
 interface VodCardProps {
   title: string;
@@ -9,21 +9,35 @@ interface VodCardProps {
   onOpen: () => void;
 }
 
+/**
+ * 聚合搜索一次能出 200+ 张卡片，调用方传的 onOpen 是内联箭头函数（每次渲染
+ * 都是新引用）。这里只比较展示字段，点击时通过 ref 转发最新回调，让 memo
+ * 在父组件无关状态变化（进度、筛选开关、加载文案）时真正跳过重渲染。
+ */
+function sameCard(a: VodCardProps, b: VodCardProps): boolean {
+  return a.title === b.title && a.pic === b.pic && a.remarks === b.remarks && a.sub === b.sub;
+}
+
 /** 统一的影片卡片：封面 + 角标 + 标题。 */
-export default function VodCard({ title, pic, remarks, sub, onOpen }: VodCardProps) {
+const VodCard = memo(function VodCard({ title, pic, remarks, sub, onOpen }: VodCardProps) {
   const [broken, setBroken] = useState(false);
   const cover = pic?.trim();
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
+  const handleOpen = useCallback(() => onOpenRef.current(), []);
+  const handleError = useCallback(() => setBroken(true), []);
 
   return (
-    <button type="button" className="vod-card" onClick={onOpen} title={title}>
+    <button type="button" className="vod-card" onClick={handleOpen} title={title}>
       <div className="vod-card__poster">
         {cover && !broken ? (
           <img
             src={cover}
             alt={title}
             loading="lazy"
+            decoding="async"
             referrerPolicy="no-referrer"
-            onError={() => setBroken(true)}
+            onError={handleError}
           />
         ) : (
           <span className="vod-card__ph">无封面</span>
@@ -34,4 +48,6 @@ export default function VodCard({ title, pic, remarks, sub, onOpen }: VodCardPro
       {sub ? <div className="vod-card__sub">{sub}</div> : null}
     </button>
   );
-}
+}, sameCard);
+
+export default VodCard;
