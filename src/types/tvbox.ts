@@ -164,6 +164,28 @@ export interface PlayResolved {
   headers: [string, string][];
 }
 
+/** parses[] 通用解析请求（TVBox `parse=1` / `jx=1` 时使用） */
+export interface ParseRequest {
+  siteKey: string;
+  /** playerContent 返回的播放页 / 线路值 */
+  url: string;
+  /** 线路名，用于 ext.flag 匹配 */
+  flag?: string;
+  headers?: Record<string, string>;
+}
+
+/** 解析池命中结果 */
+export interface ParseResolved {
+  url: string;
+  /** 命中的解析器名，用于「解析来自 xxx」提示 */
+  parser: string;
+  /** json / webview */
+  kind: string;
+  headers: [string, string][];
+  /** 已尝试且失败的解析器，形如 `name: reason` */
+  tried: string[];
+}
+
 /** 本地反代状态（7.5） */
 export interface ProxyStatus {
   port: number;

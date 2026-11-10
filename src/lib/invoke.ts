@@ -15,6 +15,8 @@ import type {
   FetchResponse,
   HistoryItem,
   HomeResult,
+  ParseRequest,
+  ParseResolved,
   PlayRequest,
   PlayResolved,
   LiveListResult,
@@ -99,6 +101,11 @@ export const api = {
 
   resolvePlay(req: PlayRequest): Promise<PlayResolved> {
     return call("resolve_play", { request: req });
+  },
+
+  /** `parses[]` 通用解析池：`playerContent` 返回 parse=1 / jx=1 时调用。 */
+  parseResolve(req: ParseRequest): Promise<ParseResolved> {
+    return call("parse_resolve", { request: req });
   },
 
   openExternal(url: string): Promise<void> {

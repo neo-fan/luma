@@ -104,6 +104,11 @@ def route(site: dict[str, Any], global_spider: str | None) -> str:
     # Spider class names are passed as bare identifiers (`api: "csp_Xxx"`).
     if api.startswith("csp_") or (api and not api.startswith(("http://", "https://")) and "/" not in api):
         return "jvm"
+    # Group dividers (`{"key":"1","name":"--- 1 ---"}`) carry no api/ext/jar at
+    # all. They used to inherit the global spider and be counted as jvm sites,
+    # which burned one guaranteed-to-fail call per divider on every fan-out.
+    if not api and not site.get("ext") and not site.get("jar"):
+        return "none"
     if global_spider and not api:
         return "jvm"
     if type_no in (0, 1, 4):
@@ -169,12 +174,23 @@ def normalize_site(
         "filterable": _bool(site.get("filterable", 0)),
         "categories": _categories(site.get("categories")),
         "timeoutMs": timeout_ms,
-        "enabled": True,
+        # Group dividers stay in the snapshot (the UI can render them as
+        # headings) but are excluded from every fan-out.
+        "enabled": runtime != "none",
         "_raw": {k: v for k, v in site.items() if k not in known and k not in SITE_ALIASES},
     }
-    for optional in ("jar", "ext", "type"):
-        if site.get(optional) not in (None, ""):
-            out[optional] = site[optional]
+    # Spec 1773: `ext`/`header`/`ua`/`filter`/`quickSearch`/`timeout`/
+    # `categories`/`playerType`/`flags` must pass through untouched. Listing a
+    # field in `known` above only stops it landing in `_raw` — it still has to
+    # be copied here or it disappears from the snapshot entirely.
+    for passed in ("jar", "ext", "type", "ua", "filter", "playerType", "style", "indexs"):
+        if site.get(passed) not in (None, "", []):
+            out[passed] = site[passed]
+    if site.get("changeable") is not None:
+        out["changeable"] = _bool(site.get("changeable"))
+    order = site.get("order_num")
+    if isinstance(order, (int, float)) and not isinstance(order, bool):
+        out["orderNum"] = int(order)
     if runtime == "cms" and site.get("type") not in (0, 1, 4, None):
         out["_raw"]["needsProbe"] = True
     return out
@@ -237,7 +253,7 @@ def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
     snapshot_id = hashlib.sha1(origin.encode("utf-8")).hexdigest()[:12]
     return {
         "id": snapshot_id,
-        "name": str(config.get("name") or "stub"),
+        "name": _config_name(config, origin),
         "importedAt": datetime.now(timezone.utc).isoformat(),
         "sites": sites,
         "lives": lives,
@@ -247,6 +263,25 @@ def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
         "flags": config.get("flags") or [],
         "_raw": {k: v for k, v in config.items() if k not in known_top},
     }
+
+
+def _config_name(config: dict[str, Any], origin: str) -> str:
+    """Configs rarely carry a `name`; showing "stub" in the UI looks broken."""
+    explicit = str(config.get("name") or "").strip()
+    if explicit:
+        return explicit
+    cleaned = (origin or "").rstrip("/")
+    tail = cleaned.rsplit("/", 1)[-1]
+    if tail and not tail.startswith("http") and "?" not in tail:
+        stem = tail.rsplit(".", 1)[0]
+        if stem:
+            return stem
+    for scheme in ("https://", "http://"):
+        if cleaned.startswith(scheme):
+            host = cleaned[len(scheme) :].split("/", 1)[0]
+            if host:
+                return host
+    return "本地配置"
 
 
 def merge_repos(snapshots: list[dict[str, Any]]) -> dict[str, Any]:

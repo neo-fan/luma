@@ -138,6 +138,17 @@ pub async fn sniff(
                 .with_cause(err.to_string())
         })?;
 
+    // If this future is dropped (the parse pool races several parsers and
+    // aborts the losers), the guard still closes the window. Without it an
+    // aborted sniff leaks a hidden WebView2 for the app's whole lifetime.
+    struct CloseOnDrop<'a>(&'a tauri::WebviewWindow);
+    impl Drop for CloseOnDrop<'_> {
+        fn drop(&mut self) {
+            let _ = self.0.close();
+        }
+    }
+    let _closer = CloseOnDrop(&window);
+
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     if let Err(err) = window.with_webview(move |webview| install(webview, tx, ready_tx)) {

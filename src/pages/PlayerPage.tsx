@@ -84,19 +84,55 @@ export default function PlayerPage({
               playUrl?: string;
               url?: string;
               parse?: number;
+              jx?: number;
               header?: Record<string, string>;
             } | null;
             const candidate = String(played?.playUrl || played?.url || "");
             const parseFlag = Number(played?.parse ?? 0);
-            // `127.0.0.1:9978/proxy?do=py…` 现在由宿主实现（spider.proxy 转发），
-            // 直接使用即可；`resolve_play` 会识别本机代理地址并原样透传。
-            // parse=1 代表还要过 parses[] 通用解析，交给后级处理，不在这里猜。
-            if (/^https?:\/\//i.test(candidate) && parseFlag === 0) {
-              targetUrl = candidate;
-              const header = played?.header ?? {};
-              ua = header["User-Agent"] || header["user-agent"];
-              referer = header["Referer"] || header["referer"];
-              cookie = header["Cookie"] || header["cookie"];
+            const jxFlag = Number(played?.jx ?? 0);
+            const header = played?.header ?? {};
+            ua = header["User-Agent"] || header["user-agent"];
+            referer = header["Referer"] || header["referer"];
+            cookie = header["Cookie"] || header["cookie"];
+
+            if (/^https?:\/\//i.test(candidate)) {
+              // `127.0.0.1:9978/proxy?do=py…` 由宿主实现（spider.proxy 转发），
+              // `resolve_play` 会识别本机代理地址并原样透传。
+              const isLocalProxy =
+                /^https?:\/\/127\.0\.0\.1:\d+\/(proxy|proxy2)\b/i.test(candidate);
+              if (isLocalProxy) {
+                targetUrl = candidate;
+              } else if (parseFlag !== 0 || jxFlag !== 0) {
+                // TVBox 语义：parse=1 / jx=1 表示该地址还要过 parses[] 解析池
+                // （type 0 嗅探 / type 1 JSON 接口 / type 4 并行竞速）。
+                try {
+                  const hit = await api.parseResolve({
+                    siteKey,
+                    url: candidate,
+                    flag: playFrom,
+                    headers: header,
+                  });
+                  if (hit?.url) {
+                    targetUrl = hit.url;
+                    for (const [name, value] of hit.headers ?? []) {
+                      const lower = name.toLowerCase();
+                      if (lower === "user-agent") {
+                        ua = value;
+                      } else if (lower === "referer") {
+                        referer = value;
+                      } else if (lower === "cookie") {
+                        cookie = value;
+                      }
+                    }
+                    setSwitchTip(`解析来自「${hit.parser}」`);
+                  }
+                } catch {
+                  // 解析池全失败：保留原地址，由 resolve_play 的嗅探兜底。
+                  targetUrl = candidate;
+                }
+              } else {
+                targetUrl = candidate;
+              }
             }
           } catch {
             // CMS / 未实现 playerContent 的源：沿用原始地址。

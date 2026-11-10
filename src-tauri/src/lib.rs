@@ -6,6 +6,7 @@ pub mod error;
 pub mod http;
 pub mod live;
 pub mod mpv;
+pub mod parse;
 pub mod paths;
 pub mod play;
 pub mod process;
@@ -76,6 +77,7 @@ pub fn run() {
             live::live_parse,
             proxy::proxy_status,
             play::resolve_play,
+            parse::parse_resolve,
             play::open_external,
             mpv::mpv_play,
             store::favorites_list,

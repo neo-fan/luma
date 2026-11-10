@@ -135,7 +135,7 @@ def standard(port: int) -> dict:
         "wallpaper": f"http://127.0.0.1:{port}/wallpaper.jpg",
         "sites": json.loads(json.dumps(SITES).replace("{port}", str(port))),
         "lives": json.loads(json.dumps(LIVES).replace("{port}", str(port))),
-        "parses": PARSES,
+        "parses": json.loads(json.dumps(PARSES).replace("{port}", str(port))),
         "flags": ["qq", "youku"],
         "rules": [{"name": "stub", "hosts": [f"127.0.0.1:{port}"], "regex": ["127\\.0\\.0\\.1/cms/"]}],
         "hosts": [f"127.0.0.1:{port}"],

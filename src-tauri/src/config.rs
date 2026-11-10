@@ -165,6 +165,24 @@ impl ConfigStore {
         ))
     }
 
+    /// Snapshot of the active config (falls back to the last imported one).
+    ///
+    /// `parses`/`flags` live at config level, not per site, so playback needs
+    /// this rather than `find_site`.
+    pub fn active_snapshot(&self) -> Option<ConfigSnapshot> {
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard
+            .iter()
+            .find(|entry| active.as_deref() == Some(entry.snapshot.id.as_str()))
+            .or_else(|| guard.last())
+            .map(|entry| entry.snapshot.clone())
+    }
+
     /// Sites of the active config, de-duplicated by key (first wins).
     ///
     /// Old snapshots must not leak into the current config's fan-out: a

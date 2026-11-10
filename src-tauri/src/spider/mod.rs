@@ -300,10 +300,12 @@ async fn aggregate(
         // Runtimes that are not implemented yet are skipped instead of failing
         // the whole home page.
         .filter(|site| runtime_for(route(site)).is_some())
-        // Divider entries (`-- 1 --`) carry no api and would only produce noise.
+        // Divider entries (`--- 1 ---`) are normalised to `enabled: false`, but
+        // older snapshots may still carry them, so keep a defensive check. They
+        // must not be exempted just because they inherited the global jar.
         .filter(|site| {
             let api = site.get("api").and_then(Value::as_str).unwrap_or("");
-            !api.is_empty() || route(site) == RuntimeKind::Jvm
+            !api.is_empty() || site.get("ext").is_some()
         })
         .collect();
 

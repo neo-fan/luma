@@ -104,6 +104,7 @@ python tests/e2e/p0.py     # P0 基线
 python tests/e2e/p1.py     # P1 子进程运行时
 python tests/e2e/p2.py     # P2 jar / JVM 运行时
 python tests/e2e/p3.py     # P3 嗅探 / mpv / 打包
+python tests/e2e/parse_check.py  # 解析池与配置字段（离线，无需窗口）
 corepack pnpm test         # 前端单测
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
@@ -116,6 +117,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 |---|---|---|
 | CMS 采集（`api.php/provide/vod`） | ✅ 支持 | 主流配置的主体，直链 m3u8 |
 | Python（TVBox `base.spider` 框架） | ✅ 支持 | 含直链型与 `proxy?do=py` 型 |
+| `parses[]` 通用解析池 | ✅ 支持 | type 0 嗅探 / type 1 JSON 接口 / type 4 并行竞速 |
 | 直播（`lives`） | ✅ 支持 | m3u8 经本地代理重写后播放 |
 | jar（`csp_*` / `spider` 全局 jar） | ⚠️ 仅纯 class jar | 见下方说明 |
 | js（drpy2） | ⚠️ 不支持 | 需要 ES 模块加载器与 cheerio |
@@ -135,6 +137,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 ## 已知限制
 
 - py 源若返回 TVBox 本地代理地址（`127.0.0.1:9978/proxy?do=py&…`），宿主已实现该路由并转发给 `Spider.proxy()`；但返回自有本地服务地址（如 `127.0.0.1:10010`）的源仍不可用。
+- `parses[]` 只实现 type 0（网页嗅探）、type 1（JSON 接口）与 type 4（并行竞速）。type 2/3 依赖 jar 反射（`com.github.catvod.parser.Json*`），配置里只有这两类解析器时会直接返回「不支持」而不是卡住。
+- 公开的 jx 解析接口存活期普遍很短，解析池失败是常态；失败会保留原地址，由内置嗅探兜底。
 - T-31（`tvbox://` 协议关联、JumpList、全屏勿扰）未实现。
 - `mpv` 默认不随 zip 分发（单文件约 117MB），需要时放入 `sidecars/mpv/`，或用 `--with-mpv` 重新打包。
 - 公开源失效频繁，属正常现象；自动换源与源级原因提示是必需能力。
