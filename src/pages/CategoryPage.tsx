@@ -5,6 +5,7 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { usePageState } from "../lib/usePageState";
 import type { ResultPage } from "../types/tvbox";
 
 interface CategoryPageProps {
@@ -17,19 +18,24 @@ interface CategoryPageProps {
 
 /** 分类页：网格 + 分页。 */
 export default function CategoryPage({ siteKey, tid, title, onBack, navigate }: CategoryPageProps) {
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<ResultPage | null>(null);
+  const stateKey = `category:${siteKey}:${tid}`;
+  // 页码与结果都按「站点 + 分类」保留，看完详情返回时停在同一页。
+  const [page, setPage] = usePageState<number>(`${stateKey}:page`, 1);
+  const [data, setData] = usePageState<ResultPage | null>(`${stateKey}:${page}:data`, null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
+    if (data && reload === 0) {
+      return;
+    }
     let alive = true;
     const run = async () => {
       setLoading(true);
       setError("");
       try {
-        const result = await api.category(siteKey, tid, page);
+        const result = await api.category(siteKey, tid, page, reload > 0);
         if (alive) {
           setData(result);
         }

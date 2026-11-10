@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canFailover } from "./lib/format";
 import { api } from "./lib/invoke";
+import { pageCache } from "./lib/pageCache";
+import { clearPageStates } from "./lib/usePageState";
 import CategoryPage from "./pages/CategoryPage";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
@@ -37,6 +39,20 @@ export type View =
 export type Navigate = (view: View, replace?: boolean) => void;
 
 const SITE_CACHE_KEY = "tvbox:sites:v1";
+
+/** 视图标识：用于按「栈深度 + 页面」保存滚动位置，同名页面不同深度互不覆盖。 */
+function viewKey(view: View): string {
+  switch (view.name) {
+    case "category":
+      return `category:${view.siteKey}:${view.tid}`;
+    case "detail":
+      return `detail:${view.siteKey}:${view.vodId}`;
+    case "player":
+      return `player:${view.siteKey}:${view.vodId}:${view.playUrl}`;
+    default:
+      return view.name;
+  }
+}
 
 interface SiteCache {
   configId: string;
@@ -97,22 +113,58 @@ export default function App() {
   }, [preferredSite, usableSites]);
 
   const view = stack[stack.length - 1];
+  const scrollKey = `${stack.length}:${viewKey(view)}`;
+  const contentRef = useRef<HTMLElement | null>(null);
+  /** 切页前保存、切页后恢复；只存数字，不占内存。 */
+  const scrollPositions = useRef(new Map<string, number>());
+  const scrollKeyRef = useRef(scrollKey);
+
+  const saveScroll = useCallback(() => {
+    const el = contentRef.current;
+    if (el) {
+      scrollPositions.current.set(scrollKeyRef.current, el.scrollTop);
+    }
+  }, []);
+
+  // 恢复要等一帧：详情页缓存命中是同步直出，但布局撑开 scrollHeight 需要 rAF。
+  useLayoutEffect(() => {
+    scrollKeyRef.current = scrollKey;
+    const el = contentRef.current;
+    if (!el) {
+      return;
+    }
+    const saved = scrollPositions.current.get(scrollKey) ?? 0;
+    el.scrollTop = saved;
+    const frame = window.requestAnimationFrame(() => {
+      el.scrollTop = saved;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [scrollKey]);
 
   const navigate = useCallback<Navigate>((next, replace = false) => {
+    saveScroll();
     setStack((current) =>
       replace ? [...current.slice(0, -1), next] : [...current, next],
     );
-  }, []);
+  }, [saveScroll]);
 
   const back = useCallback(() => {
+    saveScroll();
     setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
-  }, []);
+  }, [saveScroll]);
 
   const resetTo = useCallback((next: View) => {
+    saveScroll();
     setStack([next]);
-  }, []);
+  }, [saveScroll]);
 
   const handleImported = useCallback((snapshot: ConfigSnapshot) => {
+    // 换了配置（或重新导入同一份）后，旧站点的详情/分类与页面筛选状态
+    // 都不能再复用；scope 变化会清一次，同 id 重导入也强制清一次。
+    pageCache.setScope(snapshot.id);
+    pageCache.clear();
+    clearPageStates();
+    scrollPositions.current.clear();
     const next: SiteCache = {
       configId: snapshot.id,
       sites: snapshot.sites,
@@ -127,6 +179,9 @@ export default function App() {
   }, []);
 
   const handleConfigRemoved = useCallback((id: string) => {
+    pageCache.clear();
+    clearPageStates();
+    scrollPositions.current.clear();
     setCache((current) => {
       if (!current || current.configId !== id) {
         return current;
@@ -151,6 +206,8 @@ export default function App() {
         if (!alive || !snapshot || snapshot.sites.length === 0) {
           return;
         }
+        // 后端 active 配置是唯一真源；换过配置就让旧 scope 的缓存整体失效。
+        pageCache.setScope(snapshot.id);
         // 后端是唯一真源：即使 configId 相同，运行策略升级（例如导入时屏蔽
         // jar 源）也会改变 sites，必须无条件覆盖旧缓存，否则前端又会列出
         // 已被禁止运行的站点。
@@ -276,7 +333,7 @@ export default function App() {
           <span>v0.1.0</span>
         </div>
       </aside>
-      <main className="content">{content}</main>
+      <main className="content" ref={contentRef}>{content}</main>
     </div>
   );
 }

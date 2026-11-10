@@ -6,6 +6,7 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { usePageState } from "../lib/usePageState";
 import { rankByTitle, titleMatchScore } from "../lib/format";
 import type { ResultPage, Site, VodInfo } from "../types/tvbox";
 
@@ -47,19 +48,22 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
   // P2: jar sites are dispatchable now. Keep them selectable so a failing
   // source shows its reason instead of silently disappearing from the list.
   const selectableSites = sites.filter((item) => item.enabled);
-  const [keyword, setKeyword] = useState("");
+  // 聚合搜索要 12~20 秒；点进详情再返回时不应把结果清空重搜。
+  // 只有 loading / error 是瞬时状态，其余都留在页面快照里。
+  const K = "search:state:";
+  const [keyword, setKeyword] = usePageState<string>(`${K}keyword`, "");
   // A 100-site config makes single-site search the wrong default: users expect
   // one keyword to cover the whole active config.
-  const [target, setTarget] = useState<string>(ALL_SITES);
-  const [hits, setHits] = useState<SearchHit[]>([]);
-  const [matchCount, setMatchCount] = useState(0);
+  const [target, setTarget] = usePageState<string>(`${K}target`, ALL_SITES);
+  const [hits, setHits] = usePageState<SearchHit[]>(`${K}hits`, []);
+  const [matchCount, setMatchCount] = usePageState<number>(`${K}matchCount`, 0);
   /** 视图偏好，跨搜索保留；不改后端返回，只影响渲染哪些卡片。 */
-  const [onlyMatches, setOnlyMatches] = useState(false);
-  const [failures, setFailures] = useState(0);
+  const [onlyMatches, setOnlyMatches] = usePageState<boolean>(`${K}onlyMatches`, false);
+  const [failures, setFailures] = usePageState<number>(`${K}failures`, 0);
   /** 源级降级原因（规格 14 节）：按出现次数取前三条，避免刷屏。 */
-  const [failureReasons, setFailureReasons] = useState<string[]>([]);
-  const [progress, setProgress] = useState("");
-  const [searched, setSearched] = useState(false);
+  const [failureReasons, setFailureReasons] = usePageState<string[]>(`${K}failureReasons`, []);
+  const [progress, setProgress] = usePageState<string>(`${K}progress`, "");
+  const [searched, setSearched] = usePageState<boolean>(`${K}searched`, false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 

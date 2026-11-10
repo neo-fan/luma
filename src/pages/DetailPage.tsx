@@ -6,7 +6,9 @@ import SourcePicker from "../components/SourcePicker";
 import Spinner from "../components/Spinner";
 import { formatDuration, parsePlayLines, toVodRef } from "../lib/format";
 import type { Episode, PlayLine } from "../lib/format";
-import { api, errorMessage } from "../lib/invoke";
+import { api, cacheKeys, errorMessage } from "../lib/invoke";
+import { pageCache } from "../lib/pageCache";
+import { usePageState } from "../lib/usePageState";
 import { countEpisodes } from "../lib/sources";
 import type { SourceOption } from "../lib/sources";
 import type { HistoryItem, Site, VodInfo } from "../types/tvbox";
@@ -29,29 +31,42 @@ export default function DetailPage({
   navigate,
   onBack,
 }: DetailPageProps) {
-  const [vod, setVod] = useState<VodInfo | null>(null);
+  const detailKey = cacheKeys.detail(siteKey, vodId);
+  /**
+   * 播放页返回时组件会重新挂载：先从数据缓存 / UI 快照直出，命中就完全不发
+   * IPC，也不会闪一下 Spinner。线路、筛选词、倒序、简介展开状态一并保留。
+   */
+  const [vod, setVod] = usePageState<VodInfo | null>(
+    `${detailKey}:vod`,
+    pageCache.peek<VodInfo[]>(detailKey)?.[0] ?? null,
+  );
+  const [lineIndex, setLineIndex] = usePageState(`${detailKey}:line`, 0);
+  const [episodeQuery, setEpisodeQuery] = usePageState(`${detailKey}:query`, "");
+  const [reverse, setReverse] = usePageState(`${detailKey}:reverse`, false);
+  const [expanded, setExpanded] = usePageState(`${detailKey}:expanded`, false);
+
+  // 瞬时状态不缓存：刷新序号每次挂载归零，保证回退一定走缓存。
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
-
   const [favorite, setFavorite] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
   const [favTip, setFavTip] = useState("");
-
-  const [lineIndex, setLineIndex] = useState(0);
-  const [episodeQuery, setEpisodeQuery] = useState("");
-  const [reverse, setReverse] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const [showSources, setShowSources] = useState(false);
+  // 历史进度刚在播放页写过，必须每次回到详情重新读，不能缓存成旧值。
   const [resume, setResume] = useState<HistoryItem | null>(null);
 
   useEffect(() => {
+    // reload>0 是用户点了「↻ 刷新」；此时忽略缓存强制拉取最新播放列表。
+    if (vod && reload === 0) {
+      return;
+    }
     let alive = true;
     const run = async () => {
       setLoading(true);
       setError("");
       try {
-        const list = await api.detail(siteKey, vodId);
+        const list = await api.detail(siteKey, vodId, reload > 0);
         if (!alive) {
           return;
         }
@@ -78,6 +93,9 @@ export default function DetailPage({
     return () => {
       alive = false;
     };
+    // vod 故意不进依赖：只在挂载 / 换源 / 手动刷新时决定是否请求，
+    // 否则渲染过程中写入 vod 会立刻再触发一次 effect。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteKey, vodId, reload]);
 
   // 收藏与观看进度都是「看一眼就走」的旁路数据，失败不阻断详情浏览。
@@ -238,6 +256,13 @@ export default function DetailPage({
   ].filter((item): item is string => Boolean(item && item.trim()));
   const site = sites.find((item) => item.key === siteKey);
   const description = vod.vod_content?.trim() || "暂无简介";
+  const cacheAge = pageCache.age(detailKey);
+  const cacheLabel =
+    cacheAge === undefined
+      ? ""
+      : cacheAge < 60_000
+        ? "刚缓存"
+        : `${Math.floor(cacheAge / 60_000)} 分钟前缓存`;
 
   return (
     <section className="page">
@@ -249,10 +274,24 @@ export default function DetailPage({
           <span className="detail-source" title={siteKey}>
             当前源：{siteName || siteKey}
           </span>
+          {cacheLabel ? (
+            <span className="page-meta" title="播放列表来自本次会话的缓存，点「↻ 刷新」可强制重新拉取">
+              {cacheLabel}
+            </span>
+          ) : null}
         </div>
         <div className="detail-actions">
           <button type="button" className="btn" onClick={() => setShowSources(true)}>
             ⇄ 换源
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setReload((value) => value + 1)}
+            disabled={loading}
+            title="忽略缓存，重新拉取播放列表"
+          >
+            ↻ 刷新
           </button>
           <button
             type="button"

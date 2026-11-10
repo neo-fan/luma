@@ -5,6 +5,7 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { usePageState } from "../lib/usePageState";
 import type { HomeResult, Site } from "../types/tvbox";
 
 interface HomePageProps {
@@ -16,7 +17,8 @@ interface HomePageProps {
 
 /** 首页：站点切换 + 分类标签 + 推荐网格。 */
 export default function HomePage({ sites, siteKey, onSiteChange, navigate }: HomePageProps) {
-  const [home, setHome] = useState<HomeResult | null>(null);
+  // 首页推荐内容按站点保留，返回首页时直接出结果；站点 key 变化时自然失效。
+  const [home, setHome] = usePageState<HomeResult | null>(`home:${siteKey}:data`, null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
@@ -26,6 +28,10 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
   const list = home?.list ?? [];
 
   useEffect(() => {
+    // 已有缓存内容且不是手动刷新：跳过整个请求，不闪 Spinner。
+    if (home && reload === 0) {
+      return;
+    }
     let alive = true;
     const run = async () => {
       if (!siteKey) {
@@ -39,7 +45,7 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
       // 冷启动或刚导入配置后，站点写入与页面挂载可能抢跑，失败时自动重试一次。
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-          const result = await api.home(siteKey);
+          const result = await api.home(siteKey, reload > 0);
           if (alive) {
             setHome(result);
             setError("");

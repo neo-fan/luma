@@ -4,6 +4,7 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import { api, errorMessage } from "../lib/invoke";
+import { usePageState } from "../lib/usePageState";
 import type { LiveGroup, LiveSource } from "../types/tvbox";
 
 interface LivePageProps {
@@ -38,21 +39,27 @@ const CHANNEL_LIMIT = 300;
 
 /** 直播：配置里的 lives[] 列表 → 分组频道 → 播放。 */
 export default function LivePage({ lives, navigate }: LivePageProps) {
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [groups, setGroups] = useState<LiveGroup[]>([]);
+  const [activeIndex, setActiveIndex] = usePageState<number>("live:index", 0);
+  const [keyword, setKeyword] = usePageState<string>("live:keyword", "");
+  const active = lives[activeIndex];
+  const sourceUrl = active?.url ?? "";
+  // m3u 列表按源地址保留，播完一个频道返回时不再重新下载解析几千行。
+  const [groups, setGroups] = usePageState<LiveGroup[]>(
+    `live:${sourceUrl || `container:${activeIndex}`}:groups`,
+    [],
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
-  const [keyword, setKeyword] = useState("");
-
-  const active = lives[activeIndex];
 
   useEffect(() => {
     if (!active) {
       setGroups([]);
       return;
     }
-    const sourceUrl = active.url;
+    if (groups.length > 0 && reload === 0) {
+      return;
+    }
     if (!sourceUrl) {
       // 分组容器：本地展开即可，别拿 undefined 去请求接口。
       const local = expandChannels(active);
@@ -70,7 +77,7 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       setLoading(true);
       setError("");
       try {
-        const result = await api.liveParse(sourceUrl, active.ua);
+        const result = await api.liveParse(sourceUrl, active.ua, reload > 0);
         if (alive) {
           setGroups(result.groups ?? []);
         }

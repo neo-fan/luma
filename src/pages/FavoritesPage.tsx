@@ -5,6 +5,7 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { usePageState } from "../lib/usePageState";
 import type { FavoriteItem, VodRef } from "../types/tvbox";
 
 interface FavoritesPageProps {
@@ -13,7 +14,9 @@ interface FavoritesPageProps {
 
 /** 收藏页：列表 + 取消收藏。 */
 export default function FavoritesPage({ navigate }: FavoritesPageProps) {
-  const [items, setItems] = useState<FavoriteItem[]>([]);
+  // 收藏是本地 SQLite 读，成本极低：列表先直出，再静默刷新（详情页刚点过
+  // 星标时能立刻反映出来），有数据时不再闪 Spinner。
+  const [items, setItems] = usePageState<FavoriteItem[]>("favorites:items", []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
@@ -22,7 +25,9 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
   useEffect(() => {
     let alive = true;
     const run = async () => {
-      setLoading(true);
+      if (items.length === 0) {
+        setLoading(true);
+      }
       setError("");
       try {
         const list = await api.favoritesList();
@@ -44,6 +49,8 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
     return () => {
       alive = false;
     };
+    // items 故意不进依赖：只在挂载 / 手动刷新时读库，渲染写入不再触发。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reload]);
 
   const remove = async (item: FavoriteItem) => {

@@ -5,6 +5,7 @@
  * `@tauri-apps/api`，禁止 import 任何 Node 内置模块。
  */
 import { invoke } from "@tauri-apps/api/core";
+import { CACHE_TTL, pageCache } from "./pageCache";
 import type {
   AppError,
   ConfigMeta,
@@ -57,6 +58,21 @@ function spider<T>(siteKey: string, method: SpiderMethod, args: unknown[]): Prom
   return call<T>("spider_invoke", { request: req });
 }
 
+/**
+ * 读结果的缓存键：页面用同一组函数做首屏直出 / 失效，避免手写字符串漂移。
+ * 只覆盖「短时间内不会变、且重复拉取代价高」的 spider 读操作；收藏、历史、
+ * 解析地址与播放解析不带时效保证，一律不走缓存。
+ */
+export const cacheKeys = {
+  home: (siteKey: string) => `home:${siteKey}`,
+  category: (siteKey: string, tid: string, page: number) =>
+    `category:${siteKey}:${tid}:${page}`,
+  search: (siteKey: string, keyword: string, page: number) =>
+    `search:${siteKey}:${keyword}:${page}`,
+  detail: (siteKey: string, vodId: string) => `detail:${siteKey}:${vodId}`,
+  live: (url: string, ua?: string) => `live:${url}:${ua ?? ""}`,
+};
+
 /** 7.1 的 command 面：一一对应，不额外暴露能力。 */
 export const api = {
   configImport(source: ConfigSource): Promise<ConfigSnapshot> {
@@ -80,29 +96,63 @@ export const api = {
     return call("spider_invoke", { request: req });
   },
 
-  home(siteKey: string): Promise<HomeResult> {
-    return spider<HomeResult>(siteKey, "homeContent", []);
+  /** force=true 用于页面上的「刷新」按钮；其余调用自动复用缓存。 */
+  home(siteKey: string, force = false): Promise<HomeResult> {
+    return pageCache.load(
+      cacheKeys.home(siteKey),
+      CACHE_TTL.home,
+      () => spider<HomeResult>(siteKey, "homeContent", []),
+      force,
+    );
   },
 
-  category(siteKey: string, tid: string, page: number): Promise<ResultPage> {
-    return spider<ResultPage>(siteKey, "categoryContent", [tid, page]);
+  category(siteKey: string, tid: string, page: number, force = false): Promise<ResultPage> {
+    return pageCache.load(
+      cacheKeys.category(siteKey, tid, page),
+      CACHE_TTL.category,
+      () => spider<ResultPage>(siteKey, "categoryContent", [tid, page]),
+      force,
+    );
   },
 
-  search(siteKey: string, keyword: string, page: number): Promise<ResultPage> {
+  search(siteKey: string, keyword: string, page: number, force = false): Promise<ResultPage> {
     // TVBox 统一签名是 (key, quick, pg)；CMS 兼容两参数，py/js 需要三参数。
-    return spider<ResultPage>(siteKey, "searchContent", [keyword, false, page]);
+    return pageCache.load(
+      cacheKeys.search(siteKey, keyword, page),
+      CACHE_TTL.search,
+      () => spider<ResultPage>(siteKey, "searchContent", [keyword, false, page]),
+      force,
+    );
   },
 
-  detail(siteKey: string, vodId: string): Promise<VodInfo[]> {
-    return spider<VodInfo[]>(siteKey, "detailContent", [vodId]);
+  /** 详情页、播放页选集面板、手动换源、自动换源都读同一份详情。 */
+  async detail(siteKey: string, vodId: string, force = false): Promise<VodInfo[]> {
+    const key = cacheKeys.detail(siteKey, vodId);
+    const list = await pageCache.load(
+      key,
+      CACHE_TTL.detail,
+      () => spider<VodInfo[]>(siteKey, "detailContent", [vodId]),
+      force,
+    );
+    // 空详情多半是源站偶发失败，别把它缓存十分钟；下次进来 / 点刷新可重试。
+    if (!list || list.length === 0) {
+      pageCache.invalidate(key);
+    }
+    return list;
   },
 
   httpFetch(req: FetchRequest): Promise<FetchResponse> {
     return call("http_fetch", { req });
   },
 
-  liveParse(url: string, ua?: string): Promise<LiveListResult> {
-    return call("live_parse", { url, ua });
+  /** 直播 m3u 动辄数千频道，返回直播页时不要重新下载解析一遍。 */
+  liveParse(url: string, ua?: string, force = false): Promise<LiveListResult> {
+    return pageCache.load(
+      cacheKeys.live(url, ua),
+      CACHE_TTL.live,
+      () => call("live_parse", { url, ua }),
+      force,
+    );
   },
 
   proxyStatus(): Promise<ProxyStatus> {
