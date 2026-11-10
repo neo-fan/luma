@@ -54,19 +54,9 @@ impl Conn {
 }
 
 fn adapter_root() -> PathBuf {
-    // Installed builds carry the adapter under <resource>/sidecars/py; dev keeps
-    // it next to the source tree. Probe instead of guessing from the exe path so
-    // `cargo run` and the NSIS install share one code path.
-    if let Ok(dir) = std::env::var("TVBOX_RESOURCE_DIR") {
-        let path = PathBuf::from(dir);
-        if path.join("sidecars").join("py").join("main.py").is_file() {
-            return path;
-        }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_default()
+    // Dev checkout, portable folder or installed build: probe for the adapter
+    // instead of assuming one resource layout (see paths::sidecar_roots).
+    crate::paths::find(&["sidecars", "py", "main.py"]).unwrap_or_else(crate::paths::source_root)
 }
 
 /// Python launcher plus the working directory it needs.

@@ -49,18 +49,8 @@ fn disabled() -> &'static StdMutex<HashSet<String>> {
 }
 
 fn project_root() -> PathBuf {
-    // Same resource-dir probing as bridge::adapter_root, so an installed build
-    // finds <resource>/sidecars/java/runner.jar.
-    if let Ok(dir) = std::env::var("TVBOX_RESOURCE_DIR") {
-        let path = PathBuf::from(dir);
-        if path.join("sidecars").join("java").join("runner.jar").is_file() {
-            return path;
-        }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_default()
+    // Same multi-layout probing as bridge::adapter_root.
+    crate::paths::find(&["sidecars", "java", "runner.jar"]).unwrap_or_else(crate::paths::source_root)
 }
 
 /// Resolve the JVM launcher and the runner jar. No absolute machine path is

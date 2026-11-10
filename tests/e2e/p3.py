@@ -20,13 +20,15 @@ import subprocess
 import sys
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 STUB = "http://127.0.0.1:8787"
 CDP = "http://127.0.0.1:9222/json/list"
 TAURI_CONF = ROOT / "src-tauri" / "tauri.conf.json"
-INSTALLER_DIR = ROOT / "src-tauri" / "target" / "release" / "bundle" / "nsis"
+PORTABLE_ZIP = ROOT / "dist" / "TVBox-Desktop-0.1.0-portable.zip"
+PORTABLE_DIR = ROOT / "dist" / "portable" / "TVBox Desktop"
 SIZE_REPORT = ROOT / "docs" / "size-report.md"
 README = ROOT / "README.md"
 
@@ -104,21 +106,38 @@ def t29_t30_phase() -> None:
 def t32_phase() -> None:
     conf = json.loads(TAURI_CONF.read_text(encoding="utf-8"))
     bundle = conf.get("bundle", {})
-    external = bundle.get("externalBin", [])
-    resources = bundle.get("resources", {})
-    check("binaries/qjs-runner" in external, "T-32 bundle", "externalBin registered", str(external))
-    resource_text = json.dumps(resources, ensure_ascii=False)
-    check("sidecars/jre" in resource_text, "T-32 bundle", "JRE bundled as resource")
-    check("sidecars/python-embed" in resource_text, "T-32 bundle", "Python embeddable bundled")
+    # The deliverable is a portable folder/zip, so no installer target is built.
+    check(bundle.get("targets") == [], "T-32 portable", "installer targets disabled")
+    check(SIZE_REPORT.is_file(), "T-32 portable", "docs/size-report.md exists")
 
-    check(SIZE_REPORT.is_file(), "T-32 bundle", "docs/size-report.md exists")
-    installers = sorted(INSTALLER_DIR.glob("*.exe")) if INSTALLER_DIR.is_dir() else []
-    if not installers:
-        check(False, "T-32 bundle", "NSIS installer built", f"missing under {INSTALLER_DIR}")
+    if not PORTABLE_ZIP.is_file():
+        check(False, "T-32 portable", "portable zip built",
+              "run `python tools/make_portable.py`")
         return
-    size_mb = installers[0].stat().st_size / (1024 * 1024)
-    check(size_mb <= 130, "T-32 bundle", "installer <= 130MB", f"{size_mb:.1f}MB {installers[0].name}")
-    record("T-32 bundle", "installer path", "PASS", str(installers[0].relative_to(ROOT)))
+
+    size_mb = PORTABLE_ZIP.stat().st_size / (1024 * 1024)
+    check(size_mb <= 45, "T-32 portable", "zip <= 45MB", f"{size_mb:.2f}MB")
+    with zipfile.ZipFile(PORTABLE_ZIP) as archive:
+        names = archive.namelist()
+    for required in (
+        "TVBox Desktop.exe",
+        "sidecars/py/main.py",
+        "sidecars/java/runner.jar",
+        "sidecars/jre/bin/java.exe",
+        "sidecars/python-embed/python.exe",
+    ):
+        check(any(name.endswith(required) for name in names), "T-32 portable",
+              f"zip contains {required}")
+    check(any(name.endswith("data/.keep") for name in names), "T-32 portable",
+          "zip contains portable data dir")
+    # The self-check proves the packaged layout actually resolves its sidecars.
+    selfcheck = PORTABLE_DIR / "data" / "selfcheck.log"
+    if selfcheck.is_file():
+        text = selfcheck.read_text(encoding="utf-8", errors="replace")
+        check("ping ok" in text, "T-32 portable", "portable self-check ping", text.strip()[:80])
+    else:
+        record("T-32 portable", "portable self-check ping", "N/A",
+               "run the folder once with TVBOX_SELFCHECK=1")
 
 
 def t33_phase() -> None:

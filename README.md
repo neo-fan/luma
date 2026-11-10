@@ -32,9 +32,17 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架
 
 ```powershell
 corepack pnpm install
-corepack pnpm tauri dev                    # 开发
-corepack pnpm tauri build --bundles nsis   # 安装包
+corepack pnpm tauri dev                     # 开发
+python tools/make_portable.py               # 绿色版：dist/portable + zip
+python tools/make_portable.py --with-mpv    # 连 mpv 一起打（体积 +40MB）
 ```
+
+产物：
+
+- `dist/portable/TVBox Desktop/` —— 解压即用的文件夹；
+- `dist/TVBox-Desktop-0.1.0-portable.zip` —— 分发包（约 41MB）。
+
+不需要安装程序；整个文件夹可以放在任意目录、U 盘或移动硬盘。
 
 首次构建前如需重建运行时（JRE / Python embeddable / sidecar 暂存）：
 
@@ -66,14 +74,28 @@ $env:TVBOX_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 3. 播放失败时的顺序：同片其它线路 → 其它站点 → 第 4 级嗅探 → mpv / 外部播放器。搜索页会列出未响应源的原因。
 4. 直播页可导入 m3u 源观看。
 
-## 安装与 SmartScreen
+## 运行（便携版）
 
-安装包未做代码签名，首次运行 Windows 可能弹出 SmartScreen：
+1. 解压 `TVBox-Desktop-0.1.0-portable.zip` 到任意目录；
+2. 双击 `TVBox Desktop.exe`。
 
-1. 点击「更多信息」；
-2. 点击「仍要运行」。
+配置、收藏、历史都写在 **exe 同级的 `data/`** 目录；`data/` 存在即自动进入便携模式，不会写 `%APPDATA%`。删除整个文件夹即完成卸载。
 
-正式分发需要 OV/EV 代码签名证书。
+未签名的 exe 首次运行可能触发 SmartScreen：点击「更多信息」→「仍要运行」。正式分发需要 OV/EV 代码签名证书。
+
+便携版布局：
+
+```text
+TVBox Desktop/
+  TVBox Desktop.exe
+  sidecars/
+    py/               适配层源码
+    python-embed/     嵌入式 Python 3.11 + 第三方包
+    jre/              jlink 裁剪的 JDK 17
+    java/runner.jar   JVM spider 桥
+    mpv/              可选，自行放入
+  data/               配置 / 收藏 / 历史
+```
 
 ## 测试
 
@@ -92,5 +114,5 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 
 - 第三方 **Android dex jar** 在 Win x64 无法加载（jar 内是 `classes.dex`，依赖 ART / okhttp / QuickJS 等）。这类源会快速失败并给出原因；jar 运行时只对纯 class jar 与仓库内自编模板 jar 作保证。
 - T-31（`tvbox://` 协议关联、JumpList、全屏勿扰）未实现。
-- `mpv` 不随安装包分发（体积考虑），需手动放入 `sidecars/mpv/` 或按需下载。
+- `mpv` 默认不随 zip 分发（单文件约 117MB），需要时放入 `sidecars/mpv/`，或用 `--with-mpv` 重新打包。
 - 公开源失效频繁，属正常现象；自动换源与源级原因提示是必需能力。

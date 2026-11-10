@@ -6,6 +6,7 @@ pub mod error;
 pub mod http;
 pub mod live;
 pub mod mpv;
+pub mod paths;
 pub mod play;
 pub mod process;
 pub mod proxy;
@@ -33,6 +34,28 @@ pub fn run() {
                 std::env::set_var("TVBOX_RESOURCE_DIR", &resource);
                 tracing::info!(dir = %resource.display(), "resource dir");
             }
+            // Optional startup self-check (`TVBOX_SELFCHECK=1`): exercises the
+            // Python sidecar path resolution and leaves the result in
+            // `<data>/selfcheck.log`. Off by default; useful for diagnosing a
+            // portable/installed layout without a console.
+            if std::env::var("TVBOX_SELFCHECK").ok().as_deref() == Some("1") {
+                tauri::async_runtime::spawn(async move {
+                    let outcome = match tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        bridge::ping(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(value)) => format!("ping ok: {value}"),
+                        Ok(Err(err)) => format!("ping err: {} {}", err.code, err.message),
+                        Err(_) => "ping timeout".to_string(),
+                    };
+                    let dir = store::data_dir();
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = std::fs::write(dir.join("selfcheck.log"), outcome);
+                });
+            }
+
             // 7.5: the local reverse proxy is started by the Rust host only.
             match proxy::start() {
                 Ok(state) => {

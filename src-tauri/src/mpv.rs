@@ -13,35 +13,17 @@ use std::process::{Command, Stdio};
 
 const MPV_PIPE: &str = r"\\.\pipe\tvbox-mpv";
 
-fn candidate_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    // Installed build: resources are copied under the resource dir.
-    if let Ok(dir) = std::env::var("TVBOX_RESOURCE_DIR") {
-        roots.push(PathBuf::from(dir));
-    }
-    // Dev build: TVBOX_RESOURCE_DIR points at target/debug, which has no
-    // sidecars, so always fall back to the checkout root.
-    roots.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_default(),
-    );
-    roots
-}
-
 fn mpv_path() -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("TVBOX_MPV") {
         let path = PathBuf::from(explicit);
         return path.is_file().then_some(path);
     }
-    candidate_roots()
+    crate::paths::sidecar_roots()
         .into_iter()
         .flat_map(|root| {
             [
                 root.join("sidecars").join("mpv").join("mpv.exe"),
-                // Tauri puts bundled resources under <resource>/sidecars, but
-                // keep the explicit resources/ form for portable layouts.
+                // Installed layouts that keep resources in a sibling folder.
                 root.join("resources").join("sidecars").join("mpv").join("mpv.exe"),
             ]
         })
