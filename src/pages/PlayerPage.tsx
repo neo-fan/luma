@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Artplayer from "artplayer";
+import artplayerPluginHlsControl from "artplayer-plugin-hls-control";
 import Hls from "hls.js";
 import type { Navigate } from "../App";
 import ErrorBar from "../components/ErrorBar";
@@ -39,7 +41,12 @@ export default function PlayerPage({
   navigate,
   onBack,
 }: PlayerPageProps) {
+  /** ArtPlayer 挂载点；实例会在这个容器里生成真正的 <video>。 */
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  /** ArtPlayer 托管的原生 <video>，换源、兜底、历史逻辑仍基于它。 */
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  /** 卸载时 ArtPlayer 会清掉 src，进度必须独立留一份快照。 */
+  const lastMediaRef = useRef<{ positionMs: number; durationMs?: number }>({ positionMs: 0 });
 
   const [resolved, setResolved] = useState<PlayResolved | null>(null);
   const [resolving, setResolving] = useState(false);
@@ -449,14 +456,109 @@ export default function PlayerPage({
     void switchOrFailoverRef.current();
   }, [resolved, resolving, resolveError, playUrl]);
 
-  // 挂载 / 销毁播放内核。
+  /**
+   * 挂载 / 销毁播放内核：ArtPlayer 负责控件与交互，解码仍交给现有 hls.js。
+   * 反代地址（127.0.0.1:9978/proxy?…）没有扩展名，必须显式传 type，
+   * 否则 customType 不命中，m3u8 会被直接塞给 <video> 而失败。
+   */
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !resolved) {
+    const container = containerRef.current;
+    if (!container || !resolved) {
       return;
     }
-    const source = resolved.proxyUrl;
+
     mpvTried.current = false;
+    lastMediaRef.current = { positionMs: 0 };
+    const art = new Artplayer({
+      container,
+      url: resolved.proxyUrl,
+      type: resolved.kind === "hls" ? "m3u8" : resolved.kind,
+      lang: "zh-cn",
+      theme: "#e50914",
+      volume: 0.8,
+      isLive: siteKey === "live",
+      autoPlayback: false,
+      screenshot: false,
+      hotkey: true,
+      playbackRate: true,
+      aspectRatio: true,
+      setting: true,
+      pip: true,
+      fullscreen: true,
+      fullscreenWeb: true,
+      miniProgressBar: true,
+      mutex: true,
+      moreVideoAttr: { playsInline: true },
+      plugins:
+        resolved.kind === "hls"
+          ? [
+              artplayerPluginHlsControl({
+                quality: {
+                  control: true,
+                  setting: true,
+                  title: "清晰度",
+                  auto: "自动",
+                  // 多数 TVBox 源是单码率且不带 RESOLUTION，插件默认会显示
+                  // "0P"；无分辨率时退回码率 / 片源自定义名 / 原画。
+                  getName: (level) => {
+                    const item = level as { name?: string; height?: number; bitrate?: number };
+                    if (item.height && item.height > 0) {
+                      return `${item.height}P`;
+                    }
+                    if (item.bitrate && item.bitrate > 0) {
+                      return `${Math.round(item.bitrate / 1000)}kbps`;
+                    }
+                    return item.name || "原画";
+                  },
+                },
+                audio: { control: false, setting: true, title: "音轨", auto: "自动" },
+              }),
+            ]
+          : [],
+      customType: {
+        m3u8: (video, url, instance) => {
+          // WebView2 的 canPlayType 会对 mpegurl 返回 "maybe"，但真正把
+          // m3u8 塞给 <video> 会以 MEDIA_ERR_SRC_NOT_SUPPORTED 失败。
+          if (!Hls.isSupported()) {
+            if (video.canPlayType("application/vnd.apple.mpegurl")) {
+              video.src = url;
+            } else {
+              setVideoError("当前环境不支持 HLS 内置播放，请使用外部播放。");
+            }
+            return;
+          }
+          const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+          hls.loadSource(url);
+          hls.attachMedia(video);
+          // hls-control 插件约定从 art.hls 读 levels / currentLevel。
+          instance.hls = hls;
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            // 插件默认只在 ready / restart 读 levels；manifest 解析完再刷一次，
+            // 避免首次播放时清晰度列表还是空的。
+            const control = instance.plugins.artplayerPluginHlsControl as
+              | { update?: () => void }
+              | undefined;
+            control?.update?.();
+            void video.play().catch(() => {
+              // 自动播放被拦截时保留控件，用户点一下即可。
+            });
+          });
+          hls.on(Hls.Events.ERROR, (_event, data) => {
+            if (!data.fatal) {
+              return;
+            }
+            const reason = data.details ? String(data.details) : "未知错误";
+            setVideoError(`HLS 播放失败：${reason}`);
+            void switchOrFailoverRef.current();
+          });
+          instance.on("destroy", () => hls.destroy());
+        },
+      },
+    });
+
+    const video = art.video;
+    videoRef.current = video;
+
     const onError = () => {
       const mediaError = video.error;
       // 3 = MEDIA_ERR_DECODE, 4 = MEDIA_ERR_SRC_NOT_SUPPORTED. WebView2 常见于
@@ -477,63 +579,27 @@ export default function PlayerPage({
     };
     video.addEventListener("error", onError);
 
-    let hls: Hls | null = null;
-    let stallTimer: number | undefined;
-
-    if (resolved.kind === "hls") {
-      // Prefer hls.js: WebView2 的 canPlayType 会对 mpegurl 返回 "maybe"，但真正
-      // 把 m3u8 塞给 <video> 会以 MEDIA_ERR_SRC_NOT_SUPPORTED 失败。
-      if (Hls.isSupported()) {
-        hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-        hls.loadSource(source);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          void video.play().catch(() => {
-            // 自动播放被拦截时保留控件，用户点一下即可。
-          });
-        });
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) {
-            const reason = data.details ? String(data.details) : "未知错误";
-            setVideoError(`HLS 播放失败：${reason}`);
-            void switchOrFailoverRef.current();
-          }
-        });
-      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = source;
-      } else {
-        setVideoError("当前环境不支持 HLS 内置播放，请使用外部播放。");
-      }
-    } else if (resolved.kind === "flv" || resolved.kind === "file") {
-      video.src = source;
-    } else {
-      setVideoError("该地址需要外部播放器。");
-    }
-
     // 死 CDN 会让 hls.js 无限重试却不触发 fatal，画面永远停在 00:00。
     // 12 秒仍没拿到首帧就视作线路不可用，主动切线路 / 换源。
-    if (BUILTIN_KINDS.includes(resolved.kind)) {
-      stallTimer = window.setTimeout(() => {
-        if (video.readyState >= 2 || failoverStarted.current || lineSwitchStarted.current) {
-          return;
-        }
-        setVideoError("当前线路长时间无法加载，正在尝试其它线路…");
-        void switchOrFailoverRef.current();
-      }, 12_000);
-    }
+    const stallTimer = window.setTimeout(() => {
+      if (!BUILTIN_KINDS.includes(resolved.kind)) {
+        return;
+      }
+      if (video.readyState >= 2 || failoverStarted.current || lineSwitchStarted.current) {
+        return;
+      }
+      setVideoError("当前线路长时间无法加载，正在尝试其它线路…");
+      void switchOrFailoverRef.current();
+    }, 12_000);
 
     return () => {
+      window.clearTimeout(stallTimer);
       video.removeEventListener("error", onError);
-      if (stallTimer !== undefined) {
-        window.clearTimeout(stallTimer);
-      }
-      video.pause();
-      if (hls) {
-        hls.destroy();
-      }
-      // 不主动清空 src：保留 currentTime 供卸载前的历史写入读取。
+      // 先置空引用，避免 destroy 过程中的 video:error 再触发换源。
+      videoRef.current = null;
+      art.destroy();
     };
-  }, [resolved]);
+  }, [resolved, siteKey, vodName]);
 
   // 播放进度 → 历史记录（5 秒节流，播放/暂停立即写）。
   useEffect(() => {
@@ -543,7 +609,8 @@ export default function PlayerPage({
     }
 
     let lastWrite = 0;
-    const write = async (force: boolean) => {
+    /** 卸载时 ArtPlayer 已清掉 src，最后一次写入用快照，不重读 currentTime。 */
+    const write = async (force: boolean, snapshot?: { positionMs: number; durationMs?: number }) => {
       const now = Date.now();
       if (!force && now - lastWrite < 5000) {
         return;
@@ -554,8 +621,10 @@ export default function PlayerPage({
         vodId,
         name: vodName,
         playUrl,
-        positionMs: Math.round(video.currentTime * 1000),
-        durationMs: Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : undefined,
+        positionMs: snapshot?.positionMs ?? Math.round(video.currentTime * 1000),
+        durationMs:
+          snapshot?.durationMs ??
+          (Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : undefined),
         updatedAt: now,
       };
       try {
@@ -577,10 +646,17 @@ export default function PlayerPage({
       // the second has not changed. History uses video.currentTime directly.
       const second = Math.floor(video.currentTime);
       setTimeMs((prev) => (Math.floor(prev / 1000) === second ? prev : second * 1000));
+      lastMediaRef.current.positionMs = Math.round(video.currentTime * 1000);
+      if (Number.isFinite(video.duration)) {
+        lastMediaRef.current.durationMs = Math.round(video.duration * 1000);
+      }
       void write(false);
     };
     const onMeta = () => {
       setDurationMs(Number.isFinite(video.duration) ? video.duration * 1000 : 0);
+      if (Number.isFinite(video.duration)) {
+        lastMediaRef.current.durationMs = Math.round(video.duration * 1000);
+      }
     };
 
     video.addEventListener("play", onPlay);
@@ -593,7 +669,7 @@ export default function PlayerPage({
       video.removeEventListener("pause", onPause);
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("loadedmetadata", onMeta);
-      void write(true);
+      void write(true, lastMediaRef.current);
     };
   }, [resolved, siteKey, vodId, vodName, playUrl]);
 
@@ -660,9 +736,7 @@ export default function PlayerPage({
       <div className="player-stage">
         {resolving ? <Spinner label="正在解析播放地址…" /> : null}
 
-        {!resolving && playable ? (
-          <video ref={videoRef} className="player-video" controls playsInline />
-        ) : null}
+        {!resolving && playable ? <div ref={containerRef} className="player-art" /> : null}
 
         {!resolving && !playable ? (
           <div className="player-fallback">

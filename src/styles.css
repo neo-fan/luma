@@ -699,7 +699,9 @@ textarea {
   padding: 0;
 }
 
-.player-video {
+/* ArtPlayer 会在这个容器内部注入自己的模板与 <video>，容器必须自带高度。 */
+.player-art {
+  position: relative;
   width: 100%;
   max-height: 64vh;
   aspect-ratio: 16 / 9;
