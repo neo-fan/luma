@@ -97,6 +97,20 @@ pub async fn resolve_play(
         ));
     }
 
+    // Some sources hand back TVBox's own local proxy URL already
+    // (`http://127.0.0.1:<port>/proxy?do=py&...`). That endpoint is playable by
+    // itself — wrapping it in another proxy layer would 403.
+    if matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost"))
+        && parsed.path() == "/proxy"
+    {
+        return Ok(PlayResolved {
+            url: request.url.clone(),
+            proxy_url: request.url.clone(),
+            kind: kind_of(&request.url),
+            headers: Vec::new(),
+        });
+    }
+
     let Some(host) = parsed.host_str() else {
         return Err(AppError::new(code::INVALID_ARGUMENT, "play url has no host"));
     };

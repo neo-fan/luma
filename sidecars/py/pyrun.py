@@ -9,6 +9,7 @@ Exiting here is cheap — the caller can kill this process at any time.
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import types
@@ -28,7 +29,47 @@ SIGNATURES = {
     "searchContent": 3,
     "playerContent": 3,
     "liveContent": 1,
+    # TVBox local proxy: `Spider.proxy(Map) -> [contentType, headers, bytes]`.
+    "proxy": 1,
 }
+
+
+def proxy_result(result: object) -> dict:
+    """Turn `Spider.proxy()` output into a JSON-safe payload (body as base64).
+
+    Sources return either `[contentType, headers, bytes]` or a dict with the
+    same fields; a file-like object is read once. Bytes cannot cross the JSON
+    frame, so the body is base64-encoded here and decoded by the Rust host.
+    """
+    content_type = "application/octet-stream"
+    headers: dict[str, str] = {}
+    body = b""
+    if isinstance(result, (list, tuple)):
+        if len(result) > 0 and isinstance(result[0], str):
+            content_type = result[0] or content_type
+        if len(result) > 1 and isinstance(result[1], dict):
+            headers = {str(k): str(v) for k, v in result[1].items()}
+        if len(result) > 2:
+            data = result[2]
+            if isinstance(data, (bytes, bytearray, memoryview)):
+                body = bytes(data)
+            elif isinstance(data, str):
+                body = data.encode("utf-8")
+            elif hasattr(data, "read"):
+                body = data.read()
+    elif isinstance(result, dict):
+        content_type = str(result.get("contentType") or content_type)
+        headers = {str(k): str(v) for k, v in (result.get("headers") or {}).items()}
+        data = result.get("body") or b""
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            body = bytes(data)
+        elif isinstance(data, str):
+            body = data.encode("utf-8")
+    return {
+        "contentType": content_type,
+        "headers": headers,
+        "body": base64.b64encode(body).decode("ascii"),
+    }
 
 
 def to_args(method: str, raw: list) -> list:
@@ -58,6 +99,9 @@ def to_args(method: str, raw: list) -> list:
         return [flag, pid, vip]
     if method == "liveContent":
         return [str(raw[0]) if raw else ""]
+    if method == "proxy":
+        params = raw[0] if raw and isinstance(raw[0], dict) else {}
+        return [{str(k): str(v) for k, v in params.items()}]
     raise ValueError(f"unsupported method: {method}")
 
 
@@ -96,6 +140,8 @@ def main() -> int:
         result = getattr(instance, method)(*args)
         if result is None:
             result = {}
+        if method == "proxy":
+            result = proxy_result(result)
         frame = {"ok": True, "result": result}
     except Exception as exc:  # noqa: BLE001 - process boundary
         frame = {

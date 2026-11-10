@@ -88,12 +88,10 @@ export default function PlayerPage({
             } | null;
             const candidate = String(played?.playUrl || played?.url || "");
             const parseFlag = Number(played?.parse ?? 0);
-            // 部分源返回 TVBox 自己的本地代理地址（`127.0.0.1:9978/proxy?do=py…`），
-            // 它需要宿主实现对应路由；在接入前直接忽略，保留原始地址，
-            // 否则会把本来能播的直链覆盖成 403。
-            const isLocalProxy = /^https?:\/\/127\.0\.0\.1:\d+\/(proxy|proxy2)\b/i.test(candidate);
+            // `127.0.0.1:9978/proxy?do=py…` 现在由宿主实现（spider.proxy 转发），
+            // 直接使用即可；`resolve_play` 会识别本机代理地址并原样透传。
             // parse=1 代表还要过 parses[] 通用解析，交给后级处理，不在这里猜。
-            if (/^https?:\/\//i.test(candidate) && !isLocalProxy && parseFlag === 0) {
+            if (/^https?:\/\//i.test(candidate) && parseFlag === 0) {
               targetUrl = candidate;
               const header = played?.header ?? {};
               ua = header["User-Agent"] || header["user-agent"];

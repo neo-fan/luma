@@ -30,6 +30,9 @@ def _normalize(method: str, result: Any) -> Any:
         return result if isinstance(result, dict) else {}
     if method == "liveContent":
         return result if isinstance(result, dict) else {}
+    # Local proxy payload: {contentType, headers, body(base64)} — already safe.
+    if method == "proxy":
+        return result if isinstance(result, dict) else {}
     if isinstance(result, dict):
         return cms._page_from_json(result)
     return {"list": [], "page": 1, "pagecount": 1, "limit": 20, "total": 0, "classes": []}

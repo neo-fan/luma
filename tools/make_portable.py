@@ -36,9 +36,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_EXE = ROOT / "src-tauri" / "target" / "release" / "tvbox-desktop.exe"
-OUT_DIR = ROOT / "dist" / "portable"
+OUT_DIR = ROOT / "release" / "portable"
 APP_DIR = OUT_DIR / "TVBox Desktop"
-ZIP_PATH = ROOT / "dist" / "TVBox-Desktop-0.1.0-portable.zip"
+ZIP_PATH = ROOT / "release" / "TVBox-Desktop-0.1.0-portable.zip"
 CONF = ROOT / "src-tauri" / "tauri.conf.json"
 
 # Build-time-only Python bits: safe to omit from the portable copy.

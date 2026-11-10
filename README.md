@@ -33,14 +33,14 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架
 ```powershell
 corepack pnpm install
 corepack pnpm tauri dev                     # 开发
-python tools/make_portable.py               # 绿色版：dist/portable + zip
+python tools/make_portable.py               # 绿色版：release/portable + zip
 python tools/make_portable.py --with-mpv    # 连 mpv 一起打（体积 +40MB）
 ```
 
 产物：
 
-- `dist/portable/TVBox Desktop/` —— 解压即用的文件夹；
-- `dist/TVBox-Desktop-0.1.0-portable.zip` —— 分发包（约 41MB）。
+- `release/portable/TVBox Desktop/` —— 解压即用的文件夹；
+- `release/TVBox-Desktop-0.1.0-portable.zip` —— 分发包（约 41MB）。
 
 不需要安装程序；整个文件夹可以放在任意目录、U 盘或移动硬盘。
 
@@ -112,6 +112,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 
 ## 已知限制
 
+- py 源若返回 TVBox 本地代理地址（`127.0.0.1:9978/proxy?do=py&…`），宿主已实现该路由并转发给 `Spider.proxy()`；但返回自有本地服务地址（如 `127.0.0.1:10010`）的源仍不可用。
 - 第三方 **Android dex jar** 在 Win x64 无法加载（jar 内是 `classes.dex`，依赖 ART / okhttp / QuickJS 等）。这类源会快速失败并给出原因；jar 运行时只对纯 class jar 与仓库内自编模板 jar 作保证。
 - T-31（`tvbox://` 协议关联、JumpList、全屏勿扰）未实现。
 - `mpv` 默认不随 zip 分发（单文件约 117MB），需要时放入 `sidecars/mpv/`，或用 `--with-mpv` 重新打包。

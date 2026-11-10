@@ -5,7 +5,7 @@
 
 ## 便携版目录（压缩前）
 
-| 项 | 路径（相对 `dist/portable/TVBox Desktop/`） | 体积 |
+| 项 | 路径（相对 `release/portable/TVBox Desktop/`） | 体积 |
 |---|---|---:|
 | 主程序 | `TVBox Desktop.exe` | 15.00 MB |
 | Python 适配层源码 | `sidecars/py/` | 0.04 MB |
@@ -21,7 +21,7 @@ mpv（可选，默认不打进 zip）：`sidecars/mpv/mpv.exe` 单文件 **116.8
 
 | 产物 | 路径 | 体积 |
 |---|---|---:|
-| 便携版 zip | `dist/TVBox-Desktop-0.1.0-portable.zip` | **41.36 MB** |
+| 便携版 zip | `release/TVBox-Desktop-0.1.0-portable.zip` | **41.36 MB** |
 
 ## 判定
 

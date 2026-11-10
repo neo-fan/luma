@@ -27,8 +27,8 @@ ROOT = Path(__file__).resolve().parents[2]
 STUB = "http://127.0.0.1:8787"
 CDP = "http://127.0.0.1:9222/json/list"
 TAURI_CONF = ROOT / "src-tauri" / "tauri.conf.json"
-PORTABLE_ZIP = ROOT / "dist" / "TVBox-Desktop-0.1.0-portable.zip"
-PORTABLE_DIR = ROOT / "dist" / "portable" / "TVBox Desktop"
+PORTABLE_ZIP = ROOT / "release" / "TVBox-Desktop-0.1.0-portable.zip"
+PORTABLE_DIR = ROOT / "release" / "portable" / "TVBox Desktop"
 SIZE_REPORT = ROOT / "docs" / "size-report.md"
 README = ROOT / "README.md"
 

@@ -18,6 +18,8 @@ use crate::error::{code, AppError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
@@ -94,6 +96,92 @@ pub trait SpiderRuntime: Send + Sync {
     ) -> Result<Value, AppError>;
 
     async fn health(&self) -> Result<(), AppError>;
+
+    /// TVBox local proxy (`/proxy?do=py|jar`). Sources that implement
+    /// `Spider.proxy(Map)` hand back URLs pointing at the host; this turns the
+    /// query map into the spider call and returns its bytes. Runtimes without
+    /// such an implementation keep the default error.
+    async fn proxy(
+        &self,
+        _site: &Value,
+        _params: HashMap<String, String>,
+        _timeout: Duration,
+    ) -> Result<ProxyPayload, AppError> {
+        Err(AppError::new(
+            code::RUNTIME_UNAVAILABLE,
+            "this runtime does not implement proxy()",
+        ))
+    }
+}
+
+/// Payload returned by `Spider.proxy(Map)`:
+/// `[contentType, headers, bytes]` flattened for the HTTP response.
+pub struct ProxyPayload {
+    pub content_type: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+static LAST_PLAY: OnceLock<StdMutex<Option<Value>>> = OnceLock::new();
+
+fn last_play_cell() -> &'static StdMutex<Option<Value>> {
+    LAST_PLAY.get_or_init(|| StdMutex::new(None))
+}
+
+/// Remember which site produced the current play session. TVBox's local proxy
+/// carries only `do=py|jar`, not a site key, so the host tracks the last
+/// `playerContent` caller (one player window).
+pub fn note_play_site(site: &Value) {
+    if let Ok(mut guard) = last_play_cell().lock() {
+        *guard = Some(site.clone());
+    }
+}
+
+pub fn last_play_site() -> Option<Value> {
+    last_play_cell()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+pub fn decode_proxy_payload(value: &Value) -> Result<ProxyPayload, AppError> {
+    let content_type = value
+        .get("contentType")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let mut headers = Vec::new();
+    if let Some(map) = value.get("headers").and_then(Value::as_object) {
+        for (name, item) in map {
+            if let Some(text) = item.as_str() {
+                headers.push((name.clone(), text.to_string()));
+            }
+        }
+    }
+    let encoded = value.get("body").and_then(Value::as_str).unwrap_or("");
+    let body = crate::proxy::base64_decode(encoded)
+        .map_err(|_| AppError::new(code::INTERNAL, "proxy body is not valid base64"))?;
+    Ok(ProxyPayload {
+        content_type,
+        headers,
+        body,
+    })
+}
+
+pub async fn proxy_call(
+    site: &Value,
+    params: HashMap<String, String>,
+    timeout: Duration,
+) -> Result<ProxyPayload, AppError> {
+    let kind = route(site);
+    let runtime = runtime_for(kind).ok_or_else(|| {
+        AppError::new(
+            code::RUNTIME_UNAVAILABLE,
+            format!("runtime {} is not available", kind.as_str()),
+        )
+    })?;
+    runtime.proxy(site, params, timeout).await
 }
 
 pub fn route(site: &Value) -> RuntimeKind {
@@ -190,6 +278,11 @@ pub async fn spider_invoke(
     }
 
     let site = state.find_site(&request.site_key)?;
+    // `/proxy?do=py` does not carry a site key; the last playerContent caller
+    // is the current play session (single player window).
+    if request.method == SpiderMethod::PlayerContent {
+        note_play_site(&site);
+    }
     invoke_one(&site, request.method, &request.args, timeout).await
 }
 

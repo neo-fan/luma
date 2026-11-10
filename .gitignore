@@ -18,6 +18,9 @@ docs/verification-config.md
 # 构建产物 / 依赖 / 本地环境
 node_modules/
 dist/
+release/
+__pycache__/
+*.pyc
 target/
 src-tauri/target/
 src-tauri/gen/

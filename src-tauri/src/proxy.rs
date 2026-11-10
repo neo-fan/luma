@@ -8,7 +8,7 @@
 
 use crate::error::{code, AppError};
 use axum::body::Body;
-use axum::extract::{Query, State};
+use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, HeaderName, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -176,9 +176,39 @@ async fn handle_options() -> Response {
 
 async fn handle_proxy(
     State(state): State<Arc<ProxyState>>,
-    Query(query): Query<ProxyQuery>,
+    RawQuery(raw): RawQuery,
     headers: HeaderMap,
 ) -> Response {
+    // TVBox sources hand back `proxy?do=py&type=m3u8&url=…` (sometimes with a
+    // duplicated `url`), so parse the raw query and keep the last value.
+    let pairs: Vec<(String, String)> = raw
+        .as_deref()
+        .map(|text| {
+            url::form_urlencoded::parse(text.as_bytes())
+                .into_owned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let get = |key: &str| {
+        pairs
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    };
+
+    if let Some(kind) = get("do").filter(|value| !value.is_empty()) {
+        return handle_spider_proxy(&kind, &pairs).await;
+    }
+
+    let query = ProxyQuery {
+        url: get("url").unwrap_or_default(),
+        ua: get("ua"),
+        referer: get("referer"),
+        cookie: get("cookie"),
+        h: get("h"),
+    };
+
     let target = match Url::parse(&query.url) {
         Ok(url) => url,
         Err(err) => return deny(StatusCode::BAD_REQUEST, &format!("invalid url: {err}")),
@@ -274,6 +304,73 @@ async fn handle_proxy(
         .header("x-tvbox-proxy", "1")
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"))
+}
+
+/// TVBox local proxy for spider-owned resources (`/proxy?do=py|jar|js`).
+///
+/// Sources that implement `Spider.proxy(Map)` return URLs pointing at this
+/// route; the query map is handed to the spider and its
+/// `[contentType, headers, bytes]` answer becomes the HTTP response.
+async fn handle_spider_proxy(kind: &str, pairs: &[(String, String)]) -> Response {
+    let Some(site) = crate::spider::last_play_site() else {
+        return deny(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no active play source; open a title before using the spider proxy",
+        );
+    };
+
+    let mut params: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (name, value) in pairs {
+        params.insert(name.clone(), value.clone());
+    }
+    let timeout = std::time::Duration::from_millis(
+        params
+            .get("timeoutMs")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(20_000)
+            .clamp(3_000, 60_000),
+    );
+
+    match crate::spider::proxy_call(&site, params, timeout).await {
+        Ok(payload) => {
+            let mut builder = Response::builder().status(StatusCode::OK);
+            for (name, value) in payload.headers.iter() {
+                // Framing headers from the spider would corrupt our response.
+                if matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "content-length"
+                        | "transfer-encoding"
+                        | "connection"
+                        | "content-encoding"
+                        | "content-type"
+                ) {
+                    continue;
+                }
+                builder = builder.header(name, value);
+            }
+            // Spiders frequently return application/octet-stream even for
+            // playlists; hls.js sniffs the body, but a correct type keeps
+            // browsers/proxies from treating it as a download.
+            let mut content_type = payload.content_type.clone();
+            if content_type.is_empty() || content_type == "application/octet-stream" {
+                if payload.body.starts_with(b"#EXTM3U") {
+                    content_type = "application/vnd.apple.mpegurl".to_string();
+                }
+            }
+            builder
+                .header("content-type", content_type)
+                .header("cache-control", "no-store")
+                .header("access-control-allow-origin", "*")
+                .header("access-control-expose-headers", "*")
+                .header("x-tvbox-proxy", format!("spider-{kind}"))
+                .body(Body::from(payload.body))
+                .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "proxy response build failed"))
+        }
+        Err(err) => deny(
+            StatusCode::BAD_GATEWAY,
+            &format!("spider proxy failed: {} {}", err.code, err.message),
+        ),
+    }
 }
 
 /// Headers/params that must travel with every rewritten playlist URI.
@@ -373,7 +470,7 @@ fn extra_headers(payload: Option<&str>) -> Vec<(HeaderName, String)> {
         .collect()
 }
 
-fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
+pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = Vec::with_capacity(input.len() * 3 / 4);
     let mut buffer = 0u32;

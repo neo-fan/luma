@@ -12,6 +12,13 @@ use std::path::PathBuf;
 pub fn sidecar_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
 
+    // Debug builds run from the checkout: a bundle step may have left a stale
+    // copy under target/debug/sidecars, and picking it silently runs old code.
+    // Prefer the live source tree in debug, the resource dir in release.
+    if cfg!(debug_assertions) {
+        push_unique(&mut roots, source_root());
+    }
+
     if let Ok(dir) = std::env::var("TVBOX_RESOURCE_DIR") {
         let dir = PathBuf::from(dir);
         // Installed build: <resource>/sidecars. Portable: <exe>/sidecars where
@@ -31,7 +38,9 @@ pub fn sidecar_roots() -> Vec<PathBuf> {
         }
     }
 
-    push_unique(&mut roots, source_root());
+    if !cfg!(debug_assertions) {
+        push_unique(&mut roots, source_root());
+    }
     roots
 }
 

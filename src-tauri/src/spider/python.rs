@@ -123,4 +123,33 @@ impl SpiderRuntime for PythonRuntime {
     async fn health(&self) -> Result<(), AppError> {
         bridge::call_with_timeout("ping", json!({}), Duration::from_secs(5)).await.map(|_| ())
     }
+
+    /// `Spider.proxy(Map)` for `/proxy?do=py`. Python returns
+    /// `{contentType, headers, body(base64)}` via `pyrun.proxy_result`.
+    async fn proxy(
+        &self,
+        site: &Value,
+        params: std::collections::HashMap<String, String>,
+        timeout: Duration,
+    ) -> Result<crate::spider::ProxyPayload, AppError> {
+        let source = source_for(site).await?;
+        let ext = site.get("ext").and_then(Value::as_str).unwrap_or("");
+        let _permit = concurrency().acquire().await.map_err(|err| {
+            AppError::new(code::INTERNAL, "py semaphore closed").with_cause(err.to_string())
+        })?;
+        let value = bridge::call_with_timeout(
+            "spider.py",
+            json!({
+                "source": source,
+                "className": site.get("className").and_then(Value::as_str).unwrap_or("Spider"),
+                "method": "proxy",
+                "args": [params],
+                "ext": ext,
+                "timeoutMs": timeout.as_millis() as u64,
+            }),
+            timeout,
+        )
+        .await?;
+        crate::spider::decode_proxy_payload(&value)
+    }
 }
