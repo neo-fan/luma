@@ -219,6 +219,7 @@ export default function DetailPage({ siteKey, vodId, siteName, navigate, onBack 
                         vodName: vod.vod_name,
                         playUrl: episode.url,
                         episodeName: episode.name,
+                        playFrom: line.name,
                       })
                     }
                     title={episode.name}

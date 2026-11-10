@@ -22,6 +22,8 @@ export type View =
       vodName: string;
       playUrl: string;
       episodeName: string;
+      /** TVBox 线路名（vod_play_from），playerContent 的第一个参数。 */
+      playFrom?: string;
     }
   | { name: "live" }
   | { name: "favorites" }
@@ -180,6 +182,7 @@ export default function App() {
             vodName={view.vodName}
             episodeName={view.episodeName}
             playUrl={view.playUrl}
+            playFrom={view.playFrom}
             navigate={navigate}
             onBack={back}
           />

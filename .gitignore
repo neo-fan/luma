@@ -10,6 +10,7 @@ docs/verification-config.md
 .workbuddy/*.txt
 .workbuddy/q_*
 .workbuddy/probe_*
+.workbuddy/*.json
 # 便携版/安装包的本机解压验证目录
 .workbuddy/*-test/
 .workbuddy/user-config.b64

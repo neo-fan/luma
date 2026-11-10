@@ -14,6 +14,8 @@ interface PlayerPageProps {
   vodName: string;
   episodeName: string;
   playUrl: string;
+  /** TVBox 线路名；有值时先走 playerContent 解析，再交给本地代理。 */
+  playFrom?: string;
   navigate: Navigate;
   onBack: () => void;
 }
@@ -27,6 +29,7 @@ export default function PlayerPage({
   vodName,
   episodeName,
   playUrl,
+  playFrom,
   navigate,
   onBack,
 }: PlayerPageProps) {
@@ -63,7 +66,45 @@ export default function PlayerPage({
       setTimeMs(0);
       setDurationMs(0);
       try {
-        const result = await api.resolvePlay({ siteKey, url: playUrl });
+        // TVBox 链路：详情里的 playUrl 常常只是线路 id 或自定义 scheme
+        // （weiguan://、PAN1-…、6105_0_1），必须让 spider 的 playerContent
+        // 解析出真实直链再交给本地代理。CMS 未实现该方法时直接回退。
+        let targetUrl = playUrl;
+        let ua: string | undefined;
+        let referer: string | undefined;
+        let cookie: string | undefined;
+        if (playFrom) {
+          try {
+            const played = (await api.spiderInvoke({
+              siteKey,
+              method: "playerContent",
+              args: [playFrom, playUrl, []],
+              timeoutMs: 15_000,
+            })) as {
+              playUrl?: string;
+              url?: string;
+              parse?: number;
+              header?: Record<string, string>;
+            } | null;
+            const candidate = String(played?.playUrl || played?.url || "");
+            const parseFlag = Number(played?.parse ?? 0);
+            // 部分源返回 TVBox 自己的本地代理地址（`127.0.0.1:9978/proxy?do=py…`），
+            // 它需要宿主实现对应路由；在接入前直接忽略，保留原始地址，
+            // 否则会把本来能播的直链覆盖成 403。
+            const isLocalProxy = /^https?:\/\/127\.0\.0\.1:\d+\/(proxy|proxy2)\b/i.test(candidate);
+            // parse=1 代表还要过 parses[] 通用解析，交给后级处理，不在这里猜。
+            if (/^https?:\/\//i.test(candidate) && !isLocalProxy && parseFlag === 0) {
+              targetUrl = candidate;
+              const header = played?.header ?? {};
+              ua = header["User-Agent"] || header["user-agent"];
+              referer = header["Referer"] || header["referer"];
+              cookie = header["Cookie"] || header["cookie"];
+            }
+          } catch {
+            // CMS / 未实现 playerContent 的源：沿用原始地址。
+          }
+        }
+        const result = await api.resolvePlay({ siteKey, url: targetUrl, ua, referer, cookie });
         if (alive) {
           setResolved(result);
         }
@@ -81,7 +122,7 @@ export default function PlayerPage({
     return () => {
       alive = false;
     };
-  }, [siteKey, playUrl]);
+  }, [siteKey, playUrl, playFrom]);
 
   // 拉详情只为拿剧集列表做上/下集，失败不影响当前播放。
   useEffect(() => {
@@ -512,6 +553,7 @@ export default function PlayerPage({
         vodName,
         playUrl: episode.url,
         episodeName: episode.name,
+        playFrom: currentLine.name,
       },
       true,
     );
