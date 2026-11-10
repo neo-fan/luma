@@ -15,6 +15,7 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架
 - 四类源：CMS（`api.php/provide/vod`）、Python（`.py`）、JavaScript（`.js`，独立 qjs-runner sidecar）、Java（`csp_*` + jar，JVM sidecar）。
 - 聚合搜索：一次关键词覆盖当前配置的全部站点，按站点分组返回，失败源给出可读原因。
 - 播放：ArtPlayer + hls.js；清晰度 / 倍速 / 画中画 / 快捷键等完整控件；同一剧集多线路自动切换；HLS 卡死 12 秒看门狗；跨站自动换源。
+- 详情与选源：手动换源（一次聚合列出其它站点的同名影片，可选 20/35 秒检索）、任意线路/剧集直达、剧集筛选与正倒序、继续播放（读 SQLite 历史）、收藏与简介展开。
 - 第 4 级嗅探：前三级都拿不到直链时，用隔离的隐藏 WebView2 加载播放页并拦截网络请求取真实地址（该窗口不在 capabilities 授权列表内，零 command 权限）。
 - mpv 兜底：WebView2 无法解码（如 HEVC）时自动交给随包 mpv；找不到 `mpv.exe` 时退回外部播放器提示。
 - 直播：m3u/m3u8 解析，代理内重写相对分片。

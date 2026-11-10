@@ -205,9 +205,11 @@ export default function App() {
       case "detail":
         return (
           <DetailPage
+            key={`${view.siteKey}:${view.vodId}`}
             siteKey={view.siteKey}
             vodId={view.vodId}
             siteName={sites.find((item) => item.key === view.siteKey)?.name}
+            sites={sites}
             navigate={navigate}
             onBack={back}
           />
@@ -225,6 +227,8 @@ export default function App() {
             playFrom={view.playFrom}
             liveUa={view.ua}
             allowFailover={canFailover(site)}
+            sites={sites}
+            siteName={site?.name}
             navigate={navigate}
             onBack={back}
           />

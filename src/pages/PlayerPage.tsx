@@ -4,11 +4,14 @@ import artplayerPluginHlsControl from "artplayer-plugin-hls-control";
 import Hls from "hls.js";
 import type { Navigate } from "../App";
 import ErrorBar from "../components/ErrorBar";
+import SourcePicker from "../components/SourcePicker";
 import Spinner from "../components/Spinner";
 import { formatDuration, parsePlayLines } from "../lib/format";
 import type { PlayLine } from "../lib/format";
+import { countEpisodes, pickMatchingEpisode } from "../lib/sources";
+import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
-import type { HistoryItem, PlayResolved, ResultPage } from "../types/tvbox";
+import type { HistoryItem, PlayResolved, ResultPage, Site } from "../types/tvbox";
 
 interface PlayerPageProps {
   siteKey: string;
@@ -20,8 +23,11 @@ interface PlayerPageProps {
   playFrom?: string;
   /** 直播源声明的 UA，直接用于播放请求（没有 playerContent 可问）。 */
   liveUa?: string;
-  /** 站点 `changeable: 0` 时禁止跨站换源；缺省允许。 */
+  /** 站点 `changeable: 0` 时禁止跨站自动换源；缺省允许。手动换源不受限。 */
   allowFailover?: boolean;
+  /** 手动换源需要站点清单做名称映射与可用性过滤。 */
+  sites: Site[];
+  siteName?: string;
   navigate: Navigate;
   onBack: () => void;
 }
@@ -38,6 +44,8 @@ export default function PlayerPage({
   playFrom,
   liveUa,
   allowFailover = true,
+  sites,
+  siteName,
   navigate,
   onBack,
 }: PlayerPageProps) {
@@ -68,6 +76,10 @@ export default function PlayerPage({
   const [lines, setLines] = useState<PlayLine[]>([]);
   const [lineIndex, setLineIndex] = useState(0);
   const [episodeIndex, setEpisodeIndex] = useState(0);
+  /** 播放页内的选集面板与手动换源弹层。 */
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelLine, setPanelLine] = useState(0);
+  const [showSources, setShowSources] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -205,11 +217,13 @@ export default function PlayerPage({
       const index = lines[line].episodes.findIndex((item) => item.url === playUrl);
       if (index >= 0) {
         setLineIndex(line);
+        setPanelLine(line);
         setEpisodeIndex(index);
         return;
       }
     }
     setLineIndex(0);
+    setPanelLine(0);
     setEpisodeIndex(0);
   }, [lines, playUrl]);
 
@@ -677,15 +691,13 @@ export default function PlayerPage({
   const canPrev = currentLine !== null && episodeIndex > 0;
   const canNext = currentLine !== null && episodeIndex < currentLine.episodes.length - 1;
 
-  const goEpisode = (delta: number) => {
-    if (!currentLine) {
+  /** 选集面板里点任意线路 / 任意一集，直接替换当前播放页。 */
+  const goToEpisode = (targetLine: number, index: number) => {
+    const target = lines[targetLine];
+    if (!target || index < 0 || index >= target.episodes.length) {
       return;
     }
-    const next = episodeIndex + delta;
-    if (next < 0 || next >= currentLine.episodes.length) {
-      return;
-    }
-    const episode = currentLine.episodes[next];
+    const episode = target.episodes[index];
     navigate(
       {
         name: "player",
@@ -694,7 +706,50 @@ export default function PlayerPage({
         vodName,
         playUrl: episode.url,
         episodeName: episode.name,
-        playFrom: currentLine.name,
+        playFrom: target.name,
+      },
+      true,
+    );
+  };
+
+  const goEpisode = (delta: number) => {
+    if (!currentLine) {
+      return;
+    }
+    goToEpisode(lineIndex, episodeIndex + delta);
+  };
+
+  /**
+   * 手动换源：用户选定站点后取该站详情，尽量续播同一集（同名 / 同集号 /
+   * 同序号），不探活也不抢答——选哪个源由用户决定，失败仍走原有兜底链路。
+   */
+  const pickSource = async (option: SourceOption) => {
+    setShowSources(false);
+    const list = await api.detail(option.siteKey, option.vodId);
+    const nextLines = list?.[0]
+      ? parsePlayLines(list[0].vod_play_from, list[0].vod_play_url)
+      : [];
+    const match = pickMatchingEpisode(nextLines, {
+      name: episodeName,
+      index: episodeIndex,
+    });
+    if (!match) {
+      throw "该源没有可播放剧集，请换一个片源";
+    }
+    // 换源会重建页面，提示沿用自动换源的通道带过去一次。
+    window.sessionStorage.setItem(
+      "tvbox:autoSwitch",
+      `已手动切换到「${option.siteName}」`,
+    );
+    navigate(
+      {
+        name: "player",
+        siteKey: option.siteKey,
+        vodId: option.vodId,
+        vodName: option.vodName || vodName,
+        playUrl: match.episode.url,
+        episodeName: match.episode.name,
+        playFrom: match.line.name,
       },
       true,
     );
@@ -726,7 +781,12 @@ export default function PlayerPage({
             <span className="page-title__sub">{episodeName}</span>
           </h1>
         </div>
-        <span className="page-meta">{progressLabel}</span>
+        <div className="player-head__meta">
+          <span className="detail-source" title={siteKey}>
+            当前源：{siteName || siteKey}
+          </span>
+          <span className="page-meta">{progressLabel}</span>
+        </div>
       </header>
 
       {switchTip ? <p className="tip">{switchTip}</p> : null}
@@ -780,10 +840,78 @@ export default function PlayerPage({
         ) : (
           <span className="player-bar__info">未获取到剧集列表</span>
         )}
+        {siteKey === "live" ? null : (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setPanelOpen((value) => !value)}
+            disabled={lines.length === 0}
+          >
+            {panelOpen ? "收起选集" : "选集"}
+          </button>
+        )}
+        {siteKey === "live" ? null : (
+          <button type="button" className="btn" onClick={() => setShowSources(true)}>
+            ⇄ 换源
+          </button>
+        )}
         <button type="button" className="btn btn--primary" onClick={() => void playExternal()}>
           外部播放
         </button>
       </div>
+
+      {/* 选集面板：线路切换 + 任意一集直达，替代只能上一集/下一集的旧交互。 */}
+      {panelOpen && lines.length > 0 ? (
+        <div className="player-episodes">
+          <div className="section-head">
+            <h2 className="section-title">选集 · 线路</h2>
+            <span className="page-meta">
+              共 {lines.length} 条线路 · {countEpisodes(lines)} 集
+            </span>
+          </div>
+          <div className="chip-row">
+            {lines.map((item, index) => (
+              <button
+                key={`${item.name}-${index}`}
+                type="button"
+                className={index === panelLine ? "chip is-active" : "chip"}
+                onClick={() => setPanelLine(index)}
+                title={`${item.episodes.length} 集`}
+              >
+                {item.name}（{item.episodes.length}）
+              </button>
+            ))}
+          </div>
+          <div className="episode-grid">
+            {(lines[panelLine]?.episodes ?? []).map((episode, index) => {
+              const active = panelLine === lineIndex && index === episodeIndex;
+              return (
+                <button
+                  key={`${episode.url}-${index}`}
+                  type="button"
+                  className={active ? "episode is-active" : "episode"}
+                  onClick={() => goToEpisode(panelLine, index)}
+                  title={episode.name}
+                >
+                  {episode.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {showSources ? (
+        <SourcePicker
+          title={vodName}
+          currentSiteKey={siteKey}
+          currentSiteName={siteName}
+          sites={sites}
+          notice={allowFailover ? undefined : "当前源禁止自动换源，手动切换仍由你决定。"}
+          onPick={pickSource}
+          onClose={() => setShowSources(false)}
+        />
+      ) : null}
     </section>
   );
 }
