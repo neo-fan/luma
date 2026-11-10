@@ -5,9 +5,11 @@ pub mod config;
 pub mod error;
 pub mod http;
 pub mod live;
+pub mod mpv;
 pub mod play;
 pub mod process;
 pub mod proxy;
+pub mod sniff;
 pub mod spider;
 pub mod store;
 
@@ -24,6 +26,13 @@ pub fn run() {
         .manage(ConfigStore::load())
         .manage(LibraryStore::load())
         .setup(|app| {
+            // T-32: in an installed build the sidecars live under the resource
+            // dir, not next to the source tree. Publish that root once so
+            // bridge / jvm / mpv resolve the same layout in dev and prod.
+            if let Ok(resource) = app.path().resource_dir() {
+                std::env::set_var("TVBOX_RESOURCE_DIR", &resource);
+                tracing::info!(dir = %resource.display(), "resource dir");
+            }
             // 7.5: the local reverse proxy is started by the Rust host only.
             match proxy::start() {
                 Ok(state) => {
@@ -45,6 +54,7 @@ pub fn run() {
             proxy::proxy_status,
             play::resolve_play,
             play::open_external,
+            mpv::mpv_play,
             store::favorites_list,
             store::favorites_toggle,
             store::history_list,

@@ -44,6 +44,8 @@ export default function PlayerPage({
   const failoverStarted = useRef(false);
   /** 已经自动处理过的地址，避免切线路 / 换源之间来回跳转。 */
   const handledUrls = useRef<Set<string>>(new Set());
+  /** T-30：解码失败只自动转 mpv 一次，避免用户手动关掉后被反复拉起。 */
+  const mpvTried = useRef(false);
   /** 同一轮播放只允许一次「找下一条线路」，防止多个失败信号并发触发。 */
   const lineSwitchStarted = useRef(false);
 
@@ -352,7 +354,22 @@ export default function PlayerPage({
       return;
     }
     const source = resolved.proxyUrl;
+    mpvTried.current = false;
     const onError = () => {
+      const mediaError = video.error;
+      // 3 = MEDIA_ERR_DECODE, 4 = MEDIA_ERR_SRC_NOT_SUPPORTED. WebView2 常见于
+      // HEVC：换源也救不了同一编码，直接交给随包 mpv（规格 T-30 自动兜底）。
+      if (mediaError && (mediaError.code === 3 || mediaError.code === 4) && !mpvTried.current) {
+        mpvTried.current = true;
+        setVideoError("浏览器无法解码该视频，已自动交给 mpv 播放…");
+        void api
+          .mpvPlay(resolved.url, vodName, resolved.headers)
+          .catch((err) => {
+            setVideoError(`mpv 启动失败：${toAppError(err).message}`);
+            void switchOrFailoverRef.current();
+          });
+        return;
+      }
       setVideoError("播放器加载失败，可尝试外部播放。");
       void switchOrFailoverRef.current();
     };

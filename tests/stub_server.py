@@ -258,7 +258,16 @@ def fixture(name: str, ctype: str) -> tuple[bytes, str]:
 
 def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
     as_json = lambda obj: (json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+    # T-29 嗅探测试页：加载后主动请求一个 m3u8，隐藏 WebView 必须能观测到它。
+    sniff_page = (
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>sniff</title></head>"
+        "<body><p>sniff fixture</p>"
+        "<script>"
+        "fetch('/media/index.m3u8', {cache: 'no-store'}).catch(function(){});"
+        "</script></body></html>"
+    ).encode("utf-8")
     return {
+        "/page/play.html": (sniff_page, "text/html; charset=utf-8"),
         "/config.json": as_json(standard(port)),
         "/config-dialect.json": as_json(dialect(port)),
         "/config-repos.json": as_json(repos(port)),

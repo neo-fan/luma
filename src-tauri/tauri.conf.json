@@ -31,6 +31,12 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
-    "externalBin": []
+    "externalBin": ["binaries/qjs-runner"],
+    "resources": {
+      "../sidecars/py": "sidecars/py",
+      "../sidecars/python-embed": "sidecars/python-embed",
+      "../sidecars/java/runner.jar": "sidecars/java/runner.jar",
+      "../sidecars/jre": "sidecars/jre"
+    }
   }
 }

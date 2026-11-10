@@ -31,3 +31,8 @@ windows = { version = "0.58", features = [
     "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }
+# T-29: the level-4 sniffer reads the WebView2 controller to observe network
+# requests. webview2-com 0.39 links windows 0.62, so alias that version instead
+# of forcing the Job Object code (windows 0.58) to migrate.
+webview2-com = "0.39"
+windows062 = { package = "windows", version = "0.62", features = ["Win32_Foundation"] }

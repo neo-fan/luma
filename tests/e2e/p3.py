@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""P3 stage acceptance (spec 12.2 cumulative matrix, T-28 ~ T-34).
+
+Cumulative: every earlier stage is re-run and must stay green, then the P3
+groups are added. The only N/A left is T-31, which the spec itself marks as
+manual acceptance and which is **not implemented** — it is reported as N/A
+rather than silently passed.
+
+Usage:
+    python3 tests/e2e/p3.py
+    python3 tests/e2e/p3.py --no-cumulative
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+STUB = "http://127.0.0.1:8787"
+CDP = "http://127.0.0.1:9222/json/list"
+TAURI_CONF = ROOT / "src-tauri" / "tauri.conf.json"
+INSTALLER_DIR = ROOT / "src-tauri" / "target" / "release" / "bundle" / "nsis"
+SIZE_REPORT = ROOT / "docs" / "size-report.md"
+README = ROOT / "README.md"
+
+results: list[tuple[str, str, str]] = []
+
+
+def record(group: str, name: str, status: str, note: str = "") -> None:
+    results.append((group, name, status))
+    mark = {"PASS": "ok  ", "FAIL": "FAIL", "SKIP": "skip", "N/A": "n/a "}[status]
+    print(f"[{mark}] {group:<12} {name}{('  -- ' + note) if note else ''}", flush=True)
+
+
+def check(condition: bool, group: str, name: str, note: str = "") -> None:
+    record(group, name, "PASS" if condition else "FAIL", note)
+
+
+def ensure_stub() -> subprocess.Popen | None:
+    try:
+        with urllib.request.urlopen(f"{STUB}/config.json", timeout=1) as response:
+            response.read(64)
+        return None
+    except Exception:
+        pass
+    proc = subprocess.Popen(
+        [sys.executable, str(ROOT / "tests" / "stub_server.py")],
+        cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    for _ in range(40):
+        try:
+            with urllib.request.urlopen(f"{STUB}/config.json", timeout=1) as response:
+                response.read(64)
+            return proc
+        except Exception:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.1)
+    return proc
+
+
+def cdp_available() -> bool:
+    try:
+        with urllib.request.urlopen(CDP, timeout=2) as response:
+            pages = json.loads(response.read())
+        return any(page.get("type") == "page" for page in pages)
+    except Exception:
+        return False
+
+
+def run_script(group: str, name: str, argv: list[str], timeout: int = 300) -> bool:
+    try:
+        proc = subprocess.run(argv, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        check(False, group, name, f"timed out after {timeout}s")
+        return False
+    tail = (proc.stdout or proc.stderr).strip().splitlines()
+    check(proc.returncode == 0, group, name, tail[-1][:110] if tail else f"rc={proc.returncode}")
+    return proc.returncode == 0
+
+
+def t28_phase() -> None:
+    configs = sorted((ROOT / "tests" / "fixtures" / "configs").glob("*.json"))
+    check(len(configs) >= 5, "T-28 dialects", "fixture configs present", f"{len(configs)} files")
+    run_script("T-28 dialects", "config_compat.py", [sys.executable, "tests/e2e/config_compat.py"])
+
+
+def t29_t30_phase() -> None:
+    if not cdp_available():
+        record("T-29 sniff", "hidden webview sniff", "FAIL", "dev window (9222) is not running")
+        record("T-30 mpv", "mpv fallback", "FAIL", "dev window (9222) is not running")
+        return
+    run_script("T-29 sniff", "hidden webview sniff", ["node", "tools/probe_sniff.mjs"], timeout=180)
+    run_script("T-30 mpv", "mpv fallback", ["node", "tools/probe_mpv.mjs"], timeout=120)
+
+
+def t32_phase() -> None:
+    conf = json.loads(TAURI_CONF.read_text(encoding="utf-8"))
+    bundle = conf.get("bundle", {})
+    external = bundle.get("externalBin", [])
+    resources = bundle.get("resources", {})
+    check("binaries/qjs-runner" in external, "T-32 bundle", "externalBin registered", str(external))
+    resource_text = json.dumps(resources, ensure_ascii=False)
+    check("sidecars/jre" in resource_text, "T-32 bundle", "JRE bundled as resource")
+    check("sidecars/python-embed" in resource_text, "T-32 bundle", "Python embeddable bundled")
+
+    check(SIZE_REPORT.is_file(), "T-32 bundle", "docs/size-report.md exists")
+    installers = sorted(INSTALLER_DIR.glob("*.exe")) if INSTALLER_DIR.is_dir() else []
+    if not installers:
+        check(False, "T-32 bundle", "NSIS installer built", f"missing under {INSTALLER_DIR}")
+        return
+    size_mb = installers[0].stat().st_size / (1024 * 1024)
+    check(size_mb <= 130, "T-32 bundle", "installer <= 130MB", f"{size_mb:.1f}MB {installers[0].name}")
+    record("T-32 bundle", "installer path", "PASS", str(installers[0].relative_to(ROOT)))
+
+
+def t33_phase() -> None:
+    if not README.is_file():
+        check(False, "T-33 readme", "README.md exists")
+        return
+    text = README.read_text(encoding="utf-8")
+    check("免责" in text or "disclaimer" in text.lower(), "T-33 readme", "disclaimer section")
+    check("构建" in text or "build" in text.lower(), "T-33 readme", "build instructions")
+    check("SmartScreen" in text, "T-33 readme", "SmartScreen note")
+
+
+def cumulative_phase() -> None:
+    py = sys.executable
+    run_script("12.2 cumul", "p0.py (offline)", [py, "tests/e2e/p0.py", "--offline"])
+    run_script("12.2 cumul", "p1.py (adapter)", [py, "tests/e2e/p1.py", "--adapter"])
+    run_script("12.2 cumul", "p2.py", [py, "tests/e2e/p2.py"], timeout=600)
+    run_script("12.2 cumul", "contract_check.py", [py, "tests/e2e/contract_check.py"])
+    run_script("12.2 cumul", "capabilities_check.py", [py, "tests/e2e/capabilities_check.py"])
+    run_script("12.2 cumul", "javap_conserve.py", [py, "tools/javap_conserve.py"])
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-cumulative", action="store_true")
+    args = parser.parse_args()
+
+    stub = ensure_stub()
+    try:
+        t28_phase()
+        t29_t30_phase()
+        t32_phase()
+        t33_phase()
+        # Spec T-31 is explicitly manual acceptance (protocol handler, JumpList,
+        # DPI manifest) and is not implemented; report it instead of hiding it.
+        record("T-31 win11", "shell integration", "N/A", "manual acceptance, not implemented in this build")
+        if not args.no_cumulative:
+            cumulative_phase()
+    finally:
+        if stub is not None:
+            stub.terminate()
+
+    passed = sum(1 for _, _, s in results if s == "PASS")
+    failed = sum(1 for _, _, s in results if s == "FAIL")
+    skipped = sum(1 for _, _, s in results if s in ("SKIP", "N/A"))
+    print(f"\nP3 summary: {passed} pass / {failed} fail / {skipped} n-a (total {len(results)})")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

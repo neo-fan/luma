@@ -49,6 +49,14 @@ fn disabled() -> &'static StdMutex<HashSet<String>> {
 }
 
 fn project_root() -> PathBuf {
+    // Same resource-dir probing as bridge::adapter_root, so an installed build
+    // finds <resource>/sidecars/java/runner.jar.
+    if let Ok(dir) = std::env::var("TVBOX_RESOURCE_DIR") {
+        let path = PathBuf::from(dir);
+        if path.join("sidecars").join("java").join("runner.jar").is_file() {
+            return path;
+        }
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(PathBuf::from)

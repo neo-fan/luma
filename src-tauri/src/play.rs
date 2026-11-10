@@ -6,8 +6,58 @@
 use crate::error::{code, AppError};
 use crate::proxy::{self, ProxyState};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use url::Url;
+
+/// Spec 8.6 level 4. The spec gives no separate budget for the hidden WebView,
+/// so reuse the 15s single-source wall clock; a successful sniff is cached so
+/// re-entering the player for the same page does not open a window again.
+const SNIFF_TIMEOUT: Duration = Duration::from_secs(15);
+const SNIFF_TTL: Duration = Duration::from_secs(600);
+
+struct SniffHit {
+    media: String,
+    found_at: Instant,
+}
+
+fn sniff_cache() -> &'static Mutex<HashMap<String, SniffHit>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, SniffHit>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_sniff(page: &str) -> Option<String> {
+    let guard = sniff_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard
+        .get(page)
+        .filter(|hit| hit.found_at.elapsed() < SNIFF_TTL)
+        .map(|hit| hit.media.clone())
+}
+
+fn remember_sniff(page: &str, media: &str) {
+    let mut guard = sniff_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if guard.len() >= 128 {
+        guard.clear();
+    }
+    guard.insert(
+        page.to_string(),
+        SniffHit {
+            media: media.to_string(),
+            found_at: Instant::now(),
+        },
+    );
+}
+
+fn kind_of(url: &str) -> String {
+    Url::parse(url)
+        .map(|parsed| classify(&parsed).to_string())
+        .unwrap_or_else(|_| "page".to_string())
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,7 +83,8 @@ pub struct PlayResolved {
 }
 
 #[tauri::command]
-pub fn resolve_play(
+pub async fn resolve_play(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Arc<ProxyState>>,
     request: PlayRequest,
 ) -> Result<PlayResolved, AppError> {
@@ -54,16 +105,46 @@ pub fn resolve_play(
         .clone()
         .or_else(|| Some(format!("{}://{host}/", parsed.scheme())));
     let ua = request.ua.clone().or_else(|| Some("okhttp/3.15".to_string()));
+    let port = state.port();
+
+    // Levels 1-3 already ran inside the spider (the URL we get here is either a
+    // direct stream or a play page). A `page` URL means all of them failed, so
+    // this is where level 4 kicks in.
+    let mut effective_url = request.url.clone();
+    let mut kind = classify(&parsed).to_string();
+    if kind == "page" {
+        let cached = cached_sniff(&request.url);
+        let media = match cached {
+            Some(media) => Some(media),
+            None => match crate::sniff::sniff(&app, &request.url, SNIFF_TIMEOUT).await {
+                Ok(media) => {
+                    remember_sniff(&request.url, &media);
+                    Some(media)
+                }
+                Err(err) => {
+                    tracing::info!(
+                        site = %request.site_key,
+                        error = %err.message,
+                        "level-4 sniff found nothing"
+                    );
+                    None
+                }
+            },
+        };
+        if let Some(media) = media {
+            kind = kind_of(&media);
+            effective_url = media;
+        }
+    }
 
     let proxy_url = proxy::build_proxy_url(
-        state.port(),
-        &request.url,
+        port,
+        &effective_url,
         ua.as_deref(),
         referer.as_deref(),
         request.cookie.as_deref(),
     );
 
-    let kind = classify(&parsed).to_string();
     let mut headers = Vec::new();
     if let Some(ua) = ua.clone() {
         headers.push(("User-Agent".to_string(), ua));
@@ -77,7 +158,7 @@ pub fn resolve_play(
 
     tracing::debug!(site = %request.site_key, kind, "resolved play url");
     Ok(PlayResolved {
-        url: request.url,
+        url: effective_url,
         proxy_url,
         kind,
         headers,

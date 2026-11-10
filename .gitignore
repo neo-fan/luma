@@ -18,6 +18,12 @@ dist/
 target/
 src-tauri/target/
 src-tauri/gen/
+
+# T-32 运行时产物（由 tools/prepare_runtime.py 重建，不入库）
+sidecars/jre/
+sidecars/python-embed/
+sidecars/mpv/
+src-tauri/binaries/
 pnpm-debug.log*
 *.log
 .DS_Store

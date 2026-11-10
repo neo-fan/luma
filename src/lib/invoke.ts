@@ -105,6 +105,11 @@ export const api = {
     return call("open_external", { url });
   },
 
+  /** T-30：浏览器无法解码时交给随包 mpv（带防盗链头）。 */
+  mpvPlay(url: string, title?: string, headers?: [string, string][]): Promise<{ pid: number; pipe: string }> {
+    return call("mpv_play", { url, title, headers });
+  },
+
   favoritesList(): Promise<FavoriteItem[]> {
     return call("favorites_list");
   },

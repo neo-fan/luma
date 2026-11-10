@@ -54,14 +54,39 @@ impl Conn {
 }
 
 fn adapter_root() -> PathBuf {
+    // Installed builds carry the adapter under <resource>/sidecars/py; dev keeps
+    // it next to the source tree. Probe instead of guessing from the exe path so
+    // `cargo run` and the NSIS install share one code path.
+    if let Ok(dir) = std::env::var("TVBOX_RESOURCE_DIR") {
+        let path = PathBuf::from(dir);
+        if path.join("sidecars").join("py").join("main.py").is_file() {
+            return path;
+        }
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(PathBuf::from)
         .unwrap_or_default()
 }
 
-fn python_bin() -> String {
-    std::env::var("TVBOX_PYTHON").unwrap_or_else(|_| "python".to_string())
+/// Python launcher plus the working directory it needs.
+///
+/// The embedded distribution resolves `python311.dll` relative to its own
+/// directory, so spawning it with the project root as cwd fails with
+/// STATUS_DLL_NOT_FOUND. Prod uses `<resource>/sidecars/python-embed`; dev
+/// keeps `TVBOX_PYTHON` / `python` on PATH and no special cwd.
+fn python_launch() -> (String, Option<PathBuf>) {
+    if let Ok(explicit) = std::env::var("TVBOX_PYTHON") {
+        return (explicit, None);
+    }
+    if let Ok(dir) = std::env::var("TVBOX_RESOURCE_DIR") {
+        let embed = PathBuf::from(dir).join("sidecars").join("python-embed");
+        let exe = embed.join("python.exe");
+        if exe.is_file() {
+            return (exe.to_string_lossy().to_string(), Some(embed));
+        }
+    }
+    ("python".to_string(), None)
 }
 
 /// Spawn any long-lived one-frame-per-line JSON-RPC sidecar.
@@ -145,10 +170,11 @@ fn spawn_conn() -> Result<std::sync::Arc<Conn>, AppError> {
                 .with_details(json!({ "path": script })),
         );
     }
+    let (python, cwd) = python_launch();
     spawn_stdio(
-        &python_bin(),
+        &python,
         &[script.to_string_lossy().to_string()],
-        Some(root.as_path()),
+        cwd.as_deref().or(Some(root.as_path())),
         "python adapter",
     )
 }
