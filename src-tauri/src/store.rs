@@ -1,12 +1,16 @@
-//! Favourites and playback history persistence (spec T-12).
+//! Favourites and playback history (spec T-12).
 //!
-//! One JSON document per concern under the app data directory. Portable mode
-//! (`data/` next to the executable) wins over `%APPDATA%` when it exists.
+//! SQLite (`db.rs`) is the single source of truth. The `Vec` fields are read
+//! caches only: every mutation commits a transaction first, then refreshes the
+//! cache, so a failed write can never leave the UI showing data that is not on
+//! disk. Portable mode (`data/` next to the executable) still wins over
+//! `%APPDATA%` — the database simply lives in that directory.
 
-use crate::error::{code, AppError};
+use crate::db::{Db, FavoriteRow, HistoryRow};
+use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,27 +49,13 @@ pub struct HistoryItem {
     pub updated_at: u64,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct FavoritesFile {
-    #[serde(default)]
-    items: Vec<FavoriteItem>,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct HistoryFile {
-    #[serde(default)]
-    items: Vec<HistoryItem>,
-}
-
 pub struct LibraryStore {
-    dir: PathBuf,
+    db: Arc<Db>,
     favorites: RwLock<Vec<FavoriteItem>>,
     history: RwLock<Vec<HistoryItem>>,
 }
 
-const MAX_HISTORY: usize = 500;
-
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -94,39 +84,60 @@ pub fn data_dir() -> PathBuf {
     PathBuf::from("data")
 }
 
+fn favorite_from_row(row: FavoriteRow) -> FavoriteItem {
+    FavoriteItem {
+        vod: VodRef {
+            site_key: row.site_key,
+            vod_id: row.vod_id,
+            name: row.name,
+            pic: row.pic,
+            remarks: row.remarks,
+            site_name: row.site_name,
+        },
+        added_at: row.added_at,
+    }
+}
+
+fn history_from_row(row: HistoryRow) -> HistoryItem {
+    HistoryItem {
+        vod: VodRef {
+            site_key: row.site_key,
+            vod_id: row.vod_id,
+            name: row.name,
+            pic: row.pic,
+            remarks: row.remarks,
+            site_name: row.site_name,
+        },
+        play_url: row.play_url,
+        position_ms: row.position_ms,
+        duration_ms: row.duration_ms,
+        updated_at: row.updated_at,
+    }
+}
+
+fn same_vod(a: &VodRef, b: &VodRef) -> bool {
+    a.site_key == b.site_key && a.vod_id == b.vod_id
+}
+
 impl LibraryStore {
-    pub fn load() -> Self {
-        Self::at(data_dir())
+    pub fn load(db: Arc<Db>) -> Result<Self, AppError> {
+        let favorites = db
+            .favorites()?
+            .into_iter()
+            .map(favorite_from_row)
+            .collect();
+        let history = db.history()?.into_iter().map(history_from_row).collect();
+        Ok(Self {
+            db,
+            favorites: RwLock::new(favorites),
+            history: RwLock::new(history),
+        })
     }
 
     /// Open the library rooted at `dir`; used by tests to stay isolated.
     pub fn at(dir: PathBuf) -> Self {
-        let _ = std::fs::create_dir_all(&dir);
-        let favorites = read_json::<FavoritesFile>(&dir.join("favorites.json"))
-            .unwrap_or_default()
-            .items;
-        let history = read_json::<HistoryFile>(&dir.join("history.json"))
-            .unwrap_or_default()
-            .items;
-        Self {
-            dir,
-            favorites: RwLock::new(favorites),
-            history: RwLock::new(history),
-        }
-    }
-
-    pub fn dir(&self) -> &PathBuf {
-        &self.dir
-    }
-
-    fn flush_favorites(&self) -> Result<(), AppError> {
-        let guard = self.favorites.read().unwrap_or_else(|p| p.into_inner());
-        write_json(&self.dir.join("favorites.json"), &FavoritesFile { items: guard.clone() })
-    }
-
-    fn flush_history(&self) -> Result<(), AppError> {
-        let guard = self.history.read().unwrap_or_else(|p| p.into_inner());
-        write_json(&self.dir.join("history.json"), &HistoryFile { items: guard.clone() })
+        let db = Arc::new(Db::at(dir).expect("open sqlite database"));
+        Self::load(db).expect("load library store")
     }
 
     pub fn list_favorites(&self) -> Vec<FavoriteItem> {
@@ -143,23 +154,25 @@ impl LibraryStore {
 
     /// Returns `true` when the entry ended up favourited.
     pub fn toggle_favorite(&self, vod: VodRef) -> Result<bool, AppError> {
-        let added = {
-            let mut guard = self.favorites.write().unwrap_or_else(|p| p.into_inner());
-            let existing = guard
-                .iter()
-                .position(|item| item.vod.site_key == vod.site_key && item.vod.vod_id == vod.vod_id);
-            match existing {
-                Some(index) => {
-                    guard.remove(index);
-                    false
-                }
-                None => {
-                    guard.push(FavoriteItem { vod, added_at: now_ms() });
-                    true
-                }
-            }
+        let row = FavoriteRow {
+            site_key: vod.site_key.clone(),
+            vod_id: vod.vod_id.clone(),
+            name: vod.name.clone(),
+            pic: vod.pic.clone(),
+            remarks: vod.remarks.clone(),
+            site_name: vod.site_name.clone(),
+            added_at: now_ms(),
         };
-        self.flush_favorites()?;
+        // Commit first: the DB owns the state, the Vec mirrors it.
+        let added = self.db.toggle_favorite(&row)?;
+        let mut guard = self.favorites.write().unwrap_or_else(|p| p.into_inner());
+        guard.retain(|item| !same_vod(&item.vod, &vod));
+        if added {
+            guard.push(FavoriteItem {
+                vod,
+                added_at: row.added_at,
+            });
+        }
         Ok(added)
     }
 
@@ -182,47 +195,40 @@ impl LibraryStore {
     }
 
     pub fn upsert_history(&self, item: HistoryItem) -> Result<(), AppError> {
-        {
-            let mut guard = self.history.write().unwrap_or_else(|p| p.into_inner());
-            guard.retain(|entry| {
-                !(entry.vod.site_key == item.vod.site_key && entry.vod.vod_id == item.vod.vod_id)
-            });
-            guard.push(HistoryItem { updated_at: now_ms(), ..item });
-            if guard.len() > MAX_HISTORY {
-                let mut sorted = guard.clone();
-                sorted.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-                sorted.truncate(MAX_HISTORY);
-                *guard = sorted;
-            }
-        }
-        self.flush_history()
+        let row = HistoryRow {
+            site_key: item.vod.site_key.clone(),
+            vod_id: item.vod.vod_id.clone(),
+            name: item.vod.name.clone(),
+            pic: item.vod.pic.clone(),
+            remarks: item.vod.remarks.clone(),
+            site_name: item.vod.site_name.clone(),
+            play_url: item.play_url.clone(),
+            position_ms: item.position_ms,
+            duration_ms: item.duration_ms,
+            // Always use a fresh timestamp: the caller's value may be stale
+            // (e.g. a restored player session), and the cap relies on ordering.
+            updated_at: now_ms(),
+        };
+        self.db.upsert_history(&row)?;
+        // Re-read so the 500-row cap in SQLite is exactly what the UI shows.
+        let fresh: Vec<HistoryItem> = self
+            .db
+            .history()?
+            .into_iter()
+            .map(history_from_row)
+            .collect();
+        *self.history.write().unwrap_or_else(|p| p.into_inner()) = fresh;
+        Ok(())
     }
 
     pub fn clear_history(&self) -> Result<(), AppError> {
-        {
-            let mut guard = self.history.write().unwrap_or_else(|p| p.into_inner());
-            guard.clear();
-        }
-        self.flush_history()
+        self.db.clear_history()?;
+        self.history
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        Ok(())
     }
-}
-
-fn read_json<T: for<'de> Deserialize<'de>>(path: &PathBuf) -> Option<T> {
-    let text = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-fn write_json<T: Serialize>(path: &PathBuf, value: &T) -> Result<(), AppError> {
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let text = serde_json::to_string_pretty(value)
-        .map_err(|err| AppError::new(code::INTERNAL, "serialize library failed").with_cause(err.to_string()))?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text.as_bytes())
-        .map_err(|err| AppError::new(code::INTERNAL, "write library failed").with_cause(err.to_string()))?;
-    std::fs::rename(&tmp, path)
-        .map_err(|err| AppError::new(code::INTERNAL, "commit library failed").with_cause(err.to_string()))
 }
 
 #[tauri::command]
@@ -265,21 +271,33 @@ mod tests {
         }
     }
 
+    fn temp_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tvbox-lib-{label}-{}", now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
     #[test]
     fn favorite_toggle_and_persist() {
-        let dir = std::env::temp_dir().join(format!("tvbox-test-{}", now_ms()));
+        let dir = temp_dir("fav");
         let store = LibraryStore::at(dir.clone());
         assert!(store.toggle_favorite(sample("1")).unwrap());
         assert!(store.is_favorite("stub_json", "1"));
         assert!(!store.toggle_favorite(sample("1")).unwrap());
         assert!(!store.is_favorite("stub_json", "1"));
-        assert!(dir.join("favorites.json").exists());
+        assert!(dir.join("tvbox.db").exists(), "data lives in sqlite, not json");
+
+        // A fresh store (i.e. an app restart) sees the committed state.
+        assert!(store.toggle_favorite(sample("2")).unwrap());
+        let reopened = LibraryStore::at(dir.clone());
+        assert!(reopened.is_favorite("stub_json", "2"));
+        assert!(!reopened.is_favorite("stub_json", "1"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn history_dedupes_by_vod() {
-        let dir = std::env::temp_dir().join(format!("tvbox-hist-{}", now_ms()));
+        let dir = temp_dir("hist");
         let store = LibraryStore::at(dir.clone());
         for position in [1000u64, 2000] {
             store
@@ -295,8 +313,10 @@ mod tests {
         let items = store.list_history();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].position_ms, 2000);
+        assert_eq!(LibraryStore::at(dir.clone()).list_history().len(), 1);
         store.clear_history().unwrap();
         assert!(store.list_history().is_empty());
+        assert!(LibraryStore::at(dir.clone()).list_history().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

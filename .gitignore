@@ -25,6 +25,12 @@ target/
 src-tauri/target/
 src-tauri/gen/
 
+# SQLite 运行时数据（便携版 data/ 或 dev 回退目录，绝不入库）
+/data/
+tvbox.db
+tvbox.db-wal
+tvbox.db-shm
+
 # T-32 运行时产物（由 tools/prepare_runtime.py 重建，不入库）
 sidecars/jre/
 sidecars/python-embed/

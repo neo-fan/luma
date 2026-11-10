@@ -2,6 +2,7 @@
 
 pub mod bridge;
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod http;
 pub mod live;
@@ -20,14 +21,19 @@ pub use error::{code, AppError};
 
 use config::ConfigStore;
 use store::LibraryStore;
+use std::sync::Arc;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // One SQLite connection shared by both stores: config snapshots, active
+    // marker, favourites and history all live in `<data dir>/tvbox.db`.
+    let database = Arc::new(db::Db::open().expect("open sqlite database"));
+    tracing::info!(path = %database.path().display(), "sqlite persistence ready");
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .manage(ConfigStore::load())
-        .manage(LibraryStore::load())
+        .manage(ConfigStore::load(database.clone()).expect("load config store"))
+        .manage(LibraryStore::load(database.clone()).expect("load library store"))
         .setup(|app| {
             // T-32: in an installed build the sidecars live under the resource
             // dir, not next to the source tree. Publish that root once so

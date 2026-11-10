@@ -79,7 +79,7 @@ $env:TVBOX_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 1. 解压 `TVBox-Desktop-0.1.0-portable.zip` 到任意目录；
 2. 双击 `TVBox Desktop.exe`。
 
-配置、收藏、历史都写在 **exe 同级的 `data/`** 目录；`data/` 存在即自动进入便携模式，不会写 `%APPDATA%`。删除整个文件夹即完成卸载。
+配置、收藏、历史都写在 **exe 同级 `data/tvbox.db`**（单个 SQLite 文件，运行时另有 `-wal` / `-shm` 辅助文件）；`data/` 存在即自动进入便携模式，不会写 `%APPDATA%`。删除整个文件夹即完成卸载。
 
 未签名的 exe 首次运行可能触发 SmartScreen：点击「更多信息」→「仍要运行」。正式分发需要 OV/EV 代码签名证书。
 
@@ -94,8 +94,11 @@ TVBox Desktop/
     jre/              jlink 裁剪的 JDK 17
     java/runner.jar   JVM spider 桥
     mpv/              可选，自行放入
-  data/               配置 / 收藏 / 历史
+  data/
+    tvbox.db          配置 / 收藏 / 历史（SQLite）
 ```
+
+数据层说明：配置快照（导入原件 + 运行派生）、active 配置、收藏与历史都在同一个事务型数据库里；写操作先提交事务再刷新界面缓存。首次启动会把旧版本的 JSON 数据自动导入 `tvbox.db`，旧文件保留在 `data/` 作为备份、不再读取。开发模式下数据库位于 `%APPDATA%\tvbox-desktop\tvbox.db`。
 
 ## 测试
 

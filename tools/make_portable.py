@@ -11,7 +11,7 @@ in place. Layout produced:
       sidecars/jre/              jlink-trimmed JDK 17
       sidecars/java/runner.jar   JVM spider bridge
       sidecars/mpv/              optional, only with --with-mpv
-      data/                      portable data dir (config/favourites/history)
+      data/                      portable data dir (tvbox.db + legacy json backup)
       使用说明.txt
 
 `store.rs::data_dir` already prefers `<exe>/data`, and the sidecar resolvers

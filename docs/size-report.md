@@ -2,6 +2,7 @@
 
 > 口径：字节数取自本机实测（`Path.stat()` / `rglob`），1 MB = 1024×1024 字节，保留两位小数。
 > 构建时间：2026-11-10；`python tools/make_portable.py`（`cargo build --release` + 组装 + zip）。
+> **2026-11-10 更新**：主程序现静态链接 SQLite（`rusqlite bundled`）。下表 15.00 MB / 41.36 MB 为引入前实测，重新打包后需复测；预计 exe 增加约 1 MB，zip 仍远低于 45 MB 上限。
 
 ## 便携版目录（压缩前）
 

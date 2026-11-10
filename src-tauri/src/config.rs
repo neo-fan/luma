@@ -4,19 +4,15 @@
 //! fetches payloads, forwards them to the adapter and keeps snapshots.
 
 use crate::bridge;
+use crate::db::{ConfigWrite, Db};
 use crate::error::{code, AppError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPOS: usize = 20;
-/// Persisted id of the config the user last imported. Without this a restart
-/// guesses "last entry in read_dir order", which is filesystem-dependent and
-/// can silently select an empty test config while the UI still shows the
-/// previously cached site list (fan-out then searches zero sites).
-const ACTIVE_FILE: &str = "active.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSource {
@@ -123,100 +119,91 @@ fn runtime_of(entry: &StoredConfig) -> &ConfigSnapshot {
     entry.runtime.as_ref().unwrap_or(&entry.imported)
 }
 
-#[derive(Default)]
 pub struct ConfigStore {
     entries: RwLock<Vec<StoredConfig>>,
     /// The config last imported by the user; fan-out only uses its sites.
     active: RwLock<Option<String>>,
+    /// SQLite is the source of truth; `entries` is a parsed read cache so a
+    /// 100-site snapshot is not deserialized on every search keystroke.
+    db: Arc<Db>,
 }
 
 impl ConfigStore {
-    /// Restore snapshots persisted under `<data dir>/configs` (T-12).
-    pub fn load() -> Self {
-        let dir = crate::store::data_dir().join("configs");
+    /// Restore snapshots from SQLite. Rows imported from the old JSON files may
+    /// carry an empty `runtime_json`; derive once and persist the result, so a
+    /// policy upgrade takes effect without asking the user to re-import.
+    pub fn load(db: Arc<Db>) -> Result<Self, AppError> {
         let mut entries = Vec::new();
-        if let Ok(read_dir) = std::fs::read_dir(&dir) {
-            for entry in read_dir.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                    continue;
-                }
-                if let Ok(text) = std::fs::read_to_string(&path) {
-                    if let Ok(stored) = serde_json::from_str::<StoredConfig>(&text) {
-                        entries.push(stored);
-                    }
-                }
+        for row in db.config_rows()? {
+            let imported: ConfigSnapshot = serde_json::from_str(&row.imported_json).map_err(|err| {
+                AppError::new(code::INTERNAL, format!("config {} import is corrupt", row.id))
+                    .with_cause(err.to_string())
+            })?;
+            let source: ConfigSource = serde_json::from_str(&row.source_json)
+                .unwrap_or_else(|_| ConfigSource { kind: "text".into(), value: String::new() });
+            let runtime = if row.runtime_json.is_empty() {
+                None
+            } else {
+                Some(serde_json::from_str(&row.runtime_json).map_err(|err| {
+                    AppError::new(code::INTERNAL, format!("config {} runtime is corrupt", row.id))
+                        .with_cause(err.to_string())
+                })?)
+            };
+            let mut stored = StoredConfig { imported, runtime, source };
+            if stored.runtime.is_none() {
+                let derived = derive_runtime(&stored.imported);
+                db.set_runtime_json(&stored.imported.id, &serde_json::to_string(&derived)?)?;
+                stored.runtime = Some(derived);
             }
+            entries.push(stored);
         }
-        // Files written before the imported/runtime split have no `runtime`.
-        // Derive once and persist, so a policy upgrade takes effect without
-        // asking the user to re-import the same json.
-        for entry in &mut entries {
-            if entry.runtime.is_none() {
-                entry.runtime = Some(derive_runtime(&entry.imported));
-                Self::persist_stored(entry);
-            }
-        }
-        // `active.json` is authoritative. For data written before it existed,
-        // fall back to the most recently imported snapshot: `read_dir` order is
-        // filesystem-dependent and can land on an empty test config, making
-        // every fan-out search run zero sites while the UI shows cached sites.
-        let active = std::fs::read_to_string(Self::active_path())
-            .ok()
-            .map(|text| text.trim().to_string())
+        // The active marker is authoritative. If it is missing or stale (older
+        // data, or a config deleted out of band), fall back to the newest
+        // import and self-heal the marker. Guessing from file order here is
+        // what made fan-out search zero sites after a restart.
+        let active = db
+            .active_config_id()?
             .filter(|id| entries.iter().any(|entry| entry.imported.id == *id))
             .or_else(|| newest_id(&entries));
-        Self::persist_active(active.as_deref());
+        db.set_active_config_id(active.as_deref())?;
         let store = Self {
             entries: RwLock::new(entries),
             active: RwLock::new(active),
+            db,
         };
         // Publish the restored config's host header table; otherwise the first
         // playback after a restart loses the anti-leech headers.
         if let Some(snapshot) = store.active_snapshot() {
             crate::netrules::replace(&snapshot.headers);
         }
-        store
-    }
-
-    fn dir() -> std::path::PathBuf {
-        crate::store::data_dir().join("configs")
-    }
-
-    fn active_path() -> std::path::PathBuf {
-        crate::store::data_dir().join(ACTIVE_FILE)
-    }
-
-    fn persist_active(id: Option<&str>) {
-        let path = Self::active_path();
-        match id {
-            Some(id) => {
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&path, id);
-            }
-            None => {
-                let _ = std::fs::remove_file(&path);
-            }
-        }
-    }
-
-    fn persist_stored(stored: &StoredConfig) {
-        let dir = Self::dir();
-        let _ = std::fs::create_dir_all(&dir);
-        if let Ok(text) = serde_json::to_string(stored) {
-            let _ = std::fs::write(dir.join(format!("{}.json", stored.imported.id)), text);
-        }
+        Ok(store)
     }
 
     /// Persist the imported config AND its independent runtime derivation.
     /// Returns the runtime snapshot: `config_import` gives it to the frontend
     /// so the site cache cannot reintroduce sources we just blocked.
-    pub fn insert(&self, imported: ConfigSnapshot, source: ConfigSource) -> ConfigSnapshot {
+    pub fn insert(
+        &self,
+        imported: ConfigSnapshot,
+        source: ConfigSource,
+    ) -> Result<ConfigSnapshot, AppError> {
         let id = imported.id.clone();
         let runtime = derive_runtime(&imported);
         let headers = runtime.headers.clone();
+        // Write the imported/runtime pair and switch the active marker in one
+        // transaction BEFORE touching the in-memory caches. Two separate files
+        // used to be able to disagree after a crash mid-write.
+        let imported_json = serde_json::to_string(&imported)?;
+        let runtime_json = serde_json::to_string(&runtime)?;
+        let source_json = serde_json::to_string(&source)?;
+        self.db.activate_config(ConfigWrite {
+            id: &id,
+            name: &imported.name,
+            imported_at: &imported.imported_at,
+            imported_json: &imported_json,
+            runtime_json: &runtime_json,
+            source_json: &source_json,
+        })?;
         // One clone is unavoidable here: the store owns the runtime snapshot
         // while the caller needs it for the UI. Imports are rare; a second IPC
         // round trip to read it back would cost more than the copy.
@@ -225,18 +212,14 @@ impl ConfigStore {
             runtime: Some(runtime.clone()),
             source,
         };
-        Self::persist_stored(&stored);
         {
             let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
             guard.retain(|entry| entry.imported.id != id);
             guard.push(stored);
         }
-        // Importing a config switches the active one, otherwise stale sites
-        // (fixtures, dead repos) keep showing up in every fan-out search.
-        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.clone());
-        Self::persist_active(Some(&id));
+        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id);
         crate::netrules::replace(&headers);
-        runtime
+        Ok(runtime)
     }
 
     pub fn list(&self) -> Vec<ConfigMeta> {
@@ -253,28 +236,34 @@ impl ConfigStore {
     }
 
     pub fn remove(&self, id: &str) -> Result<(), AppError> {
-        let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let before = guard.len();
-        guard.retain(|entry| entry.imported.id != id);
-        if guard.len() == before {
+        let exists = self
+            .entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .any(|entry| entry.imported.id == id);
+        if !exists {
             return Err(AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found")));
         }
-        let next_active = guard.last().map(|entry| entry.imported.id.clone());
-        drop(guard);
-        // Only now touch `active`, and only if it pointed at the removed entry.
-        // `all_sites` acquires active then entries; taking them in the opposite
-        // order (or overlapping) lets the two callers deadlock.
         let was_active = self
             .active
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_deref()
             == Some(id);
+        // SQLite promotes the newest remaining config when the active one is
+        // removed; the returned id keeps the cache and the DB in agreement.
+        let next_active = self.db.delete_config(id)?;
+        {
+            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.retain(|entry| entry.imported.id != id);
+        }
+        // Only now touch `active`, and only if it pointed at the removed entry.
+        // `all_sites` acquires active then entries; taking them in the opposite
+        // order (or overlapping) lets the two callers deadlock.
         if was_active {
-            Self::persist_active(next_active.as_deref());
             *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = next_active;
         }
-        let _ = std::fs::remove_file(Self::dir().join(format!("{id}.json")));
         if let Some(snapshot) = self.active_snapshot() {
             crate::netrules::replace(&snapshot.headers);
         }
@@ -503,7 +492,7 @@ pub async fn config_import(
     // Never hand the imported one back to the UI: its sites still contain the
     // blocked jar/JS sources and would silently repopulate the frontend cache.
     let imported = import_from_source(source.clone()).await?;
-    Ok(state.insert(imported, source))
+    state.insert(imported, source)
 }
 
 #[tauri::command]
@@ -541,33 +530,43 @@ mod tests {
         .expect("snapshot fixture")
     }
 
+    /// Each test owns a separate SQLite file. `TVBOX_DATA_DIR` is process-wide,
+    /// so the guard is held for the whole test, not just during setup.
     static DATA_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-    /// `insert`/`remove`/`load` all touch `data_dir()`, and `TVBOX_DATA_DIR` is
-    /// process-wide: serialize the tests that redirect it. Returns the guard so
-    /// the lock is held for the whole test, not just during setup.
-    fn isolate_data_dir() -> std::sync::MutexGuard<'static, ()> {
+    fn isolate_data_dir() -> (std::sync::MutexGuard<'static, ()>, std::path::PathBuf) {
         let guard = DATA_DIR_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let dir = std::env::temp_dir().join(format!("tvbox-config-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "tvbox-config-test-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::env::set_var("TVBOX_DATA_DIR", &dir);
-        guard
+        (guard, dir)
+    }
+
+    /// Fresh process-like state: open the DB and rebuild the in-memory cache.
+    fn store_at(dir: &std::path::Path) -> ConfigStore {
+        let db = Arc::new(Db::at(dir.to_path_buf()).expect("open sqlite db"));
+        ConfigStore::load(db).expect("load config store")
     }
 
     #[test]
     fn fanout_is_scoped_to_the_active_config() {
-        let _guard = isolate_data_dir();
-        let store = ConfigStore::default();
+        let (_guard, dir) = isolate_data_dir();
+        let store = store_at(&dir);
         let source = ConfigSource {
             kind: "text".into(),
             value: String::new(),
         };
-        store.insert(snapshot("old", &["stub_a"]), source.clone());
+        store.insert(snapshot("old", &["stub_a"]), source.clone()).unwrap();
         assert_eq!(store.all_sites().len(), 1);
 
-        store.insert(snapshot("new", &["real_a", "real_b"]), source);
+        store.insert(snapshot("new", &["real_a", "real_b"]), source).unwrap();
         let keys: Vec<String> = store
             .all_sites()
             .iter()
@@ -648,9 +647,8 @@ mod tests {
     }
 
     #[test]
-    fn load_migrates_legacy_snapshot_files_and_keeps_the_import() {
-        let _guard = isolate_data_dir();
-        let root = std::env::temp_dir().join(format!("tvbox-config-test-{}", std::process::id()));
+    fn legacy_json_migrates_into_sqlite_without_rewriting_the_import() {
+        let (_guard, root) = isolate_data_dir();
         let dir = root.join("configs");
         std::fs::create_dir_all(&dir).expect("temp configs dir");
         let legacy = json!({
@@ -665,11 +663,12 @@ mod tests {
             },
             "source": {"kind": "text", "value": ""}
         });
-        let path = dir.join("legacy.json");
-        std::fs::write(&path, serde_json::to_string(&legacy).unwrap()).unwrap();
-        std::fs::write(root.join(ACTIVE_FILE), "legacy").unwrap();
+        std::fs::write(dir.join("legacy.json"), serde_json::to_string(&legacy).unwrap()).unwrap();
+        std::fs::write(root.join("active.json"), "legacy").unwrap();
 
-        let store = ConfigStore::load();
+        // Db::at performs the one-time JSON -> SQLite migration on open.
+        let db = Arc::new(Db::at(root.clone()).expect("open db"));
+        let store = ConfigStore::load(db.clone()).expect("load store");
         let active = store.active_snapshot().expect("active snapshot");
         let jar = active
             .sites
@@ -680,11 +679,49 @@ mod tests {
         assert!(jar.get("disabledReason").is_some());
         assert_eq!(store.all_sites().len(), 2, "blocked rows stay, but disabled");
 
-        // The rewritten file contains both sides: the untouched import and the
-        // derived runtime, so a policy change can always re-derive from it.
-        let rewritten: Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(rewritten["imported"]["sites"][1]["enabled"], json!(true));
-        assert!(rewritten["runtime"]["sites"][1]["disabledReason"].is_string());
+        // Both sides live in SQLite now: the import is untouched, the derived
+        // runtime is persisted so a policy change can always re-derive from it.
+        let rows = db.config_rows().unwrap();
+        assert_eq!(rows.len(), 1);
+        let imported: Value = serde_json::from_str(&rows[0].imported_json).unwrap();
+        assert_eq!(imported["sites"][1]["enabled"], json!(true));
+        let runtime: Value = serde_json::from_str(&rows[0].runtime_json).unwrap();
+        assert!(runtime["sites"][1]["disabledReason"].is_string());
+        assert_eq!(db.active_config_id().unwrap().as_deref(), Some("legacy"));
+
+        // Reopening must not duplicate rows or lose the active marker, even
+        // though the old JSON files are deliberately left in place.
+        let reopened = store_at(&root);
+        assert_eq!(reopened.list().len(), 1);
+        assert_eq!(reopened.active_snapshot().unwrap().id, "legacy");
+        assert_eq!(reopened.all_sites().len(), 2);
+    }
+
+    #[test]
+    fn active_config_survives_restart_and_deletion() {
+        let (_guard, dir) = isolate_data_dir();
+        let store = store_at(&dir);
+        let source = ConfigSource {
+            kind: "text".into(),
+            value: String::new(),
+        };
+        let mut stale = snapshot("old", &["stub_a"]);
+        stale.imported_at = "2026-01-01T00:00:00Z".into();
+        let mut current = snapshot("box", &["real_a", "real_b"]);
+        current.imported_at = "2026-11-10T09:14:17Z".into();
+        store.insert(stale, source.clone()).unwrap();
+        store.insert(current, source).unwrap();
+
+        let restarted = store_at(&dir);
+        assert_eq!(restarted.list().len(), 2);
+        assert_eq!(restarted.active_snapshot().unwrap().id, "box");
+        assert_eq!(restarted.all_sites().len(), 2);
+
+        restarted.remove("box").unwrap();
+        let after = store_at(&dir);
+        assert_eq!(after.list().len(), 1);
+        assert_eq!(after.active_snapshot().unwrap().id, "old");
+        assert_eq!(after.all_sites().len(), 1);
+        assert!(after.remove("missing").is_err(), "unknown id is rejected");
     }
 }
