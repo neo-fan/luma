@@ -86,7 +86,14 @@ export default function SettingsPage({
     try {
       const snapshot = await api.configImport({ kind, value });
       onImported(snapshot);
-      setNotice(`已导入「${snapshot.name}」，共 ${snapshot.sites.length} 个站点`);
+      // configImport 返回的是运行配置（导入原件在后端单独保留）；把主动
+      // 屏蔽的数量报出来，用户才知道为什么站点比原始 json 里少。
+      const usable = snapshot.sites.filter((site) => site.enabled).length;
+      const blocked = snapshot.sites.filter((site) => site.disabledReason).length;
+      setNotice(
+        `已导入「${snapshot.name}」，${usable} 个可用站点` +
+          (blocked > 0 ? `；已屏蔽 ${blocked} 个不支持的 jar / JS 源` : ""),
+      );
       if (kind === "url") {
         setUrl("");
       } else {

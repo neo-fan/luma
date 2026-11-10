@@ -60,8 +60,67 @@ pub struct ConfigMeta {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredConfig {
-    snapshot: ConfigSnapshot,
+    /// Config exactly as imported + normalized. Runtime policy NEVER rewrites
+    /// this: it is the source of truth when a policy changes and the only place
+    /// old favourites/history can still look a site up.
+    ///
+    /// `alias` reads files written before the split, where this field was
+    /// called `snapshot`. New files always serialize as `imported`.
+    #[serde(alias = "snapshot")]
+    imported: ConfigSnapshot,
+    /// One-way derivation of `imported` (see `derive_runtime`). All fan-out,
+    /// playback and frontend cache reads go through this, never `imported`.
+    #[serde(default)]
+    runtime: Option<ConfigSnapshot>,
     source: ConfigSource,
+}
+
+/// Runtimes deliberately excluded from the runtime snapshot.
+///
+/// Community configs ship Android dex jars (`csp_*` sites + a config-level
+/// `spider` jar) and drpy2 / ES-module JS sources. Both fail on Win x64 no
+/// matter how often we retry, and each one used to add a failure line to every
+/// aggregate search. They stay intact in `imported` so the user's config is
+/// preserved and can be re-derived if support is added later.
+pub(crate) fn blocked_reason(site: &Value) -> Option<&'static str> {
+    match site.get("runtime").and_then(Value::as_str) {
+        Some("jvm") => Some("jar 源为 Android dex，Windows 端暂不支持"),
+        Some("quickjs") => Some("JS 源（drpy2 / ES 模块）暂不支持"),
+        _ => None,
+    }
+}
+
+/// imported -> runtime, one way and idempotent.
+///
+/// Only `sites` is transformed; the rest is inherited. `imported` is borrowed,
+/// so re-running this after a policy change always starts from the original
+/// data instead of stacking transformations on a transformed snapshot.
+/// Blocked rows are kept (with `enabled = false` + a reason) rather than
+/// removed, so the settings UI can explain why they disappeared.
+fn derive_runtime(imported: &ConfigSnapshot) -> ConfigSnapshot {
+    let mut runtime = imported.clone();
+    runtime.sites = imported
+        .sites
+        .iter()
+        .map(|site| match blocked_reason(site) {
+            None => site.clone(),
+            Some(reason) => {
+                let mut blocked = site.clone();
+                if let Some(map) = blocked.as_object_mut() {
+                    map.insert("enabled".into(), Value::Bool(false));
+                    map.insert("disabledReason".into(), Value::String(reason.to_string()));
+                }
+                blocked
+            }
+        })
+        .collect();
+    runtime
+}
+
+/// `runtime` is always Some after `insert`/`load`; fall back to `imported` for
+/// hand-built fixtures so a missing derivation degrades instead of panicking.
+fn runtime_of(entry: &StoredConfig) -> &ConfigSnapshot {
+    entry.runtime.as_ref().unwrap_or(&entry.imported)
 }
 
 #[derive(Default)]
@@ -89,6 +148,15 @@ impl ConfigStore {
                 }
             }
         }
+        // Files written before the imported/runtime split have no `runtime`.
+        // Derive once and persist, so a policy upgrade takes effect without
+        // asking the user to re-import the same json.
+        for entry in &mut entries {
+            if entry.runtime.is_none() {
+                entry.runtime = Some(derive_runtime(&entry.imported));
+                Self::persist_stored(entry);
+            }
+        }
         // `active.json` is authoritative. For data written before it existed,
         // fall back to the most recently imported snapshot: `read_dir` order is
         // filesystem-dependent and can land on an empty test config, making
@@ -96,7 +164,7 @@ impl ConfigStore {
         let active = std::fs::read_to_string(Self::active_path())
             .ok()
             .map(|text| text.trim().to_string())
-            .filter(|id| entries.iter().any(|entry| entry.snapshot.id == *id))
+            .filter(|id| entries.iter().any(|entry| entry.imported.id == *id))
             .or_else(|| newest_id(&entries));
         Self::persist_active(active.as_deref());
         let store = Self {
@@ -134,25 +202,33 @@ impl ConfigStore {
         }
     }
 
-    fn persist(&self, stored: &StoredConfig) {
+    fn persist_stored(stored: &StoredConfig) {
         let dir = Self::dir();
         let _ = std::fs::create_dir_all(&dir);
         if let Ok(text) = serde_json::to_string(stored) {
-            let _ = std::fs::write(dir.join(format!("{}.json", stored.snapshot.id)), text);
+            let _ = std::fs::write(dir.join(format!("{}.json", stored.imported.id)), text);
         }
     }
 
-    pub fn insert(&self, snapshot: ConfigSnapshot, source: ConfigSource) {
-        // Keep only the small fields we still need, then move the snapshot into
-        // the store. It used to be cloned twice here (raw config JSON included),
-        // which is expensive for configs with hundreds of sites.
-        let id = snapshot.id.clone();
-        let headers = snapshot.headers.clone();
-        let stored = StoredConfig { snapshot, source };
-        self.persist(&stored);
+    /// Persist the imported config AND its independent runtime derivation.
+    /// Returns the runtime snapshot: `config_import` gives it to the frontend
+    /// so the site cache cannot reintroduce sources we just blocked.
+    pub fn insert(&self, imported: ConfigSnapshot, source: ConfigSource) -> ConfigSnapshot {
+        let id = imported.id.clone();
+        let runtime = derive_runtime(&imported);
+        let headers = runtime.headers.clone();
+        // One clone is unavoidable here: the store owns the runtime snapshot
+        // while the caller needs it for the UI. Imports are rare; a second IPC
+        // round trip to read it back would cost more than the copy.
+        let stored = StoredConfig {
+            imported,
+            runtime: Some(runtime.clone()),
+            source,
+        };
+        Self::persist_stored(&stored);
         {
             let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-            guard.retain(|entry| entry.snapshot.id != id);
+            guard.retain(|entry| entry.imported.id != id);
             guard.push(stored);
         }
         // Importing a config switches the active one, otherwise stale sites
@@ -160,6 +236,7 @@ impl ConfigStore {
         *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.clone());
         Self::persist_active(Some(&id));
         crate::netrules::replace(&headers);
+        runtime
     }
 
     pub fn list(&self) -> Vec<ConfigMeta> {
@@ -167,10 +244,10 @@ impl ConfigStore {
         guard
             .iter()
             .map(|entry| ConfigMeta {
-                id: entry.snapshot.id.clone(),
-                name: entry.snapshot.name.clone(),
+                id: entry.imported.id.clone(),
+                name: entry.imported.name.clone(),
                 source: entry.source.clone(),
-                imported_at: entry.snapshot.imported_at.clone(),
+                imported_at: entry.imported.imported_at.clone(),
             })
             .collect()
     }
@@ -178,11 +255,11 @@ impl ConfigStore {
     pub fn remove(&self, id: &str) -> Result<(), AppError> {
         let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
         let before = guard.len();
-        guard.retain(|entry| entry.snapshot.id != id);
+        guard.retain(|entry| entry.imported.id != id);
         if guard.len() == before {
             return Err(AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found")));
         }
-        let next_active = guard.last().map(|entry| entry.snapshot.id.clone());
+        let next_active = guard.last().map(|entry| entry.imported.id.clone());
         drop(guard);
         // Only now touch `active`, and only if it pointed at the removed entry.
         // `all_sites` acquires active then entries; taking them in the opposite
@@ -205,9 +282,12 @@ impl ConfigStore {
     }
 
     pub fn find_site(&self, site_key: &str) -> Result<Value, AppError> {
+        // Look in the imported configs on purpose: a favourite/history entry
+        // may still point at a site that the runtime policy now blocks. The
+        // caller (`spider_invoke`) enforces the policy before dispatch.
         let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         for entry in guard.iter() {
-            for site in &entry.snapshot.sites {
+            for site in &entry.imported.sites {
                 if site.get("key").and_then(Value::as_str) == Some(site_key) {
                     return Ok(site.clone());
                 }
@@ -230,7 +310,7 @@ impl ConfigStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
         let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-        pick(active.as_deref(), guard.as_slice()).map(|entry| entry.snapshot.clone())
+        pick(active.as_deref(), guard.as_slice()).map(|entry| runtime_of(entry).clone())
     }
 
     /// Just the config-level `parses[]` pool. `parse_resolve` runs on every
@@ -244,7 +324,7 @@ impl ConfigStore {
             .clone();
         let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         pick(active.as_deref(), guard.as_slice())
-            .map(|entry| entry.snapshot.parses.clone())
+            .map(|entry| runtime_of(entry).parses.clone())
             .unwrap_or_default()
     }
 
@@ -263,7 +343,7 @@ impl ConfigStore {
         let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         let has_active = active
             .as_ref()
-            .map(|id| guard.iter().any(|entry| &entry.snapshot.id == id))
+            .map(|id| guard.iter().any(|entry| &entry.imported.id == id))
             .unwrap_or(false);
 
         // Borrow the keys for de-duplication: no need to allocate a String per
@@ -271,10 +351,10 @@ impl ConfigStore {
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut out = Vec::new();
         for entry in guard.iter() {
-            if has_active && active.as_deref() != Some(entry.snapshot.id.as_str()) {
+            if has_active && active.as_deref() != Some(entry.imported.id.as_str()) {
                 continue;
             }
-            for site in &entry.snapshot.sites {
+            for site in &runtime_of(entry).sites {
                 let key = site.get("key").and_then(Value::as_str).unwrap_or("");
                 if key.is_empty() || !seen.insert(key) {
                     continue;
@@ -291,8 +371,8 @@ impl ConfigStore {
 fn newest_id(entries: &[StoredConfig]) -> Option<String> {
     entries
         .iter()
-        .max_by(|a, b| a.snapshot.imported_at.cmp(&b.snapshot.imported_at))
-        .map(|entry| entry.snapshot.id.clone())
+        .max_by(|a, b| a.imported.imported_at.cmp(&b.imported.imported_at))
+        .map(|entry| entry.imported.id.clone())
 }
 
 /// Pick the active entry, or the most recently imported one when the active id
@@ -301,7 +381,7 @@ fn newest_id(entries: &[StoredConfig]) -> Option<String> {
 fn pick<'a>(active: Option<&str>, entries: &'a [StoredConfig]) -> Option<&'a StoredConfig> {
     entries
         .iter()
-        .find(|entry| active == Some(entry.snapshot.id.as_str()))
+        .find(|entry| active == Some(entry.imported.id.as_str()))
         .or_else(|| entries.last())
 }
 
@@ -419,9 +499,11 @@ pub async fn config_import(
     state: tauri::State<'_, ConfigStore>,
     source: ConfigSource,
 ) -> Result<ConfigSnapshot, AppError> {
-    let snapshot = import_from_source(source.clone()).await?;
-    state.insert(snapshot.clone(), source);
-    Ok(snapshot)
+    // `insert` owns the imported snapshot and returns its runtime derivation.
+    // Never hand the imported one back to the UI: its sites still contain the
+    // blocked jar/JS sources and would silently repopulate the frontend cache.
+    let imported = import_from_source(source.clone()).await?;
+    Ok(state.insert(imported, source))
 }
 
 #[tauri::command]
@@ -459,17 +541,24 @@ mod tests {
         .expect("snapshot fixture")
     }
 
-    /// `insert`/`remove` persist to `data_dir()`. Point that at a temp dir so
-    /// unit tests never leave an `old.json` (or a bogus active marker) in the
-    /// user's real config directory.
-    fn isolate_data_dir() {
+    static DATA_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `insert`/`remove`/`load` all touch `data_dir()`, and `TVBOX_DATA_DIR` is
+    /// process-wide: serialize the tests that redirect it. Returns the guard so
+    /// the lock is held for the whole test, not just during setup.
+    fn isolate_data_dir() -> std::sync::MutexGuard<'static, ()> {
+        let guard = DATA_DIR_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = std::env::temp_dir().join(format!("tvbox-config-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         std::env::set_var("TVBOX_DATA_DIR", &dir);
+        guard
     }
 
     #[test]
     fn fanout_is_scoped_to_the_active_config() {
-        isolate_data_dir();
+        let _guard = isolate_data_dir();
         let store = ConfigStore::default();
         let source = ConfigSource {
             kind: "text".into(),
@@ -506,14 +595,96 @@ mod tests {
         // ordered `old.json` after the real config on this machine.
         let entries = vec![
             StoredConfig {
-                snapshot: current,
+                imported: current,
+                runtime: None,
                 source: source.clone(),
             },
             StoredConfig {
-                snapshot: stale,
+                imported: stale,
+                runtime: None,
                 source,
             },
         ];
         assert_eq!(newest_id(&entries).as_deref(), Some("box"));
+    }
+
+    #[test]
+    fn derive_runtime_blocks_jar_and_js_without_rewriting_the_import() {
+        let mut imported = snapshot("box", &[]);
+        imported.sites = vec![
+            json!({"key": "cms", "runtime": "cms", "enabled": true}),
+            json!({"key": "py", "runtime": "python", "enabled": true}),
+            json!({"key": "jar", "runtime": "jvm", "enabled": true}),
+            json!({"key": "js", "runtime": "quickjs", "enabled": true}),
+            json!({"key": "divider", "runtime": "none", "enabled": false}),
+        ];
+        let before = imported.sites.clone();
+        let runtime = derive_runtime(&imported);
+
+        // The import is the source of truth: the transform must be read-only.
+        assert_eq!(imported.sites, before);
+        let site = |key: &str| -> Value {
+            runtime
+                .sites
+                .iter()
+                .find(|site| site.get("key").and_then(Value::as_str) == Some(key))
+                .expect("site present")
+                .clone()
+        };
+        for key in ["jar", "js"] {
+            assert_eq!(site(key).get("enabled").and_then(Value::as_bool), Some(false));
+            assert!(site(key).get("disabledReason").and_then(Value::as_str).is_some());
+        }
+        for key in ["cms", "py"] {
+            assert_eq!(site(key).get("enabled").and_then(Value::as_bool), Some(true));
+            assert!(site(key).get("disabledReason").is_none());
+        }
+        assert_eq!(site("divider").get("enabled").and_then(Value::as_bool), Some(false));
+        // Config-level fields are inherited, not rebuilt from scratch.
+        assert_eq!(runtime.id, imported.id);
+        assert_eq!(runtime.headers, imported.headers);
+        // Re-deriving from the same import is idempotent (no stacked policy).
+        assert_eq!(derive_runtime(&imported).sites, runtime.sites);
+    }
+
+    #[test]
+    fn load_migrates_legacy_snapshot_files_and_keeps_the_import() {
+        let _guard = isolate_data_dir();
+        let root = std::env::temp_dir().join(format!("tvbox-config-test-{}", std::process::id()));
+        let dir = root.join("configs");
+        std::fs::create_dir_all(&dir).expect("temp configs dir");
+        let legacy = json!({
+            "snapshot": {
+                "id": "legacy",
+                "name": "legacy",
+                "importedAt": "2026-11-10T00:00:00Z",
+                "sites": [
+                    {"key": "py", "runtime": "python", "enabled": true},
+                    {"key": "jar", "runtime": "jvm", "enabled": true}
+                ]
+            },
+            "source": {"kind": "text", "value": ""}
+        });
+        let path = dir.join("legacy.json");
+        std::fs::write(&path, serde_json::to_string(&legacy).unwrap()).unwrap();
+        std::fs::write(root.join(ACTIVE_FILE), "legacy").unwrap();
+
+        let store = ConfigStore::load();
+        let active = store.active_snapshot().expect("active snapshot");
+        let jar = active
+            .sites
+            .iter()
+            .find(|site| site.get("key").and_then(Value::as_str) == Some("jar"))
+            .expect("jar site");
+        assert_eq!(jar.get("enabled").and_then(Value::as_bool), Some(false));
+        assert!(jar.get("disabledReason").is_some());
+        assert_eq!(store.all_sites().len(), 2, "blocked rows stay, but disabled");
+
+        // The rewritten file contains both sides: the untouched import and the
+        // derived runtime, so a policy change can always re-derive from it.
+        let rewritten: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(rewritten["imported"]["sites"][1]["enabled"], json!(true));
+        assert!(rewritten["runtime"]["sites"][1]["disabledReason"].is_string());
     }
 }

@@ -78,7 +78,8 @@
         "enabled": { "type": "boolean" },
         "changeable": { "type": "boolean" },
         "playerType": { "type": ["integer", "string"] },
-        "orderNum": { "type": "integer" }
+        "orderNum": { "type": "integer" },
+        "disabledReason": { "type": "string" }
       },
       "additionalProperties": false
     },

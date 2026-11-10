@@ -121,10 +121,12 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
             aria-label="选择站点"
           >
             {sites.map((item) => {
-              const unsupported = item.runtime === "jvm";
-              const suffix = unsupported ? "（暂不支持）" : item.enabled ? "" : "（已禁用）";
+              // Old localStorage caches have no disabledReason: a jvm site is
+              // still blocked there even though `enabled` says true.
+              const blocked = Boolean(item.disabledReason) || item.runtime === "jvm";
+              const suffix = blocked ? "（已屏蔽）" : item.enabled ? "" : "（已禁用）";
               return (
-                <option key={item.key} value={item.key} disabled={unsupported || !item.enabled}>
+                <option key={item.key} value={item.key} disabled={blocked || !item.enabled}>
                   {item.name}
                   {suffix}
                 </option>

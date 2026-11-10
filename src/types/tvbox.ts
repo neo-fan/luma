@@ -37,8 +37,10 @@ export interface Site {
   filterable: boolean;
   categories: { type_id: string; type_name: string }[];
   timeoutMs: number;
-  /** 崩溃/超时次数超阈值后置 false */
+  /** 崩溃/超时次数超阈值后置 false；导入时的支持范围屏蔽同样置 false。 */
   enabled: boolean;
+  /** 存在时说明该源在运行配置中被主动屏蔽（jar / JS 源），导入配置仍保留它。 */
+  disabledReason?: string;
   /** TVBox `changeable`：false 表示该源不允许跨站换源。 */
   changeable?: boolean;
   /** TVBox `playerType`：源建议的播放内核（原样透传）。 */

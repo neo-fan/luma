@@ -148,25 +148,23 @@ export default function App() {
     void (async () => {
       try {
         const snapshot = await api.configActive();
-        if (!alive || !snapshot) {
+        if (!alive || !snapshot || snapshot.sites.length === 0) {
           return;
         }
-        setCache((current) => {
-          if (current?.configId === snapshot.id) {
-            return current;
-          }
-          const next: SiteCache = {
-            configId: snapshot.id,
-            sites: snapshot.sites,
-            lives: (snapshot.lives ?? []) as LiveSource[],
-          };
-          try {
-            window.localStorage.setItem(SITE_CACHE_KEY, JSON.stringify(next));
-          } catch {
-            // 本地缓存失败不影响本次会话。
-          }
-          return next;
-        });
+        // 后端是唯一真源：即使 configId 相同，运行策略升级（例如导入时屏蔽
+        // jar 源）也会改变 sites，必须无条件覆盖旧缓存，否则前端又会列出
+        // 已被禁止运行的站点。
+        const next: SiteCache = {
+          configId: snapshot.id,
+          sites: snapshot.sites,
+          lives: (snapshot.lives ?? []) as LiveSource[],
+        };
+        setCache(next);
+        try {
+          window.localStorage.setItem(SITE_CACHE_KEY, JSON.stringify(next));
+        } catch {
+          // 本地缓存失败不影响本次会话。
+        }
       } catch {
         // 后端没有该命令时保留本地缓存，不打断启动。
       }

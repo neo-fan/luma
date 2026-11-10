@@ -278,6 +278,15 @@ pub async fn spider_invoke(
     }
 
     let site = state.find_site(&request.site_key)?;
+    // `find_site` deliberately reads the imported snapshot (old favourites /
+    // history may still point at a blocked source), so enforce the runtime
+    // policy here: a single-site call must not bypass the import-time filter.
+    if let Some(reason) = crate::config::blocked_reason(&site) {
+        return Err(AppError::new(
+            code::RUNTIME_UNAVAILABLE,
+            format!("站点已屏蔽：{reason}"),
+        ));
+    }
     // `/proxy?do=py` does not carry a site key; the last playerContent caller
     // is the current play session (single player window).
     if request.method == SpiderMethod::PlayerContent {
