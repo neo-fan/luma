@@ -199,15 +199,25 @@ try {
   } catch { /* Network domain 不可用时忽略 */ }
   console.log(`target: ${page.url}`);
 
-  // 自检：确认 dev server 提供的是含「身份校验 + 字段隔离」的新版 PlayerPage。
-  // Vite 转换缓存曾让探针测到旧代码、误判修复无效；这里主动验证，避免重蹈覆辙。
-  const pgSrc = await fetch(`http://localhost:1420/src/pages/PlayerPage.tsx?ux=${Date.now()}`)
-    .then((r) => r.text())
-    .catch(() => "");
+  // 自检：确认 dev server 提供的是含「身份校验 + 倍速字段隔离」的新版播放链路。
+  // 内核 effect 已从 PlayerPage 抽到 usePlayerEngine，故两处源码都取来拼接检查；
+  // 这样模块再搬迁也不易碎。Vite 转换缓存曾让探针测到旧代码、误判修复无效，
+  // 这里主动验证，避免重蹈覆辙。注意别在被 fetch 的源文件注释里复刻这两个
+  // 字面串，否则自检会形同虚设。
+  const bust = Date.now();
+  const [pgSrc, engSrc] = await Promise.all([
+    fetch(`http://localhost:1420/src/pages/PlayerPage.tsx?ux=${bust}`)
+      .then((r) => r.text())
+      .catch(() => ""),
+    fetch(`http://localhost:1420/src/hooks/usePlayerEngine.ts?ux=${bust}`)
+      .then((r) => r.text())
+      .catch(() => ""),
+  ]);
+  const pgBundle = `${pgSrc}\n${engSrc}`;
   const codeIsFresh =
-    pgSrc.includes("videoRef.current !== video") &&
-    pgSrc.includes("writePlayerPrefs({ rate: video.playbackRate })");
-  assert(codeIsFresh, "dev server serves fresh PlayerPage (identity check + field isolation)",
+    pgBundle.includes("videoRef.current !== video") &&
+    pgBundle.includes("writePlayerPrefs({ rate: video.playbackRate })");
+  assert(codeIsFresh, "dev server serves fresh player (identity check + field isolation)",
     codeIsFresh ? "" : "stale Vite module cache; restart the dev server");
   if (!codeIsFresh) throw new Error("stale dev module; abort to avoid false product bug report");
 

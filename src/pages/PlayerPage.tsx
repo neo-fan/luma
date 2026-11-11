@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Artplayer from "artplayer";
-import artplayerPluginHlsControl from "artplayer-plugin-hls-control";
-import Hls from "hls.js";
 import type { Navigate } from "../App";
 import ErrorBar from "../components/ErrorBar";
 import SourcePicker from "../components/SourcePicker";
-import Spinner from "../components/Spinner";
+import PlayerHeader from "../components/player/PlayerHeader";
+import PlayerStage from "../components/player/PlayerStage";
+import PlayerControls from "../components/player/PlayerControls";
+import EpisodePanel from "../components/player/EpisodePanel";
 import { formatDuration, parsePlayLines } from "../lib/format";
-import type { PlayLine } from "../lib/format";
-import { countEpisodes, pickMatchingEpisode } from "../lib/sources";
+import { pickMatchingEpisode } from "../lib/sources";
+
 import { prefetchSources } from "../lib/sourceCache";
-import { readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
 import type { HistoryItem, PlayResolved, ResultPage, Site } from "../types/tvbox";
+import { usePlayResolution } from "../hooks/usePlayResolution";
+import { useEpisodeList } from "../hooks/useEpisodeList";
+import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
 
 interface PlayerPageProps {
   siteKey: string;
@@ -35,31 +37,6 @@ interface PlayerPageProps {
   onBack: () => void;
 }
 
-const BUILTIN_KINDS = ["hls", "flv", "file"];
-
-/**
- * mpegts.js 的最小类型面。
- *
- * 它的 d.ts 用 `export default Mpegts` 导出一个命名空间，`import("mpegts.js")`
- * 的类型查询取不到 default（TS2694），而运行时的 CJS 互操作又确实挂在
- * `default` 上。与其和第三方声明文件较劲，这里只声明真正用到的四个成员。
- */
-interface FlvPlayerLike {
-  attachMediaElement(element: HTMLMediaElement): void;
-  load(): void;
-  destroy(): void;
-  on(event: string, handler: (type: string, detail: string) => void): void;
-}
-
-interface MpegtsLike {
-  isSupported(): boolean;
-  createPlayer(
-    config: { type: string; url: string; isLive?: boolean },
-    options?: Record<string, unknown>,
-  ): FlvPlayerLike;
-  Events: { ERROR: string };
-}
-
 /** 播放页：解析地址 → 内置播放 → 记录历史；必要时外部播放。 */
 export default function PlayerPage({
   siteKey,
@@ -75,20 +52,14 @@ export default function PlayerPage({
   navigate,
   onBack,
 }: PlayerPageProps) {
-  /** ArtPlayer 挂载点；实例会在这个容器里生成真正的 <video>。 */
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  /** ArtPlayer 托管的原生 <video>，换源、兜底、历史逻辑仍基于它。 */
+  /** ArtPlayer 托管原生 <video>；换源、兜底、历史逻辑仍基于它。 */
   const videoRef = useRef<HTMLVideoElement | null>(null);
   /** 卸载时 ArtPlayer 会清掉 src，进度必须独立留一份快照。 */
   const lastMediaRef = useRef<{ positionMs: number; durationMs?: number }>({ positionMs: 0 });
+  /** ArtPlayer 挂载点；实例会在这个容器里生成真正的 <video>。 */
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const [resolved, setResolved] = useState<PlayResolved | null>(null);
-  const [resolving, setResolving] = useState(false);
-  const [resolveError, setResolveError] = useState("");
   const [videoError, setVideoError] = useState("");
-  const [timeMs, setTimeMs] = useState(0);
-  const [durationMs, setDurationMs] = useState(0);
-
   const [switchTip, setSwitchTip] = useState("");
   const triedSites = useRef<string[]>([]);
   const failoverStarted = useRef(false);
@@ -99,13 +70,41 @@ export default function PlayerPage({
   /** 同一轮播放只允许一次「找下一条线路」，防止多个失败信号并发触发。 */
   const lineSwitchStarted = useRef(false);
 
-  const [lines, setLines] = useState<PlayLine[]>([]);
-  const [lineIndex, setLineIndex] = useState(0);
-  const [episodeIndex, setEpisodeIndex] = useState(0);
-  /** 播放页内的选集面板与手动换源弹层。 */
   const [panelOpen, setPanelOpen] = useState(false);
-  const [panelLine, setPanelLine] = useState(0);
   const [showSources, setShowSources] = useState(false);
+
+  // 地址解析编排：playUrl → PlayResolved（effect 体与依赖数组原样保留在 hook 内）。
+  const {
+    resolved,
+    resolving,
+    resolveError,
+    timeMs,
+    durationMs,
+    setTimeMs,
+    setDurationMs,
+  } = usePlayResolution({
+    siteKey,
+    playUrl,
+    playFrom,
+    liveUa,
+    vodId,
+    setSwitchTip,
+    setVideoError,
+  });
+
+  // 剧集列表编排：拉详情 + 按 playUrl 定位 line/episode（effect 体原样保留在 hook 内）。
+  const {
+    lines,
+    lineIndex,
+    episodeIndex,
+    panelLine,
+    setPanelLine,
+    currentLine,
+    canPrev,
+    canNext,
+  } = useEpisodeList(siteKey, vodId, playUrl);
+
+  const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
 
   /**
    * 与详情页共用的换源候选缓存：播放页多是从详情跳转过来，缓存已就绪；
@@ -122,159 +121,6 @@ export default function PlayerPage({
     // / 收藏直接进播放页的情况，站点到达后再补一次预取判定。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vodName, siteKey, sites.length]);
-
-  useEffect(() => {
-    let alive = true;
-    const run = async () => {
-      setResolving(true);
-      setResolveError("");
-      setVideoError("");
-      setResolved(null);
-      setTimeMs(0);
-      setDurationMs(0);
-      try {
-        // TVBox 链路：详情里的 playUrl 常常只是线路 id 或自定义 scheme
-        // （weiguan://、PAN1-…、6105_0_1），必须让 spider 的 playerContent
-        // 解析出真实直链再交给本地代理。CMS 未实现该方法时直接回退。
-        let targetUrl = playUrl;
-        // 直播没有 playerContent 可问，UA 只能来自 lives[].ua。
-        let ua: string | undefined = liveUa;
-        let referer: string | undefined;
-        let cookie: string | undefined;
-        if (playFrom) {
-          try {
-            const played = (await api.spiderInvoke({
-              siteKey,
-              method: "playerContent",
-              args: [playFrom, playUrl, []],
-              timeoutMs: 15_000,
-            })) as {
-              playUrl?: string;
-              url?: string;
-              parse?: number;
-              jx?: number;
-              header?: Record<string, string>;
-            } | null;
-            const candidate = String(played?.playUrl || played?.url || "");
-            const parseFlag = Number(played?.parse ?? 0);
-            const jxFlag = Number(played?.jx ?? 0);
-            const header = played?.header ?? {};
-            ua = header["User-Agent"] || header["user-agent"];
-            referer = header["Referer"] || header["referer"];
-            cookie = header["Cookie"] || header["cookie"];
-
-            if (/^https?:\/\//i.test(candidate)) {
-              // `127.0.0.1:9978/proxy?do=py…` 由宿主实现（spider.proxy 转发），
-              // `resolve_play` 会识别本机代理地址并原样透传。
-              const isLocalProxy =
-                /^https?:\/\/127\.0\.0\.1:\d+\/(proxy|proxy2)\b/i.test(candidate);
-              if (isLocalProxy) {
-                targetUrl = candidate;
-              } else if (parseFlag !== 0 || jxFlag !== 0) {
-                // TVBox 语义：parse=1 / jx=1 表示该地址还要过 parses[] 解析池
-                // （type 0 嗅探 / type 1 JSON 接口 / type 4 并行竞速）。
-                try {
-                  const hit = await api.parseResolve({
-                    siteKey,
-                    url: candidate,
-                    flag: playFrom,
-                    headers: header,
-                  });
-                  if (hit?.url) {
-                    targetUrl = hit.url;
-                    for (const [name, value] of hit.headers ?? []) {
-                      const lower = name.toLowerCase();
-                      if (lower === "user-agent") {
-                        ua = value;
-                      } else if (lower === "referer") {
-                        referer = value;
-                      } else if (lower === "cookie") {
-                        cookie = value;
-                      }
-                    }
-                    setSwitchTip(`解析来自「${hit.parser}」`);
-                  }
-                } catch {
-                  // 解析池全失败：保留原地址，由 resolve_play 的嗅探兜底。
-                  targetUrl = candidate;
-                }
-              } else {
-                targetUrl = candidate;
-              }
-            }
-          } catch {
-            // CMS / 未实现 playerContent 的源：沿用原始地址。
-          }
-        }
-        const result = await api.resolvePlay({ siteKey, url: targetUrl, ua, referer, cookie });
-        if (alive) {
-          setResolved(result);
-        }
-      } catch (err) {
-        if (alive) {
-          setResolveError(errorMessage(err));
-          log.warn("resolve failed", {
-            siteKey,
-            vodId,
-            message: errorMessage(err),
-          });
-        }
-      } finally {
-        if (alive) {
-          setResolving(false);
-        }
-      }
-    };
-    void run();
-    return () => {
-      alive = false;
-    };
-  }, [siteKey, playUrl, playFrom, liveUa]);
-
-  // 拉详情只为拿剧集列表做上/下集，失败不影响当前播放。
-  useEffect(() => {
-    // 直播没有剧集概念，去拿 detailContent 只会多一次必败请求。
-    if (siteKey === "live") {
-      setLines([]);
-      return;
-    }
-    let alive = true;
-    const run = async () => {
-      try {
-        const list = await api.detail(siteKey, vodId);
-        if (!alive) {
-          return;
-        }
-        const first = list && list.length > 0 ? list[0] : null;
-        setLines(first ? parsePlayLines(first.vod_play_from, first.vod_play_url) : []);
-      } catch {
-        if (alive) {
-          setLines([]);
-        }
-      }
-    };
-    void run();
-    return () => {
-      alive = false;
-    };
-  }, [siteKey, vodId]);
-
-  useEffect(() => {
-    for (let line = 0; line < lines.length; line += 1) {
-      const index = lines[line].episodes.findIndex((item) => item.url === playUrl);
-      if (index >= 0) {
-        setLineIndex(line);
-        setPanelLine(line);
-        setEpisodeIndex(index);
-        return;
-      }
-    }
-    setLineIndex(0);
-    setPanelLine(0);
-    setEpisodeIndex(0);
-  }, [lines, playUrl]);
-
-  const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
 
   useEffect(() => {
     triedSites.current = [siteKey];
@@ -525,308 +371,24 @@ export default function PlayerPage({
   }, [resolved, resolving, resolveError, playUrl]);
 
   /**
-   * 挂载 / 销毁播放内核：ArtPlayer 负责控件与交互，解码仍交给现有 hls.js。
-   * 反代地址（127.0.0.1:9978/proxy?…）没有扩展名，必须显式传 type，
-   * 否则 customType 不命中，m3u8 会被直接塞给 <video> 而失败。
+   * 播放内核：ArtPlayer + hls.js / mpegts.js + 偏好记忆 + stalled watchdog +
+   * mpv 兜底。effect 体逐字保留在 usePlayerEngine，声明顺序须先于 history
+   * 与 ended 两个 effect（它们直接读内核写入的 videoRef.current）。
    */
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !resolved) {
-      return;
-    }
-
-    mpvTried.current = false;
-    lastMediaRef.current = { positionMs: 0 };
-    // 音量 / 倍速跨集沿用：连看 36 集不该每集重新调一次。
-    const prefs = readPlayerPrefs();
-    const art = new Artplayer({
-      container,
-      url: resolved.proxyUrl,
-      type: resolved.kind === "hls" ? "m3u8" : resolved.kind,
-      lang: "zh-cn",
-      theme: "#e50914",
-      volume: prefs.volume,
-      isLive: siteKey === "live",
-      autoPlayback: false,
-      screenshot: false,
-      hotkey: true,
-      playbackRate: true,
-      aspectRatio: true,
-      setting: true,
-      pip: true,
-      fullscreen: true,
-      fullscreenWeb: true,
-      miniProgressBar: true,
-      mutex: true,
-      moreVideoAttr: { playsInline: true },
-      plugins:
-        resolved.kind === "hls"
-          ? [
-              artplayerPluginHlsControl({
-                quality: {
-                  control: true,
-                  setting: true,
-                  title: "清晰度",
-                  auto: "自动",
-                  // 多数 TVBox 源是单码率且不带 RESOLUTION，插件默认会显示
-                  // "0P"；无分辨率时退回码率 / 片源自定义名 / 原画。
-                  getName: (level) => {
-                    const item = level as { name?: string; height?: number; bitrate?: number };
-                    if (item.height && item.height > 0) {
-                      return `${item.height}P`;
-                    }
-                    if (item.bitrate && item.bitrate > 0) {
-                      return `${Math.round(item.bitrate / 1000)}kbps`;
-                    }
-                    return item.name || "原画";
-                  },
-                },
-                audio: { control: false, setting: true, title: "音轨", auto: "自动" },
-              }),
-            ]
-          : [],
-      customType: {
-        m3u8: (video, url, instance) => {
-          // WebView2 的 canPlayType 会对 mpegurl 返回 "maybe"，但真正把
-          // m3u8 塞给 <video> 会以 MEDIA_ERR_SRC_NOT_SUPPORTED 失败。
-          if (!Hls.isSupported()) {
-            if (video.canPlayType("application/vnd.apple.mpegurl")) {
-              video.src = url;
-            } else {
-              setVideoError("当前环境不支持 HLS 内置播放，请使用外部播放。");
-            }
-            return;
-          }
-          const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-          hls.loadSource(url);
-          hls.attachMedia(video);
-          // hls-control 插件约定从 art.hls 读 levels / currentLevel。
-          instance.hls = hls;
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            // 插件默认只在 ready / restart 读 levels；manifest 解析完再刷一次，
-            // 避免首次播放时清晰度列表还是空的。
-            const control = instance.plugins.artplayerPluginHlsControl as
-              | { update?: () => void }
-              | undefined;
-            control?.update?.();
-            // 上次选过清晰度且这一集仍有同档位时才套用，否则保持自动。
-            const wanted = readPlayerPrefs().height;
-            if (wanted) {
-              const index = hls.levels.findIndex(
-                (level) => Math.round(level.height ?? 0) === wanted,
-              );
-              if (index >= 0) {
-                hls.currentLevel = index;
-              }
-            }
-            void video.play().catch(() => {
-              // 自动播放被拦截时保留控件，用户点一下即可。
-            });
-          });
-          hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-            // 只在用户手动选档时记住；自动档每次切换都是不同码率，
-            // 记下来会让下次错误地固定到某一档。
-            if (hls.autoLevelEnabled) {
-              return;
-            }
-            const level = hls.levels[data.level];
-            if (level?.height) {
-              writePlayerPrefs({ height: level.height });
-            }
-          });
-          hls.on(Hls.Events.ERROR, (_event, data) => {
-            if (!data.fatal) {
-              return;
-            }
-            const reason = data.details ? String(data.details) : "未知错误";
-            setVideoError(`HLS 播放失败：${reason}`);
-            void switchOrFailoverRef.current();
-          });
-          instance.on("destroy", () => hls.destroy());
-        },
-        flv: (video, url, instance) => {
-          // WebView2 没有内置 FLV 解码（<video> 直接吃 flv 会 SRC_NOT_SUPPORTED），
-          // 必须用 mpegts.js 走 MSE 分包。按需 import：只有真播 FLV 时才加载，
-          // 不拖累 HLS / 直链的播放页体积。
-          let player: FlvPlayerLike | null = null;
-          let disposed = false;
-          instance.on("destroy", () => {
-            disposed = true;
-            player?.destroy();
-            player = null;
-          });
-          void (async () => {
-            try {
-              const mod = (await import("mpegts.js")) as unknown as {
-                default?: MpegtsLike;
-              } & MpegtsLike;
-              // mpegts.js 的 d.ts 用 `export default Mpegts` 导出一个命名空间，
-              // `import("mpegts.js").default` 取不到类型；运行时 CJS 互操作后
-              // default 才是本体，这里两个都兜一下。
-              const mpegts = mod.default ?? mod;
-              if (disposed) {
-                return;
-              }
-              if (!mpegts.isSupported()) {
-                setVideoError("当前环境不支持 FLV 内置播放，已改用外部播放。");
-                return;
-              }
-              player = mpegts.createPlayer(
-                { type: "flv", url, isLive: siteKey === "live" },
-                {
-                  enableWorker: true,
-                  // 直播要低延迟；点播留一点缓冲避免卡顿。
-                  enableStashBuffer: siteKey !== "live",
-                  lazyLoad: siteKey !== "live",
-                  stashInitialSize: 128,
-                },
-              );
-              player.attachMediaElement(video);
-              player.load();
-              player.on(mpegts.Events.ERROR, (_type: string, detail: string) => {
-                setVideoError(`FLV 播放失败：${detail}`);
-                void switchOrFailoverRef.current();
-              });
-              void video.play().catch(() => {
-                // 自动播放被拦截时保留控件，用户点一下即可。
-              });
-            } catch (err) {
-              setVideoError(`FLV 解码组件加载失败：${errorMessage(err)}`);
-            }
-          })();
-        },
-      },
-    });
-
-    const video = art.video;
-    videoRef.current = video;
-    video.playbackRate = prefs.rate;
-    /**
-     * 倍速初始化静默期。
-     *
-     * 我们在 ArtPlayer 构造之后才手动设 playbackRate（构造参数没有倍速项），
-     * 但 ArtPlayer 自身的倍速设置初始化是异步的、晚于这一步，会把新 <video>
-     * 的 playbackRate 覆盖回默认 1 并触发 ratechange。若照单记录，就会把系统
-     * 默认值 1 当成用户偏好写进 storage，导致跨集倍速丢失（实测）。
-     *
-     * 处理：挂载后 2 秒内不接受 ratechange 写入（这期间的变更都属于初始化
-     * 噪声）；并在 1.2 秒时把记忆的倍速重放回 video——重放自身触发的
-     * ratechange 仍在静默期内被忽略，只纠正 video 实际值、不污染 storage。
-     * 静默期之后用户手动点倍速，才正常落盘。
-     */
-    const rateReadyAt = Date.now() + 2000;
-    const rateReplay = window.setTimeout(() => {
-      if (videoRef.current !== video) {
-        return;
-      }
-      const wanted = readPlayerPrefs().rate;
-      if (Math.abs(video.playbackRate - wanted) > 0.01) {
-        video.playbackRate = wanted;
-      }
-    }, 1200);
-    // 音量拖动会连发 volumechange，做 500ms 前缘节流；被跳过的最后一次变更
-    // 用 trailing 定时器补写，否则「拖完音量马上切集」会丢最终值。倍速是手动
-    // 点档的低频事件，立即落盘。两者各写各的字段：音量事件绝不碰 rate、倍速
-    // 事件绝不碰 volume——否则拖音量时若 playbackRate 尚未就绪就会把 rate 写坏。
-    //
-    // 回调都校验 `videoRef.current === video`：切集/换源前置空引用后，旧
-    // <video> 销毁触发的变更（已失格）不会覆盖当前偏好。
-    let volumeWrittenAt = 0;
-    let volumeTrailing: number | null = null;
-    const persistVolume = () => {
-      if (videoRef.current !== video) {
-        return;
-      }
-      const now = Date.now();
-      if (now - volumeWrittenAt < 500) {
-        if (volumeTrailing !== null) {
-          window.clearTimeout(volumeTrailing);
-        }
-        volumeTrailing = window.setTimeout(() => {
-          volumeTrailing = null;
-          if (videoRef.current !== video) {
-            return;
-          }
-          volumeWrittenAt = Date.now();
-          writePlayerPrefs({ volume: video.volume });
-        }, 500);
-        return;
-      }
-      volumeWrittenAt = now;
-      writePlayerPrefs({ volume: video.volume });
-    };
-    const persistRate = () => {
-      if (videoRef.current !== video) {
-        return;
-      }
-      // 静默期内 ArtPlayer 会把 playbackRate 覆盖成默认 1：那不是用户选择，
-      // 不记录，并即时纠正回记忆值，避免「切集后前 1.2s 是 1 倍速、随后突然
-      // 加速」的抖变。设回后再次触发 ratechange，但值已相等，递归自然终止。
-      if (Date.now() < rateReadyAt) {
-        const wanted = readPlayerPrefs().rate;
-        if (Math.abs(video.playbackRate - wanted) > 0.01) {
-          video.playbackRate = wanted;
-        }
-        return;
-      }
-      writePlayerPrefs({ rate: video.playbackRate });
-    };
-    video.addEventListener("volumechange", persistVolume);
-    video.addEventListener("ratechange", persistRate);
-
-    const onError = () => {
-      const mediaError = video.error;
-      // 3 = MEDIA_ERR_DECODE, 4 = MEDIA_ERR_SRC_NOT_SUPPORTED. WebView2 常见于
-      // HEVC：换源也救不了同一编码，直接交给随包 mpv（规格 T-30 自动兜底）。
-      if (mediaError && (mediaError.code === 3 || mediaError.code === 4) && !mpvTried.current) {
-        mpvTried.current = true;
-        log.warn("mpv fallback", { siteKey, vodId, mediaCode: mediaError.code });
-        setVideoError("浏览器无法解码该视频，已自动交给 mpv 播放…");
-        void api
-          .mpvPlay(resolved.url, vodName, resolved.headers)
-          .catch((err) => {
-            setVideoError(`mpv 启动失败：${errorMessage(err)}`);
-            void switchOrFailoverRef.current();
-          });
-        return;
-      }
-      setVideoError("播放器加载失败，可尝试外部播放。");
-      void switchOrFailoverRef.current();
-    };
-    video.addEventListener("error", onError);
-
-    // 死 CDN 会让 hls.js 无限重试却不触发 fatal，画面永远停在 00:00。
-    // 12 秒仍没拿到首帧就视作线路不可用，主动切线路 / 换源。
-    const stallTimer = window.setTimeout(() => {
-      if (!BUILTIN_KINDS.includes(resolved.kind)) {
-        return;
-      }
-      if (video.readyState >= 2 || failoverStarted.current || lineSwitchStarted.current) {
-        return;
-      }
-      setVideoError("当前线路长时间无法加载，正在尝试其它线路…");
-      void switchOrFailoverRef.current();
-    }, 12_000);
-
-    return () => {
-      window.clearTimeout(stallTimer);
-      window.clearTimeout(rateReplay);
-      if (volumeTrailing !== null) {
-        window.clearTimeout(volumeTrailing);
-      }
-      video.removeEventListener("error", onError);
-      video.removeEventListener("volumechange", persistVolume);
-      video.removeEventListener("ratechange", persistRate);
-      // 只补写音量：拖动可能被节流/定时器延后，卸载时补一次最终值。
-      // 倍速绝不能在这里覆盖——ended 触发卸载那一刻 video.playbackRate 可能已被
-      // 播放内核重置为 1（实测），写回会抹掉用户刚选的倍速。倍速由 persistRate
-      // 在变更时立即落盘，无需、也不允许在卸载时再写。
-      writePlayerPrefs({ volume: video.volume });
-      // 先置空引用，避免 destroy 过程中的 video:error 再触发换源。
-      videoRef.current = null;
-      art.destroy();
-    };
-  }, [resolved, siteKey, vodName]);
+  usePlayerEngine({
+    containerRef,
+    videoRef,
+    lastMediaRef,
+    mpvTried,
+    failoverStarted,
+    lineSwitchStarted,
+    switchOrFailoverRef,
+    resolved,
+    siteKey,
+    vodName,
+    vodId,
+    setVideoError,
+  });
 
   // 播放进度 → 历史记录（5 秒节流，播放/暂停立即写）。
   useEffect(() => {
@@ -898,11 +460,7 @@ export default function PlayerPage({
       video.removeEventListener("loadedmetadata", onMeta);
       void write(true, lastMediaRef.current);
     };
-  }, [resolved, siteKey, vodId, vodName, playUrl]);
-
-  const currentLine = lines[lineIndex] ?? null;
-  const canPrev = currentLine !== null && episodeIndex > 0;
-  const canNext = currentLine !== null && episodeIndex < currentLine.episodes.length - 1;
+  }, [resolved, siteKey, vodId, vodName, playUrl, setTimeMs, setDurationMs]);
 
   /**
    * 看完一集自动接下一集：连看时不必每集回来点按钮。
@@ -956,7 +514,6 @@ export default function PlayerPage({
     // navigate / lines 随集数变化，但真正需要重挂的只有播放内核与当前集。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved, canNext, lineIndex, episodeIndex, siteKey, vodId, vodName]);
-
 
   /** 选集面板里点任意线路 / 任意一集，直接替换当前播放页。 */
   const goToEpisode = (targetLine: number, index: number) => {
@@ -1046,134 +603,51 @@ export default function PlayerPage({
 
   return (
     <section className="page page--player">
-      <header className="page-head">
-        <div className="page-head__main">
-          <button type="button" className="btn btn--ghost" onClick={onBack}>
-            ← 返回详情
-          </button>
-          <h1 className="page-title">
-            {vodName || "播放"}
-            <span className="page-title__sub">{episodeName}</span>
-          </h1>
-        </div>
-        <div className="player-head__meta">
-          <span className="detail-source" title={siteKey}>
-            当前源：{siteName || siteKey}
-          </span>
-          <span className="page-meta">{progressLabel}</span>
-        </div>
-      </header>
+      <PlayerHeader
+        vodName={vodName}
+        episodeName={episodeName}
+        siteKey={siteKey}
+        siteName={siteName}
+        progressLabel={progressLabel}
+        onBack={onBack}
+      />
 
       {switchTip ? <p className="tip">{switchTip}</p> : null}
       {videoError ? <ErrorBar message={videoError} /> : null}
       {resolveError ? <ErrorBar message={`播放地址解析失败：${resolveError}`} /> : null}
 
-      <div className="player-stage">
-        {resolving ? <Spinner label="正在解析播放地址…" /> : null}
+      <PlayerStage
+        resolving={resolving}
+        playable={playable}
+        resolveError={resolveError}
+        containerRef={containerRef}
+      />
 
-        {!resolving && playable ? <div ref={containerRef} className="player-art" /> : null}
-
-        {!resolving && !playable ? (
-          <div className="player-fallback">
-            <p className="player-fallback__title">
-              {resolveError ? "无法解析播放地址" : "该地址需要在外部播放器中打开"}
-            </p>
-            <p className="player-fallback__desc">
-              内置播放器只支持 HLS / FLV / 直链媒体，其余格式请交给系统播放器。
-            </p>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="player-bar">
-        {siteKey === "live" ? null : (
-          <>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => goEpisode(-1)}
-              disabled={!canPrev}
-            >
-              上一集
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => goEpisode(1)}
-              disabled={!canNext}
-            >
-              下一集
-            </button>
-          </>
-        )}
-        {siteKey === "live" ? (
-          <span className="player-bar__info">直播 · {vodName}</span>
-        ) : currentLine ? (
-          <span className="player-bar__info">
-            {currentLine.name} · 第 {episodeIndex + 1} / {currentLine.episodes.length} 集
-          </span>
-        ) : (
-          <span className="player-bar__info">未获取到剧集列表</span>
-        )}
-        {siteKey === "live" ? null : (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setPanelOpen((value) => !value)}
-            disabled={lines.length === 0}
-          >
-            {panelOpen ? "收起选集" : "选集"}
-          </button>
-        )}
-        {siteKey === "live" ? null : (
-          <button type="button" className="btn" onClick={() => setShowSources(true)}>
-            ⇄ 换源
-          </button>
-        )}
-        <button type="button" className="btn btn--primary" onClick={() => void playExternal()}>
-          外部播放
-        </button>
-      </div>
+      <PlayerControls
+        siteKey={siteKey}
+        vodName={vodName}
+        canPrev={canPrev}
+        canNext={canNext}
+        goEpisode={goEpisode}
+        currentLine={currentLine}
+        episodeIndex={episodeIndex}
+        lineCount={lines.length}
+        panelOpen={panelOpen}
+        setPanelOpen={setPanelOpen}
+        setShowSources={setShowSources}
+        playExternal={() => void playExternal()}
+      />
 
       {/* 选集面板：线路切换 + 任意一集直达，替代只能上一集/下一集的旧交互。 */}
       {panelOpen && lines.length > 0 ? (
-        <div className="player-episodes">
-          <div className="section-head">
-            <h2 className="section-title">选集 · 线路</h2>
-            <span className="page-meta">
-              共 {lines.length} 条线路 · {countEpisodes(lines)} 集
-            </span>
-          </div>
-          <div className="chip-row">
-            {lines.map((item, index) => (
-              <button
-                key={`${item.name}-${index}`}
-                type="button"
-                className={index === panelLine ? "chip is-active" : "chip"}
-                onClick={() => setPanelLine(index)}
-                title={`${item.episodes.length} 集`}
-              >
-                {item.name}（{item.episodes.length}）
-              </button>
-            ))}
-          </div>
-          <div className="episode-grid">
-            {(lines[panelLine]?.episodes ?? []).map((episode, index) => {
-              const active = panelLine === lineIndex && index === episodeIndex;
-              return (
-                <button
-                  key={`${episode.url}-${index}`}
-                  type="button"
-                  className={active ? "episode is-active" : "episode"}
-                  onClick={() => goToEpisode(panelLine, index)}
-                  title={episode.name}
-                >
-                  {episode.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <EpisodePanel
+          lines={lines}
+          panelLine={panelLine}
+          lineIndex={lineIndex}
+          episodeIndex={episodeIndex}
+          setPanelLine={setPanelLine}
+          goToEpisode={goToEpisode}
+        />
       ) : null}
 
       {showSources ? (
