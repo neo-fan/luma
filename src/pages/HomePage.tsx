@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
@@ -15,6 +15,13 @@ interface HomePageProps {
   navigate: Navigate;
 }
 
+/**
+ * 站点切换防抖窗口：下拉连点时只在用户停下后发一次请求。
+ * 300ms 足够覆盖「按住方向键快速扫过多个站点 / 连续点选」，又不会让
+ * 正常切换显得迟钝。
+ */
+const SWITCH_DEBOUNCE_MS = 300;
+
 /** 首页：站点切换 + 分类标签 + 推荐网格。 */
 export default function HomePage({ sites, siteKey, onSiteChange, navigate }: HomePageProps) {
   // 首页推荐内容按站点保留，返回首页时直接出结果；站点 key 变化时自然失效。
@@ -22,14 +29,56 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  /** 下拉的即时值；真正的 siteKey 由防抖后的 onSiteChange 更新。 */
+  const [draftSite, setDraftSite] = useState(siteKey);
+  /** 下一次 siteKey 生效时是否跳过缓存（用户主动切换 = 自动刷新）。 */
+  const forceNextRef = useRef<string | null>(null);
+  const switchTimerRef = useRef<number | null>(null);
 
   const site = sites.find((item) => item.key === siteKey);
   const classes = home?.classes?.length ? home.classes : site?.categories ?? [];
   const list = home?.list ?? [];
+  const selectedSite = sites.some((item) => item.key === draftSite) ? draftSite : siteKey;
+
+  // 外部 siteKey 变化（配置加载、App 恢复偏好）时同步下拉显示。
+  useEffect(() => {
+    setDraftSite(siteKey);
+  }, [siteKey]);
 
   useEffect(() => {
-    // 已有缓存内容且不是手动刷新：跳过整个请求，不闪 Spinner。
-    if (home && reload === 0) {
+    return () => {
+      if (switchTimerRef.current !== null) {
+        window.clearTimeout(switchTimerRef.current);
+      }
+    };
+  }, []);
+
+  /**
+   * 站点切换：立即更新下拉显示，300ms 后才真正切换并强制刷新。
+   * 快速 A→B→C 只会请求 C；C 与当前站点相同时直接取消，不发请求。
+   */
+  const switchSite = (next: string) => {
+    setDraftSite(next);
+    if (switchTimerRef.current !== null) {
+      window.clearTimeout(switchTimerRef.current);
+    }
+    switchTimerRef.current = window.setTimeout(() => {
+      switchTimerRef.current = null;
+      if (next === siteKey) {
+        return;
+      }
+      forceNextRef.current = next;
+      onSiteChange(next);
+    }, SWITCH_DEBOUNCE_MS);
+  };
+
+  useEffect(() => {
+    const force = forceNextRef.current === siteKey;
+    if (force) {
+      forceNextRef.current = null;
+    }
+    // 已有缓存内容、且不是手动刷新 / 主动切站点：跳过整个请求，不闪 Spinner。
+    if (home && reload === 0 && !force) {
       return;
     }
     let alive = true;
@@ -45,7 +94,7 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
       // 冷启动或刚导入配置后，站点写入与页面挂载可能抢跑，失败时自动重试一次。
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-          const result = await api.home(siteKey, reload > 0);
+          const result = await api.home(siteKey, reload > 0 || force);
           if (alive) {
             setHome(result);
             setError("");
@@ -122,8 +171,8 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
           <h1 className="page-title">首页</h1>
           <select
             className="select"
-            value={siteKey}
-            onChange={(event) => onSiteChange(event.target.value)}
+            value={selectedSite}
+            onChange={(event) => switchSite(event.target.value)}
             aria-label="选择站点"
           >
             {sites.map((item) => {

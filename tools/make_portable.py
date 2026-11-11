@@ -101,7 +101,12 @@ def build_release() -> None:
 
 def prepare_app_dir() -> None:
     if APP_DIR.exists():
-        shutil.rmtree(APP_DIR)
+        # 目录可能已被外部清空（robocopy /MIR 清场）：空目录直接 rmdir，
+        # 避免批量删除保护把打包挂起；非空时才走递归删除。
+        if next(APP_DIR.rglob("*"), None) is None:
+            APP_DIR.rmdir()
+        else:
+            shutil.rmtree(APP_DIR)
     APP_DIR.mkdir(parents=True)
 
     log("== copying executable ==")
