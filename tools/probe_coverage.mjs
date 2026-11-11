@@ -3,13 +3,13 @@
  * 真实配置分运行时覆盖率：哪些源能搜到、能出详情、能拿播放地址。
  *
  *   node tools/probe_coverage.mjs
- *   LUMA_KEYWORD=庆余年 node tools/probe_coverage.mjs
+ *   LUMA_KEYWORD=走马上任 node tools/probe_coverage.mjs
  */
 const CONFIG =
   process.env.LUMA_CONFIG ||
   process.env.TVBOX_CONFIG ||
   "https://raw.githubusercontent.com/cluntop/tvbox/a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8/box.json";
-const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "庆余年";
+const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "走马上任";
 
 class Cdp {
   constructor(wsUrl) {

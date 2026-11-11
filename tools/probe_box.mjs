@@ -3,7 +3,7 @@
  * 需要 dev 窗口（9222）在跑。网络请求全部由应用进程发出。
  */
 const CONFIG = process.env.LUMA_CONFIG || process.env.TVBOX_CONFIG || "https://raw.githubusercontent.com/cluntop/tvbox/a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8/box.json";
-const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "庆余年";
+const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "走马上任";
 
 const list = await (await fetch("http://127.0.0.1:9222/json/list")).json();
 const page = list.find((t) => t.type === "page" && t.webSocketDebuggerUrl);

@@ -3,7 +3,7 @@
 
 Usage:
     python3 tools/scan_sources.py <config-url> [<config-url> ...]
-    python3 tools/scan_sources.py --keyword 流浪地球 <config-url>
+    python3 tools/scan_sources.py --keyword 走马上任 <config-url>
 
 For every CMS site it runs search -> detail -> first episode, then checks the
 stream URL over HTTP. Reports one line per source so dead CDNs are obvious.
@@ -146,7 +146,7 @@ def scan(config_url: str, keyword: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("configs", nargs="+")
-    parser.add_argument("--keyword", default="流浪地球")
+    parser.add_argument("--keyword", default="走马上任")
     args = parser.parse_args()
 
     all_hits: list[str] = []

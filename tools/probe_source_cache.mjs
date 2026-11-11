@@ -170,7 +170,7 @@ const assert = (ok, label, detail = "") => {
   if (!ok) failures += 1;
 };
 
-const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "庆余年 第二季";
+const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "走马上任";
 const page = await waitForPage();
 const cdp = new Cdp(page.webSocketDebuggerUrl);
 console.log(`target: ${page.url}  keyword: ${KEYWORD}`);

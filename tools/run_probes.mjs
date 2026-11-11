@@ -220,7 +220,7 @@ for (const probe of selected) {
   const env = { ...process.env };
   if (probe.key === "search_ui" || probe.key === "artplayer") {
     // 这两个探针对关键词敏感：用完整片名能稳定命中。
-    env.LUMA_KEYWORD = env.LUMA_KEYWORD || "庆余年 第二季";
+    env.LUMA_KEYWORD = env.LUMA_KEYWORD || "走马上任";
   }
   const run = spawnSync(process.execPath, [probe.script], {
     stdio: "inherit",

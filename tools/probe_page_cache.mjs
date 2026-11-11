@@ -19,7 +19,7 @@
  */
 import { writeFileSync } from "node:fs";
 
-const KEYWORD = "庆余年 第二季";
+const KEYWORD = "走马上任";
 const SETTLE_MS = 2000;
 
 class Cdp {
