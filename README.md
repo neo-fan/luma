@@ -139,7 +139,7 @@ corepack pnpm test         # 前端单测（含播放页生命周期契约）
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-第三方 py 脚本的异常、缺失方法、非法返回值都会记到 `logs/spider.log`（`LUMA_ADAPTER_LOG` 可指定路径；默认 `%APPDATA%\Luma\logs\spider.log`）。每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback，便于定位「未响应源」。
+第三方 py 脚本的异常、缺失方法、非法返回值都会记到 `logs/spider.log`（`LUMA_ADAPTER_LOG` 可指定路径；默认 `%APPDATA%\Luma\logs\spider.log`）。每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback，便于定位「未响应源」。`detailContent` 返回空也会记一条 `empty_detail`（带 `sourceApi` / `vodId`）——TVBox 中「发现 / 推荐」型源只给列表、不给播放列表是合法能力缺口，客户端会在详情页提示换源，并按片名回查一次。前端对应的空结果记在 `luma-*.log` 的 `detail empty`。日志模块对 spider 协议是**尽力而为**的：即使它缺失或路径不通，也只降级为不写日志，绝不让 py 源整体失效。
 
 阶段脚本采用累积断言：未交付能力标 `N/A`（不计 PASS、不计 FAIL），`FAIL = 0` 即通过。
 

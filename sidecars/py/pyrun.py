@@ -18,13 +18,27 @@ import types
 import traceback
 from pathlib import Path
 
-from adapterlog import log_crash, log_event
-
-# `base.spider` ships inside this directory (vendored framework), and spiders
-# also do `sys.path.append('..')`; keeping our own dir first wins either way.
+# The bundled CPython is an *embeddable* distribution: its `python311._pth`
+# controls sys.path entirely and the script directory is NOT added when running
+# `python.exe path/to/pyrun.py`. Insert our own dir BEFORE importing any local
+# module. Importing `adapterlog` first (as an earlier revision did) made every
+# spider child die with "ModuleNotFoundError: No module named 'adapterlog'",
+# which surfaced as "py spider produced no frame" on every py site.
 _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
+
+# Diagnostics are a best-effort facility. A missing/unsynced log module (e.g.
+# a portable bundle built before it existed) must degrade to a no-op, never to
+# a hard import failure that takes down the whole spider runtime.
+try:
+    from adapterlog import log_crash, log_event
+except ImportError:  # noqa: BLE001 - logging must never break protocol
+    def log_event(_event: dict) -> None:
+        return None
+
+    def log_crash(**_kwargs: object) -> None:
+        return None
 
 SIGNATURES = {
     "homeContent": 1,
@@ -155,7 +169,15 @@ def proxy_result(result: object) -> dict:
 
 
 def to_args(method: str, raw: list) -> list:
-    """Map our internal arg order to the TVBox spider signature."""
+    """Map our internal arg order to the TVBox spider signature.
+
+    A string payload used to be indexed character-by-character here (`raw[0]`
+    became the first *character* of the vod id). Normalize once at the process
+    boundary so every method sees a list, whatever the caller sent.
+    """
+    if not isinstance(raw, (list, tuple)):
+        raw = [] if raw is None else [raw]
+    raw = list(raw)
     if method == "homeContent":
         return [bool(raw[0]) if raw else False]
     if method == "homeVideoContent":
@@ -175,8 +197,14 @@ def to_args(method: str, raw: list) -> list:
         return [key, quick, pg]
     if method == "detailContent":
         ids = raw[0] if raw else ""
-        if isinstance(ids, str):
+        # TVBox passes `List<String>`; community scripts also accept a plain
+        # string. Keep the list form (the standard) and never slice a string.
+        if isinstance(ids, (list, tuple)):
+            ids = list(ids)
+        elif isinstance(ids, str):
             ids = [ids]
+        else:
+            ids = [str(ids)]
         return [ids]
     if method == "playerContent":
         flag = str(raw[0]) if len(raw) > 0 else ""

@@ -75,14 +75,21 @@ export default function DetailPage({
       setLoading(true);
       setError("");
       try {
-        const list = await api.detail(siteKey, vodId, reload > 0);
+        // 列表/搜索已给出的片名用于空详情自愈：旧 vod_id 失效时按名回查。
+        const list = await api.detail(siteKey, vodId, reload > 0, (title || "").trim());
         if (!alive) {
           return;
         }
         const first = list && list.length > 0 ? list[0] : null;
         if (!first) {
           setVod(null);
-          setError("未获取到影片详情");
+          // 带上站点与 id：这类源常见于「发现/推荐」型配置，脚本的
+          // detailContent 直接返回 {"list": []}，光说「未获取到影片详情」
+          // 用户既不知道是哪个源，也不知道下一步该换源还是重试。
+          setError(
+            `当前源「${siteName || siteKey}」未提供影片详情` +
+              (vodId ? `（id ${vodId}）` : "（缺少影片 id）"),
+          );
           return;
         }
         setVod(first);
@@ -266,6 +273,10 @@ export default function DetailPage({
           message={`详情加载失败：${error || "影片不存在"}`}
           onRetry={() => setReload((value) => value + 1)}
         />
+        <p className="tip">
+          {title ? `《${title}》` : "该影片"}在此源暂无可用详情：TVBox 中部分源只提供发现/推荐、没有播放列表，
+          也可能是影片 id 失效或网络波动。点「⇄ 换源」按片名从其它站点查找，或点「重试」重新拉取。
+        </p>
         {showSources ? (
           <SourcePicker
             title={title || ""}

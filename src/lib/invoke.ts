@@ -7,6 +7,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { CACHE_TTL, pageCache } from "./pageCache";
 import { mergeHomeFallback } from "./home";
+import { pickRecoveryCandidate } from "./detailRecovery";
 import { log } from "./logger";
 import type {
   AppError,
@@ -81,6 +82,49 @@ export const cacheKeys = {
   detail: (siteKey: string, vodId: string) => `detail:${siteKey}:${vodId}`,
   live: (url: string, ua?: string) => `live:${url}:${ua ?? ""}`,
 };
+
+/**
+ * 空详情的按名回查：TVBox 的 `vod_id` 只在本源、本次抓取内有效。源站换库、
+ * 配置刷新、卡片没带 id 时，用旧 id 调 `detailContent` 通常不报错，只回空
+ * list。这里按片名重新问本站一次，拿到新 id 再拉详情；失败也只记日志，
+ * 不把一次空结果升级成异常（详情页还能走换源）。
+ *
+ * 只在调用方显式给了片名时启用：播放页选集、自动换源、候选预热仍是单次
+ * 请求，不受影响。
+ */
+async function recoverDetail(
+  siteKey: string,
+  vodId: string,
+  title: string,
+  cacheKey: string,
+): Promise<VodInfo[]> {
+  try {
+    const page = await api.search(siteKey, title, 1);
+    const candidate = pickRecoveryCandidate(page?.list, title, vodId);
+    if (!candidate) {
+      log.warn("detail recovery: no title match", { siteKey, vodId, title });
+      return [];
+    }
+    const recoveredId = String(candidate.vod_id);
+    const list = await spider<VodInfo[]>(siteKey, "detailContent", [recoveredId]);
+    if (!list || list.length === 0) {
+      log.warn("detail recovery: retry still empty", { siteKey, vodId, recoveredId, title });
+      return [];
+    }
+    // 写回原 key：详情页刷新 / 回退直接命中，不必再回查一轮。
+    pageCache.put(cacheKey, list, CACHE_TTL.detail);
+    log.info("detail recovered by title", { siteKey, vodId, recoveredId, title });
+    return list;
+  } catch (err) {
+    log.warn("detail recovery failed", {
+      siteKey,
+      vodId,
+      title,
+      message: errorMessage(err),
+    });
+    return [];
+  }
+}
 
 /** 7.1 的 command 面：一一对应，不额外暴露能力。 */
 export const api = {
@@ -179,20 +223,46 @@ export const api = {
     );
   },
 
-  /** 详情页、播放页选集面板、手动换源、自动换源都读同一份详情。 */
-  async detail(siteKey: string, vodId: string, force = false): Promise<VodInfo[]> {
+  /**
+   * 详情页、播放页选集面板、手动换源、自动换源都读同一份详情。
+   * `fallbackTitle` 只有详情页传：空结果时按片名自愈回查一次。
+   */
+  async detail(
+    siteKey: string,
+    vodId: string,
+    force = false,
+    fallbackTitle = "",
+  ): Promise<VodInfo[]> {
     const key = cacheKeys.detail(siteKey, vodId);
-    const list = await pageCache.load(
-      key,
-      CACHE_TTL.detail,
-      () => spider<VodInfo[]>(siteKey, "detailContent", [vodId]),
-      force,
-    );
-    // 空详情多半是源站偶发失败，别把它缓存十分钟；下次进来 / 点刷新可重试。
-    if (!list || list.length === 0) {
-      pageCache.invalidate(key);
+    const title = fallbackTitle.trim();
+    // 空 id 不值得发一次注定失败的请求：CMS 会当成 `ac=detail&ids=` 并返回
+    // 默认列表或空，python 源则常被脚本拼成无效 URL。
+    const list = vodId.trim()
+      ? await pageCache.load(
+          key,
+          CACHE_TTL.detail,
+          () => spider<VodInfo[]>(siteKey, "detailContent", [vodId]),
+          force,
+        )
+      : [];
+    if (list && list.length > 0) {
+      return list;
     }
-    return list;
+    // 空详情多半是源站偶发失败，或该源压根不提供详情（发现/推荐类源直接
+    // `return {"list": []}`）。别缓存十分钟；同时留一条带站点与 id 的记录，
+    // 否则 UI 上只剩「未获取到影片详情」，无从复盘。
+    pageCache.invalidate(key);
+    log.warn("detail empty", {
+      siteKey,
+      vodId,
+      title,
+      reason: list ? "empty list" : "no result",
+    });
+    if (!title) {
+      return list ?? [];
+    }
+    const recovered = await recoverDetail(siteKey, vodId, title, key);
+    return recovered.length > 0 ? recovered : (list ?? []);
   },
 
   httpFetch(req: FetchRequest): Promise<FetchResponse> {

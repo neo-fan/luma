@@ -29,6 +29,8 @@ export interface PageCache {
   age(key: string): number | undefined;
   /** 命中即返回缓存，否则调用 loader（并发共享同一个 Promise）。 */
   load<T>(key: string, ttlMs: number, loader: () => Promise<T>, force?: boolean): Promise<T>;
+  /** 直接写入一个已取得的结果（例如按片名回查恢复的详情）。 */
+  put(key: string, value: unknown, ttlMs: number): void;
   /** 按业务 key 前缀失效，返回删除的条目数。 */
   invalidate(prefix: string): number;
   clear(): void;
@@ -149,6 +151,24 @@ class MemoryPageCache implements PageCache {
     })();
     this.pending.set(scoped, task);
     return task;
+  }
+
+  put(key: string, value: unknown, ttlMs: number): void {
+    const scoped = this.scoped(key);
+    const now = this.clock();
+    this.entries.delete(scoped);
+    this.entries.set(scoped, {
+      value,
+      storedAt: now,
+      expiresAt: now + Math.max(1, ttlMs),
+    });
+    while (this.entries.size > this.maxEntries) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.entries.delete(oldest);
+    }
   }
 
   invalidate(prefix: string): number {

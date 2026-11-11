@@ -155,5 +155,45 @@ def parse_search(params: dict[str, Any]) -> dict[str, Any]:
     return parse_page(str(params.get("raw") or ""))
 
 
+_DETAIL_KEYS = ("vod_id", "vod_name", "vod_play_url", "vod_play_from", "vod_pic")
+
+
+def _is_vod(value: Any) -> bool:
+    return isinstance(value, dict) and any(key in value for key in _DETAIL_KEYS)
+
+
+def _detail_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Recover a vod from non-standard `ac=detail` JSON envelopes.
+
+    A few CMS deployments answer `ac=detail` with the vod object directly, with
+    `{"list": vod}`, or wrap it in `data` / `result` / `vod` instead of a list.
+    This is a boundary-level fallback shared by every site, not a per-source
+    patch; the standard `{"list": [...]}` still wins via `parse_page`.
+    """
+    for key in ("list", "data", "result", "vod"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [_vod(item) for item in value if isinstance(item, dict)]
+        if _is_vod(value):
+            return [_vod(value)]
+    if _is_vod(payload):
+        return [_vod(payload)]
+    return []
+
+
 def parse_detail(params: dict[str, Any]) -> list[dict[str, Any]]:
-    return parse_page(str(params.get("raw") or ""))["list"]
+    raw = str(params.get("raw") or "")
+    try:
+        items = parse_page(raw)["list"]
+    except (ValueError, ET.ParseError):
+        items = []
+    if items:
+        return items
+    text = raw.strip()
+    if not text.startswith("{"):
+        return []
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return []
+    return _detail_from_payload(payload) if isinstance(payload, dict) else []

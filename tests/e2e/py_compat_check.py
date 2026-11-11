@@ -7,7 +7,13 @@
 2. `searchContent` 返回 bound method 等非 JSON 值 → 进程边界必须能序列化并
    记录字段路径，不能让子进程「produced no frame」把原因吞掉；
 3. 相对路径 `/v1/...` → 用类级 `host` 或 `ext` 里的站点地址补成绝对 URL；
-4. 任何脚本异常都要带 traceback 落盘到 `LUMA_ADAPTER_LOG`，便于复盘。
+4. 任何脚本异常都要带 traceback 落盘到 `LUMA_ADAPTER_LOG`，便于复盘；
+5. `detailContent` 返回空 / 单条 dict / `data|result|vod` 别名 → 边界统一归一，
+   空结果必须记 `empty_detail`（含脚本 URL 与 vodId），否则 UI 那句
+   「未获取到影片详情」无从复盘；
+6. `adapterlog` 是诊断设施，绝不能成为硬依赖：嵌入版 CPython 的 `._pth`
+   不会把脚本目录加进 sys.path，导入顺序错了会让所有 py 源
+   `ModuleNotFoundError` 且「produced no frame」。
 
 运行： `python tests/e2e/py_compat_check.py`
 """
@@ -29,7 +35,10 @@ LOG = Path(tempfile.gettempdir()) / f"luma-py-compat-{os.getpid()}.log"
 LOG.unlink(missing_ok=True)
 os.environ["LUMA_ADAPTER_LOG"] = str(LOG)
 
+import cms  # noqa: E402
+import pyspider  # noqa: E402
 from base.spider import Spider  # noqa: E402
+from pyrun import to_args  # noqa: E402
 from pyspider import run as run_py_spider  # noqa: E402
 
 PASS = 0
@@ -121,8 +130,62 @@ def main() -> int:
     except RuntimeError:
         pass
 
+    # 5) detailContent 形状兼容 + 空结果日志（"未获取到影片详情" 的复盘依据）
+    single = {"vod_id": "7", "vod_name": "走马上任", "vod_play_url": "1$https://x/1.m3u8"}
+    for label, value in (
+        ("bare list", [single]),
+        ("list is one object", {"list": single}),
+        ("root is a vod", single),
+        ("data alias", {"data": [single]}),
+        ("result alias", {"result": single}),
+        ("vod alias", {"vod": [single]}),
+        ("standard envelope", {"list": [single]}),
+    ):
+        got = pyspider._normalize("detailContent", value, "https://cfg/shape.py", "7")
+        check(isinstance(got, list) and len(got) == 1 and got[0].get("vod_id") == "7",
+              "detail", f"py shape: {label}", repr(got)[:160])
+
+    for label, payload in (
+        ("standard", {"list": [single]}),
+        ("root vod", single),
+        ("list object", {"list": single}),
+        ("data wrapper", {"data": [single]}),
+    ):
+        got = cms.parse_detail({"raw": json.dumps(payload, ensure_ascii=False)})
+        check(isinstance(got, list) and len(got) == 1, "detail", f"cms shape: {label}", repr(got)[:160])
+
+    empty = pyspider._normalize("detailContent", {"list": []}, "https://cfg/douban.py", "36882191")
+    check(empty == [], "detail", "genuinely empty detail stays empty")
+
+    check(to_args("detailContent", "204658") == [["204658"]], "args",
+          "string payload is not sliced into characters", str(to_args("detailContent", "204658")))
+    check(to_args("detailContent", ["204658"]) == [["204658"]], "args", "standard list payload")
+
+    # 6) 嵌入式 Python 子进程必须能 import 本地模块（曾经的全局回归）
+    embed = ROOT / "sidecars" / "python-embed" / "python.exe"
+    pyrun = (PY / "pyrun.py").read_text(encoding="utf-8")
+    check(pyrun.index("sys.path.insert(0, _HERE)") < pyrun.index("from adapterlog import"),
+          "embed", "pyrun fixes sys.path before local imports")
+    check("except ImportError:" in pyrun and "def log_crash(**_kwargs" in pyrun,
+          "embed", "missing adapterlog degrades to no-op")
+    check('env["PYTHONPATH"]' in (PY / "pyspider.py").read_text(encoding="utf-8"),
+          "embed", "child inherits adapter dir via PYTHONPATH")
+    if embed.is_file():
+        child = subprocess.run(
+            [str(embed), str(PY / "pyrun.py")],
+            input=json.dumps({"source": missing, "method": "detailContent", "args": ["7"]}).encode(),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, check=False,
+        )
+        lines = child.stdout.decode("utf-8", "replace").strip().splitlines()
+        check(bool(lines) and json.loads(lines[-1]).get("ok") is True,
+              "embed", "embedded CPython child emits a frame",
+              child.stderr.decode("utf-8", "replace")[-200:])
+
     text = LOG.read_text(encoding="utf-8") if LOG.exists() else ""
     check(bool(text), "log", "spider error log written", f"{len(text)} bytes")
+    check('"kind": "empty_detail"' in text, "log", "empty detail logged")
+    check("https://cfg/douban.py" in text and "36882191" in text, "log",
+          "empty detail carries script url and vod id")
     check("spider_crash" in text, "log", "log contains spider_crash")
     check("Traceback" in text, "log", "log contains traceback")
     check("https://cfg/crash.py" in text, "log", "log attributes crash to source api")
