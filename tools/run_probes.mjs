@@ -30,6 +30,7 @@ const PROBES = [
   { key: "source_picker", script: "tools/probe_source_picker.mjs", label: "手动换源面板" },
   { key: "page_cache", script: "tools/probe_page_cache.mjs", label: "页面缓存与滚动恢复" },
   { key: "artplayer", script: "tools/probe_artplayer.mjs", label: "ArtPlayer HLS 出画" },
+  { key: "playback_ux", script: "tools/probe_playback_ux.mjs", label: "连看体验（偏好记忆/自动下一集/Esc/复制错误）" },
   { key: "flv", script: "tools/probe_flv.mjs", label: "FLV 经 mpegts.js 出画", needsStub: true },
   { key: "search_failures", script: "tools/probe_search_failures.mjs", label: "搜索失败源明细与重试", needsStub: true },
   { key: "history", script: "tools/probe_history.mjs", label: "历史页（合成记录，不留痕）" },

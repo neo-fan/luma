@@ -204,6 +204,39 @@ export default function App() {
     setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
   }, [saveScroll]);
 
+  /**
+   * 全局 Esc 返回上一级。
+   *
+   * 输入框里按 Esc 交给控件自己处理（重命名取消、搜索框清空等），换源/选集
+   * 弹层也有自己的 Esc 逻辑——这里跳过，避免一次 Esc 既关弹层又退页面。
+   */
+  const stackDepth = stack.length;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) {
+        return;
+      }
+      // 全屏播放器里按 Esc，先让浏览器退出全屏，别顺手把播放页也退掉。
+      if (document.fullscreenElement) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName ?? "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+      }
+      if (document.querySelector(".source-picker")) {
+        return;
+      }
+      if (stackDepth > 1) {
+        event.preventDefault();
+        back();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [stackDepth, back]);
+
   const resetTo = useCallback((next: View) => {
     saveScroll();
     setStack([next]);

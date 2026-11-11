@@ -786,7 +786,15 @@ textarea {
 
 .error-bar__text {
   min-width: 0;
+  flex: 1;
   word-break: break-word;
+}
+
+.error-bar__actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
 }
 
 /* ---------- 分页 ---------- */

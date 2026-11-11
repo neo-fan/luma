@@ -10,6 +10,7 @@ import { formatDuration, parsePlayLines } from "../lib/format";
 import type { PlayLine } from "../lib/format";
 import { countEpisodes, pickMatchingEpisode } from "../lib/sources";
 import { prefetchSources } from "../lib/sourceCache";
+import { readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
@@ -385,6 +386,7 @@ export default function PlayerPage({
           window.sessionStorage.setItem("luma:autoSwitch", tip);
           setSwitchTip(tip);
           handledUrls.current.add(picked.url);
+          videoRef.current = null;
           navigate(
             {
               name: "player",
@@ -479,6 +481,7 @@ export default function PlayerPage({
         }
         handledUrls.current.add(episode.url);
         setSwitchTip(`已自动切换到可播放线路「${episode.name}」`);
+        videoRef.current = null;
         navigate(
           {
             name: "player",
@@ -534,13 +537,15 @@ export default function PlayerPage({
 
     mpvTried.current = false;
     lastMediaRef.current = { positionMs: 0 };
+    // 音量 / 倍速跨集沿用：连看 36 集不该每集重新调一次。
+    const prefs = readPlayerPrefs();
     const art = new Artplayer({
       container,
       url: resolved.proxyUrl,
       type: resolved.kind === "hls" ? "m3u8" : resolved.kind,
       lang: "zh-cn",
       theme: "#e50914",
-      volume: 0.8,
+      volume: prefs.volume,
       isLive: siteKey === "live",
       autoPlayback: false,
       screenshot: false,
@@ -604,9 +609,30 @@ export default function PlayerPage({
               | { update?: () => void }
               | undefined;
             control?.update?.();
+            // 上次选过清晰度且这一集仍有同档位时才套用，否则保持自动。
+            const wanted = readPlayerPrefs().height;
+            if (wanted) {
+              const index = hls.levels.findIndex(
+                (level) => Math.round(level.height ?? 0) === wanted,
+              );
+              if (index >= 0) {
+                hls.currentLevel = index;
+              }
+            }
             void video.play().catch(() => {
               // 自动播放被拦截时保留控件，用户点一下即可。
             });
+          });
+          hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+            // 只在用户手动选档时记住；自动档每次切换都是不同码率，
+            // 记下来会让下次错误地固定到某一档。
+            if (hls.autoLevelEnabled) {
+              return;
+            }
+            const level = hls.levels[data.level];
+            if (level?.height) {
+              writePlayerPrefs({ height: level.height });
+            }
           });
           hls.on(Hls.Events.ERROR, (_event, data) => {
             if (!data.fatal) {
@@ -674,6 +700,79 @@ export default function PlayerPage({
 
     const video = art.video;
     videoRef.current = video;
+    video.playbackRate = prefs.rate;
+    /**
+     * 倍速初始化静默期。
+     *
+     * 我们在 ArtPlayer 构造之后才手动设 playbackRate（构造参数没有倍速项），
+     * 但 ArtPlayer 自身的倍速设置初始化是异步的、晚于这一步，会把新 <video>
+     * 的 playbackRate 覆盖回默认 1 并触发 ratechange。若照单记录，就会把系统
+     * 默认值 1 当成用户偏好写进 storage，导致跨集倍速丢失（实测）。
+     *
+     * 处理：挂载后 2 秒内不接受 ratechange 写入（这期间的变更都属于初始化
+     * 噪声）；并在 1.2 秒时把记忆的倍速重放回 video——重放自身触发的
+     * ratechange 仍在静默期内被忽略，只纠正 video 实际值、不污染 storage。
+     * 静默期之后用户手动点倍速，才正常落盘。
+     */
+    const rateReadyAt = Date.now() + 2000;
+    const rateReplay = window.setTimeout(() => {
+      if (videoRef.current !== video) {
+        return;
+      }
+      const wanted = readPlayerPrefs().rate;
+      if (Math.abs(video.playbackRate - wanted) > 0.01) {
+        video.playbackRate = wanted;
+      }
+    }, 1200);
+    // 音量拖动会连发 volumechange，做 500ms 前缘节流；被跳过的最后一次变更
+    // 用 trailing 定时器补写，否则「拖完音量马上切集」会丢最终值。倍速是手动
+    // 点档的低频事件，立即落盘。两者各写各的字段：音量事件绝不碰 rate、倍速
+    // 事件绝不碰 volume——否则拖音量时若 playbackRate 尚未就绪就会把 rate 写坏。
+    //
+    // 回调都校验 `videoRef.current === video`：切集/换源前置空引用后，旧
+    // <video> 销毁触发的变更（已失格）不会覆盖当前偏好。
+    let volumeWrittenAt = 0;
+    let volumeTrailing: number | null = null;
+    const persistVolume = () => {
+      if (videoRef.current !== video) {
+        return;
+      }
+      const now = Date.now();
+      if (now - volumeWrittenAt < 500) {
+        if (volumeTrailing !== null) {
+          window.clearTimeout(volumeTrailing);
+        }
+        volumeTrailing = window.setTimeout(() => {
+          volumeTrailing = null;
+          if (videoRef.current !== video) {
+            return;
+          }
+          volumeWrittenAt = Date.now();
+          writePlayerPrefs({ volume: video.volume });
+        }, 500);
+        return;
+      }
+      volumeWrittenAt = now;
+      writePlayerPrefs({ volume: video.volume });
+    };
+    const persistRate = () => {
+      if (videoRef.current !== video) {
+        return;
+      }
+      // 静默期内 ArtPlayer 会把 playbackRate 覆盖成默认 1：那不是用户选择，
+      // 不记录，并即时纠正回记忆值，避免「切集后前 1.2s 是 1 倍速、随后突然
+      // 加速」的抖变。设回后再次触发 ratechange，但值已相等，递归自然终止。
+      if (Date.now() < rateReadyAt) {
+        const wanted = readPlayerPrefs().rate;
+        if (Math.abs(video.playbackRate - wanted) > 0.01) {
+          video.playbackRate = wanted;
+        }
+        return;
+      }
+      writePlayerPrefs({ rate: video.playbackRate });
+    };
+    video.addEventListener("volumechange", persistVolume);
+    video.addEventListener("ratechange", persistRate);
 
     const onError = () => {
       const mediaError = video.error;
@@ -711,7 +810,18 @@ export default function PlayerPage({
 
     return () => {
       window.clearTimeout(stallTimer);
+      window.clearTimeout(rateReplay);
+      if (volumeTrailing !== null) {
+        window.clearTimeout(volumeTrailing);
+      }
       video.removeEventListener("error", onError);
+      video.removeEventListener("volumechange", persistVolume);
+      video.removeEventListener("ratechange", persistRate);
+      // 只补写音量：拖动可能被节流/定时器延后，卸载时补一次最终值。
+      // 倍速绝不能在这里覆盖——ended 触发卸载那一刻 video.playbackRate 可能已被
+      // 播放内核重置为 1（实测），写回会抹掉用户刚选的倍速。倍速由 persistRate
+      // 在变更时立即落盘，无需、也不允许在卸载时再写。
+      writePlayerPrefs({ volume: video.volume });
       // 先置空引用，避免 destroy 过程中的 video:error 再触发换源。
       videoRef.current = null;
       art.destroy();
@@ -794,6 +904,60 @@ export default function PlayerPage({
   const canPrev = currentLine !== null && episodeIndex > 0;
   const canNext = currentLine !== null && episodeIndex < currentLine.episodes.length - 1;
 
+  /**
+   * 看完一集自动接下一集：连看时不必每集回来点按钮。
+   *
+   * `ended` 只在当前 <video> 上生效，而换集会重建播放内核，所以依赖里带上
+   * `resolved`；直播与最后一集不接。
+   */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || siteKey === "live") {
+      return;
+    }
+    const onEnded = () => {
+      if (!canNext || !currentLine) {
+        return;
+      }
+      const next = currentLine.episodes[episodeIndex + 1];
+      // navigate 会重建本页，[siteKey, playUrl] effect 会清空 switchTip；提示必须
+      // 像手动换源那样经 sessionStorage 带过去一次，否则用户永远看不到。
+      window.sessionStorage.setItem("luma:autoSwitch", `已自动播放下一集：${next?.name ?? ""}`);
+      const target = lines[lineIndex];
+      if (!target) {
+        return;
+      }
+      const episode = target.episodes[episodeIndex + 1];
+      if (!episode) {
+        return;
+      }
+      log.info("auto next episode", {
+        siteKey,
+        vodId,
+        from: episodeIndex,
+        to: episodeIndex + 1,
+      });
+      videoRef.current = null;
+      navigate(
+        {
+          name: "player",
+          siteKey,
+          vodId,
+          vodName,
+          playUrl: episode.url,
+          episodeName: episode.name,
+          playFrom: target.name,
+        },
+        true,
+      );
+    };
+    video.addEventListener("ended", onEnded);
+    return () => video.removeEventListener("ended", onEnded);
+    // navigate / lines 随集数变化，但真正需要重挂的只有播放内核与当前集。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolved, canNext, lineIndex, episodeIndex, siteKey, vodId, vodName]);
+
+
   /** 选集面板里点任意线路 / 任意一集，直接替换当前播放页。 */
   const goToEpisode = (targetLine: number, index: number) => {
     const target = lines[targetLine];
@@ -801,6 +965,7 @@ export default function PlayerPage({
       return;
     }
     const episode = target.episodes[index];
+    videoRef.current = null;
     navigate(
       {
         name: "player",
@@ -850,6 +1015,7 @@ export default function PlayerPage({
       "luma:autoSwitch",
       `已手动切换到「${option.siteName}」`,
     );
+    videoRef.current = null;
     navigate(
       {
         name: "player",
