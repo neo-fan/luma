@@ -12,6 +12,7 @@
       "type": "string",
       "enum": [
         "homeContent",
+        "homeVideoContent",
         "categoryContent",
         "detailContent",
         "searchContent",

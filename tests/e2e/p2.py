@@ -43,7 +43,7 @@ SPIDER_API = [
     "proxy", "isVideoFormat", "manualVideoCheck", "destroy",
 ]
 SPIDER_METHODS = [
-    "homeContent", "categoryContent", "detailContent",
+    "homeContent", "homeVideoContent", "categoryContent", "detailContent",
     "searchContent", "playerContent", "liveContent",
 ]
 
@@ -231,9 +231,9 @@ def jvm_phase() -> None:
             # TVBox shapes differ per method: pages carry `list`, details are
             # an array, player carries `playUrl`, live carries `live`/`groups`.
             key_field = {
-                "homeContent": "list", "categoryContent": "list",
-                "searchContent": "list", "playerContent": "playUrl",
-                "liveContent": "live",
+                "homeContent": "list", "homeVideoContent": "list",
+                "categoryContent": "list", "searchContent": "list",
+                "playerContent": "playUrl", "liveContent": "live",
             }
             shapes = []
             for method in SPIDER_METHODS:
@@ -246,7 +246,8 @@ def jvm_phase() -> None:
                     ok = False
                 if not ok:
                     shapes.append(method)
-            check(not shapes, f"T-23 {label}", "6 SpiderMethod shapes",
+            check(not shapes, f"T-23 {label}",
+                  f"{len(SPIDER_METHODS)} SpiderMethod shapes",
                   ",".join(shapes) or "all shaped")
 
             # 8.5: ext must arrive at Spider.init(Context, String) unchanged.

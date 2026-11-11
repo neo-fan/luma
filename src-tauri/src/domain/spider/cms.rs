@@ -71,6 +71,15 @@ fn build(
             "site.parseHome",
             json!({}),
         )),
+        // CMS 协议没有独立的 homeVideoContent：它的 ac=list 一开始就同时返回
+        // 分类与 list（见 cms.py 的 _page_from_json）。alias 回同一请求，既复用
+        // 解析、又不发明不存在的 ac 参数；也避免 siteKey="all" 聚合 / 前端兜底
+        // 无差别调用时把 CMS 站记成 failed。
+        SpiderMethod::HomeVideoContent => Ok((
+            format!("{api}{separator}ac=list"),
+            "site.parseHome",
+            json!({}),
+        )),
         SpiderMethod::CategoryContent => {
             let tid = arg_str(0);
             let page = arg_page(1);
@@ -178,5 +187,16 @@ mod tests {
         .expect("two-arg search must still build");
         assert!(legacy.contains("pg=2"), "{legacy}");
         assert_eq!(extra["pg"], 2);
+    }
+
+    #[test]
+    fn home_video_content_aliases_to_list() {
+        // CMS 协议没有独立方法：homeVideoContent 必须 alias 回 ac=list，复用
+        // site.parseHome 解析，避免 siteKey="all" 无差别调用时把 CMS 站记成 failed。
+        let (url, method, extra) = build("http://x/vod", SpiderMethod::HomeVideoContent, &[])
+            .expect("homeVideoContent must build for cms");
+        assert!(url.contains("ac=list"), "{url}");
+        assert_eq!(method, "site.parseHome");
+        assert_eq!(extra, json!({}));
     }
 }

@@ -81,9 +81,10 @@ export interface ResultPage {
   classes?: { type_id: string; type_name: string }[];
 }
 
-/** 对外暴露的 6 个 spider 方法（6.2；与 8.4 的 12 个 jar 反射方法不是同一集合） */
+/** 对外暴露的 7 个 spider 方法（6.2；与 8.4 的 12 个 jar 反射方法不是同一集合） */
 export type SpiderMethod =
   | "homeContent"
+  | "homeVideoContent"
   | "categoryContent"
   | "detailContent"
   | "searchContent"

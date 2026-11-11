@@ -186,10 +186,11 @@ def adapter_phase() -> None:
             f"{len(adapter.junk)} ignored",
         )
 
-        # py template: six methods, ext passthrough
+        # py template: seven methods, ext passthrough
         source = (ROOT / "tests" / "fixtures" / "spiders" / "template.py").read_text(encoding="utf-8")
         templates = [
             ("homeContent", [], "list"),
+            ("homeVideoContent", [], "list"),
             ("categoryContent", ["1", 2], "list"),
             ("detailContent", ["py-1"], None),
             ("searchContent", ["关键词", False, 1], "list"),
@@ -208,7 +209,8 @@ def adapter_phase() -> None:
             result = frame.get("result")
             if key and (not isinstance(result, dict) or key not in result):
                 failures.append(f"{method}({key})")
-        check(not failures, "T-15 python", "template 6 methods", ",".join(failures) or "6/6")
+        check(not failures, "T-15 python", f"template {len(templates)} methods",
+              ",".join(failures) or f"{len(templates)}/{len(templates)}")
 
         home = adapter.call("spider.py", {"source": source, "method": "homeContent", "args": [], "ext": "stub-ext-py"})
         item = (home.get("result", {}).get("list") or [{}])[0]
@@ -298,6 +300,7 @@ def qjs_phase() -> None:
     source = (ROOT / "tests" / "fixtures" / "spiders" / "template.js").read_text(encoding="utf-8")
     calls = [
         ("homeContent", [], "list"),
+        ("homeVideoContent", [], "list"),
         ("categoryContent", ["1", "2", False, {}], "list"),
         ("detailContent", [["js-1"]], "list"),
         ("searchContent", ["关键词", False, "1"], "list"),
@@ -333,9 +336,16 @@ def qjs_phase() -> None:
         result = frame.get("result")
         if key and (not isinstance(result, dict) or key not in result):
             failures.append(f"{method}({key})")
-    check(len(frames) == len(calls) and not failures, "T-16 qjs", "template 6 methods", ",".join(failures) or f"{len(frames)}/6")
+    check(len(frames) == len(calls) and not failures, "T-16 qjs", f"template {len(calls)} methods",
+          ",".join(failures) or f"{len(frames)}/{len(calls)}")
 
-    player = frames[4].get("result", {}) if len(frames) > 4 else {}
+    # Locate playerContent by method name: the call table can grow (e.g. the
+    # homeVideoContent addition) without shifting a hardcoded frame index.
+    player_frame = next(
+        (f for (m, _a, _k), f in zip(calls, frames, strict=False) if m == "playerContent"),
+        {},
+    )
+    player = player_frame.get("result", {}) if isinstance(player_frame, dict) else {}
     check(player.get("ext") == "stub-ext-js", "T-16 qjs", "ext passthrough", str(player.get("ext")))
 
     sandbox_src = "globalThis.spider = { homeContent: function () { return { req: typeof req, require: typeof require, process: typeof process, fetch: typeof fetch }; } };"

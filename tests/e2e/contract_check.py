@@ -38,6 +38,14 @@ def schema_fields(defs: dict, name: str) -> set[str]:
     return set(defs[name].get("properties", {}).keys())
 
 
+def ts_string_union(source: str, name: str) -> list[str]:
+    """Extract the quoted members of `export type <name> = "a" | "b" ...;`."""
+    match = re.search(rf"export type {name}\s*=\s*([^;]+);", source)
+    if not match:
+        return []
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
 def ts_interfaces(source: str) -> dict[str, set[str]]:
     """Extract top-level field names of each `export interface`."""
     result: dict[str, set[str]] = {}
@@ -65,7 +73,8 @@ def ts_interfaces(source: str) -> dict[str, set[str]]:
 
 def main() -> int:
     defs = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]
-    ts = ts_interfaces(TS_TYPES.read_text(encoding="utf-8"))
+    ts_source = TS_TYPES.read_text(encoding="utf-8")
+    ts = ts_interfaces(ts_source)
 
     problems: list[str] = []
     for schema_name, ts_name in PAIRS:
@@ -79,6 +88,18 @@ def main() -> int:
         for field in sorted(actual - expected):
             problems.append(f"{ts_name}.{field}: in TS, missing in schema")
 
+    # PAIRS 只比 interface 字段名，enum 值漂移（如新增 SpiderMethod）会漏检；
+    # 这里额外比对 schema 的 $defs.SpiderMethod.enum 与 TS 的字符串联合成员。
+    schema_methods = defs.get("SpiderMethod", {}).get("enum", [])
+    ts_methods = ts_string_union(ts_source, "SpiderMethod")
+    if not schema_methods or not ts_methods:
+        problems.append("SpiderMethod: enum missing in schema or TS")
+    else:
+        for value in sorted(set(schema_methods) - set(ts_methods)):
+            problems.append(f"SpiderMethod.{value}: in schema enum, missing in TS union")
+        for value in sorted(set(ts_methods) - set(schema_methods)):
+            problems.append(f"SpiderMethod.{value}: in TS union, missing in schema enum")
+
     if problems:
         print("CONTRACT MISMATCH")
         for item in problems:
@@ -86,6 +107,7 @@ def main() -> int:
         return 1
 
     print(f"CONTRACT OK: {len(PAIRS)} types aligned between schema and TS")
+    print(f"             SpiderMethod enum: {len(ts_methods)} values aligned")
     return 0
 
 

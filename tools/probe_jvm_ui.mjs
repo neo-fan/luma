@@ -3,7 +3,7 @@
  * P2 真实窗口验收：通过 CDP 打 Tauri IPC，验证 jar 运行时确实接入宿主。
  *
  * 1) 导入内联配置（指向自编 template-class.jar）→ Rust jvm.rs → JVM
- *    SpiderRunner 全链路可用，6 个 SpiderMethod 与 ext 透传正确。
+ *    SpiderRunner 全链路可用，7 个 SpiderMethod 与 ext 透传正确。
  * 2) 导入真实 box.json → 28 个 csp_* 站点不再被聚合静默跳过，
  *    且给出「Android dex 不支持」的明确原因；JVM 进程保持单实例。
  *
@@ -137,7 +137,7 @@ async function main() {
   check(home?.extEcho === "stub-ext-jar", "ext passthrough via IPC", String(home?.extEcho));
 
   const shapes = {};
-  for (const method of ["homeContent", "categoryContent", "detailContent", "searchContent", "playerContent", "liveContent"]) {
+  for (const method of ["homeContent", "homeVideoContent", "categoryContent", "detailContent", "searchContent", "playerContent", "liveContent"]) {
     try {
       const value = await invoke("spider_invoke", {
         request: { siteKey: "jvm_template", method, args: method === "detailContent" ? ["1001"] : [], timeoutMs: 15000 },
@@ -149,7 +149,7 @@ async function main() {
       console.log(`       ${method}: ${String(err).slice(0, 140)}`);
     }
   }
-  check(Object.values(shapes).every(Boolean), "6 SpiderMethods via IPC", JSON.stringify(shapes));
+  check(Object.values(shapes).every(Boolean), `${Object.keys(shapes).length} SpiderMethods via IPC`, JSON.stringify(shapes));
 
   const after = javaProcessCount();
   check(before < 0 || after - before <= 1, "single JVM for repeated IPC calls", `java.exe ${before} -> ${after}`);

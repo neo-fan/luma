@@ -6,6 +6,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { CACHE_TTL, pageCache } from "./pageCache";
+import { mergeHomeFallback } from "./home";
 import { log } from "./logger";
 import type {
   AppError,
@@ -64,6 +65,7 @@ function spider<T>(siteKey: string, method: SpiderMethod, args: unknown[]): Prom
   const req: SpiderRequest = { siteKey, method, args };
   return call<T>("spider_invoke", { request: req });
 }
+
 
 /**
  * 读结果的缓存键：页面用同一组函数做首屏直出 / 失效，避免手写字符串漂移。
@@ -127,12 +129,33 @@ export const api = {
     return call("spider_invoke", { request: req });
   },
 
-  /** force=true 用于页面上的「刷新」按钮；其余调用自动复用缓存。 */
+  /**
+   * 首页：先取 `homeContent`（分类 + 有些源自带 list）。若 list 为空，再问
+   * 一次标准方法 `homeVideoContent` 补推荐流——豆瓣等严格按协议分家的源
+   * 只在这里放卡片。兜底失败一律吞掉、保留 base，绝不让首页因缺该方法而报错
+   * （老 py 脚本、部分 CMS 源可能没有独立推荐流）。两次调用包在同一缓存
+   * 条目里，force/scope 语义不变。
+   */
   home(siteKey: string, force = false): Promise<HomeResult> {
     return pageCache.load(
       cacheKeys.home(siteKey),
       CACHE_TTL.home,
-      () => spider<HomeResult>(siteKey, "homeContent", []),
+      async () => {
+        const base = await spider<HomeResult>(siteKey, "homeContent", []);
+        if ((base?.list ?? []).length > 0) {
+          return base;
+        }
+        try {
+          const extra = await spider<HomeResult>(siteKey, "homeVideoContent", []);
+          return mergeHomeFallback(base, extra);
+        } catch (err) {
+          log.warn("homeVideoContent unavailable", {
+            siteKey,
+            message: errorMessage(err),
+          });
+          return base;
+        }
+      },
       force,
     );
   },

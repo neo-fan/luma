@@ -24,6 +24,10 @@ if _HERE not in sys.path:
 
 SIGNATURES = {
     "homeContent": 1,
+    # TVBox standard: home recommendation list, no args (`def homeVideoContent(self)`).
+    # Sources that keep homeContent strictly class-only (e.g. Douban) put all
+    # their cards here; py/jvm/js runtimes call the same-named script method.
+    "homeVideoContent": 0,
     "categoryContent": 4,
     "detailContent": 1,
     "searchContent": 3,
@@ -76,6 +80,10 @@ def to_args(method: str, raw: list) -> list:
     """Map our internal arg order to the TVBox spider signature."""
     if method == "homeContent":
         return [bool(raw[0]) if raw else False]
+    if method == "homeVideoContent":
+        # 无参方法：必须返回空列表。若照搬 homeContent 补 [False]，会变成
+        # homeVideoContent(False)，对 def homeVideoContent(self) 直接 TypeError。
+        return []
     if method == "categoryContent":
         tid = str(raw[0]) if len(raw) > 0 else ""
         pg = str(raw[1]) if len(raw) > 1 else "1"

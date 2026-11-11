@@ -30,6 +30,9 @@ pub const MAX_FANOUT: usize = 20;
 #[serde(rename_all = "camelCase")]
 pub enum SpiderMethod {
     HomeContent,
+    /// TVBox 标准方法：首页推荐流（无 `homeContent.list` 的严格源靠它出卡片，
+    /// 如豆瓣只给分类）。py/jvm/js runtime 直连脚本同名方法，CMS alias 到 ac=list。
+    HomeVideoContent,
     CategoryContent,
     DetailContent,
     SearchContent,
@@ -42,6 +45,7 @@ impl SpiderMethod {
     pub fn as_str(self) -> &'static str {
         match self {
             SpiderMethod::HomeContent => "homeContent",
+            SpiderMethod::HomeVideoContent => "homeVideoContent",
             SpiderMethod::CategoryContent => "categoryContent",
             SpiderMethod::DetailContent => "detailContent",
             SpiderMethod::SearchContent => "searchContent",
@@ -811,5 +815,29 @@ mod tests {
         let value = serde_json::to_value(with_extras).expect("serialize row");
         assert_eq!(value["message"], "boom");
         assert_eq!(value["count"].as_u64(), Some(3));
+    }
+
+    #[test]
+    fn home_video_content_wire_and_serde() {
+        // 7 个 SpiderMethod 的 wire 名必须与契约（schema / TS / py adapter）逐字一致。
+        let variants = [
+            (SpiderMethod::HomeContent, "homeContent"),
+            (SpiderMethod::HomeVideoContent, "homeVideoContent"),
+            (SpiderMethod::CategoryContent, "categoryContent"),
+            (SpiderMethod::DetailContent, "detailContent"),
+            (SpiderMethod::SearchContent, "searchContent"),
+            (SpiderMethod::PlayerContent, "playerContent"),
+            (SpiderMethod::LiveContent, "liveContent"),
+        ];
+        assert_eq!(variants.len(), 7);
+        for (variant, wire) in variants {
+            assert_eq!(variant.as_str(), wire);
+        }
+
+        let parsed: SpiderMethod =
+            serde_json::from_str(r#""homeVideoContent""#).expect("camelCase wire must deserialize");
+        assert_eq!(parsed, SpiderMethod::HomeVideoContent);
+        let serialized = serde_json::to_string(&SpiderMethod::HomeVideoContent).expect("serialize");
+        assert_eq!(serialized, r#""homeVideoContent""#);
     }
 }

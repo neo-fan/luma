@@ -367,6 +367,9 @@ def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
             "application/json; charset=utf-8",
         ),
         "/spider/template.py": fixture("template.py", "text/x-python; charset=utf-8"),
+        # 严格按 TVBox 协议分家：homeContent 只给 class、homeVideoContent 才给 list。
+        # 用于回归 homeVideoContent 兜底（不依赖任何外网脚本/接口）。
+        "/spider/strict_home.py": fixture("strict_home.py", "text/x-python; charset=utf-8"),
         "/spider/broken.py": fixture("broken.py", "text/x-python; charset=utf-8"),
         "/spider/slow.py": fixture("slow.py", "text/x-python; charset=utf-8"),
         "/spider/template.js": fixture("template.js", "application/javascript; charset=utf-8"),

@@ -29,6 +29,9 @@ class Spider:
             "ext": self.ext,
         }
 
+    def homeVideoContent(self):
+        return {"list": []}
+
     def categoryContent(self, tid, pg, filter, extend):  # noqa: A002
         page = int(pg or 1)
         return {

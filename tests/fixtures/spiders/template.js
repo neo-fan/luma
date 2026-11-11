@@ -45,6 +45,9 @@ var spider = {
       ext: this.ext,
     });
   },
+  homeVideoContent: function () {
+    return { list: [] };
+  },
   categoryContent: function (tid, pg, filter, extend) {
     return page([vod("js-" + tid + "-" + pg, "JS 分类 " + tid + " 第 " + pg + " 页")]);
   },
