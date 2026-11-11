@@ -229,6 +229,16 @@ impl LibraryStore {
             .clear();
         Ok(())
     }
+
+    /// 删除单条历史；内存缓存同步摘掉，界面无需重新拉全量。
+    pub fn remove_history(&self, site_key: &str, vod_id: &str) -> Result<(), AppError> {
+        self.db.remove_history(site_key, vod_id)?;
+        self.history
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|item| !(item.vod.site_key == site_key && item.vod.vod_id == vod_id));
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -254,6 +264,15 @@ pub fn history_upsert(state: tauri::State<'_, LibraryStore>, item: HistoryItem) 
 #[tauri::command]
 pub fn history_clear(state: tauri::State<'_, LibraryStore>) -> Result<(), AppError> {
     state.clear_history()
+}
+
+#[tauri::command]
+pub fn history_remove(
+    state: tauri::State<'_, LibraryStore>,
+    siteKey: String,
+    vodId: String,
+) -> Result<(), AppError> {
+    state.remove_history(&siteKey, &vodId)
 }
 
 #[cfg(test)]

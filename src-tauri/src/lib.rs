@@ -108,10 +108,12 @@ pub fn run() {
             store::history_list,
             store::history_upsert,
             store::history_clear,
+            store::history_remove,
             // Trial-run diagnostics: UI log sink, one-click report, log folder.
             logging::log_write,
             logging::diagnostics,
             logging::open_log_dir,
+            logging::export_report,
             clipboard::copy_text,
         ])
         .run(tauri::generate_context!())

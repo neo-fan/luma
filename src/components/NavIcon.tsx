@@ -11,6 +11,7 @@ export type NavIconName =
   | "live"
   | "search"
   | "favorites"
+  | "history"
   | "settings"
   | "collapse-left"
   | "collapse-right";
@@ -43,6 +44,12 @@ const PATHS: Record<NavIconName, ReactNode> = {
     <>
       <circle cx="12" cy="12" r="3.1" />
       <path d="M12 3.2v2.3M12 18.5v2.3M3.2 12h2.3M18.5 12h2.3M5.8 5.8l1.6 1.6M16.6 16.6l1.6 1.6M18.2 5.8l-1.6 1.6M7.4 16.6l-1.6 1.6" />
+    </>
+  ),
+  history: (
+    <>
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="M12 7.6V12l3.1 1.9" />
     </>
   ),
   "collapse-left": <path d="m14.5 6-6 6 6 6" />,

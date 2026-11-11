@@ -453,6 +453,17 @@ impl Db {
         })
     }
 
+    /// 删除单条历史（历史页的「删除」按钮）。
+    pub fn remove_history(&self, site_key: &str, vod_id: &str) -> Result<(), AppError> {
+        self.with("remove history", |conn| {
+            conn.execute(
+                "DELETE FROM history WHERE site_key = ?1 AND vod_id = ?2",
+                params![site_key, vod_id],
+            )?;
+            Ok(())
+        })
+    }
+
     // ---- one-time migration from the old JSON files ------------------------
 
     fn migrate_legacy(&self, dir: &Path) -> Result<(), AppError> {

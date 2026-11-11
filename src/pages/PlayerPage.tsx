@@ -36,6 +36,29 @@ interface PlayerPageProps {
 
 const BUILTIN_KINDS = ["hls", "flv", "file"];
 
+/**
+ * mpegts.js 的最小类型面。
+ *
+ * 它的 d.ts 用 `export default Mpegts` 导出一个命名空间，`import("mpegts.js")`
+ * 的类型查询取不到 default（TS2694），而运行时的 CJS 互操作又确实挂在
+ * `default` 上。与其和第三方声明文件较劲，这里只声明真正用到的四个成员。
+ */
+interface FlvPlayerLike {
+  attachMediaElement(element: HTMLMediaElement): void;
+  load(): void;
+  destroy(): void;
+  on(event: string, handler: (type: string, detail: string) => void): void;
+}
+
+interface MpegtsLike {
+  isSupported(): boolean;
+  createPlayer(
+    config: { type: string; url: string; isLive?: boolean },
+    options?: Record<string, unknown>,
+  ): FlvPlayerLike;
+  Events: { ERROR: string };
+}
+
 /** 播放页：解析地址 → 内置播放 → 记录历史；必要时外部播放。 */
 export default function PlayerPage({
   siteKey,
@@ -594,6 +617,57 @@ export default function PlayerPage({
             void switchOrFailoverRef.current();
           });
           instance.on("destroy", () => hls.destroy());
+        },
+        flv: (video, url, instance) => {
+          // WebView2 没有内置 FLV 解码（<video> 直接吃 flv 会 SRC_NOT_SUPPORTED），
+          // 必须用 mpegts.js 走 MSE 分包。按需 import：只有真播 FLV 时才加载，
+          // 不拖累 HLS / 直链的播放页体积。
+          let player: FlvPlayerLike | null = null;
+          let disposed = false;
+          instance.on("destroy", () => {
+            disposed = true;
+            player?.destroy();
+            player = null;
+          });
+          void (async () => {
+            try {
+              const mod = (await import("mpegts.js")) as unknown as {
+                default?: MpegtsLike;
+              } & MpegtsLike;
+              // mpegts.js 的 d.ts 用 `export default Mpegts` 导出一个命名空间，
+              // `import("mpegts.js").default` 取不到类型；运行时 CJS 互操作后
+              // default 才是本体，这里两个都兜一下。
+              const mpegts = mod.default ?? mod;
+              if (disposed) {
+                return;
+              }
+              if (!mpegts.isSupported()) {
+                setVideoError("当前环境不支持 FLV 内置播放，已改用外部播放。");
+                return;
+              }
+              player = mpegts.createPlayer(
+                { type: "flv", url, isLive: siteKey === "live" },
+                {
+                  enableWorker: true,
+                  // 直播要低延迟；点播留一点缓冲避免卡顿。
+                  enableStashBuffer: siteKey !== "live",
+                  lazyLoad: siteKey !== "live",
+                  stashInitialSize: 128,
+                },
+              );
+              player.attachMediaElement(video);
+              player.load();
+              player.on(mpegts.Events.ERROR, (_type: string, detail: string) => {
+                setVideoError(`FLV 播放失败：${detail}`);
+                void switchOrFailoverRef.current();
+              });
+              void video.play().catch(() => {
+                // 自动播放被拦截时保留控件，用户点一下即可。
+              });
+            } catch (err) {
+              setVideoError(`FLV 解码组件加载失败：${errorMessage(err)}`);
+            }
+          })();
         },
       },
     });

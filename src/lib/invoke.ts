@@ -217,6 +217,11 @@ export const api = {
     return call("history_clear");
   },
 
+  /** 删除单条历史（历史页每行的「删除」）。 */
+  historyRemove(siteKey: string, vodId: string): Promise<void> {
+    return call("history_remove", { siteKey, vodId });
+  },
+
   /** 试运行诊断：版本 / 数据目录 / 日志目录 / 当前配置规模。 */
   diagnostics(): Promise<Diagnostics> {
     return call("diagnostics");
@@ -225,6 +230,11 @@ export const api = {
   /** 在资源管理器里打开日志目录，方便把日志发给开发者。 */
   openLogDir(): Promise<void> {
     return call("open_log_dir");
+  },
+
+  /** 生成一份「诊断 + 日志尾部」的反馈文件，返回其绝对路径。 */
+  exportReport(): Promise<string> {
+    return call("export_report");
   },
 
   /** 写系统剪贴板（避开 WebView2 的 clipboard 权限弹窗）。 */

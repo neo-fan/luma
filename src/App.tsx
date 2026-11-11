@@ -13,6 +13,7 @@ import NavIcon from "./components/NavIcon";
 import CategoryPage from "./pages/CategoryPage";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
+import HistoryPage from "./pages/HistoryPage";
 import HomePage from "./pages/HomePage";
 import LivePage from "./pages/LivePage";
 import SearchPage from "./pages/SearchPage";
@@ -53,6 +54,7 @@ export type View =
     }
   | { name: "live" }
   | { name: "favorites" }
+  | { name: "history" }
   | { name: "settings" };
 
 /** replace=true 时替换栈顶，用于同页切换剧集，避免返回键回退到上一集。 */
@@ -93,11 +95,15 @@ interface SiteCache {
   lives: LiveSource[];
 }
 
-const NAV_ITEMS: { key: "home" | "live" | "search" | "favorites" | "settings"; label: string }[] = [
+const NAV_ITEMS: {
+  key: "home" | "live" | "search" | "favorites" | "history" | "settings";
+  label: string;
+}[] = [
   { key: "home", label: "首页" },
   { key: "live", label: "直播" },
   { key: "search", label: "搜索" },
   { key: "favorites", label: "收藏" },
+  { key: "history", label: "历史" },
   { key: "settings", label: "设置" },
 ];
 
@@ -355,6 +361,8 @@ export default function App() {
         return <LivePage lives={lives} navigate={navigate} />;
       case "favorites":
         return <FavoritesPage navigate={navigate} />;
+      case "history":
+        return <HistoryPage navigate={navigate} />;
       case "settings":
         return (
           <SettingsPage

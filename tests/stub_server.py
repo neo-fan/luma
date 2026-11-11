@@ -143,6 +143,21 @@ def standard(port: int) -> dict:
     }
 
 
+def flv_config(port: int) -> dict:
+    """Single CMS site whose only episode is an FLV file (mpegts.js 回归用)."""
+    return {
+        "name": "stub-flv",
+        "sites": [
+            {
+                "key": "stub_flv",
+                "name": "Stub FLV",
+                "type": 1,
+                "api": f"http://127.0.0.1:{port}/cms/flv",
+            }
+        ],
+    }
+
+
 def dialect(port: int) -> dict:
     """Same config with community aliases: list / parse / global jar."""
     base = standard(port)
@@ -301,6 +316,31 @@ def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
         "/play.m3u8": (PLAYLIST.encode("utf-8"), "application/vnd.apple.mpegurl"),
         "/spider.jar": (b"PK\x03\x04stub", "application/java-archive"),
         "/config-py.json": as_json(py_config(port)),
+        "/config-flv.json": as_json(flv_config(port)),
+        "/cms/flv": (
+            json.dumps(
+                {
+                    "code": 1,
+                    "list": [
+                        {
+                            "vod_id": "flv-1",
+                            "vod_name": "Stub FLV Movie",
+                            "vod_pic": f"http://127.0.0.1:{port}/poster.jpg",
+                            "vod_remarks": "FLV",
+                            "type_name": "Stub",
+                            "vod_play_from": "flv",
+                            "vod_play_url": f"第1集$http://127.0.0.1:{port}/media/sample.flv",
+                        }
+                    ],
+                    "page": 1,
+                    "pagecount": 1,
+                    "limit": 20,
+                    "total": 1,
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            "application/json; charset=utf-8",
+        ),
         "/config-failover.json": as_json(failover_config(port)),
         "/cms/dead": (
             json.dumps(
@@ -470,6 +510,7 @@ class Handler(BaseHTTPRequestHandler):
                 ".m3u8": "application/vnd.apple.mpegurl",
                 ".ts": "video/mp2t",
                 ".mp4": "video/mp4",
+                ".flv": "video/x-flv",
             }.get(target.suffix, "application/octet-stream")
             range_header = self.headers.get("Range") or ""
             if range_header.startswith("bytes="):

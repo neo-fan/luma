@@ -368,6 +368,53 @@ textarea {
   font-size: 13px;
 }
 
+/* 聚合搜索的失败源明细：默认收起，只占一行开关，展开后逐站可重试 */
+.failure-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+  align-items: flex-start;
+}
+
+.failure-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.failure-item {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.failure-item__name {
+  color: var(--text-soft);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.failure-item__reason {
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* 聚合搜索：精确命中的片名被源站推荐列表淹没时的一键收敛开关 */
 .filter-toggle {
   display: inline-flex;
@@ -578,6 +625,10 @@ textarea {
 .vod-card {
   display: flex;
   flex-direction: column;
+  /* 卡片有时是 .vod-grid 的直接子项（首页/搜索），有时裹在 .fav-item 里
+   * （收藏/历史）。按钮默认按内容宽度收缩，没有封面图时整列就会变窄、
+   * 高度参差不齐；显式撑满才能让两种结构都对上网格。 */
+  width: 100%;
   gap: 8px;
   padding: 0;
   border: 0;

@@ -31,6 +31,7 @@ export default defineConfig({
         manualChunks(id) {
           const path = id.replace(/\\/g, "/");
           if (path.includes("/node_modules/hls.js/")) return "hls";
+          if (path.includes("/node_modules/mpegts.js/")) return "mpegts";
           if (path.includes("/node_modules/artplayer-plugin-hls-control/")) return "artplayer-hls-control";
           if (path.includes("/node_modules/artplayer/")) return "artplayer";
           return undefined;

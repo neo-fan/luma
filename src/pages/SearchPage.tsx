@@ -45,6 +45,15 @@ interface SearchHit {
   matchScore: number;
 }
 
+/** 聚合失败的一行：够用户判断「是源挂了还是我关键词错了」，也够我们定位。 */
+interface FailureRow {
+  siteKey: string;
+  siteName: string;
+  message: string;
+  /** 单站重试进行中。 */
+  busy?: boolean;
+}
+
 /** 搜索页：单站点直连，全部站点走后端一次并发聚合。 */
 export default function SearchPage({ sites, navigate }: SearchPageProps) {
   // P2: jar sites are dispatchable now. Keep them selectable so a failing
@@ -64,6 +73,9 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
   const [failures, setFailures] = usePageState<number>(`${K}failures`, 0);
   /** 源级降级原因（规格 14 节）：按出现次数取前三条，避免刷屏。 */
   const [failureReasons, setFailureReasons] = usePageState<string[]>(`${K}failureReasons`, []);
+  /** 逐站失败明细：用户能看到是哪一站、什么错，并对单站重试。 */
+  const [failureRows, setFailureRows] = usePageState<FailureRow[]>(`${K}failureRows`, []);
+  const [showFailures, setShowFailures] = useState(false);
   const [progress, setProgress] = usePageState<string>(`${K}progress`, "");
   const [searched, setSearched] = usePageState<boolean>(`${K}searched`, false);
   const [loading, setLoading] = useState(false);
@@ -89,6 +101,8 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
     setSearched(false);
     setFailures(0);
     setFailureReasons([]);
+    setFailureRows([]);
+    setShowFailures(false);
     setHits([]);
     setMatchCount(0);
     setProgress("");
@@ -185,12 +199,18 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         // Group identical failures so 28 csp_* sites sharing one Android dex
         // jar produce one readable reason instead of 28 identical lines.
         const reasons = new Map<string, number>();
+        const breakdown: FailureRow[] = [];
         for (const row of agg.results ?? []) {
           if (row.ok) {
             continue;
           }
           const message = row.error?.message || row.error?.code || "未知错误";
           reasons.set(message, (reasons.get(message) ?? 0) + 1);
+          breakdown.push({
+            siteKey: row.siteKey,
+            siteName: names.get(row.siteKey) ?? row.siteKey,
+            message,
+          });
         }
         setFailureReasons(
           [...reasons.entries()]
@@ -198,6 +218,8 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
             .slice(0, 3)
             .map(([message, count]) => `${message}（${count} 个站点）`),
         );
+        // 明细按站点名排序：用户找「某某站怎么没结果」时能直接扫。
+        setFailureRows(breakdown.sort((a, b) => a.siteName.localeCompare(b.siteName, "zh-Hans-CN")));
         setFailures(agg.failed + (agg.skipped ?? 0));
         aggregateStats = {
           total: agg.total,
@@ -237,6 +259,66 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
       return;
     }
     void runSearch();
+  };
+
+  /**
+   * 单站重试：聚合时超时的慢源往往单独再跑一次就能出结果。成功则把结果
+   * 合并进当前列表（仍按片名相关度排序），并把该站从失败明细里移除。
+   */
+  const retrySite = async (row: FailureRow) => {
+    const word = keyword.trim();
+    if (!word) {
+      return;
+    }
+    setFailureRows((current) =>
+      current.map((item) => (item.siteKey === row.siteKey ? { ...item, busy: true } : item)),
+    );
+    try {
+      const result = await api.search(row.siteKey, word, 1, true);
+      const added: SearchHit[] = (result.list ?? []).map((vod) => ({
+        siteKey: row.siteKey,
+        siteName: row.siteName,
+        vod,
+        matchScore: titleMatchScore(vod.vod_name, word),
+      }));
+      const merged = rankByTitle(
+        [...hits, ...added],
+        word,
+        (hit) => hit.vod.vod_name,
+      );
+      // 同一站可能重复点重试；按 (siteKey, vodId) 去重后再落盘。
+      const deduped: SearchHit[] = [];
+      const seen = new Set<string>();
+      for (const hit of merged) {
+        const id = `${hit.siteKey}:${hit.vod.vod_id}`;
+        if (seen.has(id)) {
+          continue;
+        }
+        seen.add(id);
+        deduped.push(hit);
+      }
+      setHits(deduped);
+      setMatchCount(deduped.filter((hit) => hit.matchScore >= 2).length);
+      setFailureRows((current) => current.filter((item) => item.siteKey !== row.siteKey));
+      setFailures((count) => Math.max(0, count - 1));
+      log.info("search retry ok", {
+        siteKey: row.siteKey,
+        hits: added.length,
+        keyword: word.slice(0, 60),
+      });
+    } catch (err) {
+      setFailureRows((current) =>
+        current.map((item) =>
+          item.siteKey === row.siteKey
+            ? { ...item, busy: false, message: errorMessage(err) }
+            : item,
+        ),
+      );
+      log.warn("search retry failed", {
+        siteKey: row.siteKey,
+        message: errorMessage(err),
+      });
+    }
   };
 
   const visibleHits = onlyMatches
@@ -293,6 +375,41 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         <p className="result-meta" style={{ opacity: 0.72, fontSize: 12 }}>
           未响应源的原因：{failureReasons.join("；")}
         </p>
+      ) : null}
+
+      {!loading && searched && failureRows.length > 0 ? (
+        <div className="failure-panel">
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            aria-expanded={showFailures}
+            onClick={() => setShowFailures((value) => !value)}
+          >
+            {showFailures ? "收起失败源" : `查看 ${failureRows.length} 个失败源`}
+          </button>
+          {showFailures ? (
+            <ul className="failure-list">
+              {failureRows.map((row) => (
+                <li className="failure-item" key={row.siteKey}>
+                  <span className="failure-item__name" title={row.siteKey}>
+                    {row.siteName}
+                  </span>
+                  <span className="failure-item__reason" title={row.message}>
+                    {row.message}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    disabled={row.busy}
+                    onClick={() => void retrySite(row)}
+                  >
+                    {row.busy ? "重试中…" : "重试"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
 
       {!loading && searched &&

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync, statSync } from "node:fs";
 /**
  * 试运行诊断回归：版本号、日志目录、一键复制与后端 diagnostics。
  *
@@ -6,8 +7,9 @@
  *   1. 侧栏与设置页都显示 1.0.0-alpha（同一来源：package.json → Vite define）；
  *   2. 「版本与日志」块列出数据目录 / 日志目录 / 日志文件数量 / 当前配置；
  *   3. `diagnostics` command 返回 version / logDir / config / logFiles；
- *   4. 「打开日志目录」「复制诊断信息」按钮存在，复制有 tip 反馈；
- *   5. 无未捕获页面异常。
+ *   4. 「打开日志目录」「复制诊断信息」「导出反馈文件」按钮存在，复制有 tip 反馈；
+ *   5. 「导出反馈文件」生成真实文件，内容含诊断与日志；
+ *   6. 无未捕获页面异常。
  *
  * 依赖 dev 窗口（CDP 9222）与至少一份 active 配置。
  *   node tools/probe_settings_logs.mjs
@@ -192,6 +194,31 @@ try {
   );
   console.log(`[info] copy tip: ${String(tip)}`);
   assert(!!tip, "copy action produced a tip", String(tip));
+
+  // 导出反馈文件：确认按钮在、路径回显、磁盘上真的生成了一个带诊断与日志的文件。
+  const buttons = JSON.parse(
+    (await cdp.eval(
+      `JSON.stringify([...document.querySelectorAll('.settings-actions button')].map((n) => n.textContent.trim()))`,
+    )) || "[]",
+  );
+  assert(buttons.includes("导出反馈文件"), "export report button present", JSON.stringify(buttons));
+  const exported = await cdp.eval(CLICK("导出反馈文件", ".settings-actions button"));
+  assert(exported === "CLICKED", "click 导出反馈文件", exported);
+  const reportPath = await cdp.eval(
+    WAIT(
+      "const el = [...document.querySelectorAll('.settings-line code')].map((n) => n.textContent.trim()).find((t) => t.includes('luma-report-')); return el || null;",
+      20000,
+    ),
+  );
+  console.log(`[info] report path: ${String(reportPath)}`);
+  assert(!!reportPath, "report path shown in settings", String(reportPath));
+  if (reportPath) {
+    const size = statSync(reportPath).size;
+    const content = readFileSync(reportPath, "utf8");
+    assert(size > 1000, "report file is not empty", `${size} bytes`);
+    assert(content.includes("== 诊断 =="), "report contains diagnostics", "== 诊断 ==");
+    assert(/== 日志/.test(content), "report contains logs", "== 日志");
+  }
 } catch (err) {
   console.log(`[diag] unexpected error: ${String((err && err.stack) || err)}`);
   failures += 1;

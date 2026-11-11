@@ -144,8 +144,18 @@ try {
   console.log(`[info] expanded: ${JSON.stringify(expanded)}`);
   assert(expanded?.collapsed === false, "starts expanded", JSON.stringify(expanded));
   assert(expanded?.width >= 180, "expanded width ~204", String(expanded?.width));
-  assert(expanded?.icons === 5 && expanded?.visibleIcons === 5, "5 nav icons visible", JSON.stringify(expanded));
-  assert(expanded?.visibleLabels === 6, "labels visible (5 nav + 收起)", JSON.stringify(expanded));
+  // 导航项数量会随功能增加（现在是首页/直播/搜索/收藏/历史/设置）；用实测数量
+  // 做基准，避免每加一个入口就要改一次探针。
+  assert(
+    expanded?.icons >= 5 && expanded?.visibleIcons === expanded?.icons,
+    "all nav icons visible",
+    JSON.stringify(expanded),
+  );
+  assert(
+    expanded?.visibleLabels === expanded?.icons + 1,
+    "labels visible (nav items + 收起)",
+    JSON.stringify(expanded),
+  );
   assert(expanded?.brandTextVisible === true && expanded?.footVisible === true, "brand/foot visible", JSON.stringify(expanded));
 
   const collapse = await cdp.eval(`(() => {
@@ -162,7 +172,7 @@ try {
   console.log(`[info] collapsed: ${JSON.stringify(collapsed)}`);
   assert(collapsed?.collapsed === true, "sidebar collapsed", JSON.stringify(collapsed));
   assert(collapsed?.width <= 80, "collapsed width ~68", String(collapsed?.width));
-  assert(collapsed?.visibleIcons === 5, "icons still visible when collapsed", JSON.stringify(collapsed));
+  assert(collapsed?.visibleIcons === collapsed?.icons, "icons still visible when collapsed", JSON.stringify(collapsed));
   assert(collapsed?.visibleLabels === 0, "labels hidden when collapsed", JSON.stringify(collapsed));
   assert(collapsed?.brandTextVisible === false && collapsed?.footVisible === false, "brand/foot hidden", JSON.stringify(collapsed));
   assert(collapsed?.stored === "1", "collapse persisted", String(collapsed?.stored));
@@ -192,7 +202,7 @@ try {
   const restored = JSON.parse((await cdp.eval(SNAPSHOT)) || "null");
   console.log(`[info] restored: ${JSON.stringify(restored)}`);
   assert(restored?.width >= 180, "width restored", String(restored?.width));
-  assert(restored?.visibleLabels === 6, "labels restored", JSON.stringify(restored));
+  assert(restored?.visibleLabels === restored?.icons + 1, "labels restored", JSON.stringify(restored));
   assert(restored?.stored === "0", "expand persisted", String(restored?.stored));
 
   // 收缩后 reload：偏好应恢复为收缩态。
@@ -211,8 +221,18 @@ try {
   console.log(`[info] after reload: ${JSON.stringify(afterReload)}`);
   assert(afterReload?.collapsed === true, "collapse persisted across reload", JSON.stringify(afterReload));
 
-  // 恢复展开，避免影响后续探针（它们按文字点侧栏，虽然 textContent 仍可用）。
-  await cdp.eval(`(() => { const b = document.querySelector('.sidebar__collapse'); b && b.click(); return true; })()`);
+  // 收尾必须把侧栏留在展开态：探针只是验证，不该改掉用户下次启动看到的界面。
+  await cdp.eval(`localStorage.setItem('luma:sidebar:v1', '0')`);
+  await cdp.eval(`(() => {
+    const bar = document.querySelector('.sidebar');
+    const btn = document.querySelector('.sidebar__collapse');
+    if (bar && bar.classList.contains('is-collapsed') && btn) btn.click();
+    return true;
+  })()`);
+  const finalState = await cdp.eval(
+    WAIT("return !document.querySelector('.sidebar.is-collapsed') ? 'OK' : null;", 5000),
+  );
+  assert(finalState === "OK", "sidebar left expanded", String(finalState));
 } catch (err) {
   console.log(`[diag] unexpected error: ${String((err && err.stack) || err)}`);
   failures += 1;

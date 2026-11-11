@@ -79,6 +79,8 @@ export default function SettingsPage({
   const [copyTip, setCopyTip] = useState("");
   /** 自动复制失败时的只读兜底文本。 */
   const [manualCopy, setManualCopy] = useState("");
+  /** 最近一次导出的反馈文件路径。 */
+  const [reportPath, setReportPath] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -313,6 +315,21 @@ export default function SettingsPage({
     log.info("diagnostics copy", { ok: copied, version: payload.version });
   };
 
+  /** 生成反馈文件（诊断 + 日志尾部），一个文件就能发给开发者。 */
+  const exportReport = async () => {
+    setCopyTip("");
+    setManualCopy("");
+    try {
+      const file = await api.exportReport();
+      setReportPath(file);
+      setCopyTip("反馈文件已生成，可直接发送这个文件");
+      log.info("report exported", { file });
+    } catch (err) {
+      setCopyTip(`生成反馈文件失败：${errorMessage(err)}`);
+      log.error("report export failed", { message: errorMessage(err) });
+    }
+  };
+
   return (
     <section className="page">
       <header className="page-head">
@@ -519,8 +536,16 @@ export default function SettingsPage({
           <button type="button" className="btn" onClick={() => void copyDiagnostics()}>
             复制诊断信息
           </button>
+          <button type="button" className="btn btn--primary" onClick={() => void exportReport()}>
+            导出反馈文件
+          </button>
         </div>
         {copyTip ? <p className="tip">{copyTip}</p> : null}
+        {reportPath ? (
+          <p className="settings-line" title={reportPath}>
+            反馈文件：<code>{reportPath}</code>
+          </p>
+        ) : null}
         {manualCopy ? (
           <textarea
             className="textarea"
