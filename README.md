@@ -49,7 +49,7 @@ node tools/bundle_report.mjs               # 构建产物体积 / gzip 报告
 产物：
 
 - `release/portable/Luma/` —— 解压即用的文件夹；
-- `release/Luma-0.1.0-portable.zip` —— 分发包（约 41MB，SQLite bundled 后需重测体积）。
+- `release/Luma-1.0.0-alpha-portable.zip` —— 分发包（约 41MB，SQLite bundled 后需重测体积）。
 
 不需要安装程序；整个文件夹可以放在任意目录、U 盘或移动硬盘。
 
@@ -81,6 +81,7 @@ $env:LUMA_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 | `LUMA_RESOURCE_DIR` | 宿主发布给 sidecar 的资源目录，通常无需手工设置 |
 | `LUMA_PROXY_ALLOW_LOCAL` | `1` 时允许反代访问 `127.0.0.1`（仅本地联调） |
 | `LUMA_SELFCHECK` | `1` 时启动自检并写 `data/selfcheck.log` |
+| `LUMA_LOG` | 日志级别：`trace` / `debug` / `info` / `warn` / `error` / `off`，默认 `info` |
 
 ## 使用
 
@@ -89,9 +90,18 @@ $env:LUMA_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 3. 播放失败时的顺序：同片其它线路 → 其它站点 → 第 4 级嗅探 → mpv / 外部播放器。搜索页会列出未响应源的原因。
 4. 直播页可导入 m3u 源观看。
 
+## 日志与诊断（试运行）
+
+- **版本**：`1.0.0-alpha`。侧栏、设置页、便携包文件名与 `tauri.conf.json` 使用同一版本号。
+- **位置**：便携版 `data/logs/luma-YYYY-MM-DD.log`；开发 / 安装模式 `%APPDATA%\Luma\logs\`。每天一个文件，保留最近 7 天。
+- **级别**：默认 `info`；需要排查 sidecar / 聚合细节时设 `LUMA_LOG=debug` 后重启。日志同时写文件与控制台（release 包无控制台，只看文件）。
+- **内容**：启动摘要（版本、平台、数据目录、配置 id）、前端关键操作（搜索完成、手动/自动换源、播放解析失败、配置导入导出）、IPC 错误、未捕获异常与 Promise rejection。
+- **隐私**：URL 只记录 `scheme + host + path`，查询参数（token / 签名）与片段不会落盘；播放直链不记录；日志只写本机，不上传。
+- **反馈**：设置页「复制诊断信息」生成包含版本 / 平台 / 目录 / 当前配置规模 / 日志文件列表的 JSON；需要细节时点「打开日志目录」附上当天的 `luma-*.log`。
+
 ## 运行（便携版）
 
-1. 解压 `Luma-0.1.0-portable.zip` 到任意目录；
+1. 解压 `Luma-1.0.0-alpha-portable.zip` 到任意目录；
 2. 双击 `Luma.exe`。
 
 配置、收藏、历史都写在 **exe 同级 `data/luma.db`**（单个 SQLite 文件，运行时另有 `-wal` / `-shm` 辅助文件）；`data/` 存在即自动进入便携模式，不会写 `%APPDATA%`。删除整个文件夹即完成卸载。

@@ -1,8 +1,16 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import packageJson from "./package.json";
+
+// 版本号唯一来源：package.json。Cargo.toml / tauri.conf.json 手工保持同步，
+// 前端通过 define 注入，避免侧栏 / 诊断页 / 日志里出现三个不同版本。
+const APP_VERSION = packageJson.version;
 
 // Tauri 需要固定端口；strictPort 避免端口漂移后 devUrl 对不上。
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
   plugins: [react()],
   clearScreen: false,
   server: {

@@ -17,10 +17,12 @@ import LivePage from "./pages/LivePage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
 import { canFailover } from "./lib/format";
-import { api } from "./lib/invoke";
+import { api, errorMessage } from "./lib/invoke";
 import { pageCache } from "./lib/pageCache";
 import { clearSourceCache, setSourceCacheScope } from "./lib/sourceCache";
 import { clearPageStates } from "./lib/usePageState";
+import { log } from "./lib/logger";
+import { APP_VERSION } from "./lib/version";
 import type { ConfigSnapshot, LiveSource, Site } from "./types/tvbox";
 
 /**
@@ -249,8 +251,17 @@ export default function App() {
         } catch {
           // 本地缓存失败不影响本次会话。
         }
-      } catch {
+        log.info("app ready", {
+          version: APP_VERSION,
+          configId: snapshot.id,
+          configName: snapshot.name,
+          sites: snapshot.sites.length,
+          enabled: snapshot.sites.filter((site) => site.enabled).length,
+          lives: snapshot.lives?.length ?? 0,
+        });
+      } catch (err) {
         // 后端没有该命令时保留本地缓存，不打断启动。
+        log.warn("config_active failed", { message: errorMessage(err) });
       }
     })();
     return () => {
@@ -360,7 +371,7 @@ export default function App() {
         </nav>
         <div className="sidebar__foot">
           <span>本地播放框架</span>
-          <span>Luma · v0.1.0</span>
+          <span>Luma · v{APP_VERSION}</span>
         </div>
       </aside>
       <main className="content" ref={contentRef}>

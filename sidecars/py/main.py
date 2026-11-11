@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from decrypt import DecryptError, decrypt  # noqa: E402
 from normalize import merge_repos, normalize_config  # noqa: E402
 
-VERSION = "0.1.0"
+VERSION = "1.0.0-alpha"
 _write_lock = threading.Lock()
 _cancel_lock = threading.Lock()
 _cancelled: set[str] = set()

@@ -11,6 +11,7 @@ import { pageCache } from "../lib/pageCache";
 import { usePageState } from "../lib/usePageState";
 import { countEpisodes } from "../lib/sources";
 import { prefetchSources } from "../lib/sourceCache";
+import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
 import type { HistoryItem, Site, VodInfo } from "../types/tvbox";
 
@@ -86,6 +87,11 @@ export default function DetailPage({
         if (alive) {
           setVod(null);
           setError(errorMessage(err));
+          log.warn("detail failed", {
+            siteKey,
+            vodId,
+            message: errorMessage(err),
+          });
         }
       } finally {
         if (alive) {

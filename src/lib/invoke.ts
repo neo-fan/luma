@@ -6,11 +6,13 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { CACHE_TTL, pageCache } from "./pageCache";
+import { log } from "./logger";
 import type {
   AppError,
   ConfigMeta,
   ConfigSnapshot,
   ConfigSource,
+  Diagnostics,
   FavoriteItem,
   FetchRequest,
   FetchResponse,
@@ -49,7 +51,11 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   try {
     return await invoke<T>(cmd, args);
   } catch (err) {
-    throw toAppError(err);
+    const appError = toAppError(err);
+    // 只记失败：成功的 IPC 太吵，且错误才是试运行反馈需要的上下文。
+    // 不记录 args —— 里面可能有播放直链 / 配置地址。
+    log.error("ipc failed", { cmd, code: appError.code, message: appError.message });
+    throw appError;
   }
 }
 
@@ -195,6 +201,21 @@ export const api = {
 
   historyClear(): Promise<void> {
     return call("history_clear");
+  },
+
+  /** 试运行诊断：版本 / 数据目录 / 日志目录 / 当前配置规模。 */
+  diagnostics(): Promise<Diagnostics> {
+    return call("diagnostics");
+  },
+
+  /** 在资源管理器里打开日志目录，方便把日志发给开发者。 */
+  openLogDir(): Promise<void> {
+    return call("open_log_dir");
+  },
+
+  /** 写系统剪贴板（避开 WebView2 的 clipboard 权限弹窗）。 */
+  copyText(text: string): Promise<void> {
+    return call("copy_text", { text });
   },
 };
 

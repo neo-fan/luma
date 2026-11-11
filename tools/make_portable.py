@@ -40,8 +40,20 @@ RELEASE_EXE = ROOT / "src-tauri" / "target" / "release" / "luma.exe"
 APP_NAME = "Luma"
 OUT_DIR = ROOT / "release" / "portable"
 APP_DIR = OUT_DIR / APP_NAME
-ZIP_PATH = ROOT / "release" / f"{APP_NAME}-0.1.0-portable.zip"
 CONF = ROOT / "src-tauri" / "tauri.conf.json"
+
+
+def conf_version() -> str:
+    """交付文件名跟 tauri.conf.json 走；版本只有那一个来源。"""
+    try:
+        data = json.loads(CONF.read_text(encoding="utf-8"))
+        return str(data.get("version") or "0.0.0")
+    except (OSError, ValueError):
+        return "0.0.0"
+
+
+# 延迟到函数定义之后再拼 zip 名，避免版本号再写死一次。
+ZIP_PATH = ROOT / "release" / f"{APP_NAME}-{conf_version()}-portable.zip"
 
 # Build-time-only Python bits: safe to omit from the portable copy.
 PY_SKIP_NAMES = {"scripts", "__pycache__", "pip", "setuptools", "wheel", "_distutils_hack"}
@@ -115,7 +127,7 @@ def prepare_app_dir() -> None:
     (APP_DIR / "data" / ".keep").write_text("", encoding="utf-8")
 
     conf = json.loads(CONF.read_text(encoding="utf-8"))
-    version = conf.get("version", "0.1.0")
+    version = conf.get("version", "0.0.0")
     (APP_DIR / "使用说明.txt").write_text(
         f"""{APP_NAME} {version}（便携版）
 

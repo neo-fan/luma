@@ -266,3 +266,34 @@ export interface LiveListResult {
   source?: string;
   count?: number;
 }
+
+/** 试运行诊断（`diagnostics` command）：版本 / 目录 / 当前配置规模 / 日志。 */
+export interface DiagnosticsConfig {
+  id: string;
+  name: string;
+  sites: number;
+  enabled: number;
+  blocked: number;
+  jvm: number;
+  quickjs: number;
+  lives: number;
+  parses: number;
+  headers: number;
+}
+
+export interface DiagnosticsLogFile {
+  name: string;
+  bytes: number;
+}
+
+export interface Diagnostics {
+  version: string;
+  os: string;
+  arch: string;
+  dataDir: string;
+  logDir: string;
+  dbPath: string;
+  config: DiagnosticsConfig | null;
+  logFiles: DiagnosticsLogFile[];
+  logBytes: number;
+}

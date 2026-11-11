@@ -1232,6 +1232,34 @@ textarea {
   font-size: 13px;
 }
 
+/* 诊断键值表：左侧标签固定宽，右侧路径可换行，避免长 APPDATA 路径撑破卡片 */
+.settings-kv {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.settings-kv > span {
+  color: var(--muted);
+}
+
+.settings-kv > code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .disclaimer {
   margin: 36px 0 0;
   padding-top: 16px;

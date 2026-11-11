@@ -9,6 +9,7 @@ import { api, errorMessage } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
 import { rankByTitle, titleMatchScore } from "../lib/format";
 import { publishSearchResults } from "../lib/sourceCache";
+import { log } from "../lib/logger";
 import type { ResultPage, Site, VodInfo } from "../types/tvbox";
 
 const ALL_SITES = "__all__";
@@ -74,6 +75,15 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
       setError("请输入搜索关键词");
       return;
     }
+    const startedAt = Date.now();
+    /** 聚合统计（日志用）；单站搜索补一条等价结构。 */
+    let aggregateStats: {
+      total: number;
+      ok: number;
+      failed: number;
+      skipped: number;
+      tookMs: number;
+    } | null = null;
     setLoading(true);
     setError("");
     setSearched(false);
@@ -101,6 +111,13 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
             matchScore: titleMatchScore(vod.vod_name, word),
           });
         }
+        aggregateStats = {
+          total: 1,
+          ok: 1,
+          failed: 0,
+          skipped: 0,
+          tookMs: Date.now() - startedAt,
+        };
       } else {
         if (selectableSites.length === 0) {
           setError("请先导入一份配置");
@@ -182,6 +199,13 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
             .map(([message, count]) => `${message}（${count} 个站点）`),
         );
         setFailures(agg.failed + (agg.skipped ?? 0));
+        aggregateStats = {
+          total: agg.total,
+          ok: agg.ok,
+          failed: agg.failed,
+          skipped: agg.skipped ?? 0,
+          tookMs: agg.tookMs,
+        };
       }
 
       // 源站回退推荐列表 / 单字模糊匹配会把精确命中冲到几十条之后。
@@ -190,9 +214,18 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
       setHits(ranked);
       setMatchCount(ranked.filter((hit) => hit.matchScore >= 2).length);
       setSearched(true);
+      log.info("search done", {
+        keyword: word.slice(0, 60),
+        scope: target === ALL_SITES ? "all" : target,
+        ...(aggregateStats ?? {}),
+        hits: ranked.length,
+        matched: ranked.filter((hit) => hit.matchScore >= 2).length,
+        elapsedMs: Date.now() - startedAt,
+      });
     } catch (err) {
       setFailures(1);
       setError(errorMessage(err));
+      log.warn("search failed", { keyword: word.slice(0, 60), message: errorMessage(err) });
     } finally {
       setLoading(false);
     }

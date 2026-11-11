@@ -27,7 +27,17 @@ ROOT = Path(__file__).resolve().parents[2]
 STUB = "http://127.0.0.1:8787"
 CDP = "http://127.0.0.1:9222/json/list"
 TAURI_CONF = ROOT / "src-tauri" / "tauri.conf.json"
-PORTABLE_ZIP = ROOT / "release" / "Luma-0.1.0-portable.zip"
+
+
+def conf_version() -> str:
+    """交付文件名跟 tauri.conf.json 走，避免版本升级后测试断言漂移。"""
+    try:
+        return str(json.loads(TAURI_CONF.read_text(encoding="utf-8")).get("version") or "0.0.0")
+    except (OSError, ValueError):
+        return "0.0.0"
+
+
+PORTABLE_ZIP = ROOT / "release" / f"Luma-{conf_version()}-portable.zip"
 PORTABLE_DIR = ROOT / "release" / "portable" / "Luma"
 SIZE_REPORT = ROOT / "docs" / "size-report.md"
 README = ROOT / "README.md"

@@ -10,6 +10,7 @@ import { formatDuration, parsePlayLines } from "../lib/format";
 import type { PlayLine } from "../lib/format";
 import { countEpisodes, pickMatchingEpisode } from "../lib/sources";
 import { prefetchSources } from "../lib/sourceCache";
+import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
 import type { HistoryItem, PlayResolved, ResultPage, Site } from "../types/tvbox";
@@ -188,6 +189,11 @@ export default function PlayerPage({
       } catch (err) {
         if (alive) {
           setResolveError(errorMessage(err));
+          log.warn("resolve failed", {
+            siteKey,
+            vodId,
+            message: errorMessage(err),
+          });
         }
       } finally {
         if (alive) {
@@ -348,6 +354,11 @@ export default function PlayerPage({
             continue;
           }
           const tip = `已自动切换到「${candidate.siteKey}」`;
+          log.info("auto failover", {
+            from: siteKey,
+            to: candidate.siteKey,
+            vodId: String(candidate.vod.vod_id),
+          });
           window.sessionStorage.setItem("luma:autoSwitch", tip);
           setSwitchTip(tip);
           handledUrls.current.add(picked.url);
@@ -596,6 +607,7 @@ export default function PlayerPage({
       // HEVC：换源也救不了同一编码，直接交给随包 mpv（规格 T-30 自动兜底）。
       if (mediaError && (mediaError.code === 3 || mediaError.code === 4) && !mpvTried.current) {
         mpvTried.current = true;
+        log.warn("mpv fallback", { siteKey, vodId, mediaCode: mediaError.code });
         setVideoError("浏览器无法解码该视频，已自动交给 mpv 播放…");
         void api
           .mpvPlay(resolved.url, vodName, resolved.headers)
@@ -754,6 +766,12 @@ export default function PlayerPage({
       throw "该源没有可播放剧集，请换一个片源";
     }
     // 换源会重建页面，提示沿用自动换源的通道带过去一次。
+    log.info("manual source switch", {
+      from: siteKey,
+      to: option.siteKey,
+      vodId: option.vodId,
+      episode: episodeName,
+    });
     window.sessionStorage.setItem(
       "luma:autoSwitch",
       `已手动切换到「${option.siteName}」`,

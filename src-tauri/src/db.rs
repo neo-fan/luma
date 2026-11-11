@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-const DB_FILE: &str = "luma.db";
+pub(crate) const DB_FILE: &str = "luma.db";
 const META_ACTIVE: &str = "active_config_id";
 const META_MIGRATED: &str = "legacy_migrated";
 pub const MAX_HISTORY: usize = 500;

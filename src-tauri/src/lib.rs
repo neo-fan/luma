@@ -1,12 +1,14 @@
 //! Tauri 应用入口。业务 command 按 7.1 注册；解析逻辑全部在 Python sidecar。
 
 pub mod bridge;
+pub mod clipboard;
 pub mod config;
 pub mod db;
 pub mod env;
 pub mod error;
 pub mod http;
 pub mod live;
+pub mod logging;
 pub mod migrate;
 pub mod mpv;
 pub mod netrules;
@@ -28,6 +30,10 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Logging first: DB migration, sidecar resolution and proxy startup all
+    // emit tracing events, and a trial user needs them on disk even if the
+    // window never renders.
+    logging::init();
     // One SQLite connection shared by both stores: config snapshots, active
     // marker, favourites and history all live in `<data dir>/luma.db`.
     let database = Arc::new(db::Db::open().expect("open sqlite database"));
@@ -95,6 +101,11 @@ pub fn run() {
             store::history_list,
             store::history_upsert,
             store::history_clear,
+            // Trial-run diagnostics: UI log sink, one-click report, log folder.
+            logging::log_write,
+            logging::diagnostics,
+            logging::open_log_dir,
+            clipboard::copy_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

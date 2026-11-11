@@ -3,7 +3,33 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import { api, errorMessage } from "../lib/invoke";
-import type { ConfigMeta, ConfigSnapshot, ProxyStatus } from "../types/tvbox";
+import { log } from "../lib/logger";
+import { APP_VERSION } from "../lib/version";
+import type { ConfigMeta, ConfigSnapshot, Diagnostics, ProxyStatus } from "../types/tvbox";
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * 复制文本。优先走后端系统剪贴板：WebView2 的 `navigator.clipboard` 在缺少
+ * 用户手势时会弹权限框并挂起，桌面应用里体验很差。失败时把内容放进只读
+ * textarea，让用户手动全选复制。
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await api.copyText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface SettingsPageProps {
   activeConfigId?: string;
@@ -30,6 +56,13 @@ export default function SettingsPage({
 
   const [proxy, setProxy] = useState<ProxyStatus | null>(null);
   const [proxyError, setProxyError] = useState("");
+
+  // 试运行诊断：版本 / 目录 / 日志文件，与配置列表并行获取。
+  const [diag, setDiag] = useState<Diagnostics | null>(null);
+  const [diagError, setDiagError] = useState("");
+  const [copyTip, setCopyTip] = useState("");
+  /** 自动复制失败时的只读兜底文本。 */
+  const [manualCopy, setManualCopy] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -75,6 +108,28 @@ export default function SettingsPage({
     };
   }, [reload]);
 
+  // 诊断信息单独一个 effect：配置列表 / 反代慢时也能先把版本与目录显示出来。
+  useEffect(() => {
+    let alive = true;
+    void api
+      .diagnostics()
+      .then((value) => {
+        if (alive) {
+          setDiag(value);
+          setDiagError("");
+        }
+      })
+      .catch((err) => {
+        if (alive) {
+          setDiag(null);
+          setDiagError(errorMessage(err));
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [reload]);
+
   const importConfig = async (kind: "url" | "text", value: string) => {
     if (!value) {
       setError(kind === "url" ? "请先填写配置地址" : "请先粘贴配置内容");
@@ -94,6 +149,14 @@ export default function SettingsPage({
         `已导入「${snapshot.name}」，${usable} 个可用站点` +
           (blocked > 0 ? `；已屏蔽 ${blocked} 个不支持的 jar / JS 源` : ""),
       );
+      log.info("config imported", {
+        id: snapshot.id,
+        name: snapshot.name,
+        kind,
+        sites: snapshot.sites.length,
+        enabled: usable,
+        blocked,
+      });
       if (kind === "url") {
         setUrl("");
       } else {
@@ -102,6 +165,7 @@ export default function SettingsPage({
       setReload((current) => current + 1);
     } catch (err) {
       setError(`导入失败：${errorMessage(err)}`);
+      log.error("config import failed", { kind, message: errorMessage(err) });
     } finally {
       setImporting(false);
     }
@@ -117,9 +181,11 @@ export default function SettingsPage({
       await api.configRemove(meta.id);
       onConfigRemoved(meta.id);
       setNotice(`已删除配置「${meta.name}」`);
+      log.info("config removed", { id: meta.id, name: meta.name });
       setReload((current) => current + 1);
     } catch (err) {
       setError(`删除失败：${errorMessage(err)}`);
+      log.error("config remove failed", { id: meta.id, message: errorMessage(err) });
     }
   };
 
@@ -132,9 +198,34 @@ export default function SettingsPage({
     try {
       await api.historyClear();
       setNotice("已清空观看历史");
+      log.info("history cleared");
     } catch (err) {
       setError(`清空历史失败：${errorMessage(err)}`);
     }
+  };
+
+  const openLogs = async () => {
+    setCopyTip("");
+    try {
+      await api.openLogDir();
+      log.info("log dir opened");
+    } catch (err) {
+      setCopyTip(`打开日志目录失败：${errorMessage(err)}`);
+    }
+  };
+
+  /** 一键复制诊断信息：试运行反馈只需要粘贴这一段，不必让用户找文件。 */
+  const copyDiagnostics = async () => {
+    const payload = diag ?? { version: APP_VERSION, note: "diagnostics unavailable" };
+    const text = JSON.stringify(payload, null, 2);
+    const copied = await copyText(text);
+    setManualCopy(copied ? "" : text);
+    setCopyTip(
+      copied
+        ? "诊断信息已复制，可直接粘贴反馈"
+        : "自动复制失败，请手动全选复制下面的内容",
+    );
+    log.info("diagnostics copy", { ok: copied, version: payload.version });
   };
 
   return (
@@ -226,9 +317,49 @@ export default function SettingsPage({
       </div>
 
       <div className="settings-block">
-        <h2 className="section-title">数据目录</h2>
+        <h2 className="section-title">版本与日志</h2>
+        <div className="settings-kv">
+          <span>版本</span>
+          <code>v{diag?.version ?? APP_VERSION}</code>
+          <span>运行平台</span>
+          <code>{diag ? `${diag.os}/${diag.arch}` : "读取中…"}</code>
+          <span>数据目录</span>
+          <code title={diag?.dataDir}>{diag?.dataDir ?? "读取中…"}</code>
+          <span>日志目录</span>
+          <code title={diag?.logDir}>{diag?.logDir ?? "读取中…"}</code>
+          <span>日志文件</span>
+          <code>
+            {diag ? `${diag.logFiles.length} 个 · ${formatBytes(diag.logBytes)}` : "读取中…"}
+          </code>
+          <span>当前配置</span>
+          <code>
+            {diag?.config
+              ? `${diag.config.name} · ${diag.config.enabled}/${diag.config.sites} 站点`
+              : "未导入"}
+          </code>
+        </div>
+        {diagError ? <ErrorBar message={`诊断信息读取失败：${diagError}`} /> : null}
+        <div className="settings-actions">
+          <button type="button" className="btn" onClick={() => void openLogs()}>
+            打开日志目录
+          </button>
+          <button type="button" className="btn" onClick={() => void copyDiagnostics()}>
+            复制诊断信息
+          </button>
+        </div>
+        {copyTip ? <p className="tip">{copyTip}</p> : null}
+        {manualCopy ? (
+          <textarea
+            className="textarea"
+            readOnly
+            value={manualCopy}
+            aria-label="诊断信息"
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        ) : null}
         <p className="settings-line">
-          配置、收藏与观看历史都保存在本机应用数据目录，不会上传到云端。卸载应用前如需保留，请自行备份。
+          配置、收藏与观看历史都保存在本机应用数据目录，不会上传到云端。日志同样只写本机，
+          保留最近 7 天，URL 会去掉查询参数后记录；反馈问题时请附上日志目录里的文件。
         </p>
       </div>
 

@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "0.1.0"
+version = "1.0.0-alpha"
 description = "Luma - TVBox-compatible desktop player framework"
 edition = "2021"
 rust-version = "1.77.2"
@@ -21,6 +21,16 @@ serde_json = "1"
 # the SQLite amalgamation into the binary so portable builds need no system DLL.
 rusqlite = { version = "0.32", features = ["bundled"] }
 tracing = "0.1"
+# File + stdout logging for the trial run. `fmt` + `registry` let us tee the
+# same event stream to two layers; `env-filter` is deliberately omitted so the
+# dependency tree stays small (level comes from LUMA_LOG instead).
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "registry",
+    "ansi",
+    "std",
+    "smallvec",
+] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
@@ -31,7 +41,10 @@ async-trait = "0.1"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_System_DataExchange",
     "Win32_System_JobObjects",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
     "Win32_System_Threading",
 ] }
 # T-29: the level-4 sniffer reads the WebView2 controller to observe network
