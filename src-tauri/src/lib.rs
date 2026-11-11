@@ -20,6 +20,7 @@ pub mod proxy;
 pub mod sniff;
 pub mod spider;
 pub mod store;
+pub mod window;
 
 pub use error::{code, AppError};
 
@@ -43,6 +44,10 @@ pub fn run() {
         .manage(ConfigStore::load(database.clone()).expect("load config store"))
         .manage(LibraryStore::load(database.clone()).expect("load library store"))
         .setup(|app| {
+            // 标题栏跟随主界面深色，避免 Windows 默认浅色/系统深灰与画布色差。
+            if let Some(window) = app.get_webview_window("main") {
+                window::apply_dark_caption(&window);
+            }
             // T-32: in an installed build the sidecars live under the resource
             // dir, not next to the source tree. Publish that root once so
             // bridge / jvm / mpv resolve the same layout in dev and prod.
