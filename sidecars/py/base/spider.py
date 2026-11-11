@@ -12,13 +12,18 @@ Alignment contract (see AGENTS.md "py 框架对齐 TVBox 原生"):
   * `box-src/Box-main` + `avbox` (pyramid) are the reference for the HTTP layer:
     positional `fetch(url, params, cookies, headers, ...)`, `rsp.encoding =
     "utf-8"`, and `html()` = `etree.HTML()` (tolerant, always xpath-able).
-  * `__init__` must NOT overwrite subclass `header`/`headers` class attributes.
-    The native `base.spider.Spider.__init__` only sets `self.extend`; subclass
-    class attributes (e.g. Douban's WeChat UA + Referer) therefore survive.
-    We used to hard-assign `self.header = {"User-Agent": DEFAULT_UA}` here,
-    which silently broke every source that declares a custom header as a class
-    attribute (douban / 4KAV / shanzha / shortfilm / 农民 / 嗨皮 ...) -> frodo
-    HTTP 400 -> empty home list. Fixed by copying the class attribute instead.
+  * `__init__` must NOT overwrite subclass `header`/`headers` class attributes,
+    nor assume they are dicts. The native `base.spider.Spider.__init__` only
+    sets `self.extend`; subclass class attributes (e.g. Douban's WeChat UA +
+    Referer) therefore survive. We used to hard-assign `self.header =
+    {"User-Agent": DEFAULT_UA}`, which silently broke every source that declares
+    a custom header as a class attribute (douban / 4KAV / shanzha / shortfilm /
+    农民 / 嗨皮 ...) -> frodo HTTP 400 -> empty home list. Fixed by copying the
+    class attribute. Spiders may ALSO declare `header`/`headers` as a *method*
+    returning a freshly-signed dict (`def header(self): ...`, recomputed per
+    request for time/nonce signatures, e.g. guowaiju / 云端影视). That callable
+    is preserved as-is and invoked lazily by `_merge_headers`; coercing it to a
+    dict is what used to raise "'method' object is not iterable".
   * Deliberate deviations forced by the one-shot child-process model (do NOT
     "fix" these): `log()` writes stderr (stdout is the JSON-RPC frame), no
     `__new__` singleton, proxy URL is `?url=` via `LUMA_PROXY_PORT`, cache is
@@ -101,19 +106,26 @@ class Spider:
     def __init__(self, ext: Any = "", *args: Any, **kwargs: Any) -> None:
         self.ext = ext if ext is not None else ""
         self.extend = self.ext
-        self.host = ""
+        # Preserve a subclass class-level `host` (e.g. `host = "https://..."`).
+        # Blanking it here shadows the class attribute and breaks spiders that
+        # build URLs from `self.host` (e.g. 嗨皮影视 builds `/v1/...` from a
+        # class-level host), turning a valid URL into a scheme-less path that
+        # `requests` rejects with "Invalid URL ... No scheme supplied".
+        if not isinstance(getattr(type(self), "host", None), str) or not getattr(type(self), "host"):
+            self.host = ""
         self.cache = _Cache()
         self._session = requests.Session() if requests is not None else None
         port = os.environ.get("LUMA_PROXY_PORT") or os.environ.get("TVBOX_PROXY_PORT") or ""
         self.proxy_port = int(port) if port.isdigit() else 0
 
-        # TVBox native parity: never clobber a subclass-declared header. Reading
-        # `self.header` here resolves the subclass class attribute (or this class
-        # default); dict(...) makes a per-instance copy so one spider's mutation
-        # cannot leak. The old `self.header = {DEFAULT_UA}` destroyed Douban's
-        # WeChat UA/Referer and 5 other sources' custom headers.
-        self.header = dict(getattr(self, "header", None) or {"User-Agent": DEFAULT_UA})
-        self.headers = dict(getattr(self, "headers", None) or self.header)
+        # TVBox native parity: `header`/`headers` may be a plain CLASS dict OR a
+        # method/function returning a freshly-signed dict (time/nonce based, which
+        # must be recomputed *per request*). Keep callables as-is so headers stay
+        # fresh; only coerce to a dict when the spider declares a dict or nothing.
+        # The old `dict(getattr(self, "header", None))` turned a `def header(self)`
+        # method into "'method' object is not iterable" (guowaiju / 云端影视).
+        self.header = self._coerce_header(getattr(self, "header", None), {"User-Agent": DEFAULT_UA})
+        self.headers = self._coerce_header(getattr(self, "headers", None), self.header)
 
         # TVBox's base class forwards construction to `init(extend)`; many configs
         # rely on that hook instead of overriding `__init__`.
@@ -123,11 +135,30 @@ class Spider:
                 hook(self.ext)
             except TypeError:
                 hook()
-        # A spider may set header/headers inside init(); keep them dicts.
-        if not isinstance(getattr(self, "headers", None), dict):
-            self.headers = {"User-Agent": DEFAULT_UA}
-        if not isinstance(getattr(self, "header", None), dict):
-            self.header = self.headers
+        # A spider may (re)assign header/headers inside init(); a callable must
+        # survive (see above), so re-coerce instead of forcing a plain dict.
+        if not isinstance(self.header, dict):
+            self.header = self._coerce_header(self.header, {"User-Agent": DEFAULT_UA})
+        if not isinstance(self.headers, dict):
+            self.headers = self._coerce_header(self.headers, self.header)
+
+    @staticmethod
+    def _coerce_header(value: Any, default: dict) -> Any:
+        """Return a usable header source for `header`/`headers`.
+
+        Spiders declare headers either as a plain dict (`header = {...}`) or as a
+        method returning a freshly-signed dict (`def header(self): ...`). The
+        latter must be KEPT as a callable so per-request headers stay fresh
+        (timestamp/nonce signatures are computed on every call). `None` or any
+        non-dict/non-callable value falls back to `default`.
+        """
+        if value is None:
+            return dict(default)
+        if callable(value):
+            return value
+        if isinstance(value, dict):
+            return dict(value)
+        return dict(default)
 
     def init(self, extend: Any = "") -> None:
         """Subclass hook; TVBox calls this from `__init__`."""
@@ -164,7 +195,20 @@ class Spider:
         return max(1.0, min(number, 120.0))
 
     def _merge_headers(self, headers: Any) -> dict[str, str]:
-        merged = dict(self.header or {})
+        h = self.header
+        if callable(h):
+            try:
+                h = h()
+            except TypeError:
+                try:
+                    h = h(self.ext)
+                except Exception:
+                    h = None
+            except Exception:
+                h = None
+        if not isinstance(h, dict):
+            h = {}
+        merged = dict(h)
         if isinstance(headers, dict):
             merged.update({str(k): str(v) for k, v in headers.items()})
         return merged
@@ -420,6 +464,34 @@ class Spider:
 
     def proxy(self, params: Any) -> Any:
         return [404, "text/plain", ""]
+
+    # ------------------------------------------- standard content method stubs
+    # Native TVBox `base.spider.Spider` defines these so the host (Java/Kotlin)
+    # can invoke any method by name. A spider that does not implement one inherits
+    # a valid empty envelope instead of raising AttributeError — this is exactly
+    # how TVBox treats a non-searchable / non-browsable source (skip, no crash).
+    # Without these, `getattr(instance, "searchContent")` crashed with
+    # "'Spider' object has no attribute 'searchContent'" (e.g. juzong).
+    def homeContent(self, filter: Any = False) -> dict:
+        return {"class": [], "list": []}
+
+    def homeVideoContent(self) -> dict:
+        return {"list": []}
+
+    def categoryContent(self, tid: Any, pg: Any, filter: Any, extend: Any) -> dict:
+        return {"list": [], "page": pg, "pagecount": 0, "limit": 60, "total": 0}
+
+    def detailContent(self, ids: Any) -> dict:
+        return {"list": []}
+
+    def searchContent(self, key: Any, quick: Any = False, pg: Any = "1") -> dict:
+        return {"list": []}
+
+    def playerContent(self, flag: Any, id: Any, vip: Any) -> dict:
+        return {"url": "", "header": "", "parse": 0, "playUrl": ""}
+
+    def liveContent(self, url: Any) -> dict:
+        return {"list": []}
 
     @staticmethod
     def link(name: Any, target: dict) -> str:
