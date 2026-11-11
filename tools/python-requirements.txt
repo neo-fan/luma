@@ -1,0 +1,25 @@
+# Luma 随包 Python 3.11 embeddable 的第三方依赖（T-32 运行时产物）。
+#
+# 用途：真实 TVBox py 采集源（sidecars/py 框架加载的 ./py/*.py）会 import
+# 这些库；官方 python-embed zip 不含任何第三方包，必须在重建后用本清单装回
+# sidecars/python-embed/Lib/site-packages，否则瓜子/苹果/枫叶等源报
+# `No module named 'Crypto' / 'requests' / 'lxml'`。
+#
+# 由 tools/prepare_runtime.py 的 step_python_deps() 自动安装；版本固定以保证
+# dev 与便携版行为一致。仅列**运行时**依赖；pip/setuptools/wheel 是安装工具，
+# 由引导阶段处理、不在此列出。
+beautifulsoup4==4.15.0
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+cryptography==50.0.2
+cssselect==1.6.0
+idna==3.20
+lxml==6.1.3
+packaging==26.3
+pycparser==3.12
+pycryptodome==4.4.0
+pyquery==2.1.0
+requests==2.34.2
+soupsieve==4.0.1
+urllib3==2.8.0

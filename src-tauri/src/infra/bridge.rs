@@ -63,18 +63,18 @@ fn adapter_root() -> PathBuf {
 ///
 /// The embedded distribution resolves `python311.dll` relative to its own
 /// directory, so spawning it with the project root as cwd fails with
-/// STATUS_DLL_NOT_FOUND. Prod uses `<resource>/sidecars/python-embed`; dev
-/// keeps `LUMA_PYTHON` / `python` on PATH and no special cwd.
+/// STATUS_DLL_NOT_FOUND. `LUMA_PYTHON` is the explicit override; otherwise we
+/// probe for the bundled `sidecars/python-embed` via the same `sidecar_roots()`
+/// as the adapter, so dev and shipped builds run the *same* interpreter (with
+/// pycryptodome / requests / lxml). Only when no bundle is found do we fall
+/// back to `python` on PATH — the case that made real spiders fail in dev with
+/// `No module named 'Crypto'` while working in the portable build.
 fn python_launch() -> (String, Option<PathBuf>) {
     if let Some(explicit) = crate::env::get("PYTHON") {
         return (explicit, None);
     }
-    if let Some(dir) = crate::env::get("RESOURCE_DIR") {
-        let embed = PathBuf::from(dir).join("sidecars").join("python-embed");
-        let exe = embed.join("python.exe");
-        if exe.is_file() {
-            return (exe.to_string_lossy().to_string(), Some(embed));
-        }
+    if let Some((exe, embed)) = crate::paths::embedded_python() {
+        return (exe.to_string_lossy().to_string(), Some(embed));
     }
     ("python".to_string(), None)
 }

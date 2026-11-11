@@ -67,6 +67,30 @@ pub fn find(relative: &[&str]) -> Option<PathBuf> {
     None
 }
 
+/// The bundled embedded Python and the cwd it must run from.
+///
+/// Both dev and shipped builds should use the *same* interpreter: the one in
+/// `sidecars/python-embed`, which carries pycryptodome / requests / lxml that
+/// several real spiders import. Falling back to whatever `python` is first on
+/// PATH makes those spiders fail with `No module named 'Crypto'` only in dev,
+/// while the portable build works — a confusing dev/prod drift. Probing the
+/// same `sidecar_roots()` as the adapter means debug picks the checkout copy
+/// and release picks the resource-dir copy, with no env var to remember.
+///
+/// The returned cwd is the embed dir itself: embeddable CPython resolves
+/// `python311.dll` relative to its own directory, so running it with the
+/// checkout root as cwd fails with STATUS_DLL_NOT_FOUND.
+pub fn embedded_python() -> Option<(PathBuf, PathBuf)> {
+    let root = find(&["sidecars", "python-embed", "python.exe"])?;
+    let embed = root.join("sidecars").join("python-embed");
+    let exe = embed.join("python.exe");
+    if exe.is_file() {
+        Some((exe, embed))
+    } else {
+        None
+    }
+}
+
 fn push_unique(roots: &mut Vec<PathBuf>, path: PathBuf) {
     if path.as_os_str().is_empty() {
         return;
@@ -93,6 +117,22 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for root in &roots {
             assert!(seen.insert(root.clone()), "duplicate root {root:?}");
+        }
+    }
+
+    #[test]
+    fn embedded_python_when_present_has_consistent_layout() {
+        // 运行时产物由 tools/prepare_runtime.py 重建、不入库：干净 checkout 里
+        // 可能没有，故「找不到」不算失败；找到时必须保证 exe 与 cwd 同在 embed 目录
+        // （embeddable CPython 靠自身目录解析 python311.dll，cwd 错了会 DLL 加载失败）。
+        if let Some((exe, cwd)) = embedded_python() {
+            assert!(exe.is_file(), "embedded python exe must exist");
+            assert_eq!(exe, cwd.join("python.exe"));
+            assert!(cwd.ends_with("python-embed"));
+            assert!(
+                cwd.join("Lib").join("site-packages").is_dir(),
+                "bundle must ship third-party packages (pycryptodome/requests/lxml)"
+            );
         }
     }
 }

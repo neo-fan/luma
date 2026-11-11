@@ -3,11 +3,12 @@
 
 步骤：
   1. jlink 裁剪 JRE        -> sidecars/jre
-  2. Python 3.11 embeddable -> sidecars/python-embed
+  2. Python 3.11 embeddable -> sidecars/python-embed（含第三方依赖，见第 2.5 步）
+  2.5 按 tools/python-requirements.txt 装回 py 采集源依赖（Crypto/requests/lxml…）
   3. Tauri externalBin staging -> src-tauri/binaries
 
 约定：
-  * 只用标准库，不引入依赖。
+  * 脚本自身只用标准库，不 import 任何第三方包（装依赖通过 subprocess 调 pip）。
   * 所有路径相对项目根（本文件上一级），不硬编码盘符。
   * 已存在即跳过，可重复执行。
   * JDK 解析顺序：LUMA_JDK17_HOME -> JAVA_HOME -> 默认开发机路径。
@@ -48,6 +49,9 @@ JLINK_FLAGS = [
 ]
 
 PY_VERSION = "3.11.9"
+PY_REQUIREMENTS = ROOT / "tools" / "python-requirements.txt"
+# 重建后必须能 import 成功的模块（缺任一即视为依赖不全，需要安装）。
+PY_REQUIRED_MODULES = ("Crypto", "requests", "lxml", "bs4", "pyquery")
 PY_URLS = [
     f"https://www.python.org/ftp/python/{PY_VERSION}/python-{PY_VERSION}-embed-amd64.zip",
 ]
@@ -170,6 +174,42 @@ def _download(url: str, dest: Path) -> bool:
         return False
 
 
+def ensure_site_packages_in_pth(py_dir: Path) -> None:
+    """保证 embeddable 的 ._pth 启用 site-packages 与 site.main()（幂等）。
+
+    官方 python-3.11-embed zip 里的 `python311._pth` 默认只有 python311.zip
+    与 "."；第三方包虽被 pip 装进 Lib\\site-packages，却不在 sys.path 里，
+    会表现成诡异的 `No module named 'Crypto'`。补两行让随包依赖能被找到：
+      * `Lib\\site-packages`（路径本身）
+      * `import site`（取消注释，执行 site 初始化，让 site-packages 下的
+        .pth 文件也生效——pip 装的若干包依赖这个）
+    """
+    pth_files = list(py_dir.glob("python3*._pth"))
+    if not pth_files:
+        print("  [warn] 未找到 python3xx._pth，跳过 site-packages 配置")
+        return
+    pth = pth_files[0]
+    text = pth.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    changed = False
+
+    if not any(line.strip().replace("/", "\\") == "Lib\\site-packages" for line in lines):
+        lines.append("Lib\\site-packages")
+        changed = True
+    for idx, line in enumerate(lines):
+        if line.strip() == "#import site":
+            lines[idx] = "import site"
+            changed = True
+        elif line.strip() == "import site":
+            break
+
+    if changed:
+        pth.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"  [ok] 已配置 {pth.name} 启用 site-packages / site")
+    else:
+        print(f"  [info] {pth.name} 已启用 site-packages / site")
+
+
 def step_python(force: bool = False) -> bool:
     print("[2/3] Python embeddable -> sidecars/python-embed")
     py_exe = PY_DIR / "python.exe"
@@ -212,8 +252,84 @@ def step_python(force: bool = False) -> bool:
         shutil.move(str(entry), str(PY_DIR / entry.name))
     shutil.rmtree(tmp_root, ignore_errors=True)
 
+    # 官方 embeddable zip 的 ._pth 只有 python311.zip 与 "."，不含
+    # Lib\site-packages，也没启用 import site。若不补，后面即使把依赖装进
+    # site-packages，embed python 也 import 不到（sys.path 里没有这一项）。
+    ensure_site_packages_in_pth(PY_DIR)
+
     ver = run([str(PY_DIR / "python.exe"), "--version"])
     print("  [ok] " + (ver.stdout or ver.stderr).strip())
+    report_size("sidecars/python-embed", PY_DIR)
+    return True
+
+
+def python_missing_modules() -> list[str]:
+    """embed python 当前 import 不到的必需模块（空列表＝依赖齐全）。"""
+    py_exe = PY_DIR / "python.exe"
+    if not py_exe.is_file():
+        return list(PY_REQUIRED_MODULES)
+    probe = (
+        "import importlib.util,sys;"
+        "print(' '.join(m for m in sys.argv[1:] if importlib.util.find_spec(m) is None))"
+    )
+    proc = run([str(py_exe), "-c", probe, *PY_REQUIRED_MODULES])
+    if proc.returncode != 0:
+        return list(PY_REQUIRED_MODULES)
+    return (proc.stdout or "").strip().split()
+
+
+def step_python_deps(force: bool = False) -> bool:
+    """把 py 采集源的第三方依赖装进随包 embed 的 site-packages（幂等）。
+
+    官方 embeddable zip 不含任何第三方库，且 `step_python --force` 会清空
+    整个 PY_DIR 重新解压；若不在这里装回，瓜子/苹果/枫叶等源就会报
+    `No module named 'Crypto'`。依赖清单固定在 tools/python-requirements.txt，
+    保证 dev 与便携版跑同一份解释器、同一批库。
+    """
+    py_exe = PY_DIR / "python.exe"
+    if not py_exe.is_file():
+        print("  [skip] python-embed 不存在，跳过依赖安装")
+        return False
+    if not PY_REQUIREMENTS.is_file():
+        print(f"  [fail] 依赖清单缺失：{PY_REQUIREMENTS.name}")
+        return False
+
+    missing = python_missing_modules()
+    if missing and not force:
+        print("  [info] 随包 Python 缺依赖：" + ", ".join(missing))
+
+    # 幂等：依赖齐全且非强制时直接跳过，不重复联网/写盘。
+    if not missing and not force:
+        print("  已存在，跳过（随包 Python 依赖齐全）")
+        return True
+
+    site_packages = PY_DIR / "Lib" / "site-packages"
+    site_packages.mkdir(parents=True, exist_ok=True)
+
+    # 优先用 embed 自带的 pip（若已引导）；否则退回开发机 pip --target 直接
+    # 装进 embed 的 site-packages。后者不依赖 embeddable 是否带 pip/ensurepip。
+    embed_pip = run([str(py_exe), "-m", "pip", "--version"])
+    if embed_pip.returncode == 0:
+        cmd = [str(py_exe), "-m", "pip", "install", "--disable-pip-version-check",
+               "-r", str(PY_REQUIREMENTS)]
+        print("  [deps] 用随包 pip 安装")
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
+               "--target", str(site_packages), "-r", str(PY_REQUIREMENTS)]
+        print("  [deps] 随包无 pip，用开发机 pip --target 安装 ->", site_packages.name)
+
+    proc = run(cmd)
+    if proc.returncode != 0:
+        print("  [fail] 依赖安装失败：" + (proc.stderr or proc.stdout).strip()[-600:])
+        return False
+    if (proc.stderr or "").strip():
+        print("  [warn] " + proc.stderr.strip()[-300:])
+
+    still = python_missing_modules()
+    if still:
+        print("  [fail] 安装后仍缺模块：" + ", ".join(still))
+        return False
+    print("  [ok] 随包 Python 依赖齐全：" + ", ".join(PY_REQUIRED_MODULES))
     report_size("sidecars/python-embed", PY_DIR)
     return True
 
@@ -289,10 +405,13 @@ def main() -> int:
         report_size("sidecars/python-embed", PY_DIR)
         report_size("src-tauri/binaries", BIN_DIR)
         report_size("dist", ROOT / "dist")
-        return 0
+        missing = python_missing_modules()
+        print("  [deps] 随包 Python 第三方依赖：" + ("齐全" if not missing else "缺 " + ", ".join(missing)))
+        return 0 if not missing else 1
 
     ok_jre = step_jre(force=args.force)
     ok_py = step_python(force=args.force)
+    ok_deps = step_python_deps(force=args.force)
     ok_bin = step_binaries()
 
     print("\n汇总")
@@ -301,7 +420,7 @@ def main() -> int:
     report_size("src-tauri/binaries", BIN_DIR)
     report_size("dist", ROOT / "dist")
 
-    return 0 if (ok_jre and ok_py and ok_bin) else 1
+    return 0 if (ok_jre and ok_py and ok_deps and ok_bin) else 1
 
 
 if __name__ == "__main__":

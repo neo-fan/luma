@@ -83,7 +83,10 @@ tvbox/
 │
 ├── sidecars/                              # 随包分发的 sidecar
 │   ├── py/  java/  qjs-runner/            # 源码（入库）
-│   ├── python-embed/  jre/  mpv/          # [产物] 二进制，gitignore，prepare_runtime.py 重建
+│   ├── python-embed/                      # [产物] 3.11 embeddable + site-packages 第三方依赖，gitignore
+│   │                                      #   dev/交付统一用它（bridge.rs::embedded_python 自动探测）
+│   │                                      #   依赖由 tools/python-requirements.txt + prepare_runtime.py 重建
+│   ├── jre/  mpv/                         # [产物] 二进制，gitignore，prepare_runtime.py 重建
 │
 ├── tests/
 │   ├── fixtures/
@@ -92,7 +95,8 @@ tvbox/
 │   └── e2e/                               # contract_check、stub_server、p0~p3、probe_*
 │
 └── tools/                                 # 离线辅助脚本（不参与构建）
-    ├── prepare_runtime.py                 # 重建 jre/python-embed 等运行时产物
+    ├── prepare_runtime.py                 # 重建 jre/python-embed 等产物；含随包 Python 依赖安装 + .pth 修正
+    ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
     ├── make_portable.py                   # 组装便携版 → release/
     ├── build_icons.py                     # 生成图标
     └── probe_*.mjs / run_probes.mjs       # CDP 窗口探针与一键回归
