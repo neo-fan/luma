@@ -513,8 +513,10 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--panel);
+  color: var(--text);
   outline: none;
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
 }
 
 .select:hover,
@@ -522,11 +524,17 @@ textarea {
   border-color: var(--border-strong);
 }
 
+/* 文本类控件：焦点态取消浏览器默认 :focus-visible outline（与自定义
+   border 叠加会产生“双线感”），改用干净的柔光环 + 微亮背景。 */
 .select:focus,
 .input:focus,
 .textarea:focus {
+  outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--panel-hover);
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 0 14px rgba(110, 139, 255, 0.28);
 }
 
 .select {
@@ -537,6 +545,11 @@ textarea {
 .input {
   flex: 1;
   min-width: 200px;
+}
+
+.input::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 
 .textarea {
