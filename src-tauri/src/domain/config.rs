@@ -202,9 +202,10 @@ pub struct ConfigStore {
 }
 
 impl ConfigStore {
-    /// Restore snapshots from SQLite. Rows imported from the old JSON files may
-    /// carry an empty `runtime_json`; derive once and persist the result, so a
-    /// policy upgrade takes effect without asking the user to re-import.
+    /// Restore snapshots from SQLite. A row written before the imported/runtime
+    /// split (or by a partial write) may carry an empty `runtime_json`; derive
+    /// once and persist the result, so a policy change replays without a
+    /// re-import. This is defensive normalization, not a legacy-data migration.
     pub fn load(db: Arc<Db>) -> Result<Self, AppError> {
         let mut entries = Vec::new();
         for row in db.config_rows()? {
@@ -971,57 +972,6 @@ mod tests {
         assert_eq!(runtime.headers, imported.headers);
         // Re-deriving from the same import is idempotent (no stacked policy).
         assert_eq!(derive_runtime(&imported).sites, runtime.sites);
-    }
-
-    #[test]
-    fn legacy_json_migrates_into_sqlite_without_rewriting_the_import() {
-        let (_guard, root) = isolate_data_dir();
-        let dir = root.join("configs");
-        std::fs::create_dir_all(&dir).expect("temp configs dir");
-        let legacy = json!({
-            "snapshot": {
-                "id": "legacy",
-                "name": "legacy",
-                "importedAt": "2026-11-10T00:00:00Z",
-                "sites": [
-                    {"key": "py", "runtime": "python", "enabled": true},
-                    {"key": "jar", "runtime": "jvm", "enabled": true}
-                ]
-            },
-            "source": {"kind": "text", "value": ""}
-        });
-        std::fs::write(dir.join("legacy.json"), serde_json::to_string(&legacy).unwrap()).unwrap();
-        std::fs::write(root.join("active.json"), "legacy").unwrap();
-
-        // Db::at performs the one-time JSON -> SQLite migration on open.
-        let db = Arc::new(Db::at(root.clone()).expect("open db"));
-        let store = ConfigStore::load(db.clone()).expect("load store");
-        let active = store.active_snapshot().expect("active snapshot");
-        let jar = active
-            .sites
-            .iter()
-            .find(|site| site.get("key").and_then(Value::as_str) == Some("jar"))
-            .expect("jar site");
-        assert_eq!(jar.get("enabled").and_then(Value::as_bool), Some(false));
-        assert!(jar.get("disabledReason").is_some());
-        assert_eq!(store.all_sites().len(), 2, "blocked rows stay, but disabled");
-
-        // Both sides live in SQLite now: the import is untouched, the derived
-        // runtime is persisted so a policy change can always re-derive from it.
-        let rows = db.config_rows().unwrap();
-        assert_eq!(rows.len(), 1);
-        let imported: Value = serde_json::from_str(&rows[0].imported_json).unwrap();
-        assert_eq!(imported["sites"][1]["enabled"], json!(true));
-        let runtime: Value = serde_json::from_str(&rows[0].runtime_json).unwrap();
-        assert!(runtime["sites"][1]["disabledReason"].is_string());
-        assert_eq!(db.active_config_id().unwrap().as_deref(), Some("legacy"));
-
-        // Reopening must not duplicate rows or lose the active marker, even
-        // though the old JSON files are deliberately left in place.
-        let reopened = store_at(&root);
-        assert_eq!(reopened.list().len(), 1);
-        assert_eq!(reopened.active_snapshot().unwrap().id, "legacy");
-        assert_eq!(reopened.all_sites().len(), 2);
     }
 
     #[test]

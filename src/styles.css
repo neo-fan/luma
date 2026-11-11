@@ -926,6 +926,7 @@ textarea {
 /* ---------- 播放 ---------- */
 
 .player-stage {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -941,7 +942,9 @@ textarea {
   padding: 0;
 }
 
-/* ArtPlayer 会在这个容器内部注入自己的模板与 <video>，容器必须自带高度。 */
+/* ArtPlayer 会在这个容器内部注入自己的模板与 <video>，容器必须自带高度，
+   且**始终留在 DOM**：条件卸载会让正在播放的实例失去挂载点（有声音没画面），
+   并让 destroy 链漏掉 hls.js / mpegts.js（残留流与下一实例叠成双声）。 */
 .player-art {
   position: relative;
   width: 100%;
@@ -951,7 +954,23 @@ textarea {
   display: block;
 }
 
+.player-art--hidden {
+  visibility: hidden;
+}
+
+/* 解析中 / 不可播放时的提示层：绝对定位盖在常驻容器之上，不改动它的 DOM。 */
+.player-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
 .player-fallback {
+  flex-direction: column;
+  gap: 6px;
   padding: 56px 24px;
   text-align: center;
 }

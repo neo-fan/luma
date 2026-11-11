@@ -61,7 +61,6 @@ export type View =
 export type Navigate = (view: View, replace?: boolean) => void;
 
 const SITE_CACHE_KEY = "luma:sites:v1";
-const LEGACY_SITE_CACHE_KEY = "tvbox:sites:v1";
 const SIDEBAR_KEY = "luma:sidebar:v1";
 /** 首页选中的站点：手动切换与「空站自动顺延」都写这里，跨重启/重开保留。 */
 const HOME_SITE_KEY = "luma:home:site:v1";
@@ -121,9 +120,7 @@ function readHomeSite(): string {
 /** 最近一次导入的站点列表缓存：configList 不返回站点，重启后靠它恢复。 */
 function readSiteCache(): SiteCache | null {
   try {
-    const raw =
-      window.localStorage.getItem(SITE_CACHE_KEY) ??
-      window.localStorage.getItem(LEGACY_SITE_CACHE_KEY);
+    const raw = window.localStorage.getItem(SITE_CACHE_KEY);
     if (!raw) {
       return null;
     }
@@ -297,7 +294,6 @@ export default function App() {
       }
       try {
         window.localStorage.removeItem(SITE_CACHE_KEY);
-      window.localStorage.removeItem(LEGACY_SITE_CACHE_KEY);
       } catch {
         // 忽略缓存清理失败。
       }
@@ -404,6 +400,11 @@ export default function App() {
         const site = sites.find((item) => item.key === view.siteKey);
         return (
           <PlayerPage
+            // 换源 / 切集 / 切线路都替换栈顶（不新增层级），但必须换 key：
+            // 否则 React 复用同一实例，旧的 ArtPlayer / hls.js / 计时器与
+            // 新地址解析交错，出现「只有声音没画面」或双流双声。key 变化让
+            // 整页干净卸载，所有播放内核按 effect cleanup 顺序彻底销毁。
+            key={`${view.siteKey}:${view.vodId}:${view.playUrl}`}
             siteKey={view.siteKey}
             vodId={view.vodId}
             vodName={view.vodName}

@@ -68,6 +68,8 @@ export interface UsePlayerEngineArgs {
   /** 线路切换失败后的兜底（整站找同名影片）；用 ref 转发避免本 effect 因 lines 重挂。 */
   switchOrFailoverRef: MutableRefObject<() => Promise<void>>;
   resolved: PlayResolved | null;
+  /** 新一轮地址解析中：此时旧 `resolved` 属于上一个源，不能再建播放实例。 */
+  resolving: boolean;
   siteKey: string;
   vodName: string;
   vodId: string;
@@ -84,6 +86,7 @@ export function usePlayerEngine({
   lineSwitchStarted,
   switchOrFailoverRef,
   resolved,
+  resolving,
   siteKey,
   vodName,
   vodId,
@@ -91,7 +94,16 @@ export function usePlayerEngine({
 }: UsePlayerEngineArgs): void {
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !resolved) {
+    // 换源时 props 先变、`usePlayResolution` 的 setResolving(true) 要到 effect
+    // 阶段才生效；若不显式拦住，本 effect 会用「上一个源的 resolved」再建一个
+    // 播放器，与随后解析完成的新实例叠成双流双声。非内置 kind（page/share）
+    // 也在这里挡掉，避免容器常驻后把网页地址塞给 <video>。
+    if (
+      !container ||
+      !resolved ||
+      resolving ||
+      !BUILTIN_KINDS.includes(resolved.kind)
+    ) {
       return;
     }
 
@@ -99,6 +111,15 @@ export function usePlayerEngine({
     lastMediaRef.current = { positionMs: 0 };
     // 音量 / 倍速跨集沿用：连看 36 集不该每集重新调一次。
     const prefs = readPlayerPrefs();
+    /**
+     * 解码器（hls.js / mpegts.js）的直接销毁句柄。
+     *
+     * 不能只依赖 ArtPlayer 的 `instance.on("destroy")`：换源时容器若已被摘掉，
+     * ArtPlayer 的 destroy 链可能提前中断，hls 继续拉流并输出音频，与新实例
+     * 叠成「两个声音」。cleanup 里先手动停流、再调这里、最后才 art.destroy()，
+     * 用 `disposed` 保证幂等（ArtPlayer 的 destroy 事件仍会兜底触发一次）。
+     */
+    let teardownDecoders: (() => void) | null = null;
     const art = new Artplayer({
       container,
       url: resolved.proxyUrl,
@@ -162,7 +183,19 @@ export function usePlayerEngine({
           hls.attachMedia(video);
           // hls-control 插件约定从 art.hls 读 levels / currentLevel。
           instance.hls = hls;
+          let disposed = false;
+          teardownDecoders = () => {
+            if (disposed) {
+              return;
+            }
+            disposed = true;
+            hls.destroy();
+          };
+          instance.on("destroy", () => teardownDecoders?.());
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (disposed) {
+              return;
+            }
             // 插件默认只在 ready / restart 读 levels；manifest 解析完再刷一次，
             // 避免首次播放时清晰度列表还是空的。
             const control = instance.plugins.artplayerPluginHlsControl as
@@ -184,6 +217,9 @@ export function usePlayerEngine({
             });
           });
           hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+            if (disposed) {
+              return;
+            }
             // 只在用户手动选档时记住；自动档每次切换都是不同码率，
             // 记下来会让下次错误地固定到某一档。
             if (hls.autoLevelEnabled) {
@@ -195,14 +231,13 @@ export function usePlayerEngine({
             }
           });
           hls.on(Hls.Events.ERROR, (_event, data) => {
-            if (!data.fatal) {
+            if (disposed || !data.fatal) {
               return;
             }
             const reason = data.details ? String(data.details) : "未知错误";
             setVideoError(`HLS 播放失败：${reason}`);
             void switchOrFailoverRef.current();
           });
-          instance.on("destroy", () => hls.destroy());
         },
         flv: (video, url, instance) => {
           // WebView2 没有内置 FLV 解码（<video> 直接吃 flv 会 SRC_NOT_SUPPORTED），
@@ -210,11 +245,15 @@ export function usePlayerEngine({
           // 不拖累 HLS / 直链的播放页体积。
           let player: FlvPlayerLike | null = null;
           let disposed = false;
-          instance.on("destroy", () => {
+          teardownDecoders = () => {
+            if (disposed) {
+              return;
+            }
             disposed = true;
             player?.destroy();
             player = null;
-          });
+          };
+          instance.on("destroy", () => teardownDecoders?.());
           void (async () => {
             try {
               const mod = (await import("mpegts.js")) as unknown as {
@@ -244,6 +283,9 @@ export function usePlayerEngine({
               player.attachMediaElement(video);
               player.load();
               player.on(mpegts.Events.ERROR, (_type: string, detail: string) => {
+                if (disposed) {
+                  return;
+                }
                 setVideoError(`FLV 播放失败：${detail}`);
                 void switchOrFailoverRef.current();
               });
@@ -384,10 +426,24 @@ export function usePlayerEngine({
       writePlayerPrefs({ volume: video.volume });
       // 先置空引用，避免 destroy 过程中的 video:error 再触发换源。
       videoRef.current = null;
+      // 换源 / 切集时的硬停流：ArtPlayer.destroy() 只保证自己的模板被移除，
+      // 而 hls.js / mpegts.js 是独立 attach 到 <video> 的 MSE 源。若容器已被
+      // React 摘掉或 destroy 链中断，旧解码器会继续灌数据 → 「两个声音」。
+      // 顺序：先停 <video>（pause + 清 src + load 冲掉缓冲），再销毁解码器，
+      // 最后销毁 ArtPlayer（它的 destroy 事件会幂等兜底再调一次 teardown）。
+      try {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      } catch {
+        // 已 detach 的 <video> 可能抛 InvalidStateError，忽略即可。
+      }
+      teardownDecoders?.();
       art.destroy();
     };
-    // 依赖数组与抽出前逐字一致：其余都是稳定引用（ref / setter），
-    // 或仅用于日志与回调闭包（vodId），不参与「何时重挂内核」的判定。
+    // `resolving` 必须进依赖：新一轮解析开始时要立刻卸载旧内核，不能等
+    // `setResolved(null)` 落地（两者都是 effect 阶段的 setState，晚一帧）。
+    // 其余都是稳定引用（ref / setter），或仅用于日志与回调闭包（vodId）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, siteKey, vodName]);
+  }, [resolved, resolving, siteKey, vodName]);
 }

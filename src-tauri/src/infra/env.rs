@@ -1,9 +1,10 @@
 //! Product-scoped environment variables.
 //!
-//! The app was renamed from "TVBox Desktop" to "Luma". `LUMA_*` is now the
-//! documented spelling; the legacy `TVBOX_*` name is still accepted so old
-//! shortcuts, probe scripts and sidecars keep working after the upgrade.
-//! Every read goes through this module, which keeps the fallback in one place.
+//! `LUMA_*` is the documented spelling. The `TVBOX_*` alias is still accepted
+//! so dev commands, probe scripts and side-loaded runners that use the old
+//! spelling keep working; it is an environment-variable alias only — there is
+//! no legacy release and no data migration. Every read goes through this
+//! module, which keeps the alias handling in one place.
 
 use std::path::Path;
 
@@ -31,7 +32,7 @@ pub fn is_enabled(key: &str) -> bool {
 }
 
 /// Publish a value to child processes. Both spellings are exported because a
-/// pre-rename sidecar or runner.jar may still be present on disk.
+/// side-loaded sidecar or runner.jar may still read the old spelling.
 pub fn set(key: &str, value: impl AsRef<Path>) {
     let text = value.as_ref().to_string_lossy().into_owned();
     std::env::set_var(format!("LUMA_{key}"), &text);

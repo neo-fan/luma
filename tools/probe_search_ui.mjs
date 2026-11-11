@@ -145,14 +145,14 @@ assert((await cdp.eval(CLICK("导入"))) === "CLICKED", "click import");
 // populated site cache instead of a loose substring match.
 const imported = await cdp.eval(WAIT(`
   const notice = document.querySelector('.tip--ok');
-  const raw = (localStorage.getItem('luma:sites:v1') || localStorage.getItem('tvbox:sites:v1'));
+  const raw = (localStorage.getItem('luma:sites:v1'));
   const count = raw ? (JSON.parse(raw).sites || []).length : 0;
   return notice && notice.innerText.includes('已导入') && count > 50 ? notice.innerText : null;
 `, 60000));
 assert(!!imported, "real config imported", String(imported));
 
 const cache = await cdp.eval(`(() => {
-  const raw = (localStorage.getItem('luma:sites:v1') || localStorage.getItem('tvbox:sites:v1'));
+  const raw = (localStorage.getItem('luma:sites:v1'));
   if (!raw) return null;
   const c = JSON.parse(raw);
   const counts = {};

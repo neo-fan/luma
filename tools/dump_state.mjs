@@ -40,7 +40,7 @@ const invoke = (cmd, args) =>
 console.log("config_list:", await ev(`(async () => JSON.stringify(await ${invoke("config_list")}))()`));
 console.log(
   "cache:",
-  await ev(`(localStorage.getItem('luma:sites:v1') || localStorage.getItem('tvbox:sites:v1'))?.slice(0, 200) ?? 'none'`),
+  await ev(`(localStorage.getItem('luma:sites:v1'))?.slice(0, 200) ?? 'none'`),
 );
 console.log(
   "spider home:",

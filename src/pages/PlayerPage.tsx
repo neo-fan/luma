@@ -384,6 +384,7 @@ export default function PlayerPage({
     lineSwitchStarted,
     switchOrFailoverRef,
     resolved,
+    resolving,
     siteKey,
     vodName,
     vodId,

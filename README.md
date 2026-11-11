@@ -1,6 +1,6 @@
 # Luma
 
-Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架）。产品名 **Luma**，程序标识、可执行文件、数据目录、数据库、环境变量与图标已全部统一为 Luma，不再保留 `tvbox-desktop` 作为产品名；从旧版升级会自动迁移已有的配置 / 收藏 / 历史（见「从旧版升级」）。软件本身不内置、不硬编码任何配置地址、影视源、直播源或 API Key；所有内容由用户自行导入的 TVBox 配置（`api.json` / `box.json` 及常见变体）提供。
+Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架）。产品名 **Luma**，程序标识、可执行文件、数据目录、数据库、环境变量与图标已全部统一为 Luma。软件本身不内置、不硬编码任何配置地址、影视源、直播源或 API Key；所有内容由用户自行导入的 TVBox 配置（`api.json` / `box.json` 及常见变体）提供。
 
 ## 免责声明
 
@@ -44,7 +44,7 @@ node tools/bundle_report.mjs               # 构建产物体积 / gzip 报告
 
 ## 品牌资源
 
-产品名 **Luma**，图标是深墨圆角底 + 细圆环 + 蓝紫渐变播放三角。`tools/build_icons.py` 从同一套几何常量生成 `src-tauri/icons/` 下的 ICO（16~256）与各尺寸 PNG、以及前端用的 `public/icon.svg`；修改品牌色时同步 `src/styles.css` 的 `--accent` / `--accent-2`。`tauri.conf.json` 的 `identifier` 为 `dev.luma.desktop`；改名前 `dev.tvbox.desktop` 的数据由一次性自动迁移接管（见「从旧版升级」），不需要手工复制文件。
+产品名 **Luma**，图标是深墨圆角底 + 细圆环 + 蓝紫渐变播放三角。`tools/build_icons.py` 从同一套几何常量生成 `src-tauri/icons/` 下的 ICO（16~256）与各尺寸 PNG、以及前端用的 `public/icon.svg`；修改品牌色时同步 `src/styles.css` 的 `--accent` / `--accent-2`。`tauri.conf.json` 的 `identifier` 为 `dev.luma.desktop`。本产品尚未发布过旧版本，首次启动直接创建空数据库，无需任何数据迁移。
 
 产物：
 
@@ -68,7 +68,7 @@ $env:LUMA_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 
 ### 运行期环境变量
 
-运行期变量统一为 `LUMA_*` 前缀；旧的 `TVBOX_*` 同名变量仍会被读取，方便旧快捷方式与脚本过渡。
+运行期变量统一为 `LUMA_*` 前缀；`TVBOX_*` 同名变量仍会被读取，仅供沿用旧拼写的外部脚本/快捷方式使用（与数据升级无关）。
 
 | 变量 | 用途 |
 |---|---|
@@ -123,20 +123,7 @@ Luma/
     luma.db           配置 / 收藏 / 历史（SQLite）
 ```
 
-数据层说明：配置快照（导入原件 + 运行派生）、active 配置、收藏与历史都在同一个事务型数据库里；写操作先提交事务再刷新界面缓存。首次启动会把旧版 JSON 数据自动导入 `luma.db`，旧文件保留在 `data/` 作为备份、不再读取。开发模式下数据库位于 `%APPDATA%\Luma\luma.db`。
-
-## 从旧版升级（TVBox Desktop → Luma）
-
-改名后程序标识 `dev.tvbox.desktop` → `dev.luma.desktop`，数据目录 `%APPDATA%\tvbox-desktop` → `%APPDATA%\Luma`，数据库 `tvbox.db` → `luma.db`。**首次启动 Luma 会自动迁移，不需要手工复制**：
-
-- 开发 / 安装版：检测 `%APPDATA%\tvbox-desktop\tvbox.db`；便携版：先检测新包 `data/` 里的旧 `tvbox.db`，也兼容上述 `%APPDATA%` 旧目录。
-- 用 SQLite `VACUUM INTO` 取一致性快照，包含 WAL 中已提交、尚未 checkpoint 的写入；不会裸复制 db + wal。
-- 旧 JSON 备份（`configs/`、`active.json`、`favorites.json`、`history.json`）一并复制到新目录，仅作留存。
-- 旧目录与旧文件**不删除、不改写**，回滚只需重新打开旧版；迁移只在新 `luma.db` 不存在时执行一次，误删后重启会自动再次恢复；迁移失败只写日志、不阻断启动。
-
-升级前请先退出旧版进程：快照是启动瞬间的状态，旧版之后写入的数据不会同步到 Luma。便携版用户也可以把旧文件夹的 `data/` 直接覆盖到新包 `data/`，效果相同。
-
-WebView2 的站点缓存 key 由 `tvbox:sites:v1` 换成 `luma:sites:v1`，旧 key 仍会回读，且启动时会用 Rust 侧的 active 配置重新对齐，缓存换位置不影响使用。
+数据层说明：配置快照（导入原件 + 运行派生）、active 配置、收藏与历史都在同一个事务型数据库里；写操作先提交事务再刷新界面缓存。首次启动创建空的 `luma.db`，之后所有数据都由应用自身写入。开发模式下数据库位于 `%APPDATA%\Luma\luma.db`，便携版位于包内 `data/`。
 
 ## 测试
 
@@ -145,10 +132,14 @@ python tests/e2e/p0.py     # P0 基线
 python tests/e2e/p1.py     # P1 子进程运行时
 python tests/e2e/p2.py     # P2 jar / JVM 运行时
 python tests/e2e/p3.py     # P3 嗅探 / mpv / 打包
-python tests/e2e/parse_check.py  # 解析池与配置字段（离线，无需窗口）
-corepack pnpm test         # 前端单测
+python tests/e2e/parse_check.py       # 解析池与配置字段（离线，无需窗口）
+python tests/e2e/py_compat_check.py   # TVBox py 脚本通用兼容 / 错误日志（离线）
+python tests/e2e/py_base_spider_check.py  # py 框架与原生对齐（离线）
+corepack pnpm test         # 前端单测（含播放页生命周期契约）
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
+
+第三方 py 脚本的异常、缺失方法、非法返回值都会记到 `logs/spider.log`（`LUMA_ADAPTER_LOG` 可指定路径；默认 `%APPDATA%\Luma\logs\spider.log`）。每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback，便于定位「未响应源」。
 
 阶段脚本采用累积断言：未交付能力标 `N/A`（不计 PASS、不计 FAIL），`FAIL = 0` 即通过。
 

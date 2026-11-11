@@ -28,8 +28,6 @@ pub mod error;
 pub mod http;
 #[path = "infra/logging.rs"]
 pub mod logging;
-#[path = "infra/migrate.rs"]
-pub mod migrate;
 #[path = "infra/netrules.rs"]
 pub mod netrules;
 #[path = "infra/paths.rs"]

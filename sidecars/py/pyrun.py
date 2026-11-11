@@ -10,11 +10,15 @@ Exiting here is cheap — the caller can kill this process at any time.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import math
 import sys
 import types
 import traceback
 from pathlib import Path
+
+from adapterlog import log_crash, log_event
 
 # `base.spider` ships inside this directory (vendored framework), and spiders
 # also do `sys.path.append('..')`; keeping our own dir first wins either way.
@@ -36,6 +40,80 @@ SIGNATURES = {
     # TVBox local proxy: `Spider.proxy(Map) -> [contentType, headers, bytes]`.
     "proxy": 1,
 }
+
+
+def _fingerprint(source: str) -> str:
+    """Stable short id for a spider source (used to correlate log lines)."""
+    return hashlib.sha1(source.encode("utf-8", "replace")).hexdigest()[:12]
+
+
+# TVBox host parity: the Java/Kotlin host calls spider methods reflectively and a
+# source that does NOT implement one (e.g. a non-searchable site omitting
+# `searchContent`) receives an empty envelope rather than a crash. Community py
+# configs frequently ship `class Spider:` with no `base.spider.Spider` parent,
+# so `getattr(instance, method)` would raise AttributeError. We mirror the host:
+# missing method -> empty envelope, and we log it as an INFO capability gap.
+DEFAULT_ENVELOPES = {
+    "homeContent": {"class": [], "list": []},
+    "homeVideoContent": {"list": []},
+    "categoryContent": {"list": [], "page": 1, "pagecount": 0, "limit": 60, "total": 0},
+    "detailContent": {"list": []},
+    "searchContent": {"list": []},
+    "playerContent": {"url": "", "header": "", "parse": 0, "playUrl": ""},
+    "liveContent": {"list": []},
+    "proxy": {"contentType": "application/octet-stream", "headers": {}, "body": ""},
+}
+
+
+def json_safe(value: object, path: str = "$", dropped: list | None = None, depth: int = 0):
+    """Force any third-party spider return value into a JSON-serializable shape.
+
+    TVBox spiders are untrusted community code. A source that returns a bound
+    method, a custom object, a non-string dict key or NaN used to blow up here
+    at `json.dumps(frame)` with "Object of type method is not JSON serializable"
+    — the child produced *no frame at all*, so the caller only saw a generic
+    "py spider produced no frame". Sanitizing at the process boundary keeps the
+    protocol frame intact; every replaced value is logged with its JSON path so
+    the offending field can still be diagnosed (never silently swallowed).
+
+    This is a general guarantee, not a per-source patch: it applies to every
+    method (home/category/detail/search/player/live/proxy).
+    """
+    if dropped is None:
+        dropped = []
+    if depth > 8:
+        dropped.append(f"{path}:max-depth")
+        return None
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, int):
+        # serde_json parses integers into i64/u64; anything larger would abort
+        # the whole frame on the Rust side. IDs are strings in the contract.
+        if value > 2**63 - 1 or value < -(2**63):
+            dropped.append(f"{path}:int-overflow")
+            return str(value)
+        return value
+    if isinstance(value, float):
+        # Python's json.dumps emits NaN/Infinity, which serde_json rejects.
+        if not math.isfinite(value):
+            dropped.append(f"{path}:non-finite-float")
+            return 0
+        return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return base64.b64encode(bytes(value)).decode("ascii")
+    if isinstance(value, dict):
+        return {
+            str(k): json_safe(v, f"{path}.{k}", dropped, depth + 1)
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [
+            json_safe(v, f"{path}[{i}]", dropped, depth + 1)
+            for i, v in enumerate(value)
+        ]
+    # Callable (bound method / function), module, class, arbitrary object...
+    dropped.append(f"{path}:{type(value).__name__}")
+    return f"<{type(value).__name__}>"
 
 
 def proxy_result(result: object) -> dict:
@@ -114,7 +192,11 @@ def to_args(method: str, raw: list) -> list:
 
 
 def main() -> int:
-    payload = json.load(sys.stdin)
+    raw = json.load(sys.stdin)
+    payload = raw if isinstance(raw, dict) else {}
+    # Initialized before the try block so the crash handler can always compute
+    # a fingerprint / source api even when loading or compiling failed.
+    source = ""
     real_stdout = sys.stdout
     sys.stdout = sys.stderr  # protect the protocol stream
 
@@ -145,22 +227,87 @@ def main() -> int:
             raise ValueError(f"unsupported method: {method}")
 
         args = to_args(method, payload.get("args") or [])
-        result = getattr(instance, method)(*args)
+        handler = getattr(instance, method, None)
+        if handler is None:
+            # TVBox host parity: a spider that does not implement a standard
+            # method is treated as a non-browsable / non-searchable source and
+            # returns an empty envelope instead of crashing. This is exactly how
+            # fongmi/catvod handle a missing `searchContent` (e.g. juzong).
+            log_event(
+                {
+                    "level": "INFO",
+                    "kind": "missing_method",
+                    "method": method,
+                    "spiderClass": class_name,
+                    "sourceFingerprint": _fingerprint(source),
+                    "message": f"{class_name} does not implement {method}",
+                }
+            )
+            result = dict(DEFAULT_ENVELOPES.get(method, {"list": []}))
+        else:
+            result = handler(*args)
         if result is None:
             result = {}
         if method == "proxy":
             result = proxy_result(result)
+        # Boundary guarantee: never let a malformed third-party return value
+        # break the JSON frame. Replaced fields are logged with their paths.
+        dropped: list[str] = []
+        result = json_safe(result, dropped=dropped)
+        if dropped:
+            log_event(
+                {
+                    "level": "WARN",
+                    "kind": "unsafe_result",
+                    "method": method,
+                    "spiderClass": class_name,
+                    "sourceFingerprint": _fingerprint(source),
+                    "sourceApi": str(payload.get("api") or ""),
+                    "paths": dropped[:20],
+                    "droppedCount": len(dropped),
+                    "message": "spider returned non-JSON values; sanitized",
+                }
+            )
         frame = {"ok": True, "result": result}
     except Exception as exc:  # noqa: BLE001 - process boundary
+        tb = traceback.format_exc(limit=6)
+        log_crash(
+            stage="spider",
+            method=str(payload.get("method") or ""),
+            spider_class=str(payload.get("className") or "Spider"),
+            fingerprint=_fingerprint(source),
+            source_api=str(payload.get("api") or ""),
+            message=f"{exc}",
+            trace=tb,
+        )
         frame = {
             "ok": False,
             "error": {"code": "SPIDER_CRASH", "message": f"{exc}"},
-            "trace": traceback.format_exc(limit=3),
+            "trace": tb,
         }
     finally:
         sys.stdout = real_stdout
 
-    sys.stdout.write(json.dumps(frame, ensure_ascii=False) + "\n")
+    try:
+        line = json.dumps(frame, ensure_ascii=False, allow_nan=False)
+    except Exception as exc:  # noqa: BLE001 - last-resort protocol guard
+        # Still emit a frame: a child that produces no stdout is reported as
+        # "py spider produced no frame", which hides the real cause.
+        log_crash(
+            stage="serialize",
+            method=str(payload.get("method") or ""),
+            spider_class=str(payload.get("className") or "Spider"),
+            fingerprint=_fingerprint(source),
+            source_api=str(payload.get("api") or ""),
+            message=f"frame not serializable: {exc}",
+            trace=traceback.format_exc(limit=4),
+        )
+        frame = {
+            "ok": False,
+            "error": {"code": "SPIDER_CRASH", "message": f"result not serializable: {exc}"},
+        }
+        line = json.dumps(frame, ensure_ascii=False)
+    sys.stdout.write(line + "\n")
     sys.stdout.flush()
     return 0 if frame.get("ok") else 1
 

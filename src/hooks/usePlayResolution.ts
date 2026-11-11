@@ -47,7 +47,11 @@ export function usePlayResolution({
   setVideoError,
 }: UsePlayResolutionArgs): PlayResolution {
   const [resolved, setResolved] = useState<PlayResolved | null>(null);
-  const [resolving, setResolving] = useState(false);
+  // Entering the player always starts a resolve; defaulting to true avoids a
+  // first frame that flashes "该地址需要在外部播放器中打开" before the effect
+  // flips the flag (and matches the always-mounted, hidden-while-resolving
+  // stage, so no overlay content swaps mid-frame).
+  const [resolving, setResolving] = useState(true);
   const [resolveError, setResolveError] = useState("");
   const [timeMs, setTimeMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);

@@ -226,6 +226,33 @@ class Spider:
             return "DefaultValue"
         return cleaned
 
+    def _absolutize(self, url: Any) -> Any:
+        """Resolve a scheme-less URL against the spider's site base.
+
+        Community configs frequently build request paths as `"/v1/..."` and
+        rely on the host to prepend the site origin (declared either as a class
+        `host = "https://..."` or passed through `ext`, sometimes as a JSON
+        blob). Passing such a path straight to `requests` raises
+        `Invalid URL '...': No scheme supplied. Perhaps you meant https://...?`.
+        Absolute URLs are returned untouched, so this never changes sources
+        that already build full URLs.
+        """
+        if not isinstance(url, str) or not url or url.startswith(("http://", "https://")):
+            return url
+        base = ""
+        host = getattr(self, "host", "")
+        if isinstance(host, str) and host.startswith(("http://", "https://")):
+            base = host
+        else:
+            ext = getattr(self, "ext", "")
+            if isinstance(ext, (dict, list)):
+                ext = json.dumps(ext, ensure_ascii=False)
+            if isinstance(ext, str):
+                match = re.search(r"https?://[^\s\"'\\,}\]]+", ext)
+                if match:
+                    base = match.group(0).rstrip("/")
+        return urljoin(base, url) if base else url
+
     # `verify=False` deviation: a number of real self-signed/legacy source sites
     # only respond with TLS verification off. Native box/avbox default True, but
     # matching that here would drop coverage, so keep False deliberately.
@@ -241,6 +268,7 @@ class Spider:
         allow_redirects: bool = True,
         **kwargs: Any,
     ) -> Any:
+        url = self._absolutize(url)
         if requests is None:
             return _urllib_request(
                 "GET",
@@ -285,6 +313,7 @@ class Spider:
         allow_redirects: bool = True,
         **kwargs: Any,
     ) -> Any:
+        url = self._absolutize(url)
         if isinstance(headers, dict):
             headers = {str(k): self._clean_header_value(v) for k, v in headers.items()}
         if requests is None:

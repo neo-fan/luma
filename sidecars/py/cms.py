@@ -57,21 +57,39 @@ def _vod(raw: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def _as_int(value: Any, default: int) -> int:
+    """TVBox payloads carry numbers, numeric strings and occasionally junk."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _page_from_json(payload: dict[str, Any]) -> dict[str, Any]:
-    items = payload.get("list") or []
-    classes = payload.get("class") or payload.get("classes") or []
+    # A third-party py spider may accidentally return a bound method / string
+    # where a list is expected ("'method' object is not iterable"). Normalize
+    # defensively here too, not just in pyspider, so the CMS path gets the same
+    # guarantee and the caller always receives a JSON-safe envelope.
+    items = payload.get("list")
+    if not isinstance(items, (list, tuple)):
+        items = []
+    classes = payload.get("class")
+    if classes is None:
+        classes = payload.get("classes")
     if isinstance(classes, dict):
         classes = [
             {"type_id": str(k), "type_name": str(v)} for k, v in classes.items()
         ]
+    elif not isinstance(classes, (list, tuple)):
+        classes = []
     filters = payload.get("filters") or {}
     return {
         "list": [_vod(item) for item in items if isinstance(item, dict)],
         "filters": filters if isinstance(filters, dict) else {},
-        "pagecount": int(payload.get("pagecount") or 1),
-        "page": int(payload.get("page") or 1),
-        "limit": int(payload.get("limit") or 20),
-        "total": int(payload.get("total") or len(items)),
+        "pagecount": _as_int(payload.get("pagecount"), 1),
+        "page": _as_int(payload.get("page"), 1),
+        "limit": _as_int(payload.get("limit"), 20),
+        "total": _as_int(payload.get("total"), len(items)),
         "classes": classes,
     }
 

@@ -115,6 +115,9 @@ impl SpiderRuntime for PythonRuntime {
             "method": method.as_str(),
             "args": args,
             "ext": ext,
+            // Diagnostics only: lets pyrun label tracebacks with the real script
+            // URL and lets adapterlog attribute a crash to a concrete site.
+            "api": site.get("api").and_then(Value::as_str).unwrap_or(""),
             "timeoutMs": timeout.as_millis() as u64,
         });
         bridge::call_with_timeout("spider.py", params, timeout).await
@@ -145,6 +148,7 @@ impl SpiderRuntime for PythonRuntime {
                 "method": "proxy",
                 "args": [params],
                 "ext": ext,
+                "api": site.get("api").and_then(Value::as_str).unwrap_or(""),
                 "timeoutMs": timeout.as_millis() as u64,
             }),
             timeout,
