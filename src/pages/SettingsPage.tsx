@@ -160,8 +160,10 @@ export default function SettingsPage({
       const snapshot = await api.configImport({
         kind,
         value,
-        // 空名字交给后端：它会沿用域名 / 同 id 配置已有的名字。
-        name: cleanConfigName(name) || undefined,
+        // 只有用户真的改过名字才提交。输入框里自动填的域名只是「默认值预览」，
+        // 跟着发过去会把同一份配置已有的自定义名改掉（`box` 会变回域名）。
+        // 没提交时后端按「保留已有名字 → 域名」的顺序兜底。
+        name: nameTouched ? cleanConfigName(name) || undefined : undefined,
       });
       onImported(snapshot);
       // configImport 返回的是运行配置（导入原件在后端单独保留）；把主动

@@ -304,6 +304,30 @@ try {
     JSON.stringify(afterRename),
   );
 
+  // 4b. 重新导入同一地址：名称框会被域名自动填充，但没手动改过就不该提交，
+  //     否则同一份配置的自定义名会被域名覆盖（真实踩过的 bug）。
+  assert((await cdp.eval(TYPE(".search-bar input.input", STUB))) === "TYPED", "retype the same url");
+  const autoFilled = await cdp.eval(`document.querySelector('.config-name input').value`);
+  assert(autoFilled === "127.0.0.1", "name auto-fills again after import", String(autoFilled));
+  assert((await cdp.eval(CLICK("导入"))) === "CLICKED", "click 导入 again");
+  await cdp.eval(WAIT(`return (${NOTICE("已导入")});`, 40000));
+  await sleep(400);
+  const afterReimport = JSON.parse((await cdp.eval(ROWS)) || "[]");
+  console.log(`[info] config rows after re-import: ${JSON.stringify(afterReimport)}`);
+  assert(
+    afterReimport.some((row) => row.name === RENAMED),
+    "re-import keeps the custom name",
+    JSON.stringify(afterReimport),
+  );
+  assert(
+    !afterReimport.some((row) => row.name === "127.0.0.1"),
+    "auto-filled domain is not submitted as a name",
+    JSON.stringify(afterReimport),
+  );
+  // 重新导入会把 active 切回这条，手动切回原配置再继续。
+  assert((await cdp.eval(ROW_BUTTON(originalActiveName, "切换"))) === "CLICKED", "switch back after re-import");
+  await cdp.eval(WAIT(`return (${NOTICE("已切换")});`, 30000));
+
   // 5. reload 后仍在：证明写进了 SQLite，而不是 React 内存态。
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
