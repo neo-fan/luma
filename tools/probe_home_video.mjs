@@ -8,8 +8,11 @@
  *   3. 首页切到该站后，前端 api.home 兜底 → UI 真出 2 张卡片 + 分类 chip 仍在
  *      （证明 mergeHomeFallback 生效、且 base.classes 不被 fallback 覆盖）；
  *   4. 真实豆瓣源作「观察项」：记录其 homeContent/homeVideoContent 的 list 数，
- *      不 FAIL —— 豆瓣 frodo 接口依赖微信 UA，上游脚本有 header 接线 bug，
- *      稳定返回空，属外部脚本问题，不该绑架本探针（method 可达性已在第 2 项验证）。
+ *      不 FAIL —— 豆瓣 frodo 接口依赖外网。此前豆瓣稳定返回空，一度误判为
+ *      「上游脚本 header 接线 bug」；2026-11-11 查明真因是我们自己的
+ *      base.spider.__init__ 用实例赋值覆盖了豆瓣的类属性 header（已修，见
+ *      probe_py_framework.mjs / py_base_spider_check.py）。method 可达性已在
+ *      第 2 项验证，外网 frodo 结果不该绑架本探针。
  *
  * 内联导入独立配置（kind:text），收尾删除配置并恢复原 active；不改默认 active。
  */
@@ -230,8 +233,9 @@ try {
   assert((strict.chips ?? 0) >= 2,
     "home classes preserved (not overwritten by fallback)", JSON.stringify(strict));
 
-  // 4. 真实豆瓣「观察项」：只记录，不 FAIL（上游脚本 header bug 稳定返空）。
+  // 4. 真实豆瓣「观察项」：只记录，不 FAIL（frodo 依赖外网）。
   //    此时 active 是内联配置，没有豆瓣站，用真实 box 配置的 key 直调验证 method 不报错即可。
+  //    豆瓣 frodo 出数据的正向断言在 probe_py_framework.mjs（框架对齐探针）。
   const doubanObs = await cdp.eval(`(async () => {
     try {
       const a = await window.__TAURI_INTERNALS__.invoke('spider_invoke',

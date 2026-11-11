@@ -4,8 +4,10 @@
  *
  * 覆盖三件事（只读 + 只动 localStorage，不改后端配置、不导入配置）：
  *   1. 手动切站后 reload 仍停在该站（记住用户切换的首页）且有卡片；
- *   2. 清掉偏好模拟冷启动默认空站（豆瓣只给分类），自动顺延到有内容的站并记住；
- *   3. 用户手动切到空站后 reload 不被自动跳走（尊重用户选择）。
+ *   2. 清掉偏好模拟冷启动：默认站自带内容则直接出卡（无需顺延）、真空则自动
+ *      顺延到有内容的站并记住。2026-11-11 py 框架对齐修复后豆瓣 frodo 返回
+ *      20 条，默认站不再是空站，故两种现实都接受，不硬编码「豆瓣必空」；
+ *   3. 用户手动选站后 reload 不被自动跳走（尊重用户选择，永久关闭顺延）。
  *
  * 前置：dev 窗口在跑（CDP 9222）、active 配置含至少一个首页有 list 的站
  * （真实 box 配置的「直播[py]」有 63 条）。不依赖外网：探测走 dev 已加载的
@@ -204,34 +206,54 @@ try {
   assert(afterReload.selected === dataSiteKey, "reload keeps user-selected site", String(afterReload.selected));
   assert(afterReload.cards > 0, "reload keeps cards", String(afterReload.cards));
 
-  // --- 2. 默认空站自动顺延 ---
-  await coldStart(cdp); // 清偏好 → 默认站（豆瓣，空）
+  // --- 2. 冷启动默认站：自带内容 or 自动顺延 ---
+  // py 框架对齐（修 __init__ 覆盖类属性 header）后，豆瓣默认站 homeVideoContent
+  // 经 frodo 已能返回 20 条，不再是空站。「默认站自带内容」和「真空需顺延」
+  // 都是正确现实，核心不变量＝冷启动后首页必有内容，且顺延发生时记住目标站。
+  await coldStart(cdp); // 清偏好 → 默认站 usableSites[0]（真实配置为 py_douban）
   const cold = JSON.parse((await snapshot(cdp)) || "{}");
   console.log(`[info] cold default site: ${cold.selected}`);
-  let autoKey = null;
-  for (let i = 0; i < 60; i += 1) {
+  let auto = null;
+  for (let i = 0; i < 75; i += 1) {
     const s = JSON.parse((await snapshot(cdp)) || "{}");
     if (s.cards > 0) {
-      autoKey = s.selected;
+      auto = s;
       break;
     }
     await sleep(400);
   }
-  assert(!!autoKey, "cold default empty site auto-falls-back to a site with cards", String(autoKey));
-  const afterFallback = JSON.parse((await snapshot(cdp)) || "{}");
-  assert(
-    afterFallback.stored && afterFallback.stored === afterFallback.selected,
-    "auto-fallback site remembered for next launch",
-    `stored=${afterFallback.stored} selected=${afterFallback.selected}`,
-  );
+  // 核心不变量：冷启动后首页一定有内容（无论默认站自带、还是顺延而来）。
+  assert(!!auto && (auto.cards ?? 0) > 0, "cold start ends up with home cards", JSON.stringify(auto));
+  if (auto && (auto.cards ?? 0) > 0) {
+    if (auto.selected === cold.selected) {
+      // 分支 A：默认站自带内容（豆瓣 frodo 修复后）→ 不该顺延、不该写偏好。
+      assert(
+        auto.stored === null,
+        "non-empty default site stays itself, no needless fallback/remember",
+        `default=${cold.selected} stored=${auto.stored}`,
+      );
+      console.log(`[info] default site ${cold.selected} has native home data -> no fallback (frodo fix)`);
+    } else {
+      // 分支 B：默认站真空 → 必须顺延到有内容站，并记住供下次启动。
+      assert(
+        auto.stored === auto.selected,
+        "truly-empty default site auto-falls-back to a site with cards AND is remembered",
+        `default=${cold.selected} selected=${auto.selected} stored=${auto.stored}`,
+      );
+      console.log(`[info] default site ${cold.selected} was empty -> fell back to ${auto.selected}`);
+    }
+  }
+  // 顺延的纯决策逻辑（跳过空站/找有内容的/不超上限/失活即停）由
+  // HomePage.test.tsx 的 6 个 findHomeSiteWithList 单测覆盖，不依赖真实配置形态。
 
-  // --- 3. 尊重用户手动选的空站 ---
+  // --- 3. 尊重用户手动选站（手动选择后永久关闭自动顺延）---
   await coldStart(cdp);
-  // 手动切到豆瓣（首页只给分类不给列表）
-  assert((await selectSite(cdp, "py_douban")) === "OK", "manually select an empty site");
+  // 选一个「有数据的站」以外的站最能体现「不跳走」：py_douban 无论空/非空，
+  // 手动选中后 userActedRef 置位、顺延不再介入，必须停在该站。
+  assert((await selectSite(cdp, "py_douban")) === "OK", "manually select a site");
   await sleep(2500); // 等 debounce + 一次加载 + 可能的（不应发生的）顺延
   const manual = JSON.parse((await snapshot(cdp)) || "{}");
-  assert(manual.selected === "py_douban", "user-selected empty site is NOT auto-skipped", String(manual.selected));
+  assert(manual.selected === "py_douban", "user-selected site is NOT auto-skipped", String(manual.selected));
 
   assert(cdp.errors.length === 0, "no uncaught page exceptions", cdp.errors.slice(0, 3).join(" | ").slice(0, 400));
 } catch (err) {

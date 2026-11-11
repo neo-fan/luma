@@ -370,6 +370,9 @@ def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
         # 严格按 TVBox 协议分家：homeContent 只给 class、homeVideoContent 才给 list。
         # 用于回归 homeVideoContent 兜底（不依赖任何外网脚本/接口）。
         "/spider/strict_home.py": fixture("strict_home.py", "text/x-python; charset=utf-8"),
+        # 继承真实 base.spider.Spider + 类属性 header，回显生效 header 到 vod_name。
+        # 用于回归「__init__ 不得覆盖子类 header 类属性」（豆瓣等 6 站根因）。
+        "/spider/header_probe.py": fixture("header_probe.py", "text/x-python; charset=utf-8"),
         "/spider/broken.py": fixture("broken.py", "text/x-python; charset=utf-8"),
         "/spider/slow.py": fixture("slow.py", "text/x-python; charset=utf-8"),
         "/spider/template.js": fixture("template.js", "application/javascript; charset=utf-8"),
