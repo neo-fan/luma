@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import Spinner from "./components/Spinner";
+import NavIcon from "./components/NavIcon";
 import CategoryPage from "./pages/CategoryPage";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
@@ -59,8 +60,18 @@ export type Navigate = (view: View, replace?: boolean) => void;
 
 const SITE_CACHE_KEY = "luma:sites:v1";
 const LEGACY_SITE_CACHE_KEY = "tvbox:sites:v1";
+const SIDEBAR_KEY = "luma:sidebar:v1";
 /** 稳定空数组：让下游 useEffect 的 sites 引用不会每次渲染都变化。 */
 const EMPTY_SITES: Site[] = [];
+
+/** 侧栏收缩状态；读取失败时保持展开。 */
+function readSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 /** 视图标识：用于按「栈深度 + 页面」保存滚动位置，同名页面不同深度互不覆盖。 */
 function viewKey(view: View): string {
@@ -121,6 +132,16 @@ export default function App() {
   const [stack, setStack] = useState<View[]>([{ name: "home" }]);
   const [cache, setCache] = useState<SiteCache | null>(() => readSiteCache());
   const [preferredSite, setPreferredSite] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+
+  // 收缩偏好跨重启保留；StrictMode 双调用只是写同一个值。
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed ? "1" : "0");
+    } catch {
+      // 本地存储失败不影响本次会话。
+    }
+  }, [sidebarCollapsed]);
 
   const sites = cache?.sites ?? EMPTY_SITES;
   const lives = cache?.lives ?? [];
@@ -347,7 +368,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      <aside className={sidebarCollapsed ? "sidebar is-collapsed" : "sidebar"}>
         <div className="brand">
           <span className="brand__mark">
             <img src="/icon.svg" alt="" />
@@ -364,14 +385,34 @@ export default function App() {
               type="button"
               className={section === item.key ? "nav__item is-active" : "nav__item"}
               onClick={() => resetTo({ name: item.key })}
+              // 收缩后文字隐藏，靠 title / aria-label 保持可读与可访问。
+              title={item.label}
+              aria-label={item.label}
             >
-              {item.label}
+              <span className="nav__icon">
+                <NavIcon name={item.key} />
+              </span>
+              <span className="nav__label">{item.label}</span>
             </button>
           ))}
         </nav>
-        <div className="sidebar__foot">
-          <span>本地播放框架</span>
-          <span>Luma · v{APP_VERSION}</span>
+        <div className="sidebar__bottom">
+          <button
+            type="button"
+            className="sidebar__collapse"
+            onClick={() => setSidebarCollapsed((value) => !value)}
+            aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+          >
+            <span className="nav__icon">
+              <NavIcon name={sidebarCollapsed ? "collapse-right" : "collapse-left"} />
+            </span>
+            <span className="nav__label">{sidebarCollapsed ? "展开" : "收起"}</span>
+          </button>
+          <div className="sidebar__foot">
+            <span>本地播放框架</span>
+            <span>Luma · v{APP_VERSION}</span>
+          </div>
         </div>
       </aside>
       <main className="content" ref={contentRef}>
