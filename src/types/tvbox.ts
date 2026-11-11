@@ -299,3 +299,29 @@ export interface Diagnostics {
   logFiles: DiagnosticsLogFile[];
   logBytes: number;
 }
+
+/** 站点体检单站结果（内部诊断命令，非归一化契约，故不进 schema PAIRS）。 */
+export interface SiteHealthRow {
+  siteKey: string;
+  siteName: string;
+  /** ok=可达；failed=请求出错；timeout=超时；skipped=墙钟预算内未跑完被中止。 */
+  status: "ok" | "failed" | "timeout" | "skipped";
+  /** 单站耗时 ms；skipped 为 0。 */
+  tookMs: number;
+  /** 失败/超时原因；ok 时省略。 */
+  message?: string;
+  /** homeContent 返回的内容条数（list/classes 之和），仅 ok 时有值。 */
+  count?: number;
+}
+
+/** 站点体检聚合结果。 */
+export interface SiteHealthResult {
+  configId: string;
+  rows: SiteHealthRow[];
+  ok: number;
+  failed: number;
+  skipped: number;
+  total: number;
+  /** 整次体检墙钟 ms。 */
+  tookMs: number;
+}

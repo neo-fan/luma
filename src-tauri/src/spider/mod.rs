@@ -18,7 +18,7 @@ use crate::error::{code, AppError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
@@ -419,6 +419,294 @@ async fn aggregate(
     }))
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteHealthRequest {
+    /// 单站墙钟超时；缺省 8000ms，clamp 到 [2000, 15000]。
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteHealthRow {
+    pub site_key: String,
+    pub site_name: String,
+    /// `ok` | `failed` | `timeout` | `skipped`
+    pub status: String,
+    pub took_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteHealthResult {
+    pub config_id: String,
+    pub rows: Vec<SiteHealthRow>,
+    pub ok: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub total: usize,
+    pub took_ms: u64,
+}
+
+/// 排序权重：有问题的站先看到（failed / timeout / skipped 排在 ok 前面）。
+fn status_rank(status: &str) -> u8 {
+    match status {
+        "failed" => 0,
+        "timeout" => 1,
+        "skipped" => 2,
+        "ok" => 3,
+        _ => 4,
+    }
+}
+
+/// 先按 status 分组，组内按耗时降序，完全相等时按 site_key 字典序（稳定）。
+fn sort_health_rows(rows: &mut [SiteHealthRow]) {
+    rows.sort_by(|a, b| {
+        status_rank(&a.status)
+            .cmp(&status_rank(&b.status))
+            .then_with(|| b.took_ms.cmp(&a.took_ms))
+            .then_with(|| a.site_key.cmp(&b.site_key))
+    });
+}
+
+/// 试运行「站点体检」：对每个可用站点发一次 `homeContent`，做轻量可达性
+/// 探测（顺带数一下 `list` / `classes` 条数）。这只是「这次轻请求能不能通」
+/// 的快照，**不代表该站搜索 / 详情 / 播放一定可用**，别当播放能力承诺。
+///
+/// 并发骨架与 `aggregate` 一致：`MAX_FANOUT` 信号量 + `JoinSet`，每站单独
+/// 计时并套 `per` 墙钟；整体再套一个 `budget`，到点 abort 未完成的尾巴并把
+/// 它们记成 skipped，不让一个死源拖住整页体检。
+#[tauri::command]
+pub async fn site_health(
+    state: tauri::State<'_, ConfigStore>,
+    req: SiteHealthRequest,
+) -> Result<SiteHealthResult, AppError> {
+    let config_id = state
+        .active_snapshot()
+        .ok_or_else(|| AppError::new(code::INVALID_ARGUMENT, "no active config"))?
+        .id;
+
+    // 与 aggregate 完全相同的筛选口径：enabled 默认 true、可被路由到可用
+    // runtime、且确实有 api / ext（分隔条之类不算）。注意这里读的是
+    // all_sites()（runtime_of），不是 find_site()（imported、不查 enabled）。
+    let sites: Vec<Value> = state
+        .all_sites()
+        .into_iter()
+        .filter(|site| site.get("enabled").and_then(Value::as_bool).unwrap_or(true))
+        .filter(|site| runtime_for(route(site)).is_some())
+        .filter(|site| {
+            let api = site.get("api").and_then(Value::as_str).unwrap_or("");
+            !api.is_empty() || site.get("ext").is_some()
+        })
+        .collect();
+
+    if sites.is_empty() {
+        return Ok(SiteHealthResult {
+            config_id,
+            rows: Vec::new(),
+            ok: 0,
+            failed: 0,
+            skipped: 0,
+            total: 0,
+            took_ms: 0,
+        });
+    }
+
+    let per_ms = req.timeout_ms.unwrap_or(8_000).clamp(2_000, 15_000);
+    let per = Duration::from_millis(per_ms);
+    // 体检是诊断动作，要尽量覆盖**全部**站点，不能像聚合搜索那样只给一个
+    // `per` 墙钟：67 站 / 并发 20 ≈ 4 轮，每轮最坏 per，4×8s=32s 才跑得完，
+    // 否则后几轮会被整批记成 skipped，用户拿不到有效信息。按轮次放大预算，
+    // 但留 45s 硬上限，避免一堆死源让体检页一直转。
+    let rounds = (sites.len() + MAX_FANOUT - 1) / MAX_FANOUT;
+    let budget = Duration::from_millis(per_ms.saturating_mul(rounds as u64))
+        .clamp(Duration::from_millis(8_000), Duration::from_millis(45_000));
+    let started = Instant::now();
+    let semaphore = std::sync::Arc::new(Semaphore::new(MAX_FANOUT));
+    let mut set = tokio::task::JoinSet::new();
+
+    // 带上下标排队：panicked task 拿不到内部值，但正常返回的下标能让我们
+    // 精确知道哪些站点已经产出结果行，skipped 才能补得不多不少。
+    for (index, site) in sites.iter().enumerate() {
+        let site = site.clone();
+        let semaphore = semaphore.clone();
+        set.spawn(async move {
+            let key = site
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let name = site
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let (outcome, took_ms) = match semaphore.acquire_owned().await {
+                Ok(_permit) => {
+                    // 单站计时从真正发出请求开始（不含 semaphore 排队时间）。
+                    let site_started = Instant::now();
+                    let result = tokio::time::timeout(
+                        per,
+                        invoke_one(&site, SpiderMethod::HomeContent, &[], per),
+                    )
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(AppError::new(
+                            code::SITE_TIMEOUT,
+                            format!("site {key} exceeded {}ms", per.as_millis()),
+                        ))
+                    });
+                    (result, site_started.elapsed().as_millis() as u64)
+                }
+                Err(err) => (
+                    Err(
+                        AppError::new(code::INTERNAL, "health semaphore closed")
+                            .with_cause(err.to_string()),
+                    ),
+                    0,
+                ),
+            };
+            (index, key, name, outcome, took_ms)
+        });
+    }
+
+    let into_row = |site_key: String,
+                    site_name: String,
+                    outcome: Result<Value, AppError>,
+                    took_ms: u64| {
+        match outcome {
+            Ok(data) => {
+                let list = data
+                    .get("list")
+                    .and_then(Value::as_array)
+                    .map(|items| items.len());
+                let classes = data
+                    .get("classes")
+                    .and_then(Value::as_array)
+                    .map(|items| items.len());
+                let count = if list.is_some() || classes.is_some() {
+                    Some(list.unwrap_or(0) + classes.unwrap_or(0))
+                } else {
+                    None
+                };
+                SiteHealthRow {
+                    site_key,
+                    site_name,
+                    status: "ok".into(),
+                    took_ms,
+                    message: None,
+                    count,
+                }
+            }
+            Err(err) => SiteHealthRow {
+                site_key,
+                site_name,
+                status: if err.code == code::SITE_TIMEOUT {
+                    "timeout"
+                } else {
+                    "failed"
+                }
+                .into(),
+                took_ms,
+                message: Some(err.message),
+                count: None,
+            },
+        }
+    };
+
+    let mut rows: Vec<SiteHealthRow> = Vec::with_capacity(sites.len());
+    // 用 index 记录哪些站点已产出结果行：比 site_key 可靠（key 可能重复或
+    // 为空），也是 skipped 数正确的关键。
+    let mut received: HashSet<usize> = HashSet::new();
+    loop {
+        let remaining = budget.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            set.abort_all();
+            break;
+        }
+        match tokio::time::timeout(remaining, set.join_next()).await {
+            Ok(Some(joined)) => match joined {
+                Ok((index, site_key, site_name, outcome, took_ms)) => {
+                    received.insert(index);
+                    rows.push(into_row(site_key, site_name, outcome, took_ms));
+                }
+                Err(err) => {
+                    // task panic：拿不到内部下标，补一条空 key 的 failed。
+                    // 它同样占一个结果名额，所以下面的 skipped 补齐仍以
+                    // rows.len() 对齐 sites.len() 为准（不会重复补站）。
+                    rows.push(SiteHealthRow {
+                        site_key: String::new(),
+                        site_name: String::new(),
+                        status: "failed".into(),
+                        took_ms: 0,
+                        message: Some(format!("{}: {err}", code::SPIDER_CRASH)),
+                        count: None,
+                    });
+                }
+            },
+            Ok(None) => break,
+            Err(_) => {
+                set.abort_all();
+                break;
+            }
+        }
+    }
+
+    // 墙钟内没收到结果的站点补 skipped：按 sites 顺序挑未收到结果的下标，
+    // 补到 rows.len() == sites.len() 为止，保证 ok+failed+skipped == total。
+    // 用 rows.len() 而非「未收到下标数」作终止条件，是因为 panic 那条 failed
+    // 行没有 index（不属于 received），但它已占一个结果名额，必须一并算进去，
+    // 否则会多补一条、让 rows 超过 total。
+    for (index, site) in sites.iter().enumerate() {
+        if rows.len() >= sites.len() {
+            break;
+        }
+        if received.contains(&index) {
+            continue;
+        }
+        rows.push(SiteHealthRow {
+            site_key: site
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            site_name: site
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            status: "skipped".into(),
+            took_ms: 0,
+            message: Some("体检墙钟预算内未完成".into()),
+            count: None,
+        });
+    }
+
+    sort_health_rows(&mut rows);
+    let ok = rows.iter().filter(|row| row.status == "ok").count();
+    let skipped = rows.iter().filter(|row| row.status == "skipped").count();
+    // timeout 归进 failed：本接口只有 ok / failed / skipped 三个计数，
+    // 超时是失败的一种，这样 total == ok + failed + skipped 始终成立。
+    let failed = rows
+        .iter()
+        .filter(|row| row.status == "failed" || row.status == "timeout")
+        .count();
+    Ok(SiteHealthResult {
+        config_id,
+        rows,
+        ok,
+        failed,
+        skipped,
+        total: sites.len(),
+        took_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,5 +743,73 @@ mod tests {
             runtime_for(RuntimeKind::Jvm).map(|r| r.kind()),
             Some(RuntimeKind::Jvm)
         );
+    }
+
+    fn health_row(key: &str, status: &str, took_ms: u64) -> SiteHealthRow {
+        SiteHealthRow {
+            site_key: key.into(),
+            site_name: key.into(),
+            status: status.into(),
+            took_ms,
+            message: None,
+            count: None,
+        }
+    }
+
+    #[test]
+    fn health_rows_sort_problematic_first_then_slowest() {
+        assert_eq!(status_rank("failed"), 0);
+        assert_eq!(status_rank("timeout"), 1);
+        assert_eq!(status_rank("skipped"), 2);
+        assert_eq!(status_rank("ok"), 3);
+
+        let mut rows = vec![
+            health_row("ok-slow", "ok", 900),
+            health_row("ok-fast", "ok", 10),
+            health_row("failed-fast", "failed", 5),
+            health_row("timeout", "timeout", 300),
+            health_row("skipped", "skipped", 0),
+            health_row("failed-b", "failed", 50),
+            health_row("failed-a", "failed", 50),
+        ];
+        sort_health_rows(&mut rows);
+        let order: Vec<(&str, &str, u64)> = rows
+            .iter()
+            .map(|row| (row.status.as_str(), row.site_key.as_str(), row.took_ms))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                // failed / timeout / skipped 在 ok 前；组内耗时降序；
+                // 耗时相同（failed-a / failed-b）按 site_key 字典序。
+                ("failed", "failed-a", 50),
+                ("failed", "failed-b", 50),
+                ("failed", "failed-fast", 5),
+                ("timeout", "timeout", 300),
+                ("skipped", "skipped", 0),
+                ("ok", "ok-slow", 900),
+                ("ok", "ok-fast", 10),
+            ]
+        );
+    }
+
+    #[test]
+    fn site_health_row_serializes_camel_case_and_skips_none() {
+        let value = serde_json::to_value(health_row("k", "ok", 12)).expect("serialize row");
+        assert_eq!(value["siteKey"], "k");
+        assert_eq!(value["siteName"], "k");
+        assert_eq!(value["status"], "ok");
+        assert_eq!(value["tookMs"].as_u64(), Some(12));
+        assert!(value.get("message").is_none());
+        assert!(value.get("count").is_none());
+        assert!(value.get("site_key").is_none());
+        assert!(value.get("took_ms").is_none());
+
+        let mut with_extras = health_row("k2", "failed", 7);
+        with_extras.message = Some("boom".into());
+        with_extras.count = Some(3);
+        let value = serde_json::to_value(with_extras).expect("serialize row");
+        assert_eq!(value["message"], "boom");
+        assert_eq!(value["count"].as_u64(), Some(3));
     }
 }

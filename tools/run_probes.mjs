@@ -6,7 +6,7 @@
  *   - `probe_search_ui` 会重新导入真实配置，顺带把 active 归位，放最前面；
  *   - `probe_ui` 会把 active 切成桩配置，默认不跑，需要时用 `--with-ui` 放最后；
  *   - `probe_sidebar` 结束时会 reload，放在靠后；
- *   - 每个导入自己配置的探针（flv / search_failures / config_manage）都会自清理。
+ *   - 每个导入自己配置的探针（flv / search_failures / settings_health / config_manage）都会自清理。
  *
  * 跑之前先记住「原 active 配置 id」和「已有配置 id」，跑完恢复 active 并删掉
  * 本轮新建的配置——否则几轮探针下来 SQLite 里会堆一堆 stub 配置。
@@ -35,6 +35,7 @@ const PROBES = [
   { key: "search_failures", script: "tools/probe_search_failures.mjs", label: "搜索失败源明细与重试", needsStub: true },
   { key: "history", script: "tools/probe_history.mjs", label: "历史页（合成记录，不留痕）" },
   { key: "settings_logs", script: "tools/probe_settings_logs.mjs", label: "版本 / 诊断 / 复制诊断" },
+  { key: "settings_health", script: "tools/probe_settings_health.mjs", label: "站点体检（并发测活 / 禁用持久化）", needsStub: true },
   { key: "sidebar", script: "tools/probe_sidebar.mjs", label: "侧边栏收缩 / 展开" },
   // 会把 active 切成桩配置，必须最后；默认不跑。
   { key: "ui", script: "tools/probe_ui.mjs", label: "UI 冒烟（会切桩配置）", needsStub: true, optIn: true },

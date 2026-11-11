@@ -25,6 +25,7 @@ import type {
   LiveListResult,
   ProxyStatus,
   ResultPage,
+  SiteHealthResult,
   SpiderMethod,
   SpiderRequest,
   VodInfo,
@@ -101,6 +102,16 @@ export const api = {
   /** 手动切换配置；返回新 active 的运行快照，前端拿来替换站点缓存。 */
   configActivate(id: string): Promise<ConfigSnapshot> {
     return call("config_activate", { id });
+  },
+
+  /** 站点体检：并发探测各站可达性与耗时（诊断动作，不写缓存）。 */
+  siteHealth(timeoutMs?: number): Promise<SiteHealthResult> {
+    return call("site_health", { req: { timeoutMs } });
+  },
+
+  /** 手动启用/禁用单站，返回改后的运行快照供前端换缓存。 */
+  siteSetEnabled(siteKey: string, enabled: boolean): Promise<ConfigSnapshot> {
+    return call("site_set_enabled", { req: { siteKey, enabled } });
   },
 
   /** 重命名已保存的配置（不切换 active）。 */

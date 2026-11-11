@@ -394,6 +394,91 @@ impl ConfigStore {
         })
     }
 
+    /// 手动启用 / 禁用单个站点（试运行体检用）。
+    ///
+    /// correctness 红线：只改 runtime 快照，`imported` 一个字段都不碰。手动
+    /// 禁用因此只存在于 `runtime_json`：重启时 `load()` 仅在 runtime_json 为
+    /// 空时才重新派生，所以禁用能跨重启保留；而重新导入走 `insert` 会重新
+    /// `derive_runtime(&imported)`，清掉手动禁用 —— 这是可接受的「换源重来」
+    /// 语义。也正因为如此，`derive_runtime(&imported)` 必须始终等于「未手动
+    /// 禁用时的 runtime」，手动状态绝不能污染 imported 层。
+    pub fn set_site_enabled(
+        &self,
+        site_key: &str,
+        enabled: bool,
+    ) -> Result<ConfigSnapshot, AppError> {
+        let (imported, mut runtime, source) = {
+            let active = self
+                .active
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let entry = pick(active.as_deref(), guard.as_slice())
+                .ok_or_else(|| AppError::new(code::INVALID_ARGUMENT, "no active config"))?;
+            (entry.imported.clone(), runtime_of(entry).clone(), entry.source.clone())
+        };
+
+        let mut found = false;
+        for site in runtime.sites.iter_mut() {
+            if site.get("key").and_then(Value::as_str) != Some(site_key) {
+                continue;
+            }
+            // 屏蔽源（jvm / quickjs）不允许手动打开，否则会把不支持的站点放回
+            // fan-out；禁用则始终允许。
+            if enabled && blocked_reason(site).is_some() {
+                return Err(AppError::new(
+                    code::INVALID_ARGUMENT,
+                    "该源不受支持，无法启用",
+                ));
+            }
+            if let Some(map) = site.as_object_mut() {
+                if enabled {
+                    map.remove("disabledReason");
+                    map.insert("enabled".into(), Value::Bool(true));
+                } else {
+                    map.insert("enabled".into(), Value::Bool(false));
+                    map.insert(
+                        "disabledReason".into(),
+                        Value::String("已在站点体检中手动禁用".into()),
+                    );
+                }
+            }
+            found = true;
+            break;
+        }
+        if !found {
+            return Err(AppError::new(
+                code::INVALID_ARGUMENT,
+                format!("site {site_key} not found"),
+            ));
+        }
+
+        // `imported` 不参与任何改写：仅按原样回写，与改后的 runtime 一起提交。
+        // 单站禁用不动配置级 headers[]，所以不刷 netrules。
+        let imported_json = serde_json::to_string(&imported)?;
+        let runtime_json = serde_json::to_string(&runtime)?;
+        let source_json = serde_json::to_string(&source)?;
+        self.db.update_config(ConfigWrite {
+            id: &imported.id,
+            name: &imported.name,
+            imported_at: &imported.imported_at,
+            imported_json: &imported_json,
+            runtime_json: &runtime_json,
+            source_json: &source_json,
+        })?;
+        // 直接整体替换 runtime 快照（不是只改 sites 字段）；不碰 active marker。
+        {
+            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(entry) = guard.iter_mut().find(|entry| entry.imported.id == imported.id) {
+                entry.runtime = Some(runtime.clone());
+            }
+        }
+        // 返回改后的运行快照，前端 onImported(snapshot) 换掉站点缓存，
+        // 让 fan-out 立即生效。
+        Ok(runtime)
+    }
+
     pub fn remove(&self, id: &str) -> Result<(), AppError> {
         let exists = self
             .entries
@@ -701,6 +786,22 @@ pub fn config_rename(
     state.rename(&id, &name)
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteSetEnabledRequest {
+    pub site_key: String,
+    pub enabled: bool,
+}
+
+/// 站点体检里手动启用 / 禁用单站；返回改后的运行快照供前端换缓存。
+#[tauri::command]
+pub fn site_set_enabled(
+    state: tauri::State<'_, ConfigStore>,
+    req: SiteSetEnabledRequest,
+) -> Result<ConfigSnapshot, AppError> {
+    state.set_site_enabled(&req.site_key, req.enabled)
+}
+
 /// The active snapshot as the Rust side sees it. The frontend calls this on
 /// startup so its localStorage site cache can never disagree with fan-out.
 #[tauri::command]
@@ -729,6 +830,29 @@ mod tests {
             "sites": sites,
         }))
         .expect("snapshot fixture")
+    }
+
+    /// 站点体检 fixture：带上 `api` / `runtime` / `enabled`，区别于 `snapshot`
+    /// 造出的仅 key/name 的占位站点。
+    fn site_snapshot(sites: Vec<Value>) -> ConfigSnapshot {
+        let mut snap = snapshot("box", &[]);
+        snap.sites = sites;
+        snap
+    }
+
+    fn site_by_key<'a>(sites: &'a [Value], key: &str) -> &'a Value {
+        sites
+            .iter()
+            .find(|site| site.get("key").and_then(Value::as_str) == Some(key))
+            .expect("site present")
+    }
+
+    fn text_source() -> ConfigSource {
+        ConfigSource {
+            kind: "text".into(),
+            value: String::new(),
+            name: None,
+        }
     }
 
     /// Each test owns a separate SQLite file. `LUMA_DATA_DIR` is process-wide,
@@ -1028,5 +1152,151 @@ mod tests {
             .find(|entry| entry.imported.id == "aaa")
             .map(|entry| entry.runtime.as_ref().unwrap().name.clone());
         assert_eq!(entry.as_deref(), Some("家里的配置"));
+    }
+
+    #[test]
+    fn manual_disable_changes_only_the_runtime_snapshot() {
+        let (_guard, dir) = isolate_data_dir();
+        let store = store_at(&dir);
+        store
+            .insert(
+                site_snapshot(vec![json!({
+                    "key": "a", "name": "a", "runtime": "cms", "api": "http://x", "enabled": true
+                })]),
+                text_source(),
+            )
+            .unwrap();
+
+        let runtime = store.set_site_enabled("a", false).expect("disable site");
+        let site = site_by_key(&runtime.sites, "a");
+        assert_eq!(site.get("enabled").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            site.get("disabledReason").and_then(Value::as_str),
+            Some("已在站点体检中手动禁用")
+        );
+
+        // imported 原件没被碰过：手动禁用只活在 runtime_json。
+        let import = store
+            .entries
+            .read()
+            .unwrap()
+            .iter()
+            .find(|entry| entry.imported.id == "box")
+            .unwrap()
+            .imported
+            .clone();
+        let imp = site_by_key(&import.sites, "a");
+        assert_eq!(imp.get("enabled").and_then(Value::as_bool), Some(true));
+        assert!(imp.get("disabledReason").is_none());
+        // 从原件重新派生的结果里该站仍 enabled=true，证明禁用不在 imported 层。
+        let derived = derive_runtime(&import);
+        let d = site_by_key(&derived.sites, "a");
+        assert_eq!(d.get("enabled").and_then(Value::as_bool), Some(true));
+        assert!(d.get("disabledReason").is_none());
+
+        // 未知站点按契约拒绝。
+        let err = store.set_site_enabled("missing", false).unwrap_err();
+        assert_eq!(err.code, code::INVALID_ARGUMENT);
+        assert_eq!(err.message, "site missing not found");
+    }
+
+    #[test]
+    fn manual_disable_survives_restart() {
+        let (_guard, dir) = isolate_data_dir();
+        {
+            let store = store_at(&dir);
+            store
+                .insert(
+                    site_snapshot(vec![json!({
+                        "key": "a", "name": "a", "runtime": "cms", "api": "http://x", "enabled": true
+                    })]),
+                    text_source(),
+                )
+                .unwrap();
+            store.set_site_enabled("a", false).unwrap();
+        }
+
+        // 新开的 store 只读持久化的 runtime_json（非空，不重新派生），
+        // 所以禁用 + 原因都还在；imported 仍是 enabled=true。
+        let restarted = store_at(&dir);
+        let snap = restarted.active_snapshot().expect("active snapshot");
+        let site = site_by_key(&snap.sites, "a");
+        assert_eq!(site.get("enabled").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            site.get("disabledReason").and_then(Value::as_str),
+            Some("已在站点体检中手动禁用")
+        );
+        let import = restarted
+            .entries
+            .read()
+            .unwrap()
+            .iter()
+            .find(|entry| entry.imported.id == "box")
+            .unwrap()
+            .imported
+            .clone();
+        assert_eq!(
+            site_by_key(&import.sites, "a")
+                .get("enabled")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn re_enabling_removes_the_manual_disable_reason() {
+        let (_guard, dir) = isolate_data_dir();
+        let store = store_at(&dir);
+        store
+            .insert(
+                site_snapshot(vec![json!({
+                    "key": "a", "name": "a", "runtime": "cms", "api": "http://x", "enabled": true
+                })]),
+                text_source(),
+            )
+            .unwrap();
+        store.set_site_enabled("a", false).unwrap();
+
+        let runtime = store.set_site_enabled("a", true).expect("enable site");
+        let site = site_by_key(&runtime.sites, "a");
+        assert_eq!(site.get("enabled").and_then(Value::as_bool), Some(true));
+        assert!(site.get("disabledReason").is_none());
+
+        // 内存缓存和重启后的磁盘视图都要一致（disabledReason 确实被删掉）。
+        let restarted = store_at(&dir);
+        let snap = restarted.active_snapshot().expect("active snapshot");
+        let site = site_by_key(&snap.sites, "a");
+        assert_eq!(site.get("enabled").and_then(Value::as_bool), Some(true));
+        assert!(site.get("disabledReason").is_none());
+    }
+
+    #[test]
+    fn manual_enable_is_rejected_for_blocked_jvm_sources() {
+        let (_guard, dir) = isolate_data_dir();
+        let store = store_at(&dir);
+        store
+            .insert(
+                site_snapshot(vec![json!({
+                    "key": "jar", "name": "jar", "runtime": "jvm",
+                    "api": "http://x/csp.jar", "enabled": true
+                })]),
+                text_source(),
+            )
+            .unwrap();
+
+        // derive_runtime 已把 jvm 源禁用；手动启用必须被拒绝，
+        // 否则用户会重新把一个跑不通的源放回 fan-out。
+        let err = store.set_site_enabled("jar", true).expect_err("jvm enable rejected");
+        assert_eq!(err.code, code::INVALID_ARGUMENT);
+        assert_eq!(err.message, "该源不受支持，无法启用");
+
+        // 禁用仍然允许。
+        let runtime = store.set_site_enabled("jar", false).expect("disable still allowed");
+        assert_eq!(
+            site_by_key(&runtime.sites, "jar")
+                .get("enabled")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
     }
 }

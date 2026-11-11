@@ -400,6 +400,7 @@ export default function App() {
         return (
           <SettingsPage
             activeConfigId={cache?.configId}
+            sites={sites}
             onImported={handleImported}
             onConfigRemoved={handleConfigRemoved}
           />

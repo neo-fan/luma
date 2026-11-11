@@ -1437,6 +1437,121 @@ textarea {
   margin-bottom: 10px;
 }
 
+/* 站点体检：顶部操作条 + 可滚动清单，全部走 health-* 前缀，避免碰到窗口探针依赖的类 */
+.health-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
+
+.health-summary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.health-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.health-item {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.health-item__name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-soft);
+}
+
+.health-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.health-item__status {
+  flex: 0 0 auto;
+  padding: 1px 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* 状态色只上文字，底色保持行的 panel：浅色 / 深色主题下都有稳定对比 */
+.health-item__status.is-ok {
+  color: var(--ok);
+}
+
+.health-item__status.is-failed,
+.health-item__status.is-timeout {
+  color: var(--danger);
+}
+
+.health-item__status.is-skipped {
+  color: var(--muted);
+}
+
+.health-item__status.is-disabled {
+  color: var(--faint);
+}
+
+.health-item__took,
+.health-item__count {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.health-item__reason {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--faint);
+}
+
+.health-item__actions {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 窄屏：站名占整行，状态/耗时/原因与操作换行，长文本省略不撑破卡片 */
+@media (max-width: 560px) {
+  .health-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+  }
+
+  .health-item__name {
+    grid-column: 1 / -1;
+  }
+
+  .health-item__actions {
+    grid-row: 2;
+    grid-column: 2;
+  }
+}
+
 .disclaimer {
   margin: 36px 0 0;
   padding-top: 16px;

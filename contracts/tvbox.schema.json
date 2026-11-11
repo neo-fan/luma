@@ -175,7 +175,8 @@
       "required": ["kind", "value"],
       "properties": {
         "kind": { "type": "string", "enum": ["url", "file", "text"] },
-        "value": { "type": "string" }
+        "value": { "type": "string" },
+        "name": { "type": "string" }
       },
       "additionalProperties": false
     },
