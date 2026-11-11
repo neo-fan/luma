@@ -54,11 +54,11 @@ fn project_root() -> PathBuf {
 }
 
 /// Resolve the JVM launcher and the runner jar. No absolute machine path is
-/// baked in: `TVBOX_JAVA` / `TVBOX_JVM_RUNNER` / `JAVA_HOME` decide at runtime.
+/// baked in: `LUMA_JAVA` / `LUMA_JVM_RUNNER` / `JAVA_HOME` decide at runtime.
 fn jvm_command() -> Result<(String, Vec<String>), AppError> {
-    let runner = match std::env::var("TVBOX_JVM_RUNNER") {
-        Ok(path) => PathBuf::from(path),
-        Err(_) => project_root().join("sidecars").join("java").join("runner.jar"),
+    let runner = match crate::env::get("JVM_RUNNER") {
+        Some(path) => PathBuf::from(path),
+        None => project_root().join("sidecars").join("java").join("runner.jar"),
     };
     if !runner.is_file() {
         return Err(AppError::new(
@@ -68,7 +68,7 @@ fn jvm_command() -> Result<(String, Vec<String>), AppError> {
         .with_details(json!({ "path": runner })));
     }
 
-    let java = std::env::var("TVBOX_JAVA").unwrap_or_else(|_| {
+    let java = crate::env::get("JAVA").unwrap_or_else(|| {
         std::env::var("JAVA_HOME")
             .map(|home| {
                 let exe = if cfg!(windows) { "java.exe" } else { "java" };
@@ -76,11 +76,13 @@ fn jvm_command() -> Result<(String, Vec<String>), AppError> {
             })
             .unwrap_or_else(|_| "java".to_string())
     });
-    let port = std::env::var("TVBOX_PROXY_PORT").unwrap_or_else(|_| "9978".to_string());
+    let port = crate::env::get_or("PROXY_PORT", "9978");
 
     Ok((
         java,
         vec![
+            format!("-Dluma.proxy.port={port}"),
+            // A pre-rename runner.jar still reads the old property.
             format!("-Dtvbox.proxy.port={port}"),
             "-cp".to_string(),
             runner.to_string_lossy().to_string(),
@@ -328,6 +330,7 @@ mod tests {
         // Only the shape is asserted; the runner path depends on the checkout.
         let (java, args) = jvm_command().expect("runner.jar is built");
         assert!(!java.is_empty());
+        assert!(args.iter().any(|a| a.starts_with("-Dluma.proxy.port=")));
         assert!(args.iter().any(|a| a.starts_with("-Dtvbox.proxy.port=")));
         assert_eq!(args.last().map(String::as_str), Some("SpiderRunner"));
         assert!(args.iter().any(|a| a.ends_with("runner.jar")));

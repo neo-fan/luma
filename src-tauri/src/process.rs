@@ -16,8 +16,7 @@ use tokio::process::{Child, Command};
 pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub fn call_timeout() -> Duration {
-    std::env::var("TVBOX_CALL_TIMEOUT_MS")
-        .ok()
+    crate::env::get("CALL_TIMEOUT_MS")
         .and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_millis)
         .unwrap_or(DEFAULT_CALL_TIMEOUT)
@@ -287,8 +286,9 @@ mod tests {
 
     #[test]
     fn timeout_env_override_is_honoured() {
-        std::env::set_var("TVBOX_CALL_TIMEOUT_MS", "2500");
+        crate::env::set("CALL_TIMEOUT_MS", "2500");
         assert_eq!(call_timeout(), Duration::from_millis(2500));
+        std::env::remove_var("LUMA_CALL_TIMEOUT_MS");
         std::env::remove_var("TVBOX_CALL_TIMEOUT_MS");
     }
 }

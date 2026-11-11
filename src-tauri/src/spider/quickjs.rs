@@ -33,7 +33,7 @@ impl Runner {
         let exe = resolve_runner().ok_or_else(|| {
             AppError::new(
                 code::RUNTIME_UNAVAILABLE,
-                "qjs-runner not found (set TVBOX_QJS_RUNNER or build sidecars/qjs-runner)",
+                "qjs-runner not found (set LUMA_QJS_RUNNER or build sidecars/qjs-runner)",
             )
         })?;
         let mut guard = Guarded::spawn(&exe.to_string_lossy(), &[], None)?;
@@ -104,7 +104,7 @@ impl Runner {
 }
 
 fn resolve_runner() -> Option<PathBuf> {
-    if let Ok(custom) = std::env::var("TVBOX_QJS_RUNNER") {
+    if let Some(custom) = crate::env::get("QJS_RUNNER") {
         let path = PathBuf::from(custom);
         if path.is_file() {
             return Some(path);

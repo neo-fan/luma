@@ -4,7 +4,7 @@
 //! ephemeral port and publishes the real one through `proxy_status`.
 //! Only loopback is bound. Targets are validated against a whitelist that
 //! rejects loopback / private / link-local / multicast addresses, unless
-//! `TVBOX_PROXY_ALLOW_LOCAL=1` is set (development and stub tests only).
+//! `LUMA_PROXY_ALLOW_LOCAL=1` is set (development and stub tests only).
 
 use crate::error::{code, AppError};
 use axum::body::Body;
@@ -25,7 +25,6 @@ const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(20);
 // The fallback UA and the "fill in defaults" helper live in `netrules` so the
 // resolver and the proxy cannot drift apart. Some CDNs answer garbage (or a
 // 403 body that hls.js reports as `fragParsingError`) when no UA is present.
-const ALLOW_LOCAL_ENV: &str = "TVBOX_PROXY_ALLOW_LOCAL";
 
 /// Headers copied from the browser to the upstream request.
 const PASSTHROUGH: [&str; 5] = [
@@ -95,9 +94,7 @@ pub struct ProxyStatus {
 
 /// Start the proxy on the Tauri runtime; failures are surfaced to the caller.
 pub fn start() -> Result<Arc<ProxyState>, AppError> {
-    let allow_local = std::env::var(ALLOW_LOCAL_ENV)
-        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let allow_local = crate::env::is_enabled("PROXY_ALLOW_LOCAL");
 
     let listener = bind_listener()?;
     let port = listener

@@ -7,11 +7,11 @@
  * 原生 <video> 解码出画，以及卸载前的进度写入。需要 dev 窗口（9222）。
  *
  *   node tools/probe_artplayer.mjs
- *   TVBOX_KEYWORD=庆余年 node tools/probe_artplayer.mjs
+ *   LUMA_KEYWORD=庆余年 node tools/probe_artplayer.mjs
  */
 import { writeFileSync } from "node:fs";
 
-const KEYWORD = process.env.TVBOX_KEYWORD || "庆余年";
+const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "庆余年";
 
 class Cdp {
   constructor(wsUrl) {

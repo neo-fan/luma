@@ -63,10 +63,10 @@ pub(crate) fn now_ms() -> u64 {
 }
 
 pub fn data_dir() -> PathBuf {
-    if let Ok(custom) = std::env::var("TVBOX_DATA_DIR") {
-        if !custom.trim().is_empty() {
-            return PathBuf::from(custom);
-        }
+    // `LUMA_DATA_DIR` is the documented override; `env::get` still accepts
+    // the pre-rename `TVBOX_DATA_DIR`.
+    if let Some(custom) = crate::env::get("DATA_DIR") {
+        return PathBuf::from(custom);
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
@@ -78,7 +78,7 @@ pub fn data_dir() -> PathBuf {
     }
     if let Ok(appdata) = std::env::var("APPDATA") {
         if !appdata.trim().is_empty() {
-            return PathBuf::from(appdata).join("tvbox-desktop");
+            return PathBuf::from(appdata).join("Luma");
         }
     }
     PathBuf::from("data")
@@ -272,7 +272,7 @@ mod tests {
     }
 
     fn temp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tvbox-lib-{label}-{}", now_ms()));
+        let dir = std::env::temp_dir().join(format!("luma-lib-{label}-{}", now_ms()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -285,7 +285,7 @@ mod tests {
         assert!(store.is_favorite("stub_json", "1"));
         assert!(!store.toggle_favorite(sample("1")).unwrap());
         assert!(!store.is_favorite("stub_json", "1"));
-        assert!(dir.join("tvbox.db").exists(), "data lives in sqlite, not json");
+        assert!(dir.join("luma.db").exists(), "data lives in sqlite, not json");
 
         // A fresh store (i.e. an app restart) sees the committed state.
         assert!(store.toggle_favorite(sample("2")).unwrap());

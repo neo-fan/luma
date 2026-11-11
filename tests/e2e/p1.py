@@ -41,7 +41,7 @@ def record(group: str, name: str, status: str, note: str = "") -> None:
 
 
 def python_bin() -> str:
-    return os.environ.get("TVBOX_PYTHON") or sys.executable
+    return os.environ.get("LUMA_PYTHON") or os.environ.get("TVBOX_PYTHON") or sys.executable
 
 
 class Adapter:
@@ -49,6 +49,7 @@ class Adapter:
 
     def __init__(self, timeout: float = 20.0) -> None:
         env = dict(os.environ)
+        env.setdefault("LUMA_ADAPTER_DEBUG", "1")
         env.setdefault("TVBOX_ADAPTER_DEBUG", "1")
         self.proc = subprocess.Popen(
             [python_bin(), str(ADAPTER)],
@@ -277,7 +278,7 @@ def adapter_phase() -> None:
 
 
 def qjs_binary() -> Path | None:
-    override = os.environ.get("TVBOX_QJS_RUNNER")
+    override = os.environ.get("LUMA_QJS_RUNNER") or os.environ.get("TVBOX_QJS_RUNNER")
     if override and Path(override).is_file():
         return Path(override)
     for profile in ("release", "debug"):

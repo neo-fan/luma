@@ -54,7 +54,8 @@ export type View =
 /** replace=true 时替换栈顶，用于同页切换剧集，避免返回键回退到上一集。 */
 export type Navigate = (view: View, replace?: boolean) => void;
 
-const SITE_CACHE_KEY = "tvbox:sites:v1";
+const SITE_CACHE_KEY = "luma:sites:v1";
+const LEGACY_SITE_CACHE_KEY = "tvbox:sites:v1";
 
 /** 视图标识：用于按「栈深度 + 页面」保存滚动位置，同名页面不同深度互不覆盖。 */
 function viewKey(view: View): string {
@@ -87,7 +88,9 @@ const NAV_ITEMS: { key: "home" | "live" | "search" | "favorites" | "settings"; l
 /** 最近一次导入的站点列表缓存：configList 不返回站点，重启后靠它恢复。 */
 function readSiteCache(): SiteCache | null {
   try {
-    const raw = window.localStorage.getItem(SITE_CACHE_KEY);
+    const raw =
+      window.localStorage.getItem(SITE_CACHE_KEY) ??
+      window.localStorage.getItem(LEGACY_SITE_CACHE_KEY);
     if (!raw) {
       return null;
     }
@@ -204,6 +207,7 @@ export default function App() {
       }
       try {
         window.localStorage.removeItem(SITE_CACHE_KEY);
+      window.localStorage.removeItem(LEGACY_SITE_CACHE_KEY);
       } catch {
         // 忽略缓存清理失败。
       }
@@ -331,7 +335,7 @@ export default function App() {
           </span>
           <span className="brand__text">
             Luma
-            <small>TVBox Desktop</small>
+            <small>TVBox 兼容</small>
           </span>
         </div>
         <nav className="nav">

@@ -19,7 +19,7 @@ pub fn sidecar_roots() -> Vec<PathBuf> {
         push_unique(&mut roots, source_root());
     }
 
-    if let Ok(dir) = std::env::var("TVBOX_RESOURCE_DIR") {
+    if let Some(dir) = crate::env::get("RESOURCE_DIR") {
         let dir = PathBuf::from(dir);
         // Installed build: <resource>/sidecars. Portable: <exe>/sidecars where
         // resource_dir is the exe dir. Also try the parent for <exe>/resources.

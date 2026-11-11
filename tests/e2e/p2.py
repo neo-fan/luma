@@ -61,7 +61,7 @@ def check(condition: bool, group: str, name: str, note: str = "") -> None:
 
 
 def java_bin() -> str:
-    override = os.environ.get("TVBOX_JAVA")
+    override = os.environ.get("LUMA_JAVA") or os.environ.get("TVBOX_JAVA")
     if override:
         return override
     home = os.environ.get("JAVA_HOME")
@@ -107,7 +107,8 @@ class JvmRunner:
     def __init__(self, port: str = "9978") -> None:
         env = dict(os.environ)
         self.proc = subprocess.Popen(
-            [java_bin(), f"-Dtvbox.proxy.port={port}", "-cp", str(RUNNER_JAR), "SpiderRunner"],
+            [java_bin(), f"-Dluma.proxy.port={port}", f"-Dtvbox.proxy.port={port}",
+             "-cp", str(RUNNER_JAR), "SpiderRunner"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             cwd=str(ROOT), env=env,
         )
@@ -209,7 +210,7 @@ def jvm_phase() -> None:
 
         # T-25 / 7.5.1: the host must inject the live proxy port into the JVM.
         check(str(ping_result.get("proxyPort")) == "9978", "T-25 proxy",
-              "-Dtvbox.proxy.port injected", str(ping_result.get("proxyPort")))
+              "-Dluma.proxy.port injected", str(ping_result.get("proxyPort")))
 
         class_probe = runner.call("probe", {"jar": str(CLASS_JAR)}).get("result") or {}
         dex_probe = runner.call("probe", {"jar": str(DEX_JAR)}).get("result") or {}

@@ -3,9 +3,11 @@
 pub mod bridge;
 pub mod config;
 pub mod db;
+pub mod env;
 pub mod error;
 pub mod http;
 pub mod live;
+pub mod migrate;
 pub mod mpv;
 pub mod netrules;
 pub mod parse;
@@ -27,7 +29,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // One SQLite connection shared by both stores: config snapshots, active
-    // marker, favourites and history all live in `<data dir>/tvbox.db`.
+    // marker, favourites and history all live in `<data dir>/luma.db`.
     let database = Arc::new(db::Db::open().expect("open sqlite database"));
     tracing::info!(path = %database.path().display(), "sqlite persistence ready");
     tauri::Builder::default()
@@ -39,14 +41,14 @@ pub fn run() {
             // dir, not next to the source tree. Publish that root once so
             // bridge / jvm / mpv resolve the same layout in dev and prod.
             if let Ok(resource) = app.path().resource_dir() {
-                std::env::set_var("TVBOX_RESOURCE_DIR", &resource);
+                env::set("RESOURCE_DIR", &resource);
                 tracing::info!(dir = %resource.display(), "resource dir");
             }
-            // Optional startup self-check (`TVBOX_SELFCHECK=1`): exercises the
+            // Optional startup self-check (`LUMA_SELFCHECK=1`): exercises the
             // Python sidecar path resolution and leaves the result in
             // `<data>/selfcheck.log`. Off by default; useful for diagnosing a
             // portable/installed layout without a console.
-            if std::env::var("TVBOX_SELFCHECK").ok().as_deref() == Some("1") {
+            if env::is_enabled("SELFCHECK") {
                 tauri::async_runtime::spawn(async move {
                     let outcome = match tokio::time::timeout(
                         std::time::Duration::from_secs(30),

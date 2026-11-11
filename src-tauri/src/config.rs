@@ -530,7 +530,7 @@ mod tests {
         .expect("snapshot fixture")
     }
 
-    /// Each test owns a separate SQLite file. `TVBOX_DATA_DIR` is process-wide,
+    /// Each test owns a separate SQLite file. `LUMA_DATA_DIR` is process-wide,
     /// so the guard is held for the whole test, not just during setup.
     static DATA_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -540,12 +540,12 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = std::env::temp_dir().join(format!(
-            "tvbox-config-test-{}-{}",
+            "luma-config-test-{}-{}",
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        std::env::set_var("TVBOX_DATA_DIR", &dir);
+        crate::env::set("DATA_DIR", &dir);
         (guard, dir)
     }
 

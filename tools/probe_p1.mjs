@@ -139,14 +139,18 @@ assert(fan.ok >= 2 && fan.failed >= 1, "fan-out partial success", fanout);
 assert(fan.byKey && fan.byKey.stub_py_slow === "SITE_TIMEOUT", "slow source timed out alone", String(fan.byKey?.stub_py_slow));
 assert(fan.tookMs < 12000, "fan-out finishes near the deadline", `${fan.tookMs}ms`);
 
-// 5b. JS site through the qjs-runner sidecar
+// 5b. JS sites are intentionally disabled by the imported/runtime split:
+// `derive_runtime` blocks quickjs (drpy2 / ES modules), and a single-site
+// spider_invoke call must not bypass that policy. The qjs-runner binary itself
+// is still covered offline by tests/e2e/p1.py::qjs_phase.
 const jsHome = await cdp.eval(
   `(async () => { try { const r = await ${invoke("spider_invoke", {
     request: { siteKey: "stub_js2", method: "homeContent", args: [] },
   })}; return JSON.stringify({ ok: true, count: (r.list||[]).length, name: (r.list||[])[0]?.vod_name, ext: r.ext }); } catch (e) { return JSON.stringify({ ok: false, error: e && (e.code || e.message) }); } })()`,
 );
 const jsData = JSON.parse(jsHome);
-assert(jsData.ok && jsData.count === 1, "js site homeContent via qjs-runner", jsHome);
+assert(jsData.ok === false && jsData.error === "RUNTIME_UNAVAILABLE",
+  "quickjs site is blocked by runtime policy", jsHome);
 
 const jsPlayer = await cdp.eval(
   `(async () => { try { const r = await ${invoke("spider_invoke", {
@@ -154,7 +158,8 @@ const jsPlayer = await cdp.eval(
   })}; return JSON.stringify({ ok: true, ext: r.ext, url: r.url }); } catch (e) { return JSON.stringify({ ok: false, error: e && (e.code || e.message) }); } })()`,
 );
 const jsPlayerData = JSON.parse(jsPlayer);
-assert(jsPlayerData.ok && jsPlayerData.ext === "stub-ext-js", "js ext passthrough", jsPlayer);
+assert(jsPlayerData.ok === false && jsPlayerData.error === "RUNTIME_UNAVAILABLE",
+  "quickjs ext call is blocked too", jsPlayer);
 
 // 6. no orphan python processes afterwards
 const orphan = await cdp.eval(

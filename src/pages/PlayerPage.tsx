@@ -234,9 +234,9 @@ export default function PlayerPage({
     failoverStarted.current = false;
     lineSwitchStarted.current = false;
     // 换源跳转会重建本页，提示通过 sessionStorage 带过来一次。
-    const carried = window.sessionStorage.getItem("tvbox:autoSwitch");
+    const carried = window.sessionStorage.getItem("luma:autoSwitch");
     if (carried) {
-      window.sessionStorage.removeItem("tvbox:autoSwitch");
+      window.sessionStorage.removeItem("luma:autoSwitch");
       setSwitchTip(carried);
     } else {
       setSwitchTip("");
@@ -331,7 +331,7 @@ export default function PlayerPage({
             continue;
           }
           const tip = `已自动切换到「${candidate.siteKey}」`;
-          window.sessionStorage.setItem("tvbox:autoSwitch", tip);
+          window.sessionStorage.setItem("luma:autoSwitch", tip);
           setSwitchTip(tip);
           handledUrls.current.add(picked.url);
           navigate(
@@ -738,7 +738,7 @@ export default function PlayerPage({
     }
     // 换源会重建页面，提示沿用自动换源的通道带过去一次。
     window.sessionStorage.setItem(
-      "tvbox:autoSwitch",
+      "luma:autoSwitch",
       `已手动切换到「${option.siteName}」`,
     );
     navigate(

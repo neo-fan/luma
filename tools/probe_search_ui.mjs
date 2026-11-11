@@ -7,14 +7,15 @@
  * 需要 dev 窗口（9222）。
  *
  *   node tools/probe_search_ui.mjs
- *   TVBOX_CONFIG=... TVBOX_KEYWORD=... node tools/probe_search_ui.mjs
+ *   LUMA_CONFIG=... LUMA_KEYWORD=... node tools/probe_search_ui.mjs
  */
 import { writeFileSync } from "node:fs";
 
 const CONFIG =
+  process.env.LUMA_CONFIG ||
   process.env.TVBOX_CONFIG ||
   "https://raw.githubusercontent.com/cluntop/tvbox/a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8/box.json";
-const KEYWORD = process.env.TVBOX_KEYWORD || "庆余年";
+const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "庆余年";
 
 class Cdp {
   constructor(wsUrl) {
@@ -144,14 +145,14 @@ assert((await cdp.eval(CLICK("导入"))) === "CLICKED", "click import");
 // populated site cache instead of a loose substring match.
 const imported = await cdp.eval(WAIT(`
   const notice = document.querySelector('.tip--ok');
-  const raw = localStorage.getItem('tvbox:sites:v1');
+  const raw = (localStorage.getItem('luma:sites:v1') || localStorage.getItem('tvbox:sites:v1'));
   const count = raw ? (JSON.parse(raw).sites || []).length : 0;
   return notice && notice.innerText.includes('已导入') && count > 50 ? notice.innerText : null;
 `, 60000));
 assert(!!imported, "real config imported", String(imported));
 
 const cache = await cdp.eval(`(() => {
-  const raw = localStorage.getItem('tvbox:sites:v1');
+  const raw = (localStorage.getItem('luma:sites:v1') || localStorage.getItem('tvbox:sites:v1'));
   if (!raw) return null;
   const c = JSON.parse(raw);
   const counts = {};

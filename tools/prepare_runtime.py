@@ -10,7 +10,7 @@
   * 只用标准库，不引入依赖。
   * 所有路径相对项目根（本文件上一级），不硬编码盘符。
   * 已存在即跳过，可重复执行。
-  * JDK 解析顺序：TVBOX_JDK17_HOME -> JAVA_HOME -> 默认开发机路径。
+  * JDK 解析顺序：LUMA_JDK17_HOME -> JAVA_HOME -> 默认开发机路径。
 
 用法：
   python tools/prepare_runtime.py            # 全量（缺失项补齐）
@@ -37,7 +37,7 @@ PY_DIR = ROOT / "sidecars" / "python-embed"
 BIN_DIR = ROOT / "src-tauri" / "binaries"
 
 # JDK 17 的默认位置只是开发机约定（本机安装路径），部署/CI 请用
-# TVBOX_JDK17_HOME 或 JAVA_HOME 覆盖。
+# LUMA_JDK17_HOME 或 JAVA_HOME 覆盖。
 DEFAULT_JDK17_HOME = Path("D:/software/java/oracle-jdk-17")
 
 JLINK_MODULES = "java.base,java.net.http,java.logging,jdk.unsupported"
@@ -94,7 +94,7 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 def resolve_jdk17() -> Path | None:
-    for env in ("TVBOX_JDK17_HOME", "JAVA_HOME"):
+    for env in ("LUMA_JDK17_HOME", "TVBOX_JDK17_HOME", "JAVA_HOME"):
         value = os.environ.get(env)
         if value and (Path(value) / "bin" / "jlink.exe").exists():
             print(f"  [jdk] 使用 {env}={value}")
@@ -128,7 +128,7 @@ def step_jre(force: bool = False) -> bool:
 
     jdk = resolve_jdk17()
     if jdk is None:
-        print("  [fail] 找不到 JDK 17（TVBOX_JDK17_HOME / JAVA_HOME / 默认路径均无效）")
+        print("  [fail] 找不到 JDK 17（LUMA_JDK17_HOME / JAVA_HOME / 默认路径均无效）")
         return False
 
     jlink = jdk / "bin" / "jlink.exe"

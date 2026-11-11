@@ -16,7 +16,7 @@ import android.content.Context;
  *   stdout 一行一个 JSON 响应帧（stdout 只允许协议帧）
  *   日志   全部写 stderr
  *
- * 启动：java -Dtvbox.proxy.port=9978 -cp runner.jar SpiderRunner
+ * 启动：java -Dluma.proxy.port=9978 -cp runner.jar SpiderRunner
  *   runner.jar 自包含 stubs + Runner，单 -cp 即可启动。
  *
  * 设计要点：
@@ -102,9 +102,11 @@ public class SpiderRunner {
         r.put("ok", Boolean.TRUE);
         r.put("version", VERSION);
         // 7.5.1 / T-25: the host injects the live proxy port via
-        // -Dtvbox.proxy.port; echo it back so the acceptance script can prove
+        // -Dluma.proxy.port; echo it back so the acceptance script can prove
         // the injection actually reached the JVM (also read by SpiderApi).
-        r.put("proxyPort", System.getProperty("tvbox.proxy.port", ""));
+        String port = System.getProperty("luma.proxy.port", "");
+        if (port.isEmpty()) port = System.getProperty("tvbox.proxy.port", "");
+        r.put("proxyPort", port);
         return r;
     }
 
@@ -380,7 +382,7 @@ public class SpiderRunner {
      *  - dex + 自编 fixture 标记：走「自编双形态模板」兼容路径 —— dex jar 内附带等价
      *    .class 资源(.bin)，由 FixtureClassLoader 用 defineClass 兜底加载，返回与 class 版
      *    等价的 TVBox JSON。这是自编 fixture 专用兼容路径，第三方 dex 不在承诺范围。
-     *  - dex + TVBOX_DEX2JAR：调用外部 dex2jar 工具转换后加载（best-effort，未经本机实测）。
+     *  - dex + LUMA_DEX2JAR：调用外部 dex2jar 工具转换后加载（best-effort，未经本机实测）。
      *  - 其余 dex：返回 RUNTIME_UNAVAILABLE 结构化错误帧。
      */
     static ClassLoader makeLoader(JarInfo info, File f, String target) throws Exception {
@@ -393,7 +395,8 @@ public class SpiderRunner {
             if (info.selfFixture && info.equivBytes != null && info.equivBytes.length > 0) {
                 return new FixtureClassLoader(urls, parent, EQUIV_CLASS_NAME, info.equivBytes);
             }
-            String tool = System.getenv("TVBOX_DEX2JAR");
+            String tool = System.getenv("LUMA_DEX2JAR");
+            if (tool == null || tool.isEmpty()) tool = System.getenv("TVBOX_DEX2JAR");
             if (tool != null && !tool.isEmpty()) {
                 File converted = tryDex2jar(f, tool);
                 if (converted != null) {
@@ -427,7 +430,7 @@ public class SpiderRunner {
     }
 
     /**
-     * best-effort dex2jar 转换（仅在显式设置 TVBOX_DEX2JAR 时触发，本机自测未覆盖）。
+     * best-effort dex2jar 转换（仅在显式设置 LUMA_DEX2JAR 时触发，本机自测未覆盖）。
      * 子进程输出重定向到 DISCARD，绝不污染 stdout 协议帧。
      */
     static File tryDex2jar(File dexJar, String tool) {

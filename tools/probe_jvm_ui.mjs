@@ -17,6 +17,7 @@ import path from "node:path";
 const ROOT = process.cwd();
 const CLASS_JAR = path.join(ROOT, "tests/fixtures/jars/template-class.jar").replace(/\\/g, "/");
 const REAL_CONFIG =
+  process.env.LUMA_CONFIG ||
   process.env.TVBOX_CONFIG ||
   "https://raw.githubusercontent.com/cluntop/tvbox/a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8/box.json";
 

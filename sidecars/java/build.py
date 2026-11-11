@@ -16,7 +16,7 @@ template-dex.jar 形态说明：
   - 内含 META-INF/tvbox-self-fixture.properties 标记；不含任何 .class 条目，
     因此 probe 判定为 dex。这是自编 fixture 专用兼容路径，第三方 dex 不在承诺范围。
 
-  JDK 路径：优先读环境变量 TVBOX_JDK17_BIN，缺省为项目约定的 JDK17 安装目录。
+  JDK 路径：优先读环境变量 LUMA_JDK17_BIN，缺省为项目约定的 JDK17 安装目录。
   全部日志写 stderr；中间产物在 .workbuddy/upstream/java-p2/（已 gitignore）。
   不依赖系统默认 java，可重复运行。
 """
@@ -51,7 +51,8 @@ R8_URLS = [
     "https://dl.google.com/dl/android/maven2/com/android/tools/r8/8.1.56/r8-8.1.56.jar",
 ]
 
-JDK_BIN = os.environ.get("TVBOX_JDK17_BIN", "D:/software/java/oracle-jdk-17/bin")
+JDK_BIN = (os.environ.get("LUMA_JDK17_BIN") or os.environ.get("TVBOX_JDK17_BIN")
+             or "D:/software/java/oracle-jdk-17/bin")
 
 
 def log(msg):

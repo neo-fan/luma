@@ -64,12 +64,12 @@ fn adapter_root() -> PathBuf {
 /// The embedded distribution resolves `python311.dll` relative to its own
 /// directory, so spawning it with the project root as cwd fails with
 /// STATUS_DLL_NOT_FOUND. Prod uses `<resource>/sidecars/python-embed`; dev
-/// keeps `TVBOX_PYTHON` / `python` on PATH and no special cwd.
+/// keeps `LUMA_PYTHON` / `python` on PATH and no special cwd.
 fn python_launch() -> (String, Option<PathBuf>) {
-    if let Ok(explicit) = std::env::var("TVBOX_PYTHON") {
+    if let Some(explicit) = crate::env::get("PYTHON") {
         return (explicit, None);
     }
-    if let Ok(dir) = std::env::var("TVBOX_RESOURCE_DIR") {
+    if let Some(dir) = crate::env::get("RESOURCE_DIR") {
         let embed = PathBuf::from(dir).join("sidecars").join("python-embed");
         let exe = embed.join("python.exe");
         if exe.is_file() {

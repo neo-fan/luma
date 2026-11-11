@@ -1,6 +1,6 @@
 # Luma
 
-Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架）。`Luma` 是产品名，副标 `TVBox Desktop` 保留生态识别；代码仓、Rust crate 与数据目录仍叫 `tvbox-desktop`，改名不影响已有配置/收藏/历史。软件本身不内置、不硬编码任何配置地址、影视源、直播源或 API Key；所有内容由用户自行导入的 TVBox 配置（`api.json` / `box.json` 及常见变体）提供。
+Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架）。产品名 **Luma**，程序标识、可执行文件、数据目录、数据库、环境变量与图标已全部统一为 Luma，不再保留 `tvbox-desktop` 作为产品名；从旧版升级会自动迁移已有的配置 / 收藏 / 历史（见「从旧版升级」）。软件本身不内置、不硬编码任何配置地址、影视源、直播源或 API Key；所有内容由用户自行导入的 TVBox 配置（`api.json` / `box.json` 及常见变体）提供。
 
 ## 免责声明
 
@@ -44,7 +44,7 @@ node tools/bundle_report.mjs               # 构建产物体积 / gzip 报告
 
 ## 品牌资源
 
-产品名 **Luma**，图标是深墨圆角底 + 细圆环 + 蓝紫渐变播放三角。`tools/build_icons.py` 从同一套几何常量生成 `src-tauri/icons/` 下的 ICO（16~256）与各尺寸 PNG、以及前端用的 `public/icon.svg`；修改品牌色时同步 `src/styles.css` 的 `--accent` / `--accent-2`。`tauri.conf.json` 的 `identifier` 保持 `dev.tvbox.desktop` 不变，避免换名导致 SQLite 数据目录迁移。
+产品名 **Luma**，图标是深墨圆角底 + 细圆环 + 蓝紫渐变播放三角。`tools/build_icons.py` 从同一套几何常量生成 `src-tauri/icons/` 下的 ICO（16~256）与各尺寸 PNG、以及前端用的 `public/icon.svg`；修改品牌色时同步 `src/styles.css` 的 `--accent` / `--accent-2`。`tauri.conf.json` 的 `identifier` 为 `dev.luma.desktop`；改名前 `dev.tvbox.desktop` 的数据由一次性自动迁移接管（见「从旧版升级」），不需要手工复制文件。
 
 产物：
 
@@ -63,18 +63,24 @@ python tools/prepare_runtime.py    # jlink JRE + Python embeddable + externalBin
 开发期必须显式指定 JDK 17，否则会落到系统默认版本：
 
 ```powershell
-$env:TVBOX_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
+$env:LUMA_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 ```
 
 ### 运行期环境变量
 
+运行期变量统一为 `LUMA_*` 前缀；旧的 `TVBOX_*` 同名变量仍会被读取，方便旧快捷方式与脚本过渡。
+
 | 变量 | 用途 |
 |---|---|
-| `TVBOX_PYTHON` | 覆盖 Python 解释器（缺省用随包 `python-embed`，再缺省 `python`） |
-| `TVBOX_JAVA` | 覆盖 java 可执行文件（缺省 `JAVA_HOME` 或 `java`） |
-| `TVBOX_JVM_RUNNER` | 覆盖 `runner.jar` 路径 |
-| `TVBOX_MPV` | 覆盖 `mpv.exe` 路径 |
-| `TVBOX_PROXY_PORT` | 本地反代端口，默认 9978 |
+| `LUMA_PYTHON` | 覆盖 Python 解释器（缺省用随包 `python-embed`，再缺省 `python`） |
+| `LUMA_JAVA` | 覆盖 java 可执行文件（缺省 `JAVA_HOME` 或 `java`） |
+| `LUMA_JVM_RUNNER` | 覆盖 `runner.jar` 路径 |
+| `LUMA_MPV` | 覆盖 `mpv.exe` 路径 |
+| `LUMA_PROXY_PORT` | 本地反代端口，默认 9978 |
+| `LUMA_DATA_DIR` | 覆盖数据目录（默认便携 `data/`，否则 `%APPDATA%\Luma`） |
+| `LUMA_RESOURCE_DIR` | 宿主发布给 sidecar 的资源目录，通常无需手工设置 |
+| `LUMA_PROXY_ALLOW_LOCAL` | `1` 时允许反代访问 `127.0.0.1`（仅本地联调） |
+| `LUMA_SELFCHECK` | `1` 时启动自检并写 `data/selfcheck.log` |
 
 ## 使用
 
@@ -88,7 +94,7 @@ $env:TVBOX_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 1. 解压 `Luma-0.1.0-portable.zip` 到任意目录；
 2. 双击 `Luma.exe`。
 
-配置、收藏、历史都写在 **exe 同级 `data/tvbox.db`**（单个 SQLite 文件，运行时另有 `-wal` / `-shm` 辅助文件）；`data/` 存在即自动进入便携模式，不会写 `%APPDATA%`。删除整个文件夹即完成卸载。
+配置、收藏、历史都写在 **exe 同级 `data/luma.db`**（单个 SQLite 文件，运行时另有 `-wal` / `-shm` 辅助文件）；`data/` 存在即自动进入便携模式，不会写 `%APPDATA%`。删除整个文件夹即完成卸载。
 
 未签名的 exe 首次运行可能触发 SmartScreen：点击「更多信息」→「仍要运行」。正式分发需要 OV/EV 代码签名证书。
 
@@ -104,10 +110,23 @@ Luma/
     java/runner.jar   JVM spider 桥
     mpv/              可选，自行放入
   data/
-    tvbox.db          配置 / 收藏 / 历史（SQLite）
+    luma.db           配置 / 收藏 / 历史（SQLite）
 ```
 
-数据层说明：配置快照（导入原件 + 运行派生）、active 配置、收藏与历史都在同一个事务型数据库里；写操作先提交事务再刷新界面缓存。首次启动会把旧版本的 JSON 数据自动导入 `tvbox.db`，旧文件保留在 `data/` 作为备份、不再读取。开发模式下数据库位于 `%APPDATA%\tvbox-desktop\tvbox.db`。
+数据层说明：配置快照（导入原件 + 运行派生）、active 配置、收藏与历史都在同一个事务型数据库里；写操作先提交事务再刷新界面缓存。首次启动会把旧版 JSON 数据自动导入 `luma.db`，旧文件保留在 `data/` 作为备份、不再读取。开发模式下数据库位于 `%APPDATA%\Luma\luma.db`。
+
+## 从旧版升级（TVBox Desktop → Luma）
+
+改名后程序标识 `dev.tvbox.desktop` → `dev.luma.desktop`，数据目录 `%APPDATA%\tvbox-desktop` → `%APPDATA%\Luma`，数据库 `tvbox.db` → `luma.db`。**首次启动 Luma 会自动迁移，不需要手工复制**：
+
+- 开发 / 安装版：检测 `%APPDATA%\tvbox-desktop\tvbox.db`；便携版：先检测新包 `data/` 里的旧 `tvbox.db`，也兼容上述 `%APPDATA%` 旧目录。
+- 用 SQLite `VACUUM INTO` 取一致性快照，包含 WAL 中已提交、尚未 checkpoint 的写入；不会裸复制 db + wal。
+- 旧 JSON 备份（`configs/`、`active.json`、`favorites.json`、`history.json`）一并复制到新目录，仅作留存。
+- 旧目录与旧文件**不删除、不改写**，回滚只需重新打开旧版；迁移只在新 `luma.db` 不存在时执行一次，误删后重启会自动再次恢复；迁移失败只写日志、不阻断启动。
+
+升级前请先退出旧版进程：快照是启动瞬间的状态，旧版之后写入的数据不会同步到 Luma。便携版用户也可以把旧文件夹的 `data/` 直接覆盖到新包 `data/`，效果相同。
+
+WebView2 的站点缓存 key 由 `tvbox:sites:v1` 换成 `luma:sites:v1`，旧 key 仍会回读，且启动时会用 Rust 侧的 active 配置重新对齐，缓存换位置不影响使用。
 
 ## 测试
 

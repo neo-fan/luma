@@ -27,8 +27,8 @@ ROOT = Path(__file__).resolve().parents[2]
 STUB = "http://127.0.0.1:8787"
 CDP = "http://127.0.0.1:9222/json/list"
 TAURI_CONF = ROOT / "src-tauri" / "tauri.conf.json"
-PORTABLE_ZIP = ROOT / "release" / "TVBox-Desktop-0.1.0-portable.zip"
-PORTABLE_DIR = ROOT / "release" / "portable" / "TVBox Desktop"
+PORTABLE_ZIP = ROOT / "release" / "Luma-0.1.0-portable.zip"
+PORTABLE_DIR = ROOT / "release" / "portable" / "Luma"
 SIZE_REPORT = ROOT / "docs" / "size-report.md"
 README = ROOT / "README.md"
 
@@ -120,7 +120,7 @@ def t32_phase() -> None:
     with zipfile.ZipFile(PORTABLE_ZIP) as archive:
         names = archive.namelist()
     for required in (
-        "TVBox Desktop.exe",
+        "Luma.exe",
         "sidecars/py/main.py",
         "sidecars/java/runner.jar",
         "sidecars/jre/bin/java.exe",
@@ -137,7 +137,7 @@ def t32_phase() -> None:
         check("ping ok" in text, "T-32 portable", "portable self-check ping", text.strip()[:80])
     else:
         record("T-32 portable", "portable self-check ping", "N/A",
-               "run the folder once with TVBOX_SELFCHECK=1")
+               "run the folder once with LUMA_SELFCHECK=1")
 
 
 def t33_phase() -> None:

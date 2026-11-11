@@ -12,7 +12,7 @@
   (dex 形态不能直接被 javap 读取，故对其携带的「等价 class 字节」实跑 javap)
 
 退出码：默认模式不匹配数为 0 -> 0，否则 -> 1；--jar 报告模式恒为 0。
-JDK17 路径优先读环境变量 TVBOX_JDK17_BIN。
+JDK17 路径优先读环境变量 LUMA_JDK17_BIN。
 """
 import argparse
 import json
@@ -32,7 +32,8 @@ DEX_JAR = os.path.join(ROOT, "tests", "fixtures", "jars", "template-dex.jar")
 DEFAULT_JARS = [CLASS_JAR, DEX_JAR]
 EQUIV_DIR = "META-INF/equivalent/"
 
-JDK_BIN = os.environ.get("TVBOX_JDK17_BIN", "D:/software/java/oracle-jdk-17/bin")
+JDK_BIN = (os.environ.get("LUMA_JDK17_BIN") or os.environ.get("TVBOX_JDK17_BIN")
+             or "D:/software/java/oracle-jdk-17/bin")
 
 
 def tool(name):

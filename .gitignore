@@ -30,6 +30,9 @@ src-tauri/gen/
 tvbox.db
 tvbox.db-wal
 tvbox.db-shm
+luma.db
+luma.db-wal
+luma.db-shm
 
 # T-32 运行时产物（由 tools/prepare_runtime.py 重建，不入库）
 sidecars/jre/

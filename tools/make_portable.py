@@ -11,7 +11,7 @@ in place. Layout produced:
       sidecars/jre/              jlink-trimmed JDK 17
       sidecars/java/runner.jar   JVM spider bridge
       sidecars/mpv/              optional, only with --with-mpv
-      data/                      portable data dir (tvbox.db + legacy json backup)
+      data/                      portable data dir (luma.db + legacy json backup)
       使用说明.txt
 
 `store.rs::data_dir` already prefers `<exe>/data`, and the sidecar resolvers
@@ -35,9 +35,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_EXE = ROOT / "src-tauri" / "target" / "release" / "tvbox-desktop.exe"
-# Tauri 的 productName 影响窗口标题与 bundle 产物名，但 cargo 二进制名由
-# [package] name 决定（仍是 tvbox-desktop.exe）；这里只把交付文件名换成品牌名。
+RELEASE_EXE = ROOT / "src-tauri" / "target" / "release" / "luma.exe"
+# [package] name 现在就是 luma，cargo 直接产出 luma.exe，无需再改交付文件名。
 APP_NAME = "Luma"
 OUT_DIR = ROOT / "release" / "portable"
 APP_DIR = OUT_DIR / APP_NAME
@@ -124,7 +123,8 @@ def prepare_app_dir() -> None:
 2. 配置、收藏、历史都保存在本目录的 data\\ 下；整个文件夹可随意移动或删除。
 3. 软件不内置任何源，请在「设置」中导入你自己的 TVBox 配置。
 4. 需要 mpv 兜底时，把 mpv.exe 放到 sidecars\\mpv\\ 下即可。
-5. 未签名程序首次运行可能触发 SmartScreen：更多信息 → 仍要运行。
+5. 从旧版 TVBox Desktop 升级：把旧目录 data/ 里的 tvbox.db 复制到本目录 data/，首次启动会自动迁移成 luma.db，旧文件不会被删除。
+6. 未签名程序首次运行可能触发 SmartScreen：更多信息 → 仍要运行。
 
 免责声明：本程序仅为播放框架，不提供、不托管任何音视频内容或源站地址。
 第三方配置与源的合法性、安全性由使用者自行判断并承担全部责任。

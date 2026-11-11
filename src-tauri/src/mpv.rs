@@ -11,10 +11,10 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-const MPV_PIPE: &str = r"\\.\pipe\tvbox-mpv";
+const MPV_PIPE: &str = r"\\.\pipe\luma-mpv";
 
 fn mpv_path() -> Option<PathBuf> {
-    if let Ok(explicit) = std::env::var("TVBOX_MPV") {
+    if let Some(explicit) = crate::env::get("MPV") {
         let path = PathBuf::from(explicit);
         return path.is_file().then_some(path);
     }
@@ -49,7 +49,7 @@ pub fn mpv_play(
     let exe = mpv_path().ok_or_else(|| {
         AppError::new(
             code::RUNTIME_UNAVAILABLE,
-            "mpv.exe not found (place it in sidecars/mpv or set TVBOX_MPV)",
+            "mpv.exe not found (place it in sidecars/mpv or set LUMA_MPV)",
         )
     })?;
 
@@ -96,6 +96,7 @@ mod tests {
 
     #[test]
     fn missing_mpv_is_reported_not_panicked() {
+        std::env::remove_var("LUMA_MPV");
         std::env::remove_var("TVBOX_MPV");
         // Path resolution must never panic even when the binary is absent.
         let _ = mpv_path();

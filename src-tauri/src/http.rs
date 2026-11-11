@@ -153,7 +153,7 @@ mod tests {
     use std::time::Duration;
 
     fn python() -> String {
-        std::env::var("TVBOX_PYTHON").unwrap_or_else(|_| "python".to_string())
+        crate::env::get_or("PYTHON", "python")
     }
 
     fn start_stub() -> Child {

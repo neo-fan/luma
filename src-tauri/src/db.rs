@@ -1,6 +1,6 @@
 //! SQLite persistence layer.
 //!
-//! One database (`<data dir>/tvbox.db`) is the single source of truth for
+//! One database (`<data dir>/luma.db`) is the single source of truth for
 //! configs, the active-config marker, favourites and playback history. Rust
 //! still keeps in-memory read caches (parsing a 100-site snapshot on every
 //! keystroke would be wasteful), but every write goes through a transaction
@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-const DB_FILE: &str = "tvbox.db";
+const DB_FILE: &str = "luma.db";
 const META_ACTIVE: &str = "active_config_id";
 const META_MIGRATED: &str = "legacy_migrated";
 pub const MAX_HISTORY: usize = 500;
@@ -80,11 +80,17 @@ pub struct Db {
 
 impl Db {
     pub fn open() -> Result<Self, AppError> {
-        Self::at(crate::store::data_dir())
+        let dir = crate::store::data_dir();
+        // One-shot upgrade from the pre-rename data directory. A failed
+        // migration must not stop the app from starting with a fresh DB.
+        if let Err(err) = crate::migrate::from_tvbox(&dir, &dir.join(DB_FILE), None) {
+            tracing::warn!(error = %err, "legacy data migration failed");
+        }
+        Self::at(dir)
     }
 
     /// Open (or create) the database rooted at `dir`; used by tests to stay
-    /// isolated via `TVBOX_DATA_DIR` without touching the user's real data.
+    /// isolated via `LUMA_DATA_DIR` without touching the user's real data.
     pub fn at(dir: PathBuf) -> Result<Self, AppError> {
         std::fs::create_dir_all(&dir).map_err(|err| {
             AppError::new(code::INTERNAL, "create data dir failed").with_cause(err.to_string())
@@ -678,7 +684,7 @@ mod tests {
     use super::*;
 
     fn temp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tvbox-db-test-{label}-{}", now_ms()));
+        let dir = std::env::temp_dir().join(format!("luma-db-test-{label}-{}", now_ms()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
