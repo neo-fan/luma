@@ -118,6 +118,21 @@ export function canFailover(site?: { changeable?: boolean }): boolean {
 }
 
 /**
+ * 首页/分类等需要向站点发请求的视图里，真正可运行的站点。
+ *
+ * 屏蔽规则与后端 `derive_runtime` 一致：jvm（jar/dex）与 quickjs（drpy2）
+ * 源导入时会被标 `enabled=false`+`disabledReason`，这里再按 runtime 兜一层，
+ * 兼容旧缓存里仍写着 enabled=true 的屏蔽源。App 选默认站、首页自动顺延
+ * 都走这一份口径，避免两处过滤条件漂移。
+ */
+export function usableHomeSites<T extends object>(sites: T[]): T[] {
+  return sites.filter((site) => {
+    const item = site as { runtime?: string; enabled?: boolean };
+    return item.enabled !== false && item.runtime !== "jvm" && item.runtime !== "quickjs";
+  });
+}
+
+/**
  * 聚合搜索的片名相关度（0..3），只用于展示排序。
  *
  * 真实配置里踩过的坑：部分站点无匹配时不返回空列表，而是回退整页推荐；

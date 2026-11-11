@@ -8,6 +8,7 @@ import {
   splitFlag,
   titleMatchScore,
   toVodRef,
+  usableHomeSites,
 } from "./format";
 
 describe("splitFlag", () => {
@@ -95,6 +96,32 @@ describe("canFailover", () => {
 
   it("allows sources that explicitly enabled it", () => {
     expect(canFailover({ changeable: true })).toBe(true);
+  });
+});
+
+describe("usableHomeSites", () => {
+  it("keeps enabled cms/python sites and preserves order", () => {
+    const sites = [
+      { key: "a", runtime: "cms", enabled: true },
+      { key: "b", runtime: "python", enabled: true },
+      { key: "c", runtime: "cms", enabled: true },
+    ];
+    expect(usableHomeSites(sites).map((s) => s.key)).toEqual(["a", "b", "c"]);
+  });
+
+  it("drops disabled, jvm and quickjs sites (runtime-blocked red line)", () => {
+    const sites = [
+      { key: "cms", runtime: "cms", enabled: true },
+      { key: "off", runtime: "cms", enabled: false },
+      { key: "jar", runtime: "jvm", enabled: true },
+      { key: "js", runtime: "quickjs", enabled: true },
+      { key: "stale", runtime: "jvm", enabled: true, disabledReason: "x" },
+    ];
+    expect(usableHomeSites(sites).map((s) => s.key)).toEqual(["cms"]);
+  });
+
+  it("treats missing runtime/enabled as usable (old cache compatibility)", () => {
+    expect(usableHomeSites([{ key: "legacy" }]).map((s) => s.key)).toEqual(["legacy"]);
   });
 });
 

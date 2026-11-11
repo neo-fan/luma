@@ -5,6 +5,7 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { usableHomeSites } from "../lib/format";
 import { usePageState } from "../lib/usePageState";
 import type { HomeResult, Site } from "../types/tvbox";
 
@@ -12,7 +13,43 @@ interface HomePageProps {
   sites: Site[];
   siteKey: string;
   onSiteChange: (key: string) => void;
+  /** 当前站是「用户从未确认过的默认站」时为空站自动顺延；用户手动选站后为 false。 */
+  isDefaultSite: boolean;
   navigate: Navigate;
+}
+
+/** 默认站首页无推荐时，最多再往后试探几个站，避免冷启动落在空站上像坏了。 */
+const AUTO_FALLBACK_LIMIT = 6;
+
+/**
+ * 默认站首页只给了分类、没有推荐列表时，从它后面依次找第一个真正有
+ * `list` 的可用站。探测通过 `load` 注入（通常是 `api.home`），便于单测。
+ * 只试「当前站往后 LIMIT 个」，不对全站发请求，避免冷启动风暴。
+ */
+export async function findHomeSiteWithList(
+  candidates: { key: string }[],
+  currentKey: string,
+  load: (key: string) => Promise<{ list?: unknown[] }>,
+  isAlive: () => boolean = () => true,
+): Promise<string | null> {
+  const from = candidates.findIndex((item) => item.key === currentKey);
+  if (from < 0) {
+    return null;
+  }
+  for (const candidate of candidates.slice(from + 1, from + 1 + AUTO_FALLBACK_LIMIT)) {
+    if (!isAlive()) {
+      return null;
+    }
+    try {
+      const result = await load(candidate.key);
+      if ((result?.list ?? []).length > 0) {
+        return candidate.key;
+      }
+    } catch {
+      // 探测失败就跳到下一个候选，不影响其它站。
+    }
+  }
+  return null;
 }
 
 /**
@@ -23,7 +60,13 @@ interface HomePageProps {
 const SWITCH_DEBOUNCE_MS = 300;
 
 /** 首页：站点切换 + 分类标签 + 推荐网格。 */
-export default function HomePage({ sites, siteKey, onSiteChange, navigate }: HomePageProps) {
+export default function HomePage({
+  sites,
+  siteKey,
+  onSiteChange,
+  isDefaultSite,
+  navigate,
+}: HomePageProps) {
   // 首页推荐内容按站点保留，返回首页时直接出结果；站点 key 变化时自然失效。
   const [home, setHome] = usePageState<HomeResult | null>(`home:${siteKey}:data`, null);
   const [loading, setLoading] = useState(false);
@@ -34,10 +77,16 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
   /** 下一次 siteKey 生效时是否跳过缓存（用户主动切换 = 自动刷新）。 */
   const forceNextRef = useRef<string | null>(null);
   const switchTimerRef = useRef<number | null>(null);
+  /** 用户一旦手动选站，就别再自动顺延——即使选中的站首页为空也尊重。 */
+  const userActedRef = useRef(false);
+  /** 本轮自动顺延已试过的站，避免 onSiteChange 前后反复试探同一站。 */
+  const fallbackTriedRef = useRef<Set<string>>(new Set());
 
   const site = sites.find((item) => item.key === siteKey);
   const classes = home?.classes?.length ? home.classes : site?.categories ?? [];
   const list = home?.list ?? [];
+  /** 空结果不算有效缓存：只有真正拉到列表才阻止重复请求。 */
+  const hasList = list.length > 0;
   const selectedSite = sites.some((item) => item.key === draftSite) ? draftSite : siteKey;
 
   // 外部 siteKey 变化（配置加载、App 恢复偏好）时同步下拉显示。
@@ -59,6 +108,8 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
    */
   const switchSite = (next: string) => {
     setDraftSite(next);
+    // 用户主动选站：永久关闭默认空站的自动顺延，尊重其选择。
+    userActedRef.current = true;
     if (switchTimerRef.current !== null) {
       window.clearTimeout(switchTimerRef.current);
     }
@@ -77,8 +128,10 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
     if (force) {
       forceNextRef.current = null;
     }
-    // 已有缓存内容、且不是手动刷新 / 主动切站点：跳过整个请求，不闪 Spinner。
-    if (home && reload === 0 && !force) {
+    // 已有「有内容」缓存、且不是手动刷新 / 主动切站点：跳过整个请求。
+    // 注意用 hasList 而非 home：空结果（如只给分类的豆瓣源、或一次网络
+    // 抖动）绝不缓存，否则「有缓存就跳过」会让首页永久停在空态、无法自愈。
+    if (home && hasList && reload === 0 && !force) {
       return;
     }
     let alive = true;
@@ -96,9 +149,35 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
         try {
           const result = await api.home(siteKey, reload > 0 || force);
           if (alive) {
-            setHome(result);
+            // 空结果不写缓存：下次进入重新拉，也让自动顺延每次都有机会执行。
+            // 有内容才缓存，保证返回首页仍能秒开。
+            setHome((result?.list ?? []).length > 0 ? result : null);
             setError("");
             setLoading(false);
+          }
+          // 冷启动默认站若只给分类、没有推荐列表（如豆瓣源），自动往后找
+          // 第一个有内容的站并记住，避免首页看起来「没数据」。仅发生在
+          // 用户从未手动选站时；用户主动选的站（哪怕空）一律尊重。
+          if (
+            alive &&
+            (result?.list ?? []).length === 0 &&
+            isDefaultSite &&
+            !userActedRef.current &&
+            !fallbackTriedRef.current.has(siteKey)
+          ) {
+            fallbackTriedRef.current.add(siteKey);
+            void (async () => {
+              const next = await findHomeSiteWithList(
+                usableHomeSites(sites),
+                siteKey,
+                (key) => api.home(key),
+                () => alive,
+              );
+              if (next && alive && !userActedRef.current) {
+                // onSiteChange 写 preferredSite 并持久化，下次冷启动直接用它。
+                onSiteChange(next);
+              }
+            })();
           }
           return;
         } catch (err) {

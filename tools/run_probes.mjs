@@ -6,7 +6,8 @@
  *   - `probe_search_ui` 会重新导入真实配置，顺带把 active 归位，放最前面；
  *   - `probe_ui` 会把 active 切成桩配置，默认不跑，需要时用 `--with-ui` 放最后；
  *   - `probe_sidebar` 结束时会 reload，放在靠后；
- *   - 每个导入自己配置的探针（flv / search_failures / settings_health / config_manage）都会自清理。
+ *   - 每个导入自己配置的探针（flv / search_failures / settings_health / config_manage）都会自清理；
+ *   - `probe_home_site` 只改 localStorage 的首页站偏好，结束恢复原值、不碰后端配置。
  *
  * 跑之前先记住「原 active 配置 id」和「已有配置 id」，跑完恢复 active 并删掉
  * 本轮新建的配置——否则几轮探针下来 SQLite 里会堆一堆 stub 配置。
@@ -27,6 +28,7 @@ const CDP = "http://127.0.0.1:9222/json/list";
 const PROBES = [
   { key: "rust_commands", script: "tools/probe_rust_commands.mjs", label: "Rust command 连通性（分层后不丢 command）" },
   { key: "search_ui", script: "tools/probe_search_ui.mjs", label: "真实配置 导入→搜索→详情→播放", needsStub: true },
+  { key: "home_site", script: "tools/probe_home_site.mjs", label: "首页站点记忆 + 默认空站自动顺延" },
   { key: "source_cache", script: "tools/probe_source_cache.mjs", label: "换源候选缓存（点换源不重检索）" },
   { key: "source_picker", script: "tools/probe_source_picker.mjs", label: "手动换源面板" },
   { key: "page_cache", script: "tools/probe_page_cache.mjs", label: "页面缓存与滚动恢复" },

@@ -18,7 +18,7 @@ import HomePage from "./pages/HomePage";
 import LivePage from "./pages/LivePage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
-import { canFailover } from "./lib/format";
+import { canFailover, usableHomeSites } from "./lib/format";
 import { api, errorMessage } from "./lib/invoke";
 import { pageCache } from "./lib/pageCache";
 import { clearSourceCache, setSourceCacheScope } from "./lib/sourceCache";
@@ -63,6 +63,8 @@ export type Navigate = (view: View, replace?: boolean) => void;
 const SITE_CACHE_KEY = "luma:sites:v1";
 const LEGACY_SITE_CACHE_KEY = "tvbox:sites:v1";
 const SIDEBAR_KEY = "luma:sidebar:v1";
+/** 首页选中的站点：手动切换与「空站自动顺延」都写这里，跨重启/重开保留。 */
+const HOME_SITE_KEY = "luma:home:site:v1";
 /** 稳定空数组：让下游 useEffect 的 sites 引用不会每次渲染都变化。 */
 const EMPTY_SITES: Site[] = [];
 
@@ -107,6 +109,15 @@ const NAV_ITEMS: {
   { key: "settings", label: "设置" },
 ];
 
+/** 首页上次选中的站点；读不到/损坏时返回空串，交给默认站逻辑。 */
+function readHomeSite(): string {
+  try {
+    return window.localStorage.getItem(HOME_SITE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 /** 最近一次导入的站点列表缓存：configList 不返回站点，重启后靠它恢复。 */
 function readSiteCache(): SiteCache | null {
   try {
@@ -137,7 +148,7 @@ function readSiteCache(): SiteCache | null {
 export default function App() {
   const [stack, setStack] = useState<View[]>([{ name: "home" }]);
   const [cache, setCache] = useState<SiteCache | null>(() => readSiteCache());
-  const [preferredSite, setPreferredSite] = useState("");
+  const [preferredSite, setPreferredSite] = useState(readHomeSite);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
 
   // 收缩偏好跨重启保留；StrictMode 双调用只是写同一个值。
@@ -149,13 +160,24 @@ export default function App() {
     }
   }, [sidebarCollapsed]);
 
+  // 首页选中站跨重启保留：手动切换与「默认空站自动顺延」都写同一个 key。
+  useEffect(() => {
+    try {
+      if (preferredSite) {
+        window.localStorage.setItem(HOME_SITE_KEY, preferredSite);
+      } else {
+        window.localStorage.removeItem(HOME_SITE_KEY);
+      }
+    } catch {
+      // 本地存储失败不影响本次会话。
+    }
+  }, [preferredSite]);
+
   const sites = cache?.sites ?? EMPTY_SITES;
   const lives = cache?.lives ?? [];
-  // py / js 运行时已在 P1 落地，只有 jvm（P2）暂时不可用。
-  const usableSites = useMemo(
-    () => sites.filter((item) => item.runtime !== "jvm" && item.enabled),
-    [sites],
-  );
+  // py / js 运行时已在 P1 落地，只有 jvm（P2）暂时不可用。过滤口径与
+  // 首页「空站自动顺延」共用 usableHomeSites，避免两处规则漂移。
+  const usableSites = useMemo(() => usableHomeSites(sites), [sites]);
   const siteKey = useMemo(() => {
     if (preferredSite && usableSites.some((item) => item.key === preferredSite)) {
       return preferredSite;
@@ -311,6 +333,12 @@ export default function App() {
         } catch {
           // 本地缓存失败不影响本次会话。
         }
+        // 记住的首页站若不在当前 active 配置的可用站里（换配置/重导入/
+        // 站点被屏蔽），清掉它，让首页回退到默认站并重新自动顺延。
+        // 用函数式更新基于自身最新值判定，避免把 preferredSite 拉进这个
+        // 「只跑一次」effect 的依赖数组；next.sites 是新配置真源。
+        const usableKeys = new Set(usableHomeSites(next.sites).map((s) => s.key));
+        setPreferredSite((current) => (current && !usableKeys.has(current) ? "" : current));
         log.info("app ready", {
           version: APP_VERSION,
           configId: snapshot.id,
@@ -342,6 +370,7 @@ export default function App() {
             sites={sites}
             siteKey={siteKey}
             onSiteChange={setPreferredSite}
+            isDefaultSite={!preferredSite}
             navigate={navigate}
           />
         );
