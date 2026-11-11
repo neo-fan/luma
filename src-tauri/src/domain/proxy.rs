@@ -121,6 +121,7 @@ pub fn start() -> Result<Arc<ProxyState>, AppError> {
         };
         let router = Router::new()
             .route("/proxy", get(handle_proxy).options(handle_options))
+            .route("/image", get(handle_image).options(handle_options))
             .route("/health", get(handle_health))
             .with_state(shared.clone());
         if let Err(err) = axum::serve(listener, router).await {
@@ -317,6 +318,178 @@ async fn handle_proxy(
         .header("access-control-allow-origin", "*")
         .header("access-control-expose-headers", "*")
         .header("x-tvbox-proxy", "1")
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"))
+}
+
+/// Decode a percent-encoded fragment (TVBox embeds URL-encoded header values,
+/// e.g. `User-Agent=Mozilla/5.0%20(...)`). Hand-rolled to avoid pulling in a
+/// new dependency: `%XX` -> byte, `+` stays literal (header values, not form
+/// data), then UTF-8 decode. Invalid UTF-8 falls back to the raw input rather
+/// than rejecting the header.
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = |b: u8| -> Option<u8> {
+                match b {
+                    b'0'..=b'9' => Some(b - b'0'),
+                    b'a'..=b'f' => Some(b - b'a' + 10),
+                    b'A'..=b'F' => Some(b - b'A' + 10),
+                    _ => None,
+                }
+            };
+            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
+}
+
+/// Parse a TVBox `vod_pic` that may carry inline request headers.
+///
+/// Community sources (e.g. Douban) append `@Referer=...`, `@User-Agent=...`,
+/// `@Cookie=...` or a URL-encoded `@Headers={json}` to the real image URL so
+/// the host can bypass hotlink protection. This mirrors the native host's
+/// `ImgUtil.getUrl` (FongMi) / `VodImages.parseVodPicUrl` (AVBox): the image
+/// layer strips the suffix and injects the headers into the request. WebView2
+/// `<img>` cannot set custom headers, so our local `/image` proxy plays the
+/// role of that native interceptor.
+///
+/// Returns `None` for `data:` URIs and URLs without an inline header, meaning
+/// "no parsing needed" — the caller falls back to a plain upstream fetch.
+/// Header names go through `fix_header` aliases (`ua`/`referer`/`cookie`).
+pub(crate) fn parse_vod_pic_url(raw: &str) -> Option<(String, Vec<(String, String)>)> {
+    if raw.starts_with("data:") || !raw.contains('@') {
+        return None;
+    }
+    // Values are taken up to the next '@' (the separator has no escaping in
+    // the TVBox convention). '=' is safe inside a value.
+    let grab = |key: &str| -> Option<String> {
+        let needle = format!("@{key}=");
+        raw.split(&needle)
+            .nth(1)
+            .map(|rest| rest.split('@').next().unwrap_or("").to_string())
+    };
+    let url = raw.split('@').next().unwrap_or("").to_string();
+    if url.is_empty() {
+        return None;
+    }
+    let fix_header = |key: &str| -> String {
+        match key.to_ascii_lowercase().as_str() {
+            "user-agent" | "ua" => "User-Agent".into(),
+            "referer" | "referrer" => "Referer".into(),
+            "cookie" => "Cookie".into(),
+            _ => key.to_string(),
+        }
+    };
+    let mut headers: Vec<(String, String)> = Vec::new();
+    // @Headers is a percent-encoded JSON object; expand it first so explicit
+    // @Referer/@User-Agent below can still override individual keys.
+    if let Some(json) = grab("Headers") {
+        if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&percent_decode(&json)) {
+            for (key, value) in map {
+                if let Some(text) = value.as_str().filter(|v| !v.is_empty()) {
+                    headers.push((fix_header(&key), text.to_string()));
+                }
+            }
+        }
+    }
+    // Canonical header -> accepted inline aliases. Native `fixHeader` maps
+    // `ua` -> User-Agent etc.; sources in the wild use both spellings.
+    for (canonical, aliases) in [
+        ("Cookie", &["Cookie", "cookie"][..]),
+        ("User-Agent", &["User-Agent", "ua", "user-agent"][..]),
+        ("Referer", &["Referer", "referer", "referrer"][..]),
+    ] {
+        let value = aliases
+            .iter()
+            .find_map(|key| grab(key))
+            .map(|v| percent_decode(&v))
+            .filter(|v| !v.is_empty());
+        if let Some(value) = value {
+            // Replace an existing (case-normalized) key from @Headers.
+            let normalized = fix_header(canonical);
+            headers.retain(|(name, _)| name != &normalized);
+            headers.push((normalized, value));
+        }
+    }
+    Some((url, headers))
+}
+
+/// Image proxy: the WebView2 equivalent of the native image interceptor.
+///
+/// The browser sends the original `vod_pic` (with TVBox `@header` suffix) as
+/// `?url=`; we parse the inline headers, validate the pure URL against the
+/// same whitelist as `/proxy`, inject headers (inline > config `headers[]` >
+/// defaults), then stream the image back with a long cache lifetime.
+async fn handle_image(
+    State(state): State<Arc<ProxyState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    let pairs: Vec<(String, String)> = raw
+        .as_deref()
+        .map(|text| url::form_urlencoded::parse(text.as_bytes()).into_owned().collect())
+        .unwrap_or_default();
+    let pic = pairs.iter().rev().find(|(name, _)| name == "url").map(|(_, v)| v.clone()).unwrap_or_default();
+
+    let (pure, inline) = match parse_vod_pic_url(&pic) {
+        Some((url, headers)) => (url, headers),
+        None => (pic.clone(), Vec::new()),
+    };
+    let target = match Url::parse(&pure) {
+        Ok(url) => url,
+        Err(err) => return deny(StatusCode::BAD_REQUEST, &format!("invalid url: {err}")),
+    };
+    if let Err(reason) = check_target(&target, state.allow_local).await {
+        return deny(StatusCode::FORBIDDEN, &reason);
+    }
+
+    // Inline headers win over the config-level host table; defaults fill gaps.
+    let forwarded = crate::netrules::with_defaults(
+        &target,
+        crate::netrules::merged_for(target.as_str(), &inline),
+    );
+    let mut request = state.client.get(target.clone());
+    for (name, value) in forwarded {
+        request = request.header(name, value);
+    }
+
+    let upstream = match request.send().await {
+        Ok(response) => response,
+        Err(err) => {
+            let status = if err.is_timeout() { StatusCode::GATEWAY_TIMEOUT } else { StatusCode::BAD_GATEWAY };
+            return deny(status, &format!("upstream failed: {err}"));
+        }
+    };
+    let status = upstream.status();
+    let content_type = upstream
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    // Only serve real images; refuse to turn the proxy into a generic file
+    // fetcher (and stop a mislabeled playlist/script from reaching <img>).
+    if !status.is_success() || !content_type.to_ascii_lowercase().starts_with("image/") {
+        return deny(StatusCode::BAD_GATEWAY, &format!("not an image (status {status}, type {content_type})"));
+    }
+
+    let stream = upstream.bytes_stream();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", content_type)
+        .header("cache-control", "public, max-age=604800")
+        .header("access-control-allow-origin", "*")
+        .header("access-control-expose-headers", "*")
+        .header("x-tvbox-proxy", "image")
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"))
 }
@@ -634,6 +807,54 @@ mod tests {
     fn urlencode_keeps_unreserved_only() {
         assert_eq!(urlencode("a-b_c.d~e"), "a-b_c.d~e");
         assert_eq!(urlencode("http://a b/?x=1&y=2"), "http%3A%2F%2Fa%20b%2F%3Fx%3D1%26y%3D2");
+    }
+
+    #[test]
+    fn parse_vod_pic_plain_and_data_are_not_parsed() {
+        assert!(parse_vod_pic_url("https://img/x.jpg").is_none());
+        assert!(parse_vod_pic_url("").is_none());
+        assert!(parse_vod_pic_url("data:image/png;base64,AAAA").is_none());
+        assert!(parse_vod_pic_url("@Referer=http://x").is_none()); // empty url
+    }
+
+    #[test]
+    fn parse_vod_pic_douban_inline_headers() {
+        // The exact shape produced by douban.py PIC_SUFFIX, incl. %20 in UA.
+        let raw = "https://img3.doubanio.com/p.jpg@Referer=https://api.douban.com/@User-Agent=Mozilla/5.0%20(Windows%20NT%2010.0)";
+        let (url, headers) = parse_vod_pic_url(raw).expect("inline header");
+        assert_eq!(url, "https://img3.doubanio.com/p.jpg");
+        assert_eq!(headers.len(), 2);
+        assert!(headers.iter().any(|(k, v)| k == "Referer" && v == "https://api.douban.com/"));
+        assert!(headers.iter().any(|(k, v)| k == "User-Agent" && v == "Mozilla/5.0 (Windows NT 10.0)"));
+    }
+
+    #[test]
+    fn parse_vod_pic_cookie_and_header_aliases() {
+        let raw = "https://cdn/x.png@ua=okhttp%2F3.15@referer=https%3A%2F%2Fh%2F@Cookie=a%3D1%3Bb%3D2";
+        let (url, headers) = parse_vod_pic_url(raw).expect("aliases");
+        assert_eq!(url, "https://cdn/x.png");
+        assert!(headers.iter().any(|(k, v)| k == "User-Agent" && v == "okhttp/3.15"));
+        assert!(headers.iter().any(|(k, v)| k == "Referer" && v == "https://h/"));
+        assert!(headers.iter().any(|(k, v)| k == "Cookie" && v == "a=1;b=2"));
+    }
+
+    #[test]
+    fn parse_vod_pic_headers_json_and_explicit_override() {
+        // @Headers is URL-encoded JSON; an explicit @Referer must override it.
+        let raw = "https://cdn/x.webp@Headers=%7B%22Referer%22%3A%22https%3A%2F%2Fjson%2F%22%2C%22X-Token%22%3A%22abc%22%7D@Referer=https%3A%2F%2Fexplicit%2F";
+        let (url, headers) = parse_vod_pic_url(raw).expect("headers json");
+        assert_eq!(url, "https://cdn/x.webp");
+        let get = |k: &str| headers.iter().find(|(name, _)| name == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("Referer"), Some("https://explicit/")); // explicit wins, single entry
+        assert_eq!(get("X-Token"), Some("abc"));
+        assert_eq!(headers.iter().filter(|(name, _)| name == "Referer").count(), 1);
+    }
+
+    #[test]
+    fn percent_decode_handles_invalid_utf8_gracefully() {
+        assert_eq!(percent_decode("a%20b%2Fc"), "a b/c");
+        assert_eq!(percent_decode("plain"), "plain");
+        assert_eq!(percent_decode("%FF%FE"), "%FF%FE"); // invalid UTF-8 -> raw
     }
 
     #[test]

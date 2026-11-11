@@ -1,4 +1,5 @@
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useRef } from "react";
+import { useProxiedImage } from "../hooks/useProxiedImage";
 
 interface VodCardProps {
   title: string;
@@ -20,12 +21,12 @@ function sameCard(a: VodCardProps, b: VodCardProps): boolean {
 
 /** 统一的影片卡片：封面 + 角标 + 标题。 */
 const VodCard = memo(function VodCard({ title, pic, remarks, sub, onOpen }: VodCardProps) {
-  const [broken, setBroken] = useState(false);
-  const cover = pic?.trim();
+  // TVBox `vod_pic` may carry inline @header suffix; route through the local
+  // /image proxy so the Rust host can inject them (WebView2 <img> cannot).
+  const { src: cover, broken, onError: handleError } = useProxiedImage(pic);
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
   const handleOpen = useCallback(() => onOpenRef.current(), []);
-  const handleError = useCallback(() => setBroken(true), []);
 
   return (
     <button type="button" className="vod-card" onClick={handleOpen} title={title}>
@@ -40,7 +41,7 @@ const VodCard = memo(function VodCard({ title, pic, remarks, sub, onOpen }: VodC
             onError={handleError}
           />
         ) : (
-          <span className="vod-card__ph">无封面</span>
+          <span className="vod-card__ph">{broken || pic?.trim() ? "无封面" : ""}</span>
         )}
         {remarks ? <span className="vod-card__badge">{remarks}</span> : null}
       </div>

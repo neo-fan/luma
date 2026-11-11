@@ -10,7 +10,9 @@
  *   - `probe_home_site` / `probe_home_video` / `probe_py_framework` 只改 localStorage 的首页站偏好，
  *     结束恢复原值、删探针配置、恢复 active，不污染真实配置；
  *   - `probe_home_video` / `probe_py_framework` 依赖桩服务 fixture（strict_home / header_probe），
- *     `probe_py_framework` 另有豆瓣 frodo 外网正向观察项，偶发超时不影响本地断言。
+ *     `probe_py_framework` 另有豆瓣 frodo 外网正向观察项，偶发超时不影响本地断言；
+ *   - `probe_cover` 只 reload、不切配置，验证封面经 Rust `/image` 代理出真图（豆瓣图床外网，
+ *     偶发不可达时单跑复测；JPEG magic + 安全边界断言聚焦代理逻辑）。
  *
  * 跑之前先记住「原 active 配置 id」和「已有配置 id」，跑完恢复 active 并删掉
  * 本轮新建的配置——否则几轮探针下来 SQLite 里会堆一堆 stub 配置。
@@ -34,6 +36,7 @@ const PROBES = [
   { key: "home_site", script: "tools/probe_home_site.mjs", label: "首页站点记忆 + 默认站内容/自动顺延" },
   { key: "home_video", script: "tools/probe_home_video.mjs", label: "homeVideoContent 推荐流兜底（豆瓣出卡片）", needsStub: true },
   { key: "py_framework", script: "tools/probe_py_framework.mjs", label: "py 框架对齐 TVBox（类属性 header 不被 __init__ 覆盖）", needsStub: true },
+  { key: "cover", script: "tools/probe_cover.mjs", label: "封面图经 /image 代理出真图（内嵌 header）" },
   { key: "source_cache", script: "tools/probe_source_cache.mjs", label: "换源候选缓存（点换源不重检索）" },
   { key: "source_picker", script: "tools/probe_source_picker.mjs", label: "手动换源面板" },
   { key: "page_cache", script: "tools/probe_page_cache.mjs", label: "页面缓存与滚动恢复" },

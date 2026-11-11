@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Navigate } from "../App";
+import { useProxiedImage } from "../hooks/useProxiedImage";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import SourcePicker from "../components/SourcePicker";
@@ -45,6 +46,9 @@ export default function DetailPage({
     `${detailKey}:vod`,
     pageCache.peek<VodInfo[]>(detailKey)?.[0] ?? null,
   );
+  // TVBox `vod_pic` may carry inline @headers; route the hero image through
+  // the same local /image proxy the cards use.
+  const heroImage = useProxiedImage(vod?.vod_pic);
   const [lineIndex, setLineIndex] = usePageState(`${detailKey}:line`, 0);
   const [episodeQuery, setEpisodeQuery] = usePageState(`${detailKey}:query`, "");
   const [reverse, setReverse] = usePageState(`${detailKey}:reverse`, false);
@@ -340,10 +344,10 @@ export default function DetailPage({
 
       <div className="detail-hero">
         <div className="detail-poster">
-          {vod.vod_pic ? (
-            <img src={vod.vod_pic} alt={vod.vod_name} referrerPolicy="no-referrer" />
+          {heroImage.src && !heroImage.broken ? (
+            <img src={heroImage.src} alt={vod.vod_name} referrerPolicy="no-referrer" onError={heroImage.onError} />
           ) : (
-            <span className="vod-card__ph">无封面</span>
+            <span className="vod-card__ph">{vod.vod_pic ? "无封面" : ""}</span>
           )}
         </div>
         <div className="detail-info">
