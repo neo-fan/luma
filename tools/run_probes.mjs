@@ -25,6 +25,7 @@ const CDP = "http://127.0.0.1:9222/json/list";
 
 /** 探针清单：key → { script, label, needsStub } */
 const PROBES = [
+  { key: "rust_commands", script: "tools/probe_rust_commands.mjs", label: "Rust command 连通性（分层后不丢 command）" },
   { key: "search_ui", script: "tools/probe_search_ui.mjs", label: "真实配置 导入→搜索→详情→播放", needsStub: true },
   { key: "source_cache", script: "tools/probe_source_cache.mjs", label: "换源候选缓存（点换源不重检索）" },
   { key: "source_picker", script: "tools/probe_source_picker.mjs", label: "手动换源面板" },

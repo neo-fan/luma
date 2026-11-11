@@ -15,15 +15,23 @@ docs/verification-config.md
 .workbuddy/*-test/
 .workbuddy/user-config.b64
 
-# 构建产物 / 依赖 / 本地环境
-node_modules/
+# ---- 编译产物（三类，各自唯一位置，均可重建）----
+# ① 前端：Vite 产出，tauri.conf.json 的 frontendDist 指向 ../dist
 dist/
-release/
-__pycache__/
-*.pyc
-target/
+# ② Rust：Cargo 在每个 crate 根下产出 target/，含 debug/ release/ bundle/
+#    注意：根 target/ 不会出现（非 workspace），无需忽略。
 src-tauri/target/
 src-tauri/gen/
+#    qjs-runner 是独立 crate，Cargo 会在自己目录产出 target/（prepare_runtime.py
+#    依赖该路径取 qjs-runner.exe，故只是忽略、不挪位置）。将来新增独立 crate 同理。
+sidecars/qjs-runner/target/
+# ③ 交付包：tools/make_portable.py 组装的便携版目录与 zip（有意偏离标准 bundle/）
+release/
+
+# ---- 依赖 / 本地环境 / 缓存 ----
+node_modules/
+__pycache__/
+*.pyc
 
 # SQLite 运行时数据（便携版 data/ 或 dev 回退目录，绝不入库）
 /data/
@@ -34,7 +42,9 @@ luma.db
 luma.db-wal
 luma.db-shm
 
-# T-32 运行时产物（由 tools/prepare_runtime.py 重建，不入库）
+# 随包运行时产物（非编译生成：由 tools/prepare_runtime.py 下载/裁剪重建，不入库）
+# 整目录忽略，不保留任何 .gitkeep 占位；sidecars/py、sidecars/java、sidecars/qjs-runner
+# 是源码（入库），与下面三个二进制产物目录区分开。
 sidecars/jre/
 sidecars/python-embed/
 sidecars/mpv/

@@ -105,14 +105,8 @@ def resolve_jdk17() -> Path | None:
     return None
 
 
-def preserve_gitkeep(path: Path) -> None:
-    """jlink 要求输出目录不存在；重建后补回占位文件，避免无谓的 git 删除。"""
-    keep = path / ".gitkeep"
-    if not keep.exists():
-        try:
-            keep.write_bytes(b"")
-        except OSError:
-            pass
+# 运行时产物目录（sidecars/jre、python-embed、mpv）整目录在 .gitignore 里，
+# 不跟踪任何占位文件：这里不再补 .gitkeep，产物目录保持干净。
 
 
 # ---------------------------------------------------------------- step 1
@@ -155,7 +149,6 @@ def step_jre(force: bool = False) -> bool:
         shutil.rmtree(JRE_DIR)
     shutil.move(str(tmp_root / "jre"), str(JRE_DIR))
     shutil.rmtree(tmp_root, ignore_errors=True)
-    preserve_gitkeep(JRE_DIR)
 
     ver = run([str(JRE_DIR / "bin" / "java.exe"), "-version"])
     print("  [ok] " + (ver.stderr or ver.stdout).strip().splitlines()[0])
@@ -209,8 +202,7 @@ def step_python(force: bool = False) -> bool:
 
     if PY_DIR.exists():
         for entry in PY_DIR.iterdir():
-            if entry.name == ".gitkeep":
-                continue
+            # 整目录重建：连同历史遗留的 .gitkeep 一起清掉，产物目录不跟踪占位。
             if entry.is_dir():
                 shutil.rmtree(entry, ignore_errors=True)
             else:

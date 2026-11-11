@@ -134,6 +134,11 @@ try {
   // 从展开态开始：清掉上次探针写入的偏好。
   await cdp.eval(`localStorage.removeItem('luma:sidebar:v1')`);
   await cdp.send("Page.reload", { ignoreCache: true });
+  // reload 是异步的：必须在给页面重建时间后再等侧栏，否则紧随其后的
+  // Runtime.evaluate 可能命中旧文档/销毁中的执行上下文，读到错位快照
+  // （曾在全套串行里因此 15 项连锁 FAIL，单跑却 PASS）。与文件末尾
+  // 第 212 行 reload 后的 sleep 保持同一加固口径。
+  await sleep(1500);
 
   assert(
     (await cdp.eval(WAIT("return document.querySelector('.nav__item') ? 'OK' : null;", 30000))) === "OK",

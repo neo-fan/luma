@@ -1,26 +1,65 @@
 //! Tauri 应用入口。业务 command 按 7.1 注册；解析逻辑全部在 Python sidecar。
+//!
+//! ## 源码分层（2026-11-11 物理归档）
+//!
+//! 源码按技术层归入两个目录，用 `#[path]` 保持逻辑模块名不变
+//! （`crate::error`、`crate::config` 等），因此所有 `use crate::foo` 与
+//! `generate_handler!` 的 command 路径都无需改动，也不会引发 "command not found"。
+//!
+//! - `infra/`：底座能力（错误、环境、路径、进程、HTTP、bridge、DB、迁移、
+//!   存储、日志、窗口）——出边少、被大量依赖。`db` 与 `store` 有双向引用，
+//!   刻意同放一层，避免跨越层边界成环。
+//! - `domain/`：业务语义（配置、播放、解析、代理、直播、嗅探、mpv、剪贴板、
+//!   spider 派发）。`proxy` 与 `spider` 有双向引用，同样同放一层。
+//!
+//! 这是**物理分层**：依赖方向的硬约束（把 `crate::infra::*` 前缀化、抽
+//! `commands/` 模块）留作后续阶段，届时再逐个提升私有 helper 的可见性。
 
+// ---- infra/：底座能力 ----
+#[path = "infra/bridge.rs"]
 pub mod bridge;
-pub mod clipboard;
-pub mod config;
+#[path = "infra/db.rs"]
 pub mod db;
+#[path = "infra/env.rs"]
 pub mod env;
+#[path = "infra/error.rs"]
 pub mod error;
+#[path = "infra/http.rs"]
 pub mod http;
-pub mod live;
+#[path = "infra/logging.rs"]
 pub mod logging;
+#[path = "infra/migrate.rs"]
 pub mod migrate;
-pub mod mpv;
+#[path = "infra/netrules.rs"]
 pub mod netrules;
-pub mod parse;
+#[path = "infra/paths.rs"]
 pub mod paths;
-pub mod play;
+#[path = "infra/process.rs"]
 pub mod process;
-pub mod proxy;
-pub mod sniff;
-pub mod spider;
+#[path = "infra/store.rs"]
 pub mod store;
+#[path = "infra/window.rs"]
 pub mod window;
+
+// ---- domain/：业务语义 ----
+#[path = "domain/clipboard.rs"]
+pub mod clipboard;
+#[path = "domain/config.rs"]
+pub mod config;
+#[path = "domain/live.rs"]
+pub mod live;
+#[path = "domain/mpv.rs"]
+pub mod mpv;
+#[path = "domain/parse.rs"]
+pub mod parse;
+#[path = "domain/play.rs"]
+pub mod play;
+#[path = "domain/proxy.rs"]
+pub mod proxy;
+#[path = "domain/sniff.rs"]
+pub mod sniff;
+#[path = "domain/spider/mod.rs"]
+pub mod spider;
 
 pub use error::{code, AppError};
 
