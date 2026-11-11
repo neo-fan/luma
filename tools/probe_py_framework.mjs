@@ -140,12 +140,15 @@ const snapshot = (cdp) =>
     empty: !!document.querySelector('.empty'),
   })`);
 
-async function waitForCards(cdp, want = 1, timeoutMs = 25000) {
+// 切站后 React 会短暂保留上一份配置的旧卡片，只等"卡片数 >= 1"会拿到旧 DOM 误判
+// （RPC 层已证明 header 生效）。因此可选地等到目标文本真正渲染；等不到仍按失败返回，不放宽断言。
+async function waitForCards(cdp, want = 1, timeoutMs = 25000, expectText = "") {
   const deadline = Date.now() + timeoutMs;
   let last = { cards: [] };
   while (Date.now() < deadline) {
     last = JSON.parse((await snapshot(cdp)) || "{}");
-    if ((last.cards ?? []).length >= want) return last;
+    const names = (last.cards ?? []).join(" ");
+    if ((last.cards ?? []).length >= want && (!expectText || names.includes(expectText))) return last;
     await sleep(400);
   }
   return last;
@@ -232,7 +235,7 @@ try {
     s.dispatchEvent(new Event('change', { bubbles: true }));
     return s.value;
   })()`);
-  const ui = await waitForCards(cdp, 1, 25000);
+  const ui = await waitForCards(cdp, 1, 25000, "LumaProbeUA");
   const names = (ui.cards || []).join(" ");
   assert((ui.cards ?? []).length >= 1, "UI renders card via homeVideoContent fallback", JSON.stringify(ui));
   assert(names.includes("LumaProbeUA"), "UI card echoes custom class-attr header UA", names.slice(0, 160));

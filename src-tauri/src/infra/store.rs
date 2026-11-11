@@ -266,13 +266,13 @@ pub fn history_clear(state: tauri::State<'_, LibraryStore>) -> Result<(), AppErr
     state.clear_history()
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub fn history_remove(
     state: tauri::State<'_, LibraryStore>,
-    siteKey: String,
-    vodId: String,
+    site_key: String,
+    vod_id: String,
 ) -> Result<(), AppError> {
-    state.remove_history(&siteKey, &vodId)
+    state.remove_history(&site_key, &vod_id)
 }
 
 #[cfg(test)]
