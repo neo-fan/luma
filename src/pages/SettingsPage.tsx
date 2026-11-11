@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
+import {
+  cleanConfigName,
+  configNameFromUrl,
+  describeConfigSource,
+  formatImportedAt,
+} from "../lib/config";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
 import { APP_VERSION } from "../lib/version";
@@ -45,6 +51,10 @@ export default function SettingsPage({
 }: SettingsPageProps) {
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
+  /** 导入时使用的配置名；默认取 URL 域名，用户可以直接改。 */
+  const [name, setName] = useState("");
+  /** 用户手动改过名字后，就不再跟着 URL 自动变。 */
+  const [nameTouched, setNameTouched] = useState(false);
   const [importing, setImporting] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -53,6 +63,12 @@ export default function SettingsPage({
   const [loadingConfigs, setLoadingConfigs] = useState(false);
   const [listError, setListError] = useState("");
   const [reload, setReload] = useState(0);
+  /** 正在切换的配置 id；只用于禁用按钮与文案。 */
+  const [switching, setSwitching] = useState("");
+  /** 行内重命名状态。 */
+  const [editingId, setEditingId] = useState("");
+  const [editingName, setEditingName] = useState("");
+  const [renaming, setRenaming] = useState(false);
 
   const [proxy, setProxy] = useState<ProxyStatus | null>(null);
   const [proxyError, setProxyError] = useState("");
@@ -139,7 +155,12 @@ export default function SettingsPage({
     setError("");
     setNotice("");
     try {
-      const snapshot = await api.configImport({ kind, value });
+      const snapshot = await api.configImport({
+        kind,
+        value,
+        // 空名字交给后端：它会沿用域名 / 同 id 配置已有的名字。
+        name: cleanConfigName(name) || undefined,
+      });
       onImported(snapshot);
       // configImport 返回的是运行配置（导入原件在后端单独保留）；把主动
       // 屏蔽的数量报出来，用户才知道为什么站点比原始 json 里少。
@@ -162,6 +183,9 @@ export default function SettingsPage({
       } else {
         setText("");
       }
+      // 名字只对本次导入有效：清空后下次会重新按域名推导。
+      setName("");
+      setNameTouched(false);
       setReload((current) => current + 1);
     } catch (err) {
       setError(`导入失败：${errorMessage(err)}`);
@@ -186,6 +210,67 @@ export default function SettingsPage({
     } catch (err) {
       setError(`删除失败：${errorMessage(err)}`);
       log.error("config remove failed", { id: meta.id, message: errorMessage(err) });
+    }
+  };
+
+  /** 手动切换 active 配置：后端返回运行快照，前端整体换掉站点缓存。 */
+  const switchConfig = async (meta: ConfigMeta) => {
+    if (meta.id === activeConfigId) {
+      return;
+    }
+    setSwitching(meta.id);
+    setError("");
+    setNotice("");
+    try {
+      const snapshot = await api.configActivate(meta.id);
+      onImported(snapshot);
+      const usable = snapshot.sites.filter((site) => site.enabled).length;
+      setNotice(`已切换到「${snapshot.name}」，${usable} 个可用站点`);
+      log.info("config activated", {
+        id: snapshot.id,
+        name: snapshot.name,
+        sites: snapshot.sites.length,
+        enabled: usable,
+      });
+      setEditingId("");
+      setReload((current) => current + 1);
+    } catch (err) {
+      setError(`切换失败：${errorMessage(err)}`);
+      log.error("config activate failed", { id: meta.id, message: errorMessage(err) });
+    } finally {
+      setSwitching("");
+    }
+  };
+
+  const startRename = (meta: ConfigMeta) => {
+    setEditingId(meta.id);
+    setEditingName(meta.name);
+    setError("");
+    setNotice("");
+  };
+
+  const saveRename = async (meta: ConfigMeta) => {
+    const next = cleanConfigName(editingName);
+    if (!next) {
+      setError("配置名称不能为空");
+      return;
+    }
+    if (next === meta.name) {
+      setEditingId("");
+      return;
+    }
+    setRenaming(true);
+    try {
+      const updated = await api.configRename(meta.id, next);
+      setNotice(`已重命名为「${updated.name}」`);
+      log.info("config renamed", { id: updated.id, name: updated.name });
+      setEditingId("");
+      setReload((current) => current + 1);
+    } catch (err) {
+      setError(`重命名失败：${errorMessage(err)}`);
+      log.error("config rename failed", { id: meta.id, message: errorMessage(err) });
+    } finally {
+      setRenaming(false);
     }
   };
 
@@ -245,7 +330,14 @@ export default function SettingsPage({
             type="text"
             value={url}
             placeholder="https://example.com/api.json"
-            onChange={(event) => setUrl(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setUrl(next);
+              // 只在用户没手动改过名字时跟着 URL 走，避免覆盖自定义名。
+              if (!nameTouched) {
+                setName(configNameFromUrl(next));
+              }
+            }}
           />
           <button
             type="button"
@@ -256,6 +348,23 @@ export default function SettingsPage({
             {importing ? "导入中…" : "导入"}
           </button>
         </div>
+        <label className="config-name">
+          <span className="config-name__label">配置名称</span>
+          <input
+            className="input"
+            type="text"
+            value={name}
+            maxLength={48}
+            placeholder="留空则使用域名 / 配置内名称"
+            onChange={(event) => {
+              setName(event.target.value);
+              setNameTouched(true);
+            }}
+          />
+          <small className="config-name__hint">
+            URL 与粘贴文本共用；默认取域名，可改成任意名字，保存后可在下方切换
+          </small>
+        </label>
       </div>
 
       <div className="settings-block">
@@ -263,7 +372,7 @@ export default function SettingsPage({
         <textarea
           className="textarea"
           value={text}
-          placeholder="把 api.json 的内容粘贴到这里"
+          placeholder="把 api.json 的内容粘贴到这里（名称沿用上方「配置名称」）"
           onChange={(event) => setText(event.target.value)}
         />
         <button
@@ -281,24 +390,88 @@ export default function SettingsPage({
         {listError ? <ErrorBar message={`配置列表读取失败：${listError}`} /> : null}
         {loadingConfigs && configs.length === 0 ? <Spinner label="正在读取配置列表…" /> : null}
         {!loadingConfigs && configs.length === 0 ? (
-          <Empty title="暂无已导入的配置" description="在上方填写地址或粘贴文本导入一份配置。" />
+          <Empty
+            title="暂无已导入的配置"
+            description="在上方填写地址或粘贴文本导入；可以保存多份配置，随时切换。"
+          />
         ) : null}
         {configs.length > 0 ? (
           <ul className="config-list">
             {configs.map((meta) => (
               <li className="config-item" key={meta.id}>
                 <div className="config-item__main">
-                  <span className="config-item__name">
-                    {meta.name}
-                    {meta.id === activeConfigId ? <span className="config-item__tag">当前</span> : null}
-                  </span>
-                  <span className="config-item__meta">
-                    {meta.source.kind} · {meta.importedAt}
-                  </span>
+                  {editingId === meta.id ? (
+                    <div className="config-item__rename">
+                      <input
+                        className="input"
+                        type="text"
+                        value={editingName}
+                        maxLength={48}
+                        aria-label={`重命名 ${meta.name}`}
+                        autoFocus
+                        onChange={(event) => setEditingName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            void saveRename(meta);
+                          } else if (event.key === "Escape") {
+                            setEditingId("");
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--primary btn--sm"
+                        disabled={renaming}
+                        onClick={() => void saveRename(meta)}
+                      >
+                        {renaming ? "保存中…" : "保存"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => setEditingId("")}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="config-item__name">
+                        {meta.name}
+                        {meta.id === activeConfigId ? (
+                          <span className="config-item__tag">当前</span>
+                        ) : null}
+                      </span>
+                      <span className="config-item__meta">
+                        {describeConfigSource(meta.source)} · {formatImportedAt(meta.importedAt)}
+                      </span>
+                    </>
+                  )}
                 </div>
-                <button type="button" className="btn btn--danger" onClick={() => void removeConfig(meta)}>
-                  删除
-                </button>
+                {editingId === meta.id ? null : (
+                  <div className="config-item__actions">
+                    {meta.id === activeConfigId ? null : (
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        disabled={switching === meta.id}
+                        onClick={() => void switchConfig(meta)}
+                      >
+                        {switching === meta.id ? "切换中…" : "切换"}
+                      </button>
+                    )}
+                    <button type="button" className="btn btn--sm" onClick={() => startRename(meta)}>
+                      重命名
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--danger btn--sm"
+                      onClick={() => void removeConfig(meta)}
+                    >
+                      删除
+                    </button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

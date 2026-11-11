@@ -81,6 +81,10 @@ export const cacheKeys = {
 
 /** 7.1 的 command 面：一一对应，不额外暴露能力。 */
 export const api = {
+  /**
+   * 导入配置。`source.name` 是用户在导入框里填的名字（可空）：后端优先
+   * 用显式名字，其次沿用同名配置已有的名字，最后才取域名/配置内名称。
+   */
   configImport(source: ConfigSource): Promise<ConfigSnapshot> {
     return call("config_import", { source });
   },
@@ -92,6 +96,16 @@ export const api = {
   /** 后端当前启用的配置；启动时用它对齐前端的站点缓存。 */
   configActive(): Promise<ConfigSnapshot | null> {
     return call("config_active");
+  },
+
+  /** 手动切换配置；返回新 active 的运行快照，前端拿来替换站点缓存。 */
+  configActivate(id: string): Promise<ConfigSnapshot> {
+    return call("config_activate", { id });
+  },
+
+  /** 重命名已保存的配置（不切换 active）。 */
+  configRename(id: string, name: string): Promise<ConfigMeta> {
+    return call("config_rename", { id, name });
   },
 
   configRemove(id: string): Promise<void> {

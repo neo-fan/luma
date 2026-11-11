@@ -102,6 +102,8 @@ export interface PlayTarget {
 export interface ConfigSource {
   kind: "url" | "file" | "text";
   value: string;
+  /** 导入时用户填写的配置名；后端落库前会清空（名字存在快照里）。 */
+  name?: string;
 }
 
 /** spider 调用请求（7.1） */

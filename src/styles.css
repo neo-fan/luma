@@ -1304,6 +1304,46 @@ textarea {
   font-size: 12px;
 }
 
+/* 导入区的「配置名称」：左侧固定标签，右侧输入 + 提示，窄屏自动换行 */
+.config-name {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 10px;
+}
+
+.config-name__label {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.config-name__hint {
+  grid-column: 2;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.config-item__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* 行内重命名：输入框吃掉剩余宽度，按钮不换行 */
+.config-item__rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.config-item__rename .input {
+  min-width: 160px;
+  padding: 6px 10px;
+}
+
 .settings-line {
   margin: 0;
   color: var(--text-soft);

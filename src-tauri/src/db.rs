@@ -267,6 +267,19 @@ impl Db {
         Ok(())
     }
 
+    /// Rewrite one config row **without** touching the active marker.
+    ///
+    /// Used by rename: the row's `imported`/`runtime` JSON both carry the name,
+    /// so the caller re-serialises them, but renaming must never switch which
+    /// config is live.
+    pub fn update_config(&self, row: ConfigWrite<'_>) -> Result<(), AppError> {
+        self.with("update config", |conn| {
+            let tx = conn.transaction()?;
+            Self::upsert_config(&tx, row)?;
+            tx.commit()
+        })
+    }
+
     /// Write a config AND switch the active id in one transaction. Previously
     /// these were two separate files, so a crash between them could leave the
     /// active marker pointing at a config that was never there.

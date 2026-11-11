@@ -92,6 +92,8 @@ pub fn run() {
             config::config_import,
             config::config_list,
             config::config_active,
+            config::config_activate,
+            config::config_rename,
             config::config_remove,
             http::http_fetch,
             spider::spider_invoke,

@@ -18,7 +18,19 @@ const MAX_REPOS: usize = 20;
 pub struct ConfigSource {
     pub kind: String,
     pub value: String,
+    /// Config name typed by the user during import.
+    ///
+    /// It travels inside the source object (instead of a second command
+    /// argument) so every existing `config_import { source: {kind, value} }`
+    /// caller keeps working, and it is cleared before the row is persisted:
+    /// the name of record is `ConfigSnapshot::name`, not the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
+
+/// Upper bound for a user-visible config name. Long enough for a host plus a
+/// label, short enough that the settings list never wraps into three lines.
+const MAX_NAME_CHARS: usize = 48;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,6 +131,67 @@ fn runtime_of(entry: &StoredConfig) -> &ConfigSnapshot {
     entry.runtime.as_ref().unwrap_or(&entry.imported)
 }
 
+/// Trim + length-limit a user-supplied name, dropping control characters so a
+/// pasted newline cannot break the settings list layout.
+fn clean_name(value: &str) -> String {
+    let mut out: String = value.trim().chars().take(MAX_NAME_CHARS).collect();
+    out.retain(|ch| !ch.is_control());
+    out.trim().to_string()
+}
+
+/// Host of a URL without the `www.` prefix: the default config name.
+///
+/// Users usually keep several configs from different providers, and the
+/// domain is what tells them apart — the TVBox `name` field is often just
+/// "box" or missing entirely.
+///
+/// Parsed by hand on purpose: `url::Url` IDNA-encodes the host, so a config
+/// served from `www.例子.cc` would be labelled `xn--sss604efuw.cc`. The raw
+/// authority keeps whatever the user actually typed.
+fn host_of(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let rest = trimmed
+        .split_once("://")
+        .map(|(_, tail)| tail)
+        .unwrap_or(trimmed);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // Drop `user:pass@` and the port; keep an IPv6 literal in brackets.
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, tail)| tail);
+    let host = if let Some(inner) = host_port.strip_prefix('[') {
+        inner.split(']').next().map(|hex| format!("[{hex}]"))?
+    } else {
+        host_port.split(':').next().unwrap_or("").to_string()
+    };
+    let host = host.trim_start_matches("www.").trim_end_matches('.');
+    if host.is_empty()
+        || !host
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '.' | '_' | '[' | ']'))
+    {
+        // Spaces / punctuation mean the user is still typing a URL: let the
+        // normalizer's own name win instead of showing garbage.
+        return None;
+    }
+    Some(host.to_string())
+}
+
+/// Default name for a freshly imported config.
+///
+/// URL imports use the domain; file/text imports keep whatever the normalizer
+/// derived (config `name`, file stem, or "本地配置"), because there is no host
+/// to show.
+fn default_name(source: &ConfigSource, fallback: &str) -> String {
+    if source.kind == "url" {
+        if let Some(host) = host_of(&source.value) {
+            return clean_name(&host);
+        }
+    }
+    clean_name(fallback)
+}
+
 pub struct ConfigStore {
     entries: RwLock<Vec<StoredConfig>>,
     /// The config last imported by the user; fan-out only uses its sites.
@@ -140,7 +213,11 @@ impl ConfigStore {
                     .with_cause(err.to_string())
             })?;
             let source: ConfigSource = serde_json::from_str(&row.source_json)
-                .unwrap_or_else(|_| ConfigSource { kind: "text".into(), value: String::new() });
+                .unwrap_or_else(|_| ConfigSource {
+                    kind: "text".into(),
+                    value: String::new(),
+                    name: None,
+                });
             let runtime = if row.runtime_json.is_empty() {
                 None
             } else {
@@ -233,6 +310,88 @@ impl ConfigStore {
                 imported_at: entry.imported.imported_at.clone(),
             })
             .collect()
+    }
+
+    /// Current name of an imported config, used to keep a user-chosen name
+    /// when the same config is imported again (id is derived from the origin,
+    /// so a re-import overwrites the same row).
+    pub fn name_of(&self, id: &str) -> Option<String> {
+        self.entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .find(|entry| entry.imported.id == id)
+            .map(|entry| entry.imported.name.clone())
+    }
+
+    /// Make another stored config the active one and return its runtime
+    /// snapshot so the frontend can swap its site cache in the same breath.
+    pub fn activate(&self, id: &str) -> Result<ConfigSnapshot, AppError> {
+        let snapshot = {
+            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let entry = guard
+                .iter()
+                .find(|entry| entry.imported.id == id)
+                .ok_or_else(|| {
+                    AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found"))
+                })?;
+            runtime_of(entry).clone()
+        };
+        // Persist first: if SQLite rejects the write the in-memory active id
+        // must keep pointing at the config that is actually stored.
+        self.db.set_active_config_id(Some(id))?;
+        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.to_string());
+        crate::netrules::replace(&snapshot.headers);
+        Ok(snapshot)
+    }
+
+    /// Rename a stored config. The name lives in both snapshots (`imported` is
+    /// what the list/UI reads, `runtime` is what the frontend receives), so
+    /// both are rewritten and the row is persisted as one row (no active id
+    /// change — renaming must not switch what is playing).
+    pub fn rename(&self, id: &str, name: &str) -> Result<ConfigMeta, AppError> {
+        let name = clean_name(name);
+        if name.is_empty() {
+            return Err(AppError::new(code::INVALID_ARGUMENT, "config name is empty"));
+        }
+        let (mut imported, mut runtime, source) = {
+            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let entry = guard
+                .iter()
+                .find(|entry| entry.imported.id == id)
+                .ok_or_else(|| {
+                    AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found"))
+                })?;
+            (entry.imported.clone(), runtime_of(entry).clone(), entry.source.clone())
+        };
+        imported.name = name.clone();
+        runtime.name = name.clone();
+        let imported_json = serde_json::to_string(&imported)?;
+        let runtime_json = serde_json::to_string(&runtime)?;
+        let source_json = serde_json::to_string(&source)?;
+        self.db.update_config(ConfigWrite {
+            id: &imported.id,
+            name: &name,
+            imported_at: &imported.imported_at,
+            imported_json: &imported_json,
+            runtime_json: &runtime_json,
+            source_json: &source_json,
+        })?;
+        {
+            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(entry) = guard.iter_mut().find(|entry| entry.imported.id == id) {
+                entry.imported.name = name.clone();
+                if let Some(snapshot) = entry.runtime.as_mut() {
+                    snapshot.name = name.clone();
+                }
+            }
+        }
+        Ok(ConfigMeta {
+            id: imported.id,
+            name,
+            source,
+            imported_at: imported.imported_at,
+        })
     }
 
     pub fn remove(&self, id: &str) -> Result<(), AppError> {
@@ -491,13 +650,55 @@ pub async fn config_import(
     // `insert` owns the imported snapshot and returns its runtime derivation.
     // Never hand the imported one back to the UI: its sites still contain the
     // blocked jar/JS sources and would silently repopulate the frontend cache.
-    let imported = import_from_source(source.clone()).await?;
-    state.insert(imported, source)
+    let requested = source
+        .name
+        .as_deref()
+        .map(clean_name)
+        .filter(|name| !name.is_empty());
+    let mut imported = import_from_source(ConfigSource {
+        name: None,
+        ..source.clone()
+    })
+    .await?;
+    // Priority: what the user typed → the name this config already has (a
+    // re-import must not throw away a custom name) → the domain / config name.
+    imported.name = match requested {
+        Some(name) => name,
+        None => state
+            .name_of(&imported.id)
+            .unwrap_or_else(|| default_name(&source, &imported.name)),
+    };
+    state.insert(
+        imported,
+        ConfigSource {
+            name: None,
+            ..source
+        },
+    )
 }
 
 #[tauri::command]
 pub fn config_list(state: tauri::State<'_, ConfigStore>) -> Result<Vec<ConfigMeta>, AppError> {
     Ok(state.list())
+}
+
+/// Switch the active config without re-importing it. Returns the runtime
+/// snapshot (blocked sites already disabled) so the UI can replace its cache.
+#[tauri::command]
+pub fn config_activate(
+    state: tauri::State<'_, ConfigStore>,
+    id: String,
+) -> Result<ConfigSnapshot, AppError> {
+    state.activate(&id)
+}
+
+#[tauri::command]
+pub fn config_rename(
+    state: tauri::State<'_, ConfigStore>,
+    id: String,
+    name: String,
+) -> Result<ConfigMeta, AppError> {
+    state.rename(&id, &name)
 }
 
 /// The active snapshot as the Rust side sees it. The frontend calls this on
@@ -562,6 +763,7 @@ mod tests {
         let source = ConfigSource {
             kind: "text".into(),
             value: String::new(),
+            name: None,
         };
         store.insert(snapshot("old", &["stub_a"]), source.clone()).unwrap();
         assert_eq!(store.all_sites().len(), 1);
@@ -585,6 +787,7 @@ mod tests {
         let source = ConfigSource {
             kind: "text".into(),
             value: String::new(),
+            name: None,
         };
         let mut stale = snapshot("old", &["stub_a"]);
         stale.imported_at = "2026-01-01T00:00:00Z".into();
@@ -704,6 +907,7 @@ mod tests {
         let source = ConfigSource {
             kind: "text".into(),
             value: String::new(),
+            name: None,
         };
         let mut stale = snapshot("old", &["stub_a"]);
         stale.imported_at = "2026-01-01T00:00:00Z".into();
@@ -723,5 +927,106 @@ mod tests {
         assert_eq!(after.active_snapshot().unwrap().id, "old");
         assert_eq!(after.all_sites().len(), 1);
         assert!(after.remove("missing").is_err(), "unknown id is rejected");
+    }
+
+    #[test]
+    fn default_name_uses_the_domain_for_urls() {
+        let url = |value: &str| ConfigSource {
+            kind: "url".into(),
+            value: value.into(),
+            name: None,
+        };
+        // `www.` and the path are noise; the registrable host is the label.
+        assert_eq!(
+            default_name(&url("https://www.例子.cc/tv/box.json"), "box"),
+            "例子.cc"
+        );
+        assert_eq!(default_name(&url("http://example.com:8080/api"), "box"), "example.com");
+        // No host to show: keep what the normalizer derived.
+        assert_eq!(default_name(&url("not a url"), "box"), "box");
+        assert_eq!(
+            default_name(
+                &ConfigSource {
+                    kind: "text".into(),
+                    value: "{}".into(),
+                    name: None,
+                },
+                "本地配置"
+            ),
+            "本地配置"
+        );
+    }
+
+    #[test]
+    fn clean_name_trims_and_caps_length() {
+        assert_eq!(clean_name("  我的配置 \n"), "我的配置");
+        assert_eq!(clean_name("   "), "");
+        assert_eq!(clean_name(&"x".repeat(80)).chars().count(), MAX_NAME_CHARS);
+    }
+
+    #[test]
+    fn activate_switches_the_live_config_and_persists_it() {
+        let (_guard, dir) = isolate_data_dir();
+        let store = store_at(&dir);
+        let source = ConfigSource {
+            kind: "text".into(),
+            value: String::new(),
+            name: None,
+        };
+        let mut first = snapshot("aaa", &["site_a"]);
+        first.imported_at = "2026-01-01T00:00:00Z".into();
+        let mut second = snapshot("bbb", &["site_b", "site_c"]);
+        second.imported_at = "2026-02-01T00:00:00Z".into();
+        store.insert(first, source.clone()).unwrap();
+        // The newest import becomes active, so switching back is a real change.
+        store.insert(second, source).unwrap();
+        assert_eq!(store.active_snapshot().unwrap().id, "bbb");
+
+        let snapshot = store.activate("aaa").unwrap();
+        assert_eq!(snapshot.id, "aaa");
+        assert_eq!(snapshot.sites.len(), 1);
+        assert!(store.activate("missing").is_err(), "unknown id is rejected");
+
+        // Active id is the DB's business: a restart must keep the choice.
+        let restarted = store_at(&dir);
+        assert_eq!(restarted.active_snapshot().unwrap().id, "aaa");
+        assert_eq!(restarted.all_sites().len(), 1);
+    }
+
+    #[test]
+    fn rename_touches_both_snapshots_without_switching_active() {
+        let (_guard, dir) = isolate_data_dir();
+        let store = store_at(&dir);
+        let source = ConfigSource {
+            kind: "url".into(),
+            value: "https://example.com/box.json".into(),
+            name: None,
+        };
+        let mut first = snapshot("aaa", &["site_a"]);
+        first.imported_at = "2026-01-01T00:00:00Z".into();
+        let mut second = snapshot("bbb", &["site_b"]);
+        second.imported_at = "2026-02-01T00:00:00Z".into();
+        store.insert(first, source.clone()).unwrap();
+        store.insert(second, source).unwrap();
+
+        let meta = store.rename("aaa", "  家里的配置  ").unwrap();
+        assert_eq!(meta.name, "家里的配置");
+        assert_eq!(store.name_of("aaa").as_deref(), Some("家里的配置"));
+        // Renaming the non-active config must not steal the active marker.
+        assert_eq!(store.active_snapshot().unwrap().id, "bbb");
+        assert!(store.rename("aaa", "   ").is_err(), "empty name is rejected");
+
+        let restarted = store_at(&dir);
+        assert_eq!(restarted.name_of("aaa").as_deref(), Some("家里的配置"));
+        assert_eq!(restarted.active_snapshot().unwrap().id, "bbb");
+        // Both snapshots were rewritten, so the runtime view carries the name.
+        let entry = restarted
+            .entries
+            .read()
+            .unwrap()
+            .iter()
+            .find(|entry| entry.imported.id == "aaa")
+            .map(|entry| entry.runtime.as_ref().unwrap().name.clone());
+        assert_eq!(entry.as_deref(), Some("家里的配置"));
     }
 }
