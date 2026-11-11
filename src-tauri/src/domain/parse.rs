@@ -260,6 +260,82 @@ async fn web_candidate(
     })
 }
 
+/// Run a set of already-selected parse rules against `request.url`. JSON rules
+/// (type 1) hit the API; webview rules (type 0) sniff. This is the shared core
+/// used by both the flag-based `parse_resolve` pool and the `scheme://` link
+/// resolver. Web candidates are capped because each opens a hidden WebView2.
+async fn run_pool(
+    app: &tauri::AppHandle,
+    json_rules: Vec<&Rule>,
+    web_rules: Vec<&Rule>,
+    base_headers: HashMap<String, String>,
+    play: String,
+) -> Result<ParseResolved, AppError> {
+    if json_rules.is_empty() && web_rules.is_empty() {
+        return Err(AppError::new(
+            code::PLAY_RESOLVE_FAIL,
+            "no usable parser candidates for this request",
+        ));
+    }
+    let web_rules: Vec<&Rule> = web_rules.into_iter().take(MAX_WEB_CANDIDATES).collect();
+
+    let (tx, mut rx) = mpsc::channel::<(String, Result<ParseResolved, String>)>(16);
+    let mut tasks = Vec::new();
+    for rule in json_rules {
+        let tx = tx.clone();
+        let rule = rule.clone();
+        let play = play.clone();
+        let headers = base_headers.clone();
+        tasks.push(tokio::spawn(async move {
+            let name = rule.name.clone();
+            let outcome = json_candidate(rule, play, headers).await;
+            let _ = tx.send((name, outcome)).await;
+        }));
+    }
+    for rule in web_rules {
+        let tx = tx.clone();
+        let rule = rule.clone();
+        let play = play.clone();
+        let app = app.clone();
+        tasks.push(tokio::spawn(async move {
+            let name = rule.name.clone();
+            let outcome = web_candidate(app, rule, play).await;
+            let _ = tx.send((name, outcome)).await;
+        }));
+    }
+    drop(tx);
+
+    let mut tried = Vec::new();
+    let deadline = tokio::time::Instant::now() + TOTAL_BUDGET;
+    let winner = loop {
+        match tokio::time::timeout_at(deadline, rx.recv()).await {
+            Ok(Some((name, Ok(hit)))) => break Some((name, hit)),
+            Ok(Some((name, Err(reason)))) => tried.push(format!("{name}: {reason}")),
+            Ok(None) => break None,
+            Err(_) => {
+                tried.push(format!("budget: exceeded {}s", TOTAL_BUDGET.as_secs()));
+                break None;
+            }
+        }
+    };
+
+    for task in tasks {
+        task.abort();
+    }
+
+    match winner {
+        Some((_, mut hit)) => {
+            hit.tried = tried;
+            Ok(hit)
+        }
+        None => Err(AppError::new(
+            code::PLAY_RESOLVE_FAIL,
+            format!("all {} parsers failed", tried.len()),
+        )
+        .with_details(serde_json::json!({ "tried": tried }))),
+    }
+}
+
 /// Run the pool. Split from the command so it can be exercised without a
 /// window for the JSON-only paths.
 async fn resolve_with(
@@ -276,8 +352,14 @@ async fn resolve_with(
     }
 
     let flag = request.flag.as_str();
-    let json_rules = narrow(rules.iter().filter(|rule| rule.kind == 1).collect(), flag);
-    let web_rules = narrow(rules.iter().filter(|rule| rule.kind == 0).collect(), flag);
+    let json_rules = narrow(
+        rules.iter().filter(|rule| rule.kind == 1).collect(),
+        flag,
+    );
+    let web_rules = narrow(
+        rules.iter().filter(|rule| rule.kind == 0).collect(),
+        flag,
+    );
     let has_super = rules.iter().any(|rule| rule.kind == 4);
 
     // Type 4 is "race everything"; when the pool only has one flavour we still
@@ -302,73 +384,61 @@ async fn resolve_with(
     }
 
     let base_headers = request.headers.clone().unwrap_or_default();
-    runs_web.truncate(MAX_WEB_CANDIDATES);
-    let play = request.url.clone();
-    let (tx, mut rx) = mpsc::channel::<(String, Result<ParseResolved, String>)>(16);
+    run_pool(
+        app,
+        runs_json,
+        runs_web,
+        base_headers,
+        request.url.clone(),
+    )
+    .await
+}
 
-    let mut tasks = Vec::new();
-    for rule in runs_json {
-        let tx = tx.clone();
-        let rule = rule.clone();
-        let play = play.clone();
-        let headers = base_headers.clone();
-        tasks.push(tokio::spawn(async move {
-            let name = rule.name.clone();
-            let outcome = json_candidate(rule, play, headers).await;
-            let _ = tx.send((name, outcome)).await;
-        }));
-    }
-    for rule in runs_web {
-        let tx = tx.clone();
-        let rule = rule.clone();
-        let play = play.clone();
-        let app = app.clone();
-        tasks.push(tokio::spawn(async move {
-            let name = rule.name.clone();
-            let outcome = web_candidate(app, rule, play).await;
-            let _ = tx.send((name, outcome)).await;
-        }));
-    }
-    drop(tx);
+/// Resolve a `scheme://` style parse link (e.g. `huangdou2://<page>`).
+///
+/// In TVBox a play URL whose scheme is neither `http` nor `https` names a parser
+/// from `parses[]`: the scheme *is* the parser `name`, and the text after
+/// `scheme://` is the target page to hand to that parser. Some configs ship the
+/// parser under a different name, so when no parser matches the scheme we fall
+/// back to the whole `parses[]` pool — any universal parser the config carries
+/// can still resolve the link.
+pub async fn resolve_scheme_link(
+    app: &tauri::AppHandle,
+    parses: &[Value],
+    scheme: &str,
+    target: &str,
+    headers: HashMap<String, String>,
+) -> Result<ParseResolved, AppError> {
+    let rules = parse_rules(parses);
+    let matched: Vec<&Rule> = rules
+        .iter()
+        .filter(|rule| rule.name.eq_ignore_ascii_case(scheme))
+        .collect();
 
-    let mut tried = Vec::new();
-    let deadline = tokio::time::Instant::now() + TOTAL_BUDGET;
-    let winner = loop {
-        match tokio::time::timeout_at(deadline, rx.recv()).await {
-            Ok(Some((name, Ok(hit)))) => break Some((name, hit)),
-            Ok(Some((name, Err(reason)))) => tried.push(format!("{name}: {reason}")),
-            Ok(None) => break None,
-            Err(_) => {
-                tried.push(format!(
-                    "budget: exceeded {}s",
-                    TOTAL_BUDGET.as_secs()
-                ));
-                break None;
-            }
-        }
+    let request = ParseRequest {
+        site_key: String::new(),
+        url: target.to_string(),
+        flag: String::new(),
+        headers: Some(headers.clone()),
     };
 
-    for task in tasks {
-        task.abort();
+    if !matched.is_empty() {
+        // Mirror resolve_with's one-flavour preference when only a single kind
+        // is present for the named parser.
+        let json_rules: Vec<&Rule> = matched.iter().copied().filter(|r| r.kind == 1).collect();
+        let web_rules: Vec<&Rule> = matched.iter().copied().filter(|r| r.kind == 0).collect();
+        let (runs_json, runs_web) = if json_rules.is_empty() {
+            (Vec::new(), web_rules)
+        } else if web_rules.is_empty() {
+            (json_rules, Vec::new())
+        } else {
+            (json_rules, Vec::new())
+        };
+        return run_pool(app, runs_json, runs_web, headers, request.url.clone()).await;
     }
 
-    match winner {
-        Some((_, mut hit)) => {
-            hit.tried = tried;
-            tracing::info!(
-                site = %request.site_key,
-                parser = %hit.parser,
-                kind = %hit.kind,
-                "parse pool resolved"
-            );
-            Ok(hit)
-        }
-        None => Err(AppError::new(
-            code::PLAY_RESOLVE_FAIL,
-            format!("all {} parsers failed", tried.len()),
-        )
-        .with_details(serde_json::json!({ "tried": tried }))),
-    }
+    // No parser named after the scheme: let the full pool have a go.
+    resolve_with(app, parses, &request).await
 }
 
 #[tauri::command]
@@ -378,7 +448,18 @@ pub async fn parse_resolve(
     request: ParseRequest,
 ) -> Result<ParseResolved, AppError> {
     let parses = config.active_parses();
-    resolve_with(&app, &parses, &request).await
+    match resolve_with(&app, &parses, &request).await {
+        Ok(hit) => {
+            tracing::info!(
+                site = %request.site_key,
+                parser = %hit.parser,
+                kind = %hit.kind,
+                "parse pool resolved"
+            );
+            Ok(hit)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 #[cfg(test)]

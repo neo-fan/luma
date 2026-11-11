@@ -3,6 +3,7 @@
 //! The webview never talks to a third-party host directly: every playable
 //! URL is wrapped into the local proxy so anti-leech headers survive.
 
+use crate::config::ConfigStore;
 use crate::error::{code, AppError};
 use crate::proxy::{self, ProxyState};
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,25 @@ fn kind_of(url: &str) -> String {
         .unwrap_or_else(|_| "page".to_string())
 }
 
+/// Split a TVBox `scheme://target` parse link.
+///
+/// Returns `None` for plain `http`/`https` URLs (resolved directly through the
+/// proxy) and for anything without a `://`. For a custom scheme (e.g.
+/// `huangdou2://https://...`) it returns `(scheme, target)` so the caller can
+/// look the scheme up as a parser name in `parses[]`. We split on the first
+/// `://` deliberately instead of using `Url::parse`: `Url::parse` treats
+/// `huangdou2://https://...` as a relative reference and rewrites the scheme to
+/// `https`, which would split off the wrong target.
+fn split_scheme_link(url: &str) -> Option<(String, String)> {
+    let idx = url.find("://")?;
+    let scheme = url[..idx].to_string();
+    if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    let target = url[idx + 3..].to_string();
+    Some((scheme, target))
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayRequest {
@@ -86,16 +106,73 @@ pub struct PlayResolved {
 pub async fn resolve_play(
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<ProxyState>>,
+    configs: tauri::State<'_, ConfigStore>,
     request: PlayRequest,
 ) -> Result<PlayResolved, AppError> {
-    let parsed = Url::parse(&request.url)
-        .map_err(|err| AppError::new(code::INVALID_ARGUMENT, "play url is invalid").with_cause(err.to_string()))?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(AppError::new(
-            code::INVALID_ARGUMENT,
-            format!("play url scheme {} is not supported", parsed.scheme()),
-        ));
+    // Explicit headers the spider supplied (and any the source parser returns
+    // later) flow through here so config host rules can fill the rest.
+    let mut explicit: Vec<(String, String)> = Vec::new();
+    if let Some(ua) = request.ua.clone() {
+        explicit.push(("User-Agent".to_string(), ua));
     }
+    if let Some(referer) = request.referer.clone() {
+        explicit.push(("Referer".to_string(), referer));
+    }
+    if let Some(cookie) = request.cookie.clone() {
+        explicit.push(("Cookie".to_string(), cookie));
+    }
+
+    // A play URL whose scheme is not http/https is a TVBox parse link: the
+    // scheme names a parser in `parses[]` and the remainder is the target page
+    // (e.g. `huangdou2://<real page>`). Resolve it through the parse pool first.
+    let mut effective_url = request.url.clone();
+    if let Some((scheme, target)) = split_scheme_link(&request.url) {
+        if target.is_empty() {
+            return Err(AppError::new(
+                code::INVALID_ARGUMENT,
+                format!("play url scheme {} has no target after '://'", scheme),
+            ));
+        }
+        let base: HashMap<String, String> = explicit.iter().cloned().collect();
+        match crate::parse::resolve_scheme_link(&app, &configs.active_parses(), &scheme, &target, base).await
+        {
+            Ok(hit) => {
+                effective_url = hit.url.clone();
+                // Parser-provided headers (UA/Referer/Cookie for the stream)
+                // take precedence; dedupe case-insensitively keeping the last.
+                for (k, v) in &hit.headers {
+                    if let Some(slot) = explicit
+                        .iter_mut()
+                        .find(|(key, _)| key.eq_ignore_ascii_case(k))
+                    {
+                        slot.1 = v.clone();
+                    } else {
+                        explicit.push((k.clone(), v.clone()));
+                    }
+                }
+                tracing::info!(scheme = %scheme, parser = %hit.parser, "resolved scheme parse link");
+            }
+            Err(err) => {
+                let names = configs
+                    .active_parses()
+                    .iter()
+                    .filter_map(|p| p.get("name").and_then(|n| n.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(AppError::new(
+                    code::RUNTIME_UNAVAILABLE,
+                    format!(
+                        "play url scheme `{}` could not be resolved; available parsers: [{}]",
+                        scheme, names
+                    ),
+                )
+                .with_cause(err.message));
+            }
+        }
+    }
+
+    let parsed = Url::parse(&effective_url)
+        .map_err(|err| AppError::new(code::INVALID_ARGUMENT, "play url is invalid").with_cause(err.to_string()))?;
 
     // Some sources hand back TVBox's own local proxy URL already
     // (`http://127.0.0.1:<port>/proxy?do=py&...`). That endpoint is playable by
@@ -104,10 +181,10 @@ pub async fn resolve_play(
         && parsed.path() == "/proxy"
     {
         return Ok(PlayResolved {
-            url: request.url.clone(),
-            proxy_url: request.url.clone(),
-            kind: kind_of(&request.url),
-            headers: Vec::new(),
+            url: effective_url.clone(),
+            proxy_url: effective_url.clone(),
+            kind: kind_of(&effective_url),
+            headers: explicit,
         });
     }
 
@@ -119,15 +196,14 @@ pub async fn resolve_play(
     // Levels 1-3 already ran inside the spider (the URL we get here is either a
     // direct stream or a play page). A `page` URL means all of them failed, so
     // this is where level 4 kicks in.
-    let mut effective_url = request.url.clone();
     let mut kind = classify(&parsed).to_string();
     if kind == "page" {
-        let cached = cached_sniff(&request.url);
+        let cached = cached_sniff(&effective_url);
         let media = match cached {
             Some(media) => Some(media),
-            None => match crate::sniff::sniff(&app, &request.url, SNIFF_TIMEOUT).await {
+            None => match crate::sniff::sniff(&app, &effective_url, SNIFF_TIMEOUT).await {
                 Ok(media) => {
-                    remember_sniff(&request.url, &media);
+                    remember_sniff(&effective_url, &media);
                     Some(media)
                 }
                 Err(err) => {
@@ -146,19 +222,10 @@ pub async fn resolve_play(
         }
     }
 
-    // Only what the spider actually supplied counts as explicit. Defaults are
-    // applied after the config table, otherwise `okhttp/3.15` would overwrite
-    // the per-host UA a config ships for anti-leech CDNs.
-    let mut explicit: Vec<(String, String)> = Vec::new();
-    if let Some(ua) = request.ua.clone() {
-        explicit.push(("User-Agent".to_string(), ua));
-    }
-    if let Some(referer) = request.referer.clone() {
-        explicit.push(("Referer".to_string(), referer));
-    }
-    if let Some(cookie) = request.cookie.clone() {
-        explicit.push(("Cookie".to_string(), cookie));
-    }
+    // `explicit` already carries the spider-supplied headers (and any the source
+    // parser returned). Config host rules fill in what was not supplied: a few
+    // CDNs only accept their own UA/Referer (`media.example.com`, `*.example.com`),
+    // and without them a perfectly valid m3u8 still answers 403.
     // Config host rules fill in what the spider did not: a few CDNs only accept
     // their own UA/Referer (`media.example.com`, `*.example.com`), and without
     // them a perfectly valid m3u8 still answers 403.
@@ -245,5 +312,28 @@ mod tests {
         assert_eq!(classify(&file), "file");
         let page = Url::parse("http://127.0.0.1:8787/play?url=abc").unwrap();
         assert_eq!(classify(&page), "page");
+    }
+
+    #[test]
+    fn split_scheme_link_handles_parse_links() {
+        assert_eq!(
+            split_scheme_link("huangdou2://https://example.com/page"),
+            Some(("huangdou2".to_string(), "https://example.com/page".to_string()))
+        );
+        assert_eq!(
+            split_scheme_link("huangdou2://page-only"),
+            Some(("huangdou2".to_string(), "page-only".to_string()))
+        );
+        // Empty target is still split out; the caller rejects it explicitly.
+        assert_eq!(
+            split_scheme_link("huangdou2://"),
+            Some(("huangdou2".to_string(), "".to_string()))
+        );
+        // Plain http/https are resolved directly, not as parse links.
+        assert_eq!(split_scheme_link("http://example.com/x"), None);
+        assert_eq!(split_scheme_link("https://example.com/x"), None);
+        assert_eq!(split_scheme_link("HTTP://example.com/x"), None);
+        // No scheme separator at all.
+        assert_eq!(split_scheme_link("just-a-relative-path"), None);
     }
 }

@@ -23,7 +23,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
 use tokio::sync::{oneshot, Mutex};
 
-type Pending = std::sync::Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, AppError>>>>>;
+type Pending = std::sync::Arc<StdMutex<HashMap<u64, oneshot::Sender<Result<Value, AppError>>>>>;
 
 /// A long-lived stdio sidecar connection. `pub(crate)` so the P2 JVM runner
 /// can reuse the exact same frame routing / crash detection / Job Object
@@ -46,7 +46,7 @@ impl Conn {
     fn fail_all(&self, message: &str) {
         let pending = self.pending.clone();
         // Short critical section; no await needed while draining.
-        let mut guard = pending.blocking_lock();
+        let mut guard = pending.lock().unwrap();
         for (_, sender) in guard.drain() {
             let _ = sender.send(Err(AppError::new(code::SPIDER_CRASH, message)));
         }
@@ -100,7 +100,7 @@ pub(crate) fn spawn_stdio(
 
     let conn = std::sync::Arc::new(Conn {
         stdin: Mutex::new(stdin),
-        pending: std::sync::Arc::new(Mutex::new(HashMap::new())),
+        pending: std::sync::Arc::new(StdMutex::new(HashMap::new())),
         next_id: AtomicU64::new(0),
         child: StdMutex::new(Some(guarded)),
         alive: AtomicBool::new(true),
@@ -175,7 +175,7 @@ async fn route_frame(conn: &std::sync::Arc<Conn>, frame: Value) {
         return;
     };
     let sender = {
-        let mut guard = conn.pending.lock().await;
+        let mut guard = conn.pending.lock().unwrap();
         guard.remove(&id)
     };
     let Some(sender) = sender else {
@@ -255,7 +255,7 @@ pub(crate) async fn call_on(
     let id = conn.next_id();
     let (tx, rx) = oneshot::channel();
     {
-        let mut pending = conn.pending.lock().await;
+        let mut pending = conn.pending.lock().unwrap();
         pending.insert(id, tx);
     }
 
@@ -270,14 +270,14 @@ pub(crate) async fn call_on(
         let mut stdin = conn.stdin.lock().await;
         if let Err(err) = stdin.write_all(line.as_bytes()).await {
             drop(stdin);
-            conn.pending.lock().await.remove(&id);
+            conn.pending.lock().unwrap().remove(&id);
             conn.alive.store(false, Ordering::SeqCst);
             return Err(AppError::new(code::SPIDER_CRASH, "write to sidecar failed")
                 .with_cause(err.to_string()));
         }
         if let Err(err) = stdin.flush().await {
             drop(stdin);
-            conn.pending.lock().await.remove(&id);
+            conn.pending.lock().unwrap().remove(&id);
             return Err(AppError::new(code::SPIDER_CRASH, "flush sidecar failed")
                 .with_cause(err.to_string()));
         }
@@ -288,7 +288,7 @@ pub(crate) async fn call_on(
         Ok(Ok(Err(err))) => Err(err),
         Ok(Err(_)) => Err(AppError::new(code::SPIDER_CRASH, "sidecar channel closed")),
         Err(_) => {
-            conn.pending.lock().await.remove(&id);
+            conn.pending.lock().unwrap().remove(&id);
             Err(AppError::new(
                 code::SITE_TIMEOUT,
                 format!("{} {method} exceeded {}ms", conn.label, timeout.as_millis()),
