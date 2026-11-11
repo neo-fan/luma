@@ -1033,6 +1033,19 @@ textarea {
   font-size: 12px;
 }
 
+/* 缓存命中标记：与检索统计同排，强调「无需等待 20s」 */
+.source-cache-badge {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .source-picker__meta .filter-toggle input {
   margin: 0;
 }

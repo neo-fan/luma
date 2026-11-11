@@ -9,6 +9,7 @@ import Spinner from "../components/Spinner";
 import { formatDuration, parsePlayLines } from "../lib/format";
 import type { PlayLine } from "../lib/format";
 import { countEpisodes, pickMatchingEpisode } from "../lib/sources";
+import { prefetchSources } from "../lib/sourceCache";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
 import type { HistoryItem, PlayResolved, ResultPage, Site } from "../types/tvbox";
@@ -80,6 +81,22 @@ export default function PlayerPage({
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelLine, setPanelLine] = useState(0);
   const [showSources, setShowSources] = useState(false);
+
+  /**
+   * 与详情页共用的换源候选缓存：播放页多是从详情跳转过来，缓存已就绪；
+   * 从历史/收藏直接播放时这里补一次精确片名的后台检索，点「⇄ 换源」不等待。
+   */
+  useEffect(() => {
+    if (siteKey === "live" || !vodName.trim()) {
+      return;
+    }
+    // 首帧解析优先：播放起来后再补换源候选，避免与 resolve_play 争用 sidecar。
+    const timer = window.setTimeout(() => prefetchSources(vodName, sites), 5000);
+    return () => window.clearTimeout(timer);
+    // sites 由 App 以稳定引用传入；length 覆盖「配置还在异步加载」时从历史
+    // / 收藏直接进播放页的情况，站点到达后再补一次预取判定。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vodName, siteKey, sites.length]);
 
   useEffect(() => {
     let alive = true;

@@ -19,6 +19,7 @@ import SettingsPage from "./pages/SettingsPage";
 import { canFailover } from "./lib/format";
 import { api } from "./lib/invoke";
 import { pageCache } from "./lib/pageCache";
+import { clearSourceCache, setSourceCacheScope } from "./lib/sourceCache";
 import { clearPageStates } from "./lib/usePageState";
 import type { ConfigSnapshot, LiveSource, Site } from "./types/tvbox";
 
@@ -34,7 +35,7 @@ export type View =
   | { name: "home" }
   | { name: "category"; siteKey: string; tid: string; title: string }
   | { name: "search" }
-  | { name: "detail"; siteKey: string; vodId: string }
+  | { name: "detail"; siteKey: string; vodId: string; /** 搜索/列表已知片名，用于提前预取换源候选 */ title?: string }
   | {
       name: "player";
       siteKey: string;
@@ -56,6 +57,8 @@ export type Navigate = (view: View, replace?: boolean) => void;
 
 const SITE_CACHE_KEY = "luma:sites:v1";
 const LEGACY_SITE_CACHE_KEY = "tvbox:sites:v1";
+/** 稳定空数组：让下游 useEffect 的 sites 引用不会每次渲染都变化。 */
+const EMPTY_SITES: Site[] = [];
 
 /** 视图标识：用于按「栈深度 + 页面」保存滚动位置，同名页面不同深度互不覆盖。 */
 function viewKey(view: View): string {
@@ -117,7 +120,7 @@ export default function App() {
   const [cache, setCache] = useState<SiteCache | null>(() => readSiteCache());
   const [preferredSite, setPreferredSite] = useState("");
 
-  const sites = cache?.sites ?? [];
+  const sites = cache?.sites ?? EMPTY_SITES;
   const lives = cache?.lives ?? [];
   // py / js 运行时已在 P1 落地，只有 jvm（P2）暂时不可用。
   const usableSites = useMemo(
@@ -182,6 +185,8 @@ export default function App() {
     // 都不能再复用；scope 变化会清一次，同 id 重导入也强制清一次。
     pageCache.setScope(snapshot.id);
     pageCache.clear();
+    setSourceCacheScope(snapshot.id);
+    clearSourceCache();
     clearPageStates();
     scrollPositions.current.clear();
     const next: SiteCache = {
@@ -199,6 +204,7 @@ export default function App() {
 
   const handleConfigRemoved = useCallback((id: string) => {
     pageCache.clear();
+    clearSourceCache();
     clearPageStates();
     scrollPositions.current.clear();
     setCache((current) => {
@@ -228,6 +234,7 @@ export default function App() {
         }
         // 后端 active 配置是唯一真源；换过配置就让旧 scope 的缓存整体失效。
         pageCache.setScope(snapshot.id);
+        setSourceCacheScope(snapshot.id);
         // 后端是唯一真源：即使 configId 相同，运行策略升级（例如导入时屏蔽
         // jar 源）也会改变 sites，必须无条件覆盖旧缓存，否则前端又会列出
         // 已被禁止运行的站点。
@@ -285,6 +292,7 @@ export default function App() {
             key={`${view.siteKey}:${view.vodId}`}
             siteKey={view.siteKey}
             vodId={view.vodId}
+            title={view.title}
             siteName={sites.find((item) => item.key === view.siteKey)?.name}
             sites={sites}
             navigate={navigate}

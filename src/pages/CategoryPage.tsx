@@ -96,7 +96,12 @@ export default function CategoryPage({ siteKey, tid, title, onBack, navigate }: 
               pic={vod.vod_pic}
               remarks={vod.vod_remarks}
               onOpen={() =>
-                navigate({ name: "detail", siteKey, vodId: String(vod.vod_id) })
+                navigate({
+                  name: "detail",
+                  siteKey,
+                  vodId: String(vod.vod_id),
+                  title: vod.vod_name,
+                })
               }
             />
           ))}

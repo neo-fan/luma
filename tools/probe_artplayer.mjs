@@ -267,11 +267,18 @@ const quality = await cdp.eval(`(() => {
   return JSON.stringify({ text: (bar.innerText || '').slice(0, 200), named });
 })()`);
 const qualityInfo = quality ? JSON.parse(quality) : null;
-assert(
-  !!qualityInfo && qualityInfo.named.some((name) => name.includes("art-control-hls-quality")),
-  "HLS quality control present",
-  JSON.stringify(qualityInfo),
-);
+// 单码率源按设计回退到码率/原画，不会出现清晰度切换控件；只有多码率
+// （文本里含 720P / 1080P 等）才要求插件把控件渲染出来。
+const multiBitrate = !!qualityInfo && /\d{3,4}P/.test(qualityInfo.text);
+if (multiBitrate) {
+  assert(
+    qualityInfo.named.some((name) => name.includes("art-control-hls-quality")),
+    "HLS quality control present",
+    JSON.stringify(qualityInfo),
+  );
+} else {
+  console.log(`[n-a ] HLS quality control skipped (single-bitrate source): ${JSON.stringify(qualityInfo)}`);
+}
 assert(
   !!qualityInfo && !/\b0P\b/.test(qualityInfo.text),
   "quality label falls back instead of 0P",

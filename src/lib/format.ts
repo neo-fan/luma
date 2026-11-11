@@ -128,14 +128,22 @@ export function canFailover(site?: { changeable?: boolean }): boolean {
  * 归一化只做小写 + 去空白/常见分隔符；不做繁简或同义词转换。
  *   3 完全相等 · 2 片名包含完整关键词 · 1 命中过半关键字 · 0 不相关
  */
+/**
+ * 片名归一：去空白与常见标点、统一小写。搜索词、详情页片名、缓存键都用
+ * 同一套规则，否则「庆余年 第二季」与「庆余年第二季」会被当成两部片。
+ */
+export function normalizeTitle(value: string | null | undefined): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[\s:：·・\-—_.,，。!！?？\[\]【】()（）]/g, "");
+}
+
 export function titleMatchScore(
   name: string | null | undefined,
   keyword: string,
 ): number {
-  const normalize = (value: string) =>
-    value.toLowerCase().replace(/[\s:：·・\-—_.,，。!！?？\[\]【】()（）]/g, "");
-  const title = normalize(String(name ?? ""));
-  const key = normalize(keyword);
+  const title = normalizeTitle(name);
+  const key = normalizeTitle(keyword);
   if (!title || !key) {
     return 0;
   }

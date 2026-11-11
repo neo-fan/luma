@@ -3,12 +3,13 @@
  *
  * TVBox 里「换源」是显式选择一个不同的站点；自动换源（PlayerPage 的
  * tryFailover）只在播放失败时按后端顺序探测。这里把「找候选」和「跨源
- * 保持当前集」抽成纯函数 + 一次聚合 IPC，避免两处各写一套搜索规则。
+ * 保持当前集」抽成纯函数，聚合 IO 由 `fetchSourceRows()` 统一发出，
+ * 缓存与去重交给 `sourceCache`，避免面板 / 详情 / 播放各写一套搜索规则。
  */
 import { titleMatchScore } from "./format";
 import type { Episode, PlayLine } from "./format";
 import { api } from "./invoke";
-import type { ResultPage, Site } from "../types/tvbox";
+import type { ResultPage, Site, SpiderRequest } from "../types/tvbox";
 
 /** `spider_invoke({ siteKey: "all" })` 返回的单站结果行。 */
 export interface AggregateRow {
@@ -16,6 +17,20 @@ export interface AggregateRow {
   ok: boolean;
   data?: ResultPage;
   error?: { code?: string; message?: string };
+}
+
+/** 派生候选只需要这几个字段；缓存里保存精简行，避免整份 ResultPage 常驻。 */
+export interface SourceRowLike {
+  siteKey: string;
+  ok: boolean;
+  data?: {
+    list?: {
+      vod_id?: string | number | null;
+      vod_name?: string | null;
+      vod_remarks?: string | null;
+      vod_pic?: string | null;
+    }[];
+  } | null;
 }
 
 export interface AggregateResult {
@@ -71,9 +86,9 @@ export type SourceSite = Pick<Site, "key" | "name" | "runtime" | "enabled">;
  * 由 UI 决定要不要展示相关度 1 的弱匹配。
  */
 export function collectSourceOptions(
-  rows: AggregateRow[] | undefined,
+  rows: readonly SourceRowLike[] | undefined,
   keyword: string,
-  sites: SourceSite[],
+  sites: readonly SourceSite[],
   excludeSiteKey?: string,
   minScore = 1,
 ): SourceOption[] {
@@ -122,31 +137,32 @@ export function collectSourceOptions(
   );
 }
 
-/** 一次 IPC 并发检索全部启用站点；墙钟与搜索页一致，短了会只剩几个慢源。 */
-export async function searchSources(
+/** 一次聚合 IPC 取回原始行；换源缓存与手动检索共用，便于复用同一次结果。 */
+export async function fetchSourceRows(
   keyword: string,
-  sites: Site[],
-  excludeSiteKey: string,
+  sites: readonly Site[],
   timeoutMs = 20_000,
-): Promise<{ options: SourceOption[]; stats: SourceSearchStats }> {
+  invoke: (req: SpiderRequest) => Promise<unknown> = api.spiderInvoke,
+): Promise<{ rows: AggregateRow[]; stats: SourceSearchStats }> {
   const word = keyword.trim();
   const eligible = sites.filter(
     (site) => site.enabled && site.runtime !== "jvm" && site.runtime !== "quickjs",
   );
   if (!word || eligible.length === 0) {
-    return { options: [], stats: { ...EMPTY_SOURCE_STATS } };
+    return { rows: [], stats: { ...EMPTY_SOURCE_STATS } };
   }
 
-  const agg = (await api.spiderInvoke({
+  const agg = (await invoke({
     siteKey: "all",
     method: "searchContent",
     args: [word, false, 1],
     timeoutMs,
   })) as AggregateResult;
 
-  const options = collectSourceOptions(agg.results, word, sites, excludeSiteKey);
+  const rows = agg.results ?? [];
+  const options = collectSourceOptions(rows, word, sites);
   return {
-    options,
+    rows,
     stats: {
       total: agg.total ?? eligible.length,
       ok: agg.ok ?? eligible.length,

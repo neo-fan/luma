@@ -115,7 +115,12 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
                 remarks={item.remarks}
                 sub={item.siteName}
                 onOpen={() =>
-                  navigate({ name: "detail", siteKey: item.siteKey, vodId: item.vodId })
+                  navigate({
+                    name: "detail",
+                    siteKey: item.siteKey,
+                    vodId: item.vodId,
+                    title: item.name,
+                  })
                 }
               />
               <button

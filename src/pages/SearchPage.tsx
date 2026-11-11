@@ -8,6 +8,7 @@ import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
 import { rankByTitle, titleMatchScore } from "../lib/format";
+import { publishSearchResults } from "../lib/sourceCache";
 import type { ResultPage, Site, VodInfo } from "../types/tvbox";
 
 const ALL_SITES = "__all__";
@@ -140,6 +141,24 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         }
         setProgress(
           `${agg.ok}/${agg.total} 个站点响应，耗时 ${(agg.tookMs / 1000).toFixed(1)} 秒`,
+        );
+        // 搜索结果就是换源候选：立刻发布给 sourceCache，点进详情后
+        // 「⇄ 换源」直接读缓存，不必再发一次 20s 全站聚合。
+        // 单站搜索只覆盖一个站点，不发布（否则会被误判为「已检索全站」），
+        // 由详情页的后台预取补全。
+        publishSearchResults(
+          word,
+          agg.results ?? [],
+          selectableSites,
+          {
+            total: agg.total ?? selectableSites.length,
+            ok: agg.ok ?? 0,
+            failed: agg.failed ?? 0,
+            skipped: agg.skipped ?? 0,
+            tookMs: agg.tookMs ?? 0,
+            matched: 0, // 由 sourceCache 按当前片名重算
+          },
+          "search",
         );
         // 后端可能一个站点都没跑（active 配置为空 / 站点全被过滤）。
         // 静默显示空结果会让人以为是片源没搜到，明确提示去重新导入。
@@ -282,6 +301,8 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
                   name: "detail",
                   siteKey: hit.siteKey,
                   vodId: String(hit.vod.vod_id),
+                  // 带上片名：详情还没回来就能启动后台换源预取。
+                  title: hit.vod.vod_name,
                 })
               }
             />

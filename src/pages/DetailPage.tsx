@@ -10,12 +10,15 @@ import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { pageCache } from "../lib/pageCache";
 import { usePageState } from "../lib/usePageState";
 import { countEpisodes } from "../lib/sources";
+import { prefetchSources } from "../lib/sourceCache";
 import type { SourceOption } from "../lib/sources";
 import type { HistoryItem, Site, VodInfo } from "../types/tvbox";
 
 interface DetailPageProps {
   siteKey: string;
   vodId: string;
+  /** 列表/搜索已知的片名，详情回来之前就能启动后台换源预取。 */
+  title?: string;
   siteName?: string;
   sites: Site[];
   navigate: Navigate;
@@ -26,6 +29,7 @@ interface DetailPageProps {
 export default function DetailPage({
   siteKey,
   vodId,
+  title,
   siteName,
   sites,
   navigate,
@@ -97,6 +101,21 @@ export default function DetailPage({
     // 否则渲染过程中写入 vod 会立刻再触发一次 effect。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteKey, vodId, reload]);
+
+  /**
+   * 换源候选后台预取：搜索词与片名一致时搜索结果已缓存，这里直接跳过；
+   * 从首页 / 收藏进入或搜索词只是片段时，补一次精确片名的全站检索。
+   * 整个过程 fire-and-forget，不显示 loading、不影响详情首屏。
+   */
+  const prefetchTitle = (title?.trim() || vod?.vod_name?.trim() || "").trim();
+  useEffect(() => {
+    if (!prefetchTitle) {
+      return;
+    }
+    // 详情首屏的 detailContent 先落地，再启动后台全站检索，避免抢首个请求。
+    const timer = window.setTimeout(() => prefetchSources(prefetchTitle, sites), 1200);
+    return () => window.clearTimeout(timer);
+  }, [prefetchTitle, sites]);
 
   // 收藏与观看进度都是「看一眼就走」的旁路数据，失败不阻断详情浏览。
   useEffect(() => {
@@ -197,7 +216,10 @@ export default function DetailPage({
   /** 换源只替换当前详情页，避免返回键在几十个源之间来回绕。 */
   const pickSource = (option: SourceOption) => {
     setShowSources(false);
-    navigate({ name: "detail", siteKey: option.siteKey, vodId: option.vodId }, true);
+    navigate(
+      { name: "detail", siteKey: option.siteKey, vodId: option.vodId, title: option.vodName },
+      true,
+    );
   };
 
   if (loading) {
@@ -236,7 +258,7 @@ export default function DetailPage({
         />
         {showSources ? (
           <SourcePicker
-            title=""
+            title={title || ""}
             currentSiteKey={siteKey}
             currentSiteName={siteName}
             sites={sites}
@@ -427,7 +449,7 @@ export default function DetailPage({
 
       {showSources ? (
         <SourcePicker
-          title={vod.vod_name}
+          title={title || vod.vod_name}
           currentSiteKey={siteKey}
           currentSiteName={siteName}
           sites={sites}

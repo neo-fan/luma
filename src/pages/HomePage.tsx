@@ -200,7 +200,12 @@ export default function HomePage({ sites, siteKey, onSiteChange, navigate }: Hom
               pic={vod.vod_pic}
               remarks={vod.vod_remarks}
               onOpen={() =>
-                navigate({ name: "detail", siteKey, vodId: String(vod.vod_id) })
+                navigate({
+                  name: "detail",
+                  siteKey,
+                  vodId: String(vod.vod_id),
+                  title: vod.vod_name,
+                })
               }
             />
           ))}
