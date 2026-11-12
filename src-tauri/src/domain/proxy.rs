@@ -55,6 +55,18 @@ pub struct ProxyState {
     client: reqwest::Client,
 }
 
+/// Port the proxy actually bound. Sidecars need it to build
+/// `getProxyUrl()` / `proxy?do=…` URLs; the requested `PROXY_PORT` is only a
+/// preference (a busy port falls back to an ephemeral one).
+static ACTIVE_PORT: AtomicU16 = AtomicU16::new(0);
+
+pub fn active_port() -> u16 {
+    match ACTIVE_PORT.load(Ordering::Relaxed) {
+        0 => DEFAULT_PORT,
+        port => port,
+    }
+}
+
 impl ProxyState {
     fn client() -> reqwest::Client {
         reqwest::Client::builder()
@@ -107,6 +119,7 @@ pub fn start() -> Result<Arc<ProxyState>, AppError> {
         allow_local,
         client: ProxyState::client(),
     });
+    ACTIVE_PORT.store(port, Ordering::Relaxed);
 
     let shared = state.clone();
     // `setup` runs outside the Tokio context, so the std listener is handed to

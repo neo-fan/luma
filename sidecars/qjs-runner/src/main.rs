@@ -86,6 +86,9 @@ struct Request {
     headers: HashMap<String, String>,
     #[serde(default)]
     site_key: String,
+    /// Port the host proxy bound; `getProxyUrl()` builds absolute URLs with it.
+    #[serde(default)]
+    proxy_port: u16,
     /// "auto" (default) | "classic" | "module".
     #[serde(default)]
     script_kind: String,
@@ -234,6 +237,7 @@ fn http_request(url: &str, options: &str) -> String {
 const HOST_JS: &str = r#"(function () {
   var DEFAULT_HEADERS = __TVBOX_HEADERS__;
   var PREFIX = __TVBOX_SITE__ + ':';
+  var PROXY_PORT = __TVBOX_PROXY_PORT__ || 0;
   var raw = globalThis.__tvbox_req_raw;
   globalThis.req = function (url, options) {
     var opts = options || {}, merged = {}, h = {}, k;
@@ -269,7 +273,16 @@ const HOST_JS: &str = r#"(function () {
     pd: function () { return ''; }, jsp: function () { return {}; },
     print: function () {}, log: function () {},
     VERSION: '0.0.0-luma', RKEY: '', OCR_API: '',
-    OcrApi: function () { return {}; }, getProxyUrl: function () { return ''; },
+    OcrApi: function () { return {}; },
+    // drpy2 rules splice `getProxyUrl()` into play URLs; returning '' turned
+    // every such source into "search works, playback 404". Point it at the
+    // port the host actually bound.
+    getProxyUrl: function (from) {
+      if (!PROXY_PORT) return '';
+      var base = 'http://127.0.0.1:' + PROXY_PORT + '/proxy?do=js';
+      if (from) base += '&from=' + encodeURIComponent(String(from));
+      return base;
+    },
     rule: {}, os: {}, initEnv: function () {}, _ENV: {},
     joinUrl: function (a, b) { return (a || '') + (b || ''); }
   };
@@ -283,6 +296,12 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
         "__tvbox_req_raw",
         Function::new(ctx.clone(), |url: String, options: String| -> String {
             http_request(&url, &options)
+        })?,
+    )?;
+    globals.set(
+        "__tvbox_bytes_b64",
+        Function::new(ctx.clone(), |bytes: Vec<u8>| -> String {
+            base64::engine::general_purpose::STANDARD.encode(bytes)
         })?,
     )?;
     globals.set(
@@ -356,7 +375,8 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
     });
     let shim = HOST_JS
         .replace("__TVBOX_HEADERS__", &headers)
-        .replace("__TVBOX_SITE__", &site);
+        .replace("__TVBOX_SITE__", &site)
+        .replace("__TVBOX_PROXY_PORT__", &request.proxy_port.to_string());
     ctx.eval::<(), _>(shim.as_bytes())?;
     Ok(())
 }
@@ -540,6 +560,71 @@ const CALL_JS: &str = r#"(async function () {
   return JSON.stringify(value === undefined ? null : value);
 })()"#;
 
+/// `Spider.proxy(params)` — TVBox local proxy for JS sources
+/// (`/proxy?do=js&…`).
+///
+/// The query map is passed through untouched; the result is normalized to
+/// `{contentType, headers, text|b64}` because a proxy body may be text (m3u8)
+/// or bytes (keys/images) and the JSON frame cannot carry raw bytes.
+/// Accepted shapes, in the order real sources use them:
+///   * `[contentType, headers, body]` (TVBox/FongMi convention);
+///   * the same array prefixed by a numeric status code;
+///   * `{contentType|type, headers, body|content}`;
+///   * a bare string (body only).
+const PROXY_JS: &str = r#"(async function () {
+  var PARAMS = __TVBOX_PARAMS__;
+  var pool = globalThis.__tvbox_candidates || [];
+  var fn = null, owner = null;
+  for (var i = 0; i < pool.length; i++) {
+    var o = pool[i];
+    if (typeof o.proxy === 'function') { fn = o.proxy; owner = o; break; }
+  }
+  if (!fn) throw new Error('method proxy missing');
+  var raw = await Promise.resolve(fn.apply(owner, [PARAMS]));
+  if (raw === undefined || raw === null) throw new Error('proxy returned nothing');
+
+  var contentType = '', headers = {}, body = raw;
+  if (typeof raw === 'string') {
+    body = raw;
+  } else if (Array.isArray(raw)) {
+    var at = 0;
+    if (typeof raw[0] === 'number') at = 1;
+    if (typeof raw[at] === 'string') { contentType = raw[at]; at++; }
+    var slot = raw[at];
+    if (slot && typeof slot === 'object' && !Array.isArray(slot) &&
+        typeof slot.byteLength !== 'number') { headers = slot; at++; }
+    body = raw[at];
+  } else if (typeof raw === 'object') {
+    contentType = raw.contentType || raw.type || '';
+    headers = raw.headers || {};
+    body = raw.body !== undefined ? raw.body : raw.content;
+  }
+
+  var text = null, b64 = null;
+  if (body === undefined || body === null) body = '';
+  if (typeof body === 'string') {
+    text = body;
+  } else if (typeof body === 'object' && typeof body.byteLength === 'number') {
+    var view = (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer)
+      ? new Uint8Array(body)
+      : new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    try { b64 = globalThis.__tvbox_bytes_b64(Array.prototype.slice.call(view)); }
+    catch (e) { b64 = null; }
+    if (b64 === null) text = '';
+  } else {
+    text = String(body);
+  }
+
+  var hout = {}, k;
+  for (k in headers) { if (typeof headers[k] === 'string') hout[k] = headers[k]; }
+  return JSON.stringify({
+    contentType: typeof contentType === 'string' ? contentType : '',
+    headers: hout,
+    text: text,
+    b64: b64
+  });
+})()"#;
+
 fn js_literal<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
 }
@@ -611,9 +696,19 @@ fn handle(request: Request) -> Response {
         ctx.eval::<bool, _>(bootstrap.as_bytes())
             .catch(&ctx).map_err(|err| err.to_string())?;
 
-        let call = CALL_JS
-            .replace("__TVBOX_METHOD__", &js_literal(&request.method))
-            .replace("__TVBOX_ARGS__", &js_literal(&request.args));
+        let call = if request.method == "proxy" {
+            // Proxy bodies can be bytes; `text`/`b64` keep the frame JSON-safe.
+            let params = request
+                .args
+                .first()
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            PROXY_JS.replace("__TVBOX_PARAMS__", &js_literal(&params))
+        } else {
+            CALL_JS
+                .replace("__TVBOX_METHOD__", &js_literal(&request.method))
+                .replace("__TVBOX_ARGS__", &js_literal(&request.args))
+        };
         let value: Value = ctx.eval(call.as_bytes()).catch(&ctx).map_err(|err| err.to_string())?;
         let promise = value
             .into_promise()

@@ -274,6 +274,30 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 已打通；drpy2 的「空 class」来自上游规则文件缺失与 `initEnv` polyfill 不完整，不是加载器
 缺陷。**没有**声称全量 JS 站点可用，也**没有**做便携包实机验证。
 
+### 5.4 `/proxy?do=js` 接通（2026-11-12，D1）
+
+**为什么必须先做这条**：drpy2 规则常用 `getProxyUrl()` 拼播放地址，而宿主原来把这个全局
+实现成 `return ''`，等于把「能搜到」的源全部变成「点进去 404/空」。这是 JS 家族里**唯一
+同时影响播放成功率**的缺口，比补 `initEnv` 更直接。
+
+| 环节 | 改动 |
+|---|---|
+| `qjs-runner` | 新增 `PROXY_JS`：按 `[contentType, headers, body]` / 数字状态码前缀 / `{contentType, headers, body}` / 裸字符串四种形态归一化为 `{contentType, headers, text\|b64}`；字节体经 `__tvbox_bytes_b64` 转 base64 过 JSON 帧 |
+| `qjs-runner` | `HOST_JS` 的 `getProxyUrl(from)` 改为返回 `http://127.0.0.1:<宿主真实端口>/proxy?do=js[&from=…]`；端口由帧字段 `proxy_port` 注入 |
+| Rust 宿主 | `SpiderMethod::Proxy`（wire 名 `proxy`）；`QuickJsRuntime::proxy()` 走同一把 runner 串行锁，响应经 `proxy_payload_from_js()` 还原成 `ProxyPayload` |
+| Rust 宿主 | `proxy::active_port()`：9978 被占用而回退到临时端口时，sidecar 拿到的是**实际**端口，不是配置值 |
+| 前端 | 无需改动——`usePlayResolution` 早就把 `127.0.0.1:<port>/proxy…` 原样透传，`resolve_play` 也对该路径不做二次包裹 |
+
+验收（`p1.py --adapter`，21 项全通过）：
+
+- `template.js` 的 `proxy` 返回 `[ct, headers, m3u8]` → 帧里 `contentType`、`text`、自定义 header 三项都对；
+- `Uint8Array` 体 → `b64 = AP8QIA==`，解码回 `00 ff 10 20`；
+- `getProxyUrl('vod')` → `http://127.0.0.1:9978/proxy?do=js&from=vod`。
+
+**未做**：真窗口下用一个返回 `do=js` 的真实 drpy2 规则跑通「搜索→详情→播放」出画，
+需要等 D2 的 `initEnv` 补齐（否则规则本身拿不到数据）。当前只能保证**路由与协议层**就绪。
+
+
 ---
 
 ## 6. 仍需补齐
@@ -281,8 +305,9 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 1. **drpy2 的 `initEnv` polyfill 完整性**：目前 `HOST_JS` 只提供惰性 STUBS 让模块求值能跑完，
    并非完整的 `initEnv` 注入；drpy2 真实依赖的全局/工具函数仍可能缺失，需对照 drpy-node 的
    `drpyS` 沙箱逐项补齐。
-2. **命名管道 / 本地代理**：`proxy` / `action` 类方法与本地 HTTP 代理（对应 FongMi/TV 的
-   NanoHTTPD / `getProxyUrl`）尚未接通，`playerContent` 的 lazy 解析与嗅探链路受影响。
+2. **本地代理**：`proxy` 已接通——`/proxy?do=js` 会把 query map 原样交给脚本的
+   `proxy(params)`，`getProxyUrl()` 也改为返回宿主真实端口（见 §5.3）。仍缺的是 `action`
+   方法路由（drpy2 用它做换线路/清缓存/登录）。
 3. **当前 FongMi class-based `Spider` 规范**：现只做 `new Spider(ext)` 的粗粒度兼容，新版
    class-based 规范（构造参数、`init` 时机、方法签名）尚未逐条对齐。
 4. **便携包实机验证**：本轮按约定**停在 debug、不打包**；`make_portable.py` 的新复制项

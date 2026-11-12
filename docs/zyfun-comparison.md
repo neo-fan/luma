@@ -222,6 +222,10 @@ import { batchFetch, joinUrl, local, pd, pdfa, pdfh, req } from './inject';
 
 **合计 4.5d**，建议顺序 **D1 → D2 → D4 → D3**（D1 是「搜到播不出」的元凶，D3 收益最低）。
 
+> **D1 已交付（2026-11-12）**：`/proxy?do=js` 接通 + `getProxyUrl()` 返回宿主真实端口，
+> `p1.py --adapter` 21/21、`cargo test --lib` 84/84、`pnpm test` 145/145。细节见
+> `docs/js-support.md` §5.4。剩余 D2/D4/D3 共 3d。
+
 **两个不要误解的点：**
 
 1. **KTV 那个站跑不起来不是我们的问题**：它的 `ext` 指向上游并不存在的 `./js/drpy2.js`（§3.2 已记录）。修法只有「站点侧补文件」或「我们硬编码一份规则」——后者与「不内置片源/规则」冲突，即使版权允许也不做，只在报告里如实标注「上游规则缺失」。

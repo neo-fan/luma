@@ -306,6 +306,7 @@ def qjs_phase() -> None:
         ("searchContent", ["关键词", False, "1"], "list"),
         ("playerContent", ["js", "x", []], "url"),
         ("liveContent", ["http://127.0.0.1:8787/live/list.m3u"], "list"),
+        ("proxy", [{"do": "js", "url": "http://127.0.0.1:8787/seg.ts"}], "text"),
     ]
     lines = [
         json.dumps(
@@ -347,6 +348,93 @@ def qjs_phase() -> None:
     )
     player = player_frame.get("result", {}) if isinstance(player_frame, dict) else {}
     check(player.get("ext") == "stub-ext-js", "T-16 qjs", "ext passthrough", str(player.get("ext")))
+
+    # `/proxy?do=js`: [contentType, headers, body] must survive the JSON frame
+    # as text (playlists are text; b64 is only for real byte bodies).
+    proxy_frame = next(
+        (f for (m, _a, _k), f in zip(calls, frames, strict=False) if m == "proxy"),
+        {},
+    )
+    proxy = proxy_frame.get("result", {}) if isinstance(proxy_frame, dict) else {}
+    if not isinstance(proxy, dict):
+        # A stale sidecar without the `proxy` branch answers with the raw
+        # `[contentType, headers, body]` array; fail loudly instead of crashing.
+        proxy = {}
+    proxy_ok = (
+        proxy.get("contentType") == "application/vnd.apple.mpegurl"
+        and "seg.ts" in str(proxy.get("text") or "")
+        and (proxy.get("headers") or {}).get("x-js-proxy") == "template"
+    )
+    check(proxy_ok, "T-16 qjs", "proxy do=js payload", str(proxy.get("contentType")))
+
+    # Byte bodies cannot cross the JSON frame: the sidecar base64-encodes them.
+    bytes_src = (
+        "globalThis.spider = { proxy: function () {"
+        " var b = new Uint8Array([0, 255, 16, 32]);"
+        " return { contentType: 'image/jpeg', headers: {}, body: b }; } };"
+    )
+    bytes_payload = json.dumps(
+        {"id": 1, "source": bytes_src, "method": "proxy", "args": [{}], "timeout_ms": 3000}
+    )
+    bytes_run = subprocess.run(
+        [str(binary)],
+        input=(bytes_payload + "\n").encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+    )
+    bytes_frame = json.loads(bytes_run.stdout.decode("utf-8").strip().splitlines()[0])
+    bytes_result = bytes_frame.get("result") or {}
+    import base64 as _b64
+
+    decoded = b""
+    if bytes_result.get("b64"):
+        try:
+            decoded = _b64.b64decode(bytes_result["b64"])
+        except Exception:  # noqa: BLE001
+            decoded = b""
+    check(
+        bytes_frame.get("ok") is True and decoded == b"\x00\xff\x10\x20",
+        "T-16 qjs",
+        "proxy byte body -> b64",
+        str(bytes_result.get("b64"))[:24],
+    )
+
+    # `getProxyUrl()` is the reason drpy2 sources returned 404 play URLs: the
+    # stub used to hand back ''. It must now point at the host's real port.
+    gp_src = (
+        "globalThis.spider = { homeContent: function () {"
+        " return { list: [ { vod_id: 'x', vod_name: getProxyUrl('vod') } ] }; } };"
+    )
+    gp_payload = json.dumps(
+        {
+            "id": 1,
+            "source": gp_src,
+            "method": "homeContent",
+            "args": [],
+            "proxy_port": 9978,
+            "timeout_ms": 3000,
+        }
+    )
+    gp_run = subprocess.run(
+        [str(binary)],
+        input=(gp_payload + "\n").encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+    )
+    gp_frame = json.loads(gp_run.stdout.decode("utf-8").strip().splitlines()[0])
+    gp_url = ""
+    try:
+        gp_url = gp_frame["result"]["list"][0]["vod_name"]
+    except Exception:  # noqa: BLE001
+        gp_url = ""
+    check(
+        gp_url == "http://127.0.0.1:9978/proxy?do=js&from=vod",
+        "T-16 qjs",
+        "getProxyUrl uses host port",
+        gp_url[:60],
+    )
 
     sandbox_src = "globalThis.spider = { homeContent: function () { return { req: typeof req, require: typeof require, process: typeof process, fetch: typeof fetch }; } };"
     payload = json.dumps({"id": 1, "source": sandbox_src, "method": "homeContent", "args": [], "timeout_ms": 3000})

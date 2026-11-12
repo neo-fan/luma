@@ -9,7 +9,7 @@
 use crate::error::{code, AppError};
 use crate::http;
 use crate::process::Guarded;
-use crate::spider::{RuntimeKind, SpiderMethod, SpiderRuntime};
+use crate::spider::{ProxyPayload, RuntimeKind, SpiderMethod, SpiderRuntime};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -257,6 +257,9 @@ impl SpiderRuntime for QuickJsRuntime {
             "api": api,
             "headers": site.get("headers").cloned().unwrap_or_else(|| json!({})),
             "site_key": site.get("key").and_then(Value::as_str).unwrap_or(""),
+            // `getProxyUrl()` must point at the port we actually bound; a busy
+            // 9978 falls back to an ephemeral one.
+            "proxy_port": crate::proxy::active_port(),
             "script_kind": "auto",
         });
 
@@ -289,6 +292,66 @@ impl SpiderRuntime for QuickJsRuntime {
             Err(AppError::new(code::RUNTIME_UNAVAILABLE, "qjs-runner missing"))
         }
     }
+
+    /// `Spider.proxy(Map)` for `/proxy?do=js`.
+    ///
+    /// drpy2 rules hand back `getProxyUrl() + "&do=js&..."` URLs, so without
+    /// this route those sites can be searched but never played. The sidecar
+    /// normalizes `[contentType, headers, body]` / dict / bare string into
+    /// `{contentType, headers, text|b64}`; the body is text for playlists and
+    /// base64 only when the script actually returned bytes.
+    async fn proxy(
+        &self,
+        site: &Value,
+        params: HashMap<String, String>,
+        timeout: Duration,
+    ) -> Result<ProxyPayload, AppError> {
+        let value = self
+            .invoke(site, SpiderMethod::Proxy, &[json!(params)], timeout)
+            .await?;
+        proxy_payload_from_js(&value)
+    }
+}
+
+/// Turn the sidecar's normalized proxy answer into the HTTP response parts.
+fn proxy_payload_from_js(value: &Value) -> Result<ProxyPayload, AppError> {
+    let content_type = value
+        .get("contentType")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let mut headers = Vec::new();
+    if let Some(map) = value.get("headers").and_then(Value::as_object) {
+        for (name, item) in map {
+            if let Some(text) = item.as_str() {
+                headers.push((name.clone(), text.to_string()));
+            }
+        }
+    }
+
+    let body = match value
+        .get("b64")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        Some(encoded) => crate::proxy::base64_decode(encoded).map_err(|_| {
+            AppError::new(code::INTERNAL, "js proxy body is not valid base64")
+        })?,
+        None => value
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .as_bytes()
+            .to_vec(),
+    };
+
+    Ok(ProxyPayload {
+        content_type,
+        headers,
+        body,
+    })
 }
 
 pub async fn shutdown() {
@@ -333,5 +396,39 @@ mod tests {
         let drpy_head = "import cheerio from\"assets://js/lib/cheerio.min.js\";";
         assert!(drpy_head.contains("import "));
         assert_eq!(crate::config::blocked_reason(&json!({"runtime": "quickjs"})), None);
+    }
+
+    #[test]
+    fn js_proxy_text_body_is_utf8() {
+        let value = json!({
+            "contentType": "application/vnd.apple.mpegurl",
+            "headers": { "x-js-proxy": "1" },
+            "text": "#EXTM3U\n#EXTINF:2,\nseg.ts\n",
+            "b64": null
+        });
+        let payload = proxy_payload_from_js(&value).expect("payload");
+        assert_eq!(payload.content_type, "application/vnd.apple.mpegurl");
+        assert!(payload.body.starts_with(b"#EXTM3U"));
+        assert_eq!(payload.headers.len(), 1);
+    }
+
+    #[test]
+    fn js_proxy_byte_body_is_decoded_from_b64() {
+        // 0x00 0xFF 0x10 0x20 — a binary body cannot travel as `text`.
+        let value = json!({
+            "contentType": "image/jpeg",
+            "headers": {},
+            "text": null,
+            "b64": "AP8QIA=="
+        });
+        let payload = proxy_payload_from_js(&value).expect("payload");
+        assert_eq!(payload.body, vec![0x00, 0xFF, 0x10, 0x20]);
+    }
+
+    #[test]
+    fn js_proxy_missing_content_type_falls_back() {
+        let payload = proxy_payload_from_js(&json!({ "text": "x" })).expect("payload");
+        assert_eq!(payload.content_type, "application/octet-stream");
+        assert_eq!(payload.body, b"x".to_vec());
     }
 }

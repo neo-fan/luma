@@ -70,6 +70,20 @@ var spider = {
   liveContent: function (url) {
     return { class: [], list: [] };
   },
+  /**
+   * TVBox local proxy (`/proxy?do=js`). Sources hand back
+   * `getProxyUrl() + "&do=js&..."` URLs, so this method is called with the raw
+   * query map and answers `[contentType, headers, body]`.
+   */
+  proxy: function (params) {
+    var query = params || {};
+    var target = query.url || "";
+    return [
+      "application/vnd.apple.mpegurl",
+      { "x-js-proxy": "template" },
+      "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:2,\n" + target + "\n",
+    ];
+  },
 };
 
 globalThis.spider = spider;
