@@ -587,6 +587,57 @@ globalThis.spider = {
     check(not bad, "T-16 qjs", "web globals + sync req", ",".join(bad) or f"{len(expect)} checks")
 
 
+def qjs_bundled_engine_phase() -> None:
+    """D3: the shipped engine copy must work even when its `api` URL is dead.
+
+    Relative imports inside the engine (`./pako.min.js`, `./gbk.js` ...) are
+    resolved against the source URL, so a dead `api` could drag them onto a
+    dead host. That would break drpy2 exactly when the fallback matters most.
+    """
+    binary = qjs_binary()
+    engine = ROOT / "sidecars" / "qjs-assets" / "js" / "lib" / "drpy2.min.js"
+    if binary is None or not engine.is_file():
+        record("T-16 qjs", "bundled engine", "SKIP", "build qjs-runner / fetch assets first")
+        return
+    rule = (
+        "var rule={title:'d3',host:'https://example.invalid',homeUrl:'/',headers:{},"
+        "推荐:'*',一级:'json:list;vod_name;vod_pic;vod_remarks;vod_id',"
+        "class_name:'综艺&电影',class_url:'27&1',play_parse:false,lazy:''};"
+    )
+    payload = json.dumps(
+        {
+            "id": 1,
+            "source": engine.read_text(encoding="utf-8"),
+            "method": "homeContent",
+            "args": [],
+            "ext": rule,
+            "api": "https://luma-no-such-host.invalid/lib/drpy2.min.js",
+            "assets_dir": str(ROOT / "sidecars" / "qjs-assets"),
+            "timeout_ms": 20000,
+        }
+    )
+    proc = subprocess.run(
+        [str(binary)],
+        input=(payload + "\n").encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=60,
+    )
+    try:
+        frame = json.loads(proc.stdout.decode("utf-8").strip().splitlines()[0])
+        classes = frame["result"]["class"]
+    except Exception:  # noqa: BLE001
+        record("T-16 qjs", "bundled engine + dead api", "FAIL", proc.stdout.decode("utf-8", "replace")[:80])
+        return
+    names = [item.get("type_name") for item in classes if isinstance(item, dict)]
+    check(
+        frame.get("ok") is True and names == ["综艺", "电影"],
+        "T-16 qjs",
+        "bundled engine + dead api",
+        f"classes={names}",
+    )
+
+
 def app_phase_simple() -> None:
     if not cdp_page():
         for name in [
@@ -630,6 +681,7 @@ def main() -> int:
     adapter_phase()
     qjs_phase()
     qjs_env_phase()
+    qjs_bundled_engine_phase()
     if not args.adapter:
         app_phase_simple()
 

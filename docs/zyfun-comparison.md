@@ -225,7 +225,7 @@ import { batchFetch, joinUrl, local, pd, pdfa, pdfh, req } from './inject';
 | D3 | **引擎随包（离线兜底）** | 现在引擎靠站点 `api` 远程加载（实测能加载，8 个 import 全过）。仅当远程挂了/被墙才需要本地副本 | **0.5d** | 断网时 drpy2 站点仍能启动；资源清单登记来源+版本+sha256 |
 | D4 | **class-based `Spider` 规范对齐** | 新版 FongMi 用 class 构造，我们只做粗粒度 `new Spider(ext)` | **1d** | fixture 里 class 形态能 `init` 并被短名派发命中 |
 
-**合计 4.5d → 实际 D1+D2 已完成，剩 D4/D3 共 1.5d**，顺序 **D1 → D2 → D4 → D3**（D1 是「搜到播不出」的元凶，D3 收益最低）。
+**合计 4.5d → 实际 D1+D2+D3 已完成，只剩 D4 约 1d**，顺序 **D1 → D2 → D4 → D3**（D1 是「搜到播不出」的元凶，D3 收益最低）。
 
 > **D1 已交付（2026-11-12）**：`/proxy?do=js` 接通 + `getProxyUrl()` 返回宿主真实端口，
 > `p1.py --adapter` 21/21、`cargo test --lib` 84/84、`pnpm test` 145/145。细节见
@@ -234,7 +234,14 @@ import { batchFetch, joinUrl, local, pd, pdfa, pdfh, req } from './inject';
 > **D2 已交付（2026-11-12，实际 0.5d 而非 1.5d）**：补 Web 全局 + 修 `req` 同步语义 +
 > 修 `console.log(undefined)` 中断脚本 + 修 `atob` padding 泄漏 + 补 `getProxy`。真引擎跑真实
 > CMS 三条链路各 20 条数据。`p1.py --adapter` **22/22**（新增 9 条断言）。细节见
-> `docs/js-support.md` §5.5。**剩余 D4/D3 共 1.5d。**
+> `docs/js-support.md` §5.5。
+>
+> **D3 已交付（2026-11-12）**：`sidecars/qjs-assets/js/lib/drpy2.min.js`（67,385 B，
+> sha256 登记）作为离线兜底；`source_for()` 在远程 404 / 非脚本 HTML / 域名不可达三种情况下
+> 回落，且**不是已知引擎时绝不覆盖用户 spider**。关键点：引擎的相对 import 若按死掉的 `api`
+> 解析就会全拼到死链上，实际验证「本地引擎 + 死域名 + 真实规则」仍各出 20 条数据。
+> `p1.py --adapter` **23/23**、`cargo test --lib` 87/1 ignored。细节见 `docs/js-support.md` §5.6。
+> **剩余仅 D4。**
 
 **两个不要误解的点：**
 

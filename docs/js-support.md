@@ -229,6 +229,10 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 `<APP_DIR>/sidecars/qjs-assets/`。`report()` 会把 `sidecars/qjs-assets`、
 `sidecars/qjs-runner`、`qjs-runner.exe` 列入体积汇总。
 
+`sidecars/qjs-assets/js/lib/` 里除 8 个依赖（cheerio / crypto-js / node-rsa / pako / gbk /
+json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本体**，作为
+`source_for()` 的离线回落（§5.6）。目录是整体复制的，所以新增文件自动随包，不需要改脚本。
+
 > 注意：`src-tauri/binaries/` 里那份是上一次 `prepare_runtime.py` stage 的快照；打包前应先跑
 > `python tools/prepare_runtime.py` 重新 stage，避免把旧二进制带进交付包。
 
@@ -346,6 +350,41 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 同步/await 两条 req 路径、`console.log(undefined)`、`atob` padding、`btoa`、UTF-8 编码与
 含 emoji 的往返、`URLSearchParams`、`getProxy` 端口）；`cargo test --lib` 84/84；
 `pnpm test` 145/145。
+
+### 5.6 D3：引擎随包 + 离线回落（2026-11-12）
+
+**为什么做**：引擎源码一直是**从站点 `api` 现场下载**的（`source_for`）。CDN 挂掉、被墙、
+或运营商返回一个 200 的 HTML 错误页时，整个 drpy2 家族站点全灭——而「网络不好」恰恰是用户
+最需要兜底的时刻。
+
+**做了什么**：
+
+| 层 | 改动 |
+|---|---|
+| 资源 | `sidecars/qjs-assets/js/lib/drpy2.min.js`（67,385 B，上游 `cluntop/tvbox/lib/drpy2.min.js`），`manifest.json` 登记 bytes + sha256 |
+| `quickjs.rs` | `BUNDLED_ENGINES = ["drpy2.min.js", "drpy2.js"]`，按 URL basename 命中（忽略 query/hash） |
+| `quickjs.rs` | `looks_like_script()`：`fetch` 只报传输失败，200 + HTML/空体要到 QuickJS 才炸成 `unexpected token '<'`，所以提前判定 |
+| `quickjs.rs` | `source_for()` 三条路径：正常远程 → 非脚本时回落 → 传输失败时回落；**不是已知引擎则原样报错**，不会拿引擎覆盖用户自己的 spider |
+
+**一个容易忽略但要紧的点**：引擎内部 `import "./pako.min.js"` 这类相对依赖是按**源码 URL**
+解析的。如果回落时还把死掉的 `api` 当 base，8 个依赖会全部拼到死链上——兜底等于没做。
+`normalize_module()` 的 `BUNDLED` 命中在 URL 拼接**之前**，所以 basename 命中的依赖仍然走
+本地。这一点用「本地引擎 + 死域名 api + 真实规则」实测确认过，不是推理。
+
+**验证**：
+
+| 场景 | 结果 |
+|---|---|
+| 引擎 URL 404（GitHub 返回 14 B `404: Not Found`） | 判定为非脚本 → 用随包副本，长度与本地一致 |
+| 引擎域名不可达（`.invalid`） | 传输失败 → 用随包副本 |
+| 本地引擎 + 死 api + 真实 CMS 规则 | `homeContent` 2 分类、`homeVideoContent`/`categoryContent`/`searchContent` **各 20 条真实数据** |
+| 缓存 | 回落结果与远程结果同样进 600s 缓存，避免每次请求都白等 10s 超时 |
+
+验收：`p1.py --adapter` **23/23**（新增 `bundled engine + dead api`）；`cargo test --lib`
+**87 passed / 1 ignored**（新增 3 条单测 + 1 条 `#[ignore]` 联网手工验证）；`pnpm test` 145/145。
+
+**没做**：便携包实机验证（按约定停在 debug）。`make_portable.py` 是整目录复制
+`sidecars/qjs-assets`，新文件自动随包，但未实际组装 zip 验证。
 
 
 ---

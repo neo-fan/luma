@@ -54,5 +54,12 @@
     "bytes": 15217,
     "sha256": "60bc13ee04302db0fd9b0061e234a8d2ae624e0836e8e9c50e7735425ab63bea",
     "usage": "drpy2 ./template.js（仓库 lib/ 下无此文件，需重写）"
+  },
+  {
+    "upstream": "lib/drpy2.min.js",
+    "local": "drpy2.min.js",
+    "bytes": 67385,
+    "sha256": "09e5fb139b58b5ae48abdc1051fa0443bdfbcfdae4faf161dae6f6300bec39ed",
+    "usage": "drpy2 引擎本体（离线兜底）：站点 api 远程取不到或返回非脚本时回落到此副本；它自身的 8 个 import 全部命中本地 BUNDLED"
   }
 ]

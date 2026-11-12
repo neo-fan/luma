@@ -13,6 +13,7 @@ use crate::spider::{ProxyPayload, RuntimeKind, SpiderMethod, SpiderRuntime};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -168,6 +169,41 @@ fn cache() -> &'static StdMutex<HashMap<String, (String, Instant)>> {
     CACHE.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
+/// Engine files we ship a copy of. Keyed by URL basename, so every mirror
+/// spelling (`lib/drpy2.min.js`, `js/drpy2.js`) maps onto the same local file.
+const BUNDLED_ENGINES: &[&str] = &["drpy2.min.js", "drpy2.js"];
+
+/// Last path segment of a js source URL, ignoring query/hash.
+fn api_basename(api: &str) -> &str {
+    let clean = api.split(['?', '#']).next().unwrap_or(api);
+    clean.trim_end_matches('/').rsplit('/').next().unwrap_or("")
+}
+
+/// Read the locally shipped engine when `api` points at one we know about.
+/// Returns `None` when the URL is not a known engine or the file is missing,
+/// so callers can fall back to surfacing the original network error.
+fn bundled_engine(api: &str) -> Option<String> {
+    let name = api_basename(api);
+    if !BUNDLED_ENGINES.contains(&name) {
+        return None;
+    }
+    let path = resolve_assets_dir().join("js").join("lib").join("drpy2.min.js");
+    fs::read_to_string(&path).ok()
+}
+
+/// `fetch` only reports transport failures, but a CDN/captive portal happily
+/// answers 200 with an HTML error page or an empty body. Feeding that to
+/// QuickJS fails later with a cryptic "unexpected token '<'", so treat
+/// anything that cannot be a script as garbage and let the caller downgrade.
+fn looks_like_script(body: &str) -> bool {
+    let head = body.trim_start_matches('\u{feff}').trim_start();
+    if head.len() < 256 {
+        return false;
+    }
+    let lead = head.get(..64).unwrap_or(head).to_ascii_lowercase();
+    !(lead.starts_with("<!doctype") || lead.starts_with("<html") || lead.starts_with("<?xml"))
+}
+
 async fn source_for(site: &Value) -> Result<String, AppError> {
     let api = site
         .get("api")
@@ -187,7 +223,7 @@ async fn source_for(site: &Value) -> Result<String, AppError> {
             return Ok(text);
         }
     }
-    let response = http::fetch(http::FetchRequest {
+    let fetched = http::fetch(http::FetchRequest {
         url: api.clone(),
         method: None,
         headers: site.get("headers").and_then(Value::as_object).map(|map| {
@@ -198,16 +234,42 @@ async fn source_for(site: &Value) -> Result<String, AppError> {
         body: None,
         timeout_ms: Some(10_000),
     })
-    .await?;
+    .await;
     // ES modules are NOT rejected here anymore: the sidecar auto-detects
     // `import`/`export` and evaluates them with its custom ModuleLoader.
+
+    let text = match fetched {
+        Ok(response) if looks_like_script(&response.body) => response.body,
+        Ok(response) => match bundled_engine(&api) {
+            Some(text) => {
+                eprintln!(
+                    "[qjs] {api} answered with {} bytes that are not a script; using bundled engine",
+                    response.body.len()
+                );
+                text
+            }
+            None => {
+                return Err(AppError::new(
+                    code::RUNTIME_UNAVAILABLE,
+                    format!("js source is not a script: {api}"),
+                ))
+            }
+        },
+        Err(err) => match bundled_engine(&api) {
+            Some(text) => {
+                eprintln!("[qjs] {api} unreachable ({}); using bundled engine", err.message);
+                text
+            }
+            None => return Err(err),
+        },
+    };
 
     let mut guard = cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if guard.len() >= 64 {
         guard.clear();
     }
-    guard.insert(api, (response.body.clone(), Instant::now()));
-    Ok(response.body)
+    guard.insert(api, (text.clone(), Instant::now()));
+    Ok(text)
 }
 
 pub struct QuickJsRuntime;
@@ -430,5 +492,93 @@ mod tests {
         let payload = proxy_payload_from_js(&json!({ "text": "x" })).expect("payload");
         assert_eq!(payload.content_type, "application/octet-stream");
         assert_eq!(payload.body, b"x".to_vec());
+    }
+
+    #[test]
+    fn engine_urls_are_recognised_by_basename() {
+        // Mirrors spell the engine differently but the file is the same.
+        for api in [
+            "https://raw.githubusercontent.com/cluntop/tvbox/main/lib/drpy2.min.js",
+            "https://cdn.example.com/js/drpy2.js",
+            "https://cdn.example.com/lib/drpy2.min.js?v=3#x",
+        ] {
+            assert!(
+                BUNDLED_ENGINES.contains(&api_basename(api)),
+                "expected engine basename for {api}"
+            );
+        }
+        // A user's own spider must never be silently replaced by the engine.
+        for api in [
+            "https://cdn.example.com/js/荐片.js",
+            "https://cdn.example.com/lib/live2vod.js",
+            "https://cdn.example.com/lib/drpy2.min.js.bak",
+        ] {
+            assert!(
+                !BUNDLED_ENGINES.contains(&api_basename(api)),
+                "should not treat {api} as the bundled engine"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_engine_is_shipped_and_readable() {
+        // D3: the copy must exist next to the other js assets and parse as a
+        // script, otherwise the fallback would hand garbage to QuickJS.
+        let path = resolve_assets_dir().join("js").join("lib").join("drpy2.min.js");
+        assert!(path.is_file(), "missing bundled engine: {}", path.display());
+        let text = fs::read_to_string(&path).expect("read bundled engine");
+        assert!(text.len() > 10_000);
+        assert!(text.contains("assets://js/lib/cheerio.min.js"));
+        assert!(looks_like_script(&text));
+        assert_eq!(
+            bundled_engine("https://x/y/lib/drpy2.min.js").map(|t| t.len()),
+            Some(text.len())
+        );
+        assert!(bundled_engine("https://x/y/lib/some-spider.js").is_none());
+    }
+
+    #[test]
+    fn non_script_bodies_are_rejected() {
+        // A 200 response full of HTML is the most common CDN/proxy failure and
+        // must not reach QuickJS as if it were the spider.
+        assert!(!looks_like_script(""));
+        assert!(!looks_like_script("not found"));
+        assert!(!looks_like_script(&format!(
+            "<!DOCTYPE html><html><body>{}</body></html>",
+            "x".repeat(400)
+        )));
+        assert!(!looks_like_script(&format!(
+            "<?xml version=\"1.0\"?><Error>{}</Error>",
+            "x".repeat(400)
+        )));
+        let real = format!(
+            "import cheerio from\"assets://js/lib/cheerio.min.js\";{}",
+            " ".repeat(4_000)
+        );
+        assert!(looks_like_script(&real));
+        // BOM + leading whitespace must not defeat the sniff.
+        assert!(looks_like_script(&format!("\u{feff}\n\n{}", real)));
+    }
+
+    /// Manual check (needs network, so `#[ignore]`): a dead engine URL must
+    /// yield the bundled copy instead of an error, both when the host answers
+    /// garbage (404 page) and when it cannot be reached at all. Run with
+    /// `cargo test --lib -- --ignored engine_falls_back --nocapture`.
+    #[tokio::test]
+    #[ignore]
+    async fn engine_falls_back_when_remote_is_missing() {
+        let local = bundled_engine("https://x/lib/drpy2.min.js").expect("bundled engine");
+        for api in [
+            // Same basename, nonexistent directory: raw.githubusercontent 404s.
+            "https://raw.githubusercontent.com/cluntop/tvbox/main/__nope__/drpy2.min.js",
+            // Unresolvable host: exercises the transport-error branch.
+            "https://luma-no-such-host.invalid/lib/drpy2.min.js",
+        ] {
+            let text = source_for(&json!({ "api": api, "ext": "" }))
+                .await
+                .unwrap_or_else(|err| panic!("fallback failed for {api}: {}", err.message));
+            assert_eq!(text.len(), local.len(), "wrong fallback body for {api}");
+            assert!(text.contains("assets://js/lib/cheerio.min.js"));
+        }
     }
 }
