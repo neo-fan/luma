@@ -439,7 +439,7 @@ export default function App() {
   })();
 
   return (
-    <div className="app">
+    <div className={sidebarCollapsed ? "app is-sidebar-collapsed" : "app"}>
       <aside className={sidebarCollapsed ? "sidebar is-collapsed" : "sidebar"}>
         <div className="brand">
           <span className="brand__mark">

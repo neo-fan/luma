@@ -104,31 +104,46 @@ textarea {
 
 /* ---------- 布局 ---------- */
 
+/* 侧栏脱离文档流固定在左侧窗口边缘：即使内容区滚动、或将来 .app 被撑高，
+   导航也绝不跟着走。左侧空间由 .app 的 padding-left 让出，随收缩态切换。 */
 .app {
   display: flex;
   height: 100vh;
+  height: 100dvh;
+  padding-left: 204px;
   overflow: hidden;
+  transition: padding-left var(--dur) var(--ease);
+}
+
+.app.is-sidebar-collapsed {
+  padding-left: 68px;
 }
 
 .sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
   display: flex;
   flex-direction: column;
   gap: 28px;
   width: 204px;
-  flex: 0 0 204px;
+  height: 100vh;
+  height: 100dvh;
   padding: 26px 14px 18px;
   background: var(--bg-soft);
   border-right: 1px solid var(--border);
+  /* 导航项多 / 窗口过矮时侧栏自己滚，不把整页顶下去 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
   transition:
     width var(--dur) var(--ease),
-    flex-basis var(--dur) var(--ease),
     padding var(--dur) var(--ease);
 }
 
 /* 收缩态：只留 68px 图标轨道；文字统一由 .nav__label 控制显隐 */
 .sidebar.is-collapsed {
   width: 68px;
-  flex: 0 0 68px;
   padding: 26px 8px 18px;
 }
 

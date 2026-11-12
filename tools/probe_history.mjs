@@ -224,10 +224,39 @@ try {
   );
   assert(probeCard?.hasRemove === true, "each row has a delete button", String(probeCard?.hasRemove));
 
+  // 侧栏必须钉在窗口左侧：把内容滚到底，它的顶边与左边都不许动。
+  // 放在列表渲染之后跑——列表为空时内容区没有可滚距离，断言会假绿。
+  const pinned = await cdp.eval(`(async () => {
+    const content = document.querySelector('.content');
+    const side = document.querySelector('.sidebar');
+    if (!content || !side) return 'MISSING';
+    const y = content.scrollTop;
+    content.scrollTop = content.scrollHeight;
+    await new Promise((r) => setTimeout(r, 200));
+    const rect = side.getBoundingClientRect();
+    const pos = getComputedStyle(side).position;
+    const scrolled = content.scrollTop;
+    content.scrollTop = y;
+    return JSON.stringify({
+      pos,
+      top: Math.round(rect.top),
+      left: Math.round(rect.left),
+      scrolled,
+    });
+  })()`);
+  const pinInfo = JSON.parse(pinned === "MISSING" ? "{}" : pinned);
+  assert(
+    pinInfo.pos === "fixed" && pinInfo.top === 0 && pinInfo.left === 0 && pinInfo.scrolled > 0,
+    "sidebar pinned while content scrolls",
+    pinned,
+  );
+
   // 删除这一条：只点合成记录的 ✕。
+  // 用 textContent 而不是 innerText —— 内容区滚到很远处时 innerText 会返回空串，
+  // 会让「找不到行」误判成删除失败。
   const removed = await cdp.eval(`(() => {
     const rows = [...document.querySelectorAll('.fav-item')];
-    const row = rows.find((el) => (el.innerText || '').includes(${JSON.stringify(PROBE_NAME)}));
+    const row = rows.find((el) => (el.textContent || '').includes(${JSON.stringify(PROBE_NAME)}));
     if (!row) return 'MISSING';
     const btn = row.querySelector('.fav-remove');
     if (!btn) return 'NO_BUTTON';
