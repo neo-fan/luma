@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import IconButton from "../IconButton";
 import Spinner from "../Spinner";
+import { EXTERNAL_PLAY_FALLBACK } from "../../lib/features";
 
 interface StageNav {
   /** 顶部徽标：`360zy · 第 3 / 8 集`。 */
@@ -82,11 +83,9 @@ export default function PlayerStage({
       {!resolving && !playable ? (
         <div className="player-overlay player-fallback">
           <p className="player-fallback__title">
-            {resolveError ? "无法解析播放地址" : "该地址需要在外部播放器中打开"}
+            {resolveError ? "无法解析播放地址" : EXTERNAL_PLAY_FALLBACK.title}
           </p>
-          <p className="player-fallback__desc">
-            内置播放器只支持 HLS / FLV / 直链媒体，其余格式请交给系统播放器。
-          </p>
+          <p className="player-fallback__desc">{EXTERNAL_PLAY_FALLBACK.desc}</p>
         </div>
       ) : null}
     </div>

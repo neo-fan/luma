@@ -22,6 +22,7 @@ import type {
 import Artplayer from "artplayer";
 import artplayerPluginHlsControl from "artplayer-plugin-hls-control";
 import Hls from "hls.js";
+import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
 import { readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
@@ -174,7 +175,7 @@ export function usePlayerEngine({
             if (video.canPlayType("application/vnd.apple.mpegurl")) {
               video.src = url;
             } else {
-              setVideoError("当前环境不支持 HLS 内置播放，请使用外部播放。");
+              setVideoError(`当前环境不支持 HLS 内置播放，${PLAY_FAILURE_HINT}。`);
             }
             return;
           }
@@ -267,7 +268,11 @@ export function usePlayerEngine({
                 return;
               }
               if (!mpegts.isSupported()) {
-                setVideoError("当前环境不支持 FLV 内置播放，已改用外部播放。");
+                setVideoError(
+                  EXTERNAL_PLAY_ENABLED
+                    ? "当前环境不支持 FLV 内置播放，已改用外部播放。"
+                    : "当前环境不支持 FLV 内置播放，请换源或稍后重试。",
+                );
                 return;
               }
               player = mpegts.createPlayer(
@@ -397,8 +402,14 @@ export function usePlayerEngine({
     const onError = () => {
       const mediaError = video.error;
       // 3 = MEDIA_ERR_DECODE, 4 = MEDIA_ERR_SRC_NOT_SUPPORTED. WebView2 常见于
-      // HEVC：换源也救不了同一编码，直接交给随包 mpv（规格 T-30 自动兜底）。
-      if (mediaError && (mediaError.code === 3 || mediaError.code === 4) && !mpvTried.current) {
+      // HEVC：换源也救不了同一编码，原本交给随包 mpv（规格 T-30 自动兜底）。
+      // 外部播放临时屏蔽期间不再拉起外部进程，直接落到换源/换线路流程。
+      if (
+        EXTERNAL_PLAY_ENABLED &&
+        mediaError &&
+        (mediaError.code === 3 || mediaError.code === 4) &&
+        !mpvTried.current
+      ) {
         mpvTried.current = true;
         log.warn("mpv fallback", { siteKey, vodId, mediaCode: mediaError.code });
         setVideoError("浏览器无法解码该视频，已自动交给 mpv 播放…");
@@ -410,7 +421,7 @@ export function usePlayerEngine({
           });
         return;
       }
-      setVideoError("播放器加载失败，可尝试外部播放。");
+      setVideoError(`播放器加载失败，${PLAY_FAILURE_HINT}。`);
       void switchOrFailoverRef.current();
     };
     video.addEventListener("error", onError);

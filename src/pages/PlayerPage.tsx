@@ -8,6 +8,7 @@ import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
 import { formatDuration, parsePlayLines, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
+import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
@@ -37,7 +38,7 @@ interface PlayerPageProps {
   onBack: () => void;
 }
 
-/** 播放页：解析地址 → 内置播放 → 记录历史；必要时外部播放。 */
+/** 播放页：解析地址 → 内置播放 → 记录历史；必要时换源 / 换线路。 */
 export default function PlayerPage({
   siteKey,
   vodId,
@@ -248,7 +249,7 @@ export default function PlayerPage({
     // `changeable: 0`：配置明确不允许换源，别再对其它站点发搜索。
     if (!allowFailover) {
       setSwitchTip("");
-      setVideoError("该源不允许换源，可尝试外部播放。");
+      setVideoError("该源不允许换源，请手动切换播放线路或稍后重试。");
       return;
     }
     const name = vodName.trim();
@@ -352,8 +353,8 @@ export default function PlayerPage({
       setSwitchTip("");
       setVideoError(
         siteKey === "live"
-          ? "该频道暂时无法播放，可尝试外部播放。"
-          : "所有源都无法播放该影片，可尝试外部播放。",
+          ? `该频道暂时无法播放，${PLAY_FAILURE_HINT}。`
+          : `所有源都无法播放该影片，${PLAY_FAILURE_HINT}。`,
       );
     } catch (err) {
       setSwitchTip("");
@@ -694,6 +695,11 @@ export default function PlayerPage({
   };
 
   const playExternal = async () => {
+    // 开关关闭时按钮不会渲染，这里再兜一层：防止快捷键 / 旧缓存里的调用
+    // 绕过 UI 直接拉起系统播放器。
+    if (!EXTERNAL_PLAY_ENABLED) {
+      return;
+    }
     const target = resolved?.url || playUrl;
     try {
       await api.openExternal(target);
@@ -744,7 +750,8 @@ export default function PlayerPage({
         }
       />
 
-      {/* 影片信息卡：片名/年份/简介 + 换源/外部播放，紧跟在播放器下方。 */}
+      {/* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。
+          外部播放按钮由 EXTERNAL_PLAY_ENABLED 控制，关闭时整个入口不渲染。 */}
       <PlayerAbout
         vod={vod}
         fallbackName={vodName}
@@ -753,7 +760,7 @@ export default function PlayerPage({
         lineName={currentLine?.name}
         episodeLabel={nowEpisode || undefined}
         onSwitchSource={siteKey === "live" ? undefined : () => setShowSources(true)}
-        onPlayExternal={() => void playExternal()}
+        onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
       />
 
       {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}

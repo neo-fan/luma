@@ -15,14 +15,15 @@ interface PlayerAboutProps {
   episodeLabel?: string;
   /** 直播频道没有「换源」概念，传 undefined 即不渲染该按钮。 */
   onSwitchSource?: () => void;
-  onPlayExternal: () => void;
+  /** 外部播放开关关闭时由调用方传 undefined，按钮整体不渲染。 */
+  onPlayExternal?: () => void;
 }
 
 const CLAMP_AT = 160;
 
 /**
  * 播放器下方的影片信息卡：海报 + 片名 + 年份/地区/类型 + 导演主演 + 简介，
- * 换源与外部播放放在卡片操作区。详情拿不到时只显示片名与站点，不留白板。
+ * 换源 / 外部播放（开关打开时）放在卡片操作区。详情拿不到时只显示片名与站点，不留白板。
  */
 export default function PlayerAbout({
   vod,
@@ -67,7 +68,9 @@ export default function PlayerAbout({
             {onSwitchSource ? (
               <IconButton name="swap" label="换源" onClick={onSwitchSource} />
             ) : null}
-            <IconButton name="external" label="外部播放" onClick={onPlayExternal} />
+            {onPlayExternal ? (
+              <IconButton name="external" label="外部播放" onClick={onPlayExternal} />
+            ) : null}
           </div>
         </div>
 
