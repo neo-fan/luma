@@ -14,12 +14,37 @@ const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("player favourites & history line contract", () => {
-  it("renders a favourite button in the player header", () => {
+  it("renders a favourite star next to the player title", () => {
     const header = read("src/components/player/PlayerHeader.tsx");
-    expect(header).toContain('btn--fav');
+    // 收藏是剧名旁的单图标星（不是右侧工具栏的文字按钮）：片名单独成盒，
+    // 星插在「片名」与「集名」之间。
+    expect(header).toContain("FavStar");
+    expect(header).toContain("page-title__name");
     expect(header).toContain("onToggleFavorite");
+    expect(header).not.toContain("btn--fav");
     // 直播没有 vod 条目，传 null 隐藏按钮。
     expect(header).toContain("favorite === null");
+  });
+
+  it("renders a favourite star next to the detail title", () => {
+    const page = read("src/pages/DetailPage.tsx");
+    expect(page).toContain("detail-title-row");
+    expect(page).toContain("FavStar");
+    // 旧的「☆ 收藏」文字按钮（在右上角工具栏里）必须已经拿掉。
+    expect(page).not.toContain("btn--fav");
+    expect(page).not.toContain("☆ 收藏");
+  });
+
+  it("keeps the star icon-only but accessible", () => {
+    const star = read("src/components/FavStar.tsx");
+    // 没有文字，状态只能落在 aria-pressed；探针也按它断言。
+    expect(star).toContain("aria-pressed");
+    expect(star).toContain("aria-label");
+    expect(star).toContain('"fav-star is-on"');
+    // 已收藏靠填充表达，样式里要能把描边星变实心。
+    const css = read("src/styles.css");
+    expect(css).toContain(".fav-star.is-on svg");
+    expect(css).not.toContain(".btn--fav");
   });
 
   it("toggles favourites through the shared library store", () => {

@@ -29,6 +29,8 @@
   --accent-ink: #a9bcff;
   --ok: #4ade9b;
   --danger: #ff7b83;
+  /* 收藏星专用金色：与强调色蓝紫区分，见 .fav-star */
+  --star: #f2c14e;
 
   --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.18);
   --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.32);
@@ -391,6 +393,14 @@ textarea {
   white-space: nowrap;
 }
 
+/* 片名单独成盒，收藏星才能插在「片名」与「集名」之间；
+   极长片名优先压缩自己，不要把播放进度/集名挤出可视区。 */
+.page-title__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .page-title__sub {
   color: var(--muted);
   font-size: 14px;
@@ -554,10 +564,59 @@ textarea {
   font-size: 12px;
 }
 
-.btn--fav.is-on {
-  border-color: rgba(110, 139, 255, 0.42);
-  background: var(--accent-soft);
-  color: var(--accent-ink);
+/* 收藏星：单图标按钮，紧贴剧名右侧。
+   状态只靠「描边 → 实心」表达，没有文字，所以热区给到 30px 见方（比 18px
+   的图标大一圈），点击时缩一下给出触感反馈。金色是「星」的通用语义色，
+   与强调色（蓝紫）区分开，一眼能看出是收藏而不是主操作。 */
+.fav-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  /* 未收藏用 --muted 而不是 --faint：这是可点的操作入口，不能像装饰文字那么暗 */
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease),
+    transform 0.14s var(--ease);
+}
+
+/* .page-title 是 baseline 对齐，按钮要自己抬到文字中线 */
+.page-title .fav-star {
+  align-self: center;
+}
+
+.fav-star svg {
+  width: 18px;
+  height: 18px;
+}
+
+.fav-star:hover:not(:disabled) {
+  background: var(--panel-hover);
+  color: var(--text-soft);
+}
+
+.fav-star:active:not(:disabled) {
+  transform: scale(0.86);
+}
+
+.fav-star.is-on {
+  color: var(--star);
+}
+
+/* 已收藏：描边保留 + 填充，读起来是「实心星」而不是加粗的描边星 */
+.fav-star.is-on svg {
+  fill: currentColor;
+}
+
+.fav-star:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .select,
@@ -997,12 +1056,21 @@ textarea {
   min-width: 0;
 }
 
+/* 剧名 + 收藏星同一行：星紧贴片名右侧，垂直居中于标题行。 */
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .detail-title {
   margin: 0;
   font-size: 26px;
   font-weight: 620;
   letter-spacing: -0.02em;
   line-height: 1.3;
+  min-width: 0;
 }
 
 .detail-line {

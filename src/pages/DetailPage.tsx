@@ -3,6 +3,7 @@ import type { Navigate } from "../App";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
+import FavStar from "../components/FavStar";
 import SourcePicker from "../components/SourcePicker";
 import Spinner from "../components/Spinner";
 import { formatDuration, parsePlayLines, plainText, toVodRef } from "../lib/format";
@@ -352,15 +353,6 @@ export default function DetailPage({
           >
             ↻ 刷新
           </button>
-          <button
-            type="button"
-            className={favorite ? "btn btn--fav is-on" : "btn btn--fav"}
-            onClick={() => void toggleFavorite()}
-            disabled={favBusy}
-            title={favorite ? "取消收藏" : "加入收藏"}
-          >
-            {favorite ? "★ 已收藏" : "☆ 收藏"}
-          </button>
         </div>
       </header>
 
@@ -378,7 +370,10 @@ export default function DetailPage({
           )}
         </div>
         <div className="detail-info">
-          <h1 className="detail-title">{vod.vod_name || "未命名"}</h1>
+          <div className="detail-title-row">
+            <h1 className="detail-title">{vod.vod_name || "未命名"}</h1>
+            <FavStar on={favorite} busy={favBusy} onToggle={() => void toggleFavorite()} />
+          </div>
           {chips.length > 0 ? (
             <div className="chip-row chip-row--static">
               {chips.map((chip, index) => (

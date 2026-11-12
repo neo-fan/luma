@@ -59,8 +59,10 @@ class Cdp {
   }
 
   async shot(name) {
-    const res = await this.send("Page.captureScreenshot", { format: "png" });
-    const path = `${SHOT_DIR}/${name}.png`;
+    // png 会卡死（实测在本机 WebView2 上 Page.captureScreenshot 用 png 直接超时），
+    // 全部改 jpeg，约 140ms 返回。
+    const res = await this.send("Page.captureScreenshot", { format: "jpeg", quality: 85 });
+    const path = `${SHOT_DIR}/${name}.jpg`;
     writeFileSync(path, Buffer.from(res.data, "base64"));
     console.log(`[shot] ${path}`);
   }
@@ -169,17 +171,27 @@ const detailOk = await cdp.eval(WAIT_TEXT("播放线路", 30000));
 assert(detailOk === "FOUND", "detail page episodes", detailOk);
 await cdp.shot("ui-3-detail");
 
-// 5. favourite from the detail header (sidebar also has a 收藏 entry)
+// 5. favourite from the detail title row (sidebar also has a 收藏 entry)
+// 收藏已改成剧名旁的单图标星（无文案），状态只能读 aria-pressed。
 // idempotent: only toggle when the current state is "not favourited"
-await cdp.eval(`(() => {
-  const btn = document.querySelector('.page-head .btn--fav');
+const favBtn = await cdp.eval(`(() => {
+  const btn = document.querySelector('.detail-title-row .fav-star');
   if (!btn) return 'MISSING';
-  if (btn.textContent.includes('已收藏')) return 'ALREADY';
+  if (btn.getAttribute('aria-pressed') === 'true') return 'ALREADY';
   btn.click();
   return 'CLICKED';
 })()`);
-const favOk = await cdp.eval(WAIT_TEXT("已收藏", 15000));
-assert(favOk === "FOUND", "favourite toggled", favOk);
+assert(favBtn !== 'MISSING', "detail title has a favourite star", favBtn);
+const favOk = await cdp.eval(`(async () => {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const btn = document.querySelector('.detail-title-row .fav-star');
+    if (btn && btn.getAttribute('aria-pressed') === 'true') return 'OK';
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return null;
+})()`);
+assert(favOk === "OK", "favourite toggled", String(favOk));
 
 // 6. player page
 await cdp.eval(`(() => {

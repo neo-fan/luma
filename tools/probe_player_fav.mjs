@@ -178,31 +178,34 @@ try {
     "player page mounted",
   );
   const favBtn = await cdp.eval(WAIT(`return (() => {
-    const btn = document.querySelector('.page--player .btn--fav');
+    const btn = document.querySelector('.page--player .fav-star');
     if (!btn) return null;
-    return JSON.stringify({ text: btn.textContent.trim(), disabled: btn.disabled });
+    return JSON.stringify({ pressed: btn.getAttribute('aria-pressed'), disabled: btn.disabled });
   })();`, 15000));
   assert(!!favBtn, "player header has a favourite button", String(favBtn));
-  const label = favBtn ? JSON.parse(favBtn).text : "";
-  assert(label === "☆ 收藏" || label === "★ 已收藏", "button label reflects state", label);
+  // 收藏是剧名旁的单图标星，没有文字可读；状态一律看 aria-pressed。
+  const pressed = favBtn ? JSON.parse(favBtn).pressed : null;
+  assert(pressed === "false" || pressed === "true", "star exposes aria-pressed state", String(pressed));
 
-  // 点一次：集合必须只差一条（加或删），且按钮文案翻转。
-  await cdp.eval(`document.querySelector('.page--player .btn--fav').click()`);
+  // 点一次：集合必须只差一条（加或删），且 aria-pressed 必须翻转。
+  await cdp.eval(`document.querySelector('.page--player .fav-star').click()`);
   await sleep(600);
   const afterAdd = JSON.parse((await cdp.eval(FAV_KEYS)) || "[]");
   const added = afterAdd.filter((key) => !before.has(key));
   const removed = [...before].filter((key) => !afterAdd.includes(key));
-  const flipped = await cdp.eval(`document.querySelector('.page--player .btn--fav')?.textContent.trim() || ''`);
-  if (label === "☆ 收藏") {
+  const flipped = await cdp.eval(
+    `document.querySelector('.page--player .fav-star')?.getAttribute('aria-pressed') || ''`,
+  );
+  if (pressed === "false") {
     assert(added.length === 1 && removed.length === 0, "click adds exactly one favourite", JSON.stringify({ added, removed }));
-    assert(flipped === "★ 已收藏", "button switches to 已收藏", flipped);
+    assert(flipped === "true", "star switches to favourited", flipped);
   } else {
     assert(removed.length === 1 && added.length === 0, "click removes exactly one favourite", JSON.stringify({ added, removed }));
-    assert(flipped === "☆ 收藏", "button switches to 收藏", flipped);
+    assert(flipped === "false", "star switches to unfavourited", flipped);
   }
 
   // 再点一次恢复初始状态。
-  await cdp.eval(`document.querySelector('.page--player .btn--fav').click()`);
+  await cdp.eval(`document.querySelector('.page--player .fav-star').click()`);
   await sleep(600);
   const backKeys = JSON.parse((await cdp.eval(FAV_KEYS)) || "[]");
   assert(
