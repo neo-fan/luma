@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Navigate } from "../App";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import Empty from "../components/Empty";
@@ -10,6 +10,7 @@ import SourcePicker from "../components/SourcePicker";
 import Spinner from "../components/Spinner";
 import { formatDuration, parsePlayLines, plainText, toVodRef } from "../lib/format";
 import type { Episode, PlayLine } from "../lib/format";
+import { findPlayableSource } from "../lib/crossSourceRecovery";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { pageCache } from "../lib/pageCache";
 import { usePageState } from "../lib/usePageState";
@@ -29,6 +30,14 @@ interface DetailPageProps {
   navigate: Navigate;
   onBack: () => void;
 }
+
+/**
+ * 「自动切到的目标页」不再做跨源自愈：目标页的详情已经探活过，万一再次读空
+ * （缓存失效 / 源偶发），不该又跳到第三个源，形成连环跳转。
+ */
+const skipCrossSource = new Set<string>();
+/** 跨源成功后的一次性提示（模块级变量够用，不必写 sessionStorage）。 */
+let pendingRecoveryNotice: string | null = null;
 
 /** 详情页：影片信息 + 收藏 + 线路/剧集选择 + 手动换源。 */
 export default function DetailPage({
@@ -65,6 +74,17 @@ export default function DetailPage({
   const [favBusy, setFavBusy] = useState(false);
   const [favTip, setFavTip] = useState("");
   const [showSources, setShowSources] = useState(false);
+  // 空详情（发现/推荐型源）时自动按片名去其它源找可播放版本的状态。
+  const [fallback, setFallback] = useState<"idle" | "searching" | "none">("idle");
+  const fallbackCancelRef = useRef(false);
+  const [recoveryNotice] = useState(() => pendingRecoveryNotice);
+  // dev StrictMode 会把 useState 初始化器跑两次：不能在初始化器里清空，否则
+  // 第二次挂载读到 null、提示直接消失。改到 effect 里清（幂等，跑两次无碍）。
+  useEffect(() => {
+    if (recoveryNotice) {
+      pendingRecoveryNotice = null;
+    }
+  }, [recoveryNotice]);
   // 历史进度刚在播放页写过，必须每次回到详情重新读，不能缓存成旧值。
   const [resume, setResume] = useState<HistoryItem | null>(null);
 
@@ -77,6 +97,8 @@ export default function DetailPage({
     const run = async () => {
       setLoading(true);
       setError("");
+      setFallback("idle");
+      fallbackCancelRef.current = false;
       try {
         // 列表/搜索已给出的片名用于空详情自愈：旧 vod_id 失效时按名回查。
         const list = await api.detail(siteKey, vodId, reload > 0, (title || "").trim());
@@ -93,9 +115,61 @@ export default function DetailPage({
             `当前源「${siteName || siteKey}」未提供影片详情` +
               (vodId ? `（id ${vodId}）` : "（缺少影片 id）"),
           );
+          // 发现型源（豆瓣[py] 等）连 searchContent 都没有，同站按名回查必然
+          // 失败。改用片名在其它站点里找一个真能播的详情，成功就直接切过去；
+          // 用户一旦手动操作（重试 / 打开换源面板）就中止，避免迟到结果跳页。
+          const word = (title || "").trim();
+          if (!word || skipCrossSource.has(`${siteKey}:${vodId}`)) {
+            return;
+          }
+          setFallback("searching");
+          void (async () => {
+            try {
+              const result = await findPlayableSource(word, sites, siteKey, () =>
+                alive && !fallbackCancelRef.current,
+              );
+              if (!alive || fallbackCancelRef.current) {
+                return;
+              }
+              if (!result.found) {
+                setFallback("none");
+                log.warn("cross-source recovery found no playable candidate", {
+                  siteKey,
+                  vodId,
+                  title: word,
+                  probed: result.probed,
+                });
+                return;
+              }
+              const found = result.found;
+              skipCrossSource.add(`${found.siteKey}:${found.vodId}`);
+              pendingRecoveryNotice =
+                `《${word}》在当前源没有播放列表，已切换到「${found.siteName || found.siteKey}」`;
+              log.info("detail recovered from another source", {
+                from: siteKey,
+                to: found.siteKey,
+                vodId: found.vodId,
+                probed: result.probed,
+              });
+              navigate(
+                { name: "detail", siteKey: found.siteKey, vodId: found.vodId, title: found.vodName },
+                true,
+              );
+            } catch (err) {
+              if (alive) {
+                setFallback("none");
+                log.warn("cross-source recovery failed", {
+                  siteKey,
+                  vodId,
+                  message: errorMessage(err),
+                });
+              }
+            }
+          })();
           return;
         }
         setVod(first);
+        setFallback("idle");
         setLineIndex(0);
       } catch (err) {
         if (alive) {
@@ -251,6 +325,7 @@ export default function DetailPage({
 
   /** 换源只替换当前详情页，避免返回键在几十个源之间来回绕。 */
   const pickSource = (option: SourceOption) => {
+    fallbackCancelRef.current = true;
     setShowSources(false);
     navigate(
       { name: "detail", siteKey: option.siteKey, vodId: option.vodId, title: option.vodName },
@@ -280,16 +355,32 @@ export default function DetailPage({
       <section className="page">
         <header className="page-head">
           <IconButton name="back" label="返回" onClick={onBack} />
-          <IconButton name="swap" label="换源" onClick={() => setShowSources(true)} />
+          <IconButton
+            name="swap"
+            label="换源"
+            onClick={() => {
+              fallbackCancelRef.current = true;
+              setShowSources(true);
+            }}
+          />
         </header>
         <ErrorBar
           message={`详情加载失败：${error || "影片不存在"}`}
-          onRetry={() => setReload((value) => value + 1)}
+          onRetry={() => {
+            fallbackCancelRef.current = true;
+            setReload((value) => value + 1);
+          }}
         />
-        <p className="tip">
-          {title ? `《${title}》` : "该影片"}在此源暂无可用详情：TVBox 中部分源只提供发现/推荐、没有播放列表，
-          也可能是影片 id 失效或网络波动。点右上角的换源图标按片名从其它站点查找，或点错误条上的重试图标重新拉取。
-        </p>
+        {fallback === "searching" ? (
+          <p className="tip">
+            正在按片名从其它源查找《{title}》的可播放版本，找到后会自动切换；也可以直接点右上角的换源图标手动选择。
+          </p>
+        ) : (
+          <p className="tip">
+            {title ? `《${title}》` : "该影片"}在此源暂无可用详情：TVBox 中部分源只提供发现/推荐、没有播放列表，
+            也可能是影片 id 失效或网络波动。点右上角的换源图标按片名从其它站点查找，或点错误条上的重试图标重新拉取。
+          </p>
+        )}
         {showSources ? (
           <SourcePicker
             title={title || ""}
@@ -346,6 +437,7 @@ export default function DetailPage({
         </div>
       </header>
 
+      {recoveryNotice ? <p className="tip tip--ok">{recoveryNotice}</p> : null}
       {favTip ? <p className="tip">{favTip}</p> : null}
       {site?.changeable === false ? (
         <p className="tip">该源声明 changeable=0，已关闭自动换源；手动换源仍可使用。</p>

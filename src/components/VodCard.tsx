@@ -7,6 +7,13 @@ interface VodCardProps {
   remarks?: string;
   /** 次要说明，收藏页用来显示站点名 */
   sub?: string;
+  /**
+   * 压在封面底部的信息行（历史页用：集数 / 进度 / 线路 / 时间）。
+   * 标题行因此只留片名，长片名也不会再被副标题挤成两截。
+   */
+  coverMeta?: string[];
+  /** 悬停提示，缺省用片名；历史页塞完整的「线路 · 集数 · 站点 · 进度 · 时间」。 */
+  hint?: string;
   onOpen: () => void;
 }
 
@@ -16,20 +23,42 @@ interface VodCardProps {
  * 在父组件无关状态变化（进度、筛选开关、加载文案）时真正跳过重渲染。
  */
 function sameCard(a: VodCardProps, b: VodCardProps): boolean {
-  return a.title === b.title && a.pic === b.pic && a.remarks === b.remarks && a.sub === b.sub;
+  return (
+    a.title === b.title &&
+    a.pic === b.pic &&
+    a.remarks === b.remarks &&
+    a.sub === b.sub &&
+    a.hint === b.hint &&
+    // coverMeta 每次渲染都是新数组，用内容比较而不是引用比较。
+    (a.coverMeta?.join("\u0001") ?? "") === (b.coverMeta?.join("\u0001") ?? "")
+  );
 }
 
-/** 统一的影片卡片：封面 + 角标 + 标题。 */
-const VodCard = memo(function VodCard({ title, pic, remarks, sub, onOpen }: VodCardProps) {
+/** 统一的影片卡片：封面 + 角标 + 标题（可选封面信息条与副标题）。 */
+const VodCard = memo(function VodCard({
+  title,
+  pic,
+  remarks,
+  sub,
+  coverMeta,
+  hint,
+  onOpen,
+}: VodCardProps) {
   // TVBox `vod_pic` may carry inline @header suffix; route through the local
   // /image proxy so the Rust host can inject them (WebView2 <img> cannot).
   const { src: cover, broken, onError: handleError } = useProxiedImage(pic);
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
   const handleOpen = useCallback(() => onOpenRef.current(), []);
+  const meta = (coverMeta ?? []).filter(Boolean);
 
   return (
-    <button type="button" className="vod-card" onClick={handleOpen} title={title}>
+    <button
+      type="button"
+      className={meta.length > 0 ? "vod-card vod-card--meta" : "vod-card"}
+      onClick={handleOpen}
+      title={hint ?? title}
+    >
       <div className="vod-card__poster">
         {cover && !broken ? (
           <img
@@ -44,6 +73,20 @@ const VodCard = memo(function VodCard({ title, pic, remarks, sub, onOpen }: VodC
           <span className="vod-card__ph">{broken || pic?.trim() ? "无封面" : ""}</span>
         )}
         {remarks ? <span className="vod-card__badge">{remarks}</span> : null}
+        {meta.length > 0 ? (
+          <span className="vod-card__meta">
+            {meta.map((line, index) => (
+              <span
+                className={
+                  index === 0 ? "vod-card__meta-line" : "vod-card__meta-line vod-card__meta-line--dim"
+                }
+                key={`${index}-${line}`}
+              >
+                {line}
+              </span>
+            ))}
+          </span>
+        ) : null}
       </div>
       <div className="vod-card__title">{title || "未命名"}</div>
       {sub ? <div className="vod-card__sub">{sub}</div> : null}

@@ -8,7 +8,7 @@ import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
-import { historySubtitle } from "../lib/history";
+import { historyCoverMeta, historySubtitle } from "../lib/history";
 import { log } from "../lib/logger";
 import { usePageState } from "../lib/usePageState";
 import type { HistoryItem } from "../types/tvbox";
@@ -158,15 +158,17 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
           {items.map((item) => {
             const key = `${item.siteKey}-${item.vodId}`;
             // 线路名与集数名来自播放页写入：换过源 / 换过线路后，
-            // 用户能一眼看出上次是从哪条线看到第几集。
-            const sub = historySubtitle(item);
+            // 用户能一眼看出上次是从哪条线看到第几集 —— 这些压在封面底部，
+            // 标题行只留片名（见 historyCoverMeta 的注释）。
+            const meta = historyCoverMeta(item);
             return (
               <div className="fav-item" key={key}>
                 <VodCard
                   title={item.name}
                   pic={item.pic}
                   remarks={item.remarks}
-                  sub={sub}
+                  coverMeta={meta}
+                  hint={historySubtitle(item)}
                   onOpen={() =>
                     navigate({
                       name: "detail",

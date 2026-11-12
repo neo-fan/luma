@@ -57,3 +57,20 @@ export function historySubtitle(item: HistoryItem, now = Date.now()): string {
     .filter(Boolean)
     .join(" · ");
 }
+
+/**
+ * 卡片封面上的信息行（历史页）：第一行「集数 · 进度」，第二行「线路 · 时间」。
+ *
+ * 历史页的卡片标题下不再放副标题 —— 五段信息挤在一行里既读不过来，也把片名
+ * 挤成两截。封面底部本来就是视觉冗余区（海报底部多为纯色），压两行小字既不
+ * 挡关键画面，又让「看到第几集、看了多少、哪条线、多久前」一眼可读。
+ * 副本 `historySubtitle` 仍作为 hover 提示保留完整信息（含站点名）。
+ */
+export function historyCoverMeta(item: HistoryItem, now = Date.now()): string[] {
+  const progress = progressText(item);
+  const first = [item.episodeName, progress].filter(Boolean).join(" · ");
+  const second = [item.playFrom || item.siteName || item.siteKey, relativeTime(item.updatedAt, now)]
+    .filter(Boolean)
+    .join(" · ");
+  return [first, second].filter(Boolean);
+}

@@ -1061,6 +1061,51 @@ textarea {
   text-overflow: ellipsis;
 }
 
+/* 封面底部的信息条（历史页）：两行小字压在渐变压暗层上。
+ * 放在封面里而不是标题下面 —— 标题行只留片名，长片名不再被副标题挤成两截。
+ * pointer-events:none 保证点封面任一处都等于点卡片（父级 button 的点击区）。 */
+.vod-card__meta {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 28px 10px 9px;
+  background: linear-gradient(
+    180deg,
+    rgba(6, 8, 12, 0) 0%,
+    rgba(6, 8, 12, 0.82) 38%,
+    rgba(6, 8, 12, 0.96) 100%
+  );
+  text-align: left;
+  pointer-events: none;
+}
+
+.vod-card__meta-line {
+  overflow: hidden;
+  color: #f2f4f9;
+  font-size: 11.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* 海报底部常有源站自带的白字/水印，纯靠渐变压暗不够，补一层投影保证可读。 */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* 第二行是辅助信息（线路 / 时间），压暗一档，视觉上不跟集数抢 */
+.vod-card__meta-line--dim {
+  color: rgba(238, 241, 247, 0.82);
+  font-size: 11px;
+}
+
+/* 有信息条时角标让到左上：底部留给信息条，右上角是删除键。 */
+.vod-card--meta .vod-card__badge {
+  top: 8px;
+  bottom: auto;
+}
+
 .vod-card__title {
   font-size: 14px;
   font-weight: 500;

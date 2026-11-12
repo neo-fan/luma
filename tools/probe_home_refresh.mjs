@@ -215,6 +215,16 @@ try {
 
   // 手动刷新按钮：立即 force 一次，不经过站点切换防抖。
   await cdp.eval(RESET);
+  // 切站请求可能还在飞（尤其 py 源首次要起 sidecar），按钮此时按设计是
+  // disabled + is-busy。等它真正空闲再点，否则点击被吞、后面误判成回归。
+  const idle = await cdp.eval(
+    WAIT(
+      `const btn = document.querySelector('.page-head .icon-btn[aria-label="刷新"]');
+       return btn && !btn.disabled && !btn.classList.contains('is-busy') ? 'OK' : null;`,
+      30000,
+    ),
+  );
+  assert(idle === "OK", "refresh button returns to idle after site switch", String(idle));
   const refreshed = await cdp.eval(`(() => {
     const btn = document.querySelector('.page-head .icon-btn[aria-label="刷新"]');
     if (!btn) return 'MISSING';

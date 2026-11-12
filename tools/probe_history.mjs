@@ -93,11 +93,21 @@ const WAIT = (expression, timeout = 15000) => `(async () => {
 })()`;
 
 const CARDS = `(() => {
-  const cards = [...document.querySelectorAll('.fav-item')].map((el) => ({
-    title: (el.querySelector('.vod-card__title')?.innerText || el.innerText || '').trim().split('\\n')[0],
-    sub: (el.querySelector('.vod-card__sub')?.innerText || '').trim(),
-    hasRemove: !!el.querySelector('.fav-remove'),
-  }));
+  const cards = [...document.querySelectorAll('.fav-item')].map((el) => {
+    const poster = el.querySelector('.vod-card__poster');
+    const meta = el.querySelector('.vod-card__meta');
+    const m = meta?.getBoundingClientRect();
+    const p = poster?.getBoundingClientRect();
+    return {
+      title: (el.querySelector('.vod-card__title')?.innerText || el.innerText || '').trim().split('\\n')[0],
+      // 历史信息现在压在封面底部，标题行只留片名。
+      meta: (meta?.innerText || '').trim().replace(/\\s*\\n\\s*/g, ' · '),
+      metaOnCover: !!(m && p && m.left >= p.left - 1 && m.right <= p.right + 1
+        && m.bottom <= p.bottom + 1 && m.top >= p.top),
+      hasSub: !!el.querySelector('.vod-card__sub'),
+      hasRemove: !!el.querySelector('.fav-remove'),
+    };
+  });
   return JSON.stringify(cards);
 })()`;
 
@@ -202,25 +212,27 @@ try {
   console.log(`[info] cards: ${JSON.stringify(cards.slice(0, 3))}`);
   const probeCard = cards.find((card) => card.title.includes(PROBE_NAME));
   assert(!!probeCard, "seeded entry listed", JSON.stringify(cards.slice(0, 3)));
+  assert(probeCard?.metaOnCover === true, "history info sits on the cover", JSON.stringify(probeCard));
+  assert(probeCard?.hasSub === false, "no subtitle crowding the title row", JSON.stringify(probeCard));
   assert(
-    (probeCard?.sub || "").includes("已看 50%"),
-    "progress percent rendered",
-    String(probeCard?.sub),
+    (probeCard?.meta || "").includes("已看 50%"),
+    "progress percent rendered on cover",
+    String(probeCard?.meta),
   );
   assert(
-    (probeCard?.sub || "").includes("线路 线路A"),
+    (probeCard?.meta || "").includes("线路A"),
     "line name rendered from history.playFrom",
-    String(probeCard?.sub),
+    String(probeCard?.meta),
   );
   assert(
-    (probeCard?.sub || "").includes("看到 第 2 集"),
+    (probeCard?.meta || "").includes("第 2 集"),
     "episode name rendered from history.episodeName",
-    String(probeCard?.sub),
+    String(probeCard?.meta),
   );
   assert(
-    (probeCard?.sub || "").includes("刚刚"),
+    (probeCard?.meta || "").includes("刚刚"),
     "relative time rendered",
-    String(probeCard?.sub),
+    String(probeCard?.meta),
   );
   assert(probeCard?.hasRemove === true, "each row has a delete button", String(probeCard?.hasRemove));
 

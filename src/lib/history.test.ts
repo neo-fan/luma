@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { historySubtitle, progressText, relativeTime } from "./history";
+import { historyCoverMeta, historySubtitle, progressText, relativeTime } from "./history";
 import type { HistoryItem } from "../types/tvbox";
 
 const base: HistoryItem = {
@@ -55,5 +55,32 @@ describe("historySubtitle", () => {
   it("keeps old rows readable when line/episode are absent", () => {
     const legacy = { ...base, playFrom: undefined, episodeName: undefined, siteName: undefined };
     expect(historySubtitle(legacy, 1_060_000)).toBe("cms · 已看 50% · 1 分钟前");
+  });
+});
+
+describe("historyCoverMeta", () => {
+  it("puts episode/progress on the first line and source/time on the second", () => {
+    expect(historyCoverMeta({ ...base, updatedAt: 1_000_000 }, 1_060_000)).toEqual([
+      "第 3 集 · 已看 50%",
+      "线路A · 1 分钟前",
+    ]);
+  });
+
+  it("falls back to the site name for legacy rows and drops empty lines", () => {
+    const legacy = {
+      ...base,
+      playFrom: undefined,
+      episodeName: undefined,
+      updatedAt: 0,
+      positionMs: 0,
+      durationMs: 0,
+    };
+    expect(historyCoverMeta(legacy, 1_060_000)).toEqual(["量子"]);
+  });
+
+  it("never returns more than two lines", () => {
+    const lines = historyCoverMeta(base);
+    expect(lines.length).toBeLessThanOrEqual(2);
+    expect(lines.every((line) => line.length > 0)).toBe(true);
   });
 });
