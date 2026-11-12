@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import IconButton from "../IconButton";
 import { countEpisodes } from "../../lib/sources";
 import type { PlayLine } from "../../lib/format";
 
@@ -71,9 +72,13 @@ export default function EpisodePanel({
             aria-label="筛选剧集"
             onChange={(event) => setQuery(event.target.value)}
           />
-          <button type="button" className="btn btn--sm" onClick={() => setReverse((v) => !v)}>
-            {reverse ? "正序" : "倒序"}
-          </button>
+          <IconButton
+            name="sort"
+            label={reverse ? "正序" : "倒序"}
+            pressed={reverse}
+            className="icon-btn--flip"
+            onClick={() => setReverse((v) => !v)}
+          />
           <span className="page-meta">显示 {visible.length} 集</span>
         </div>
       ) : null}
@@ -90,7 +95,11 @@ export default function EpisodePanel({
               title={episode.name}
             >
               {episode.name}
-              {active ? <span className="episode__now">正在播放</span> : null}
+              {active ? (
+                <span className="episode__now">
+                  <span className="sr-only">正在播放</span>
+                </span>
+              ) : null}
             </button>
           );
         })}

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
+import IconButton from "../components/IconButton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -64,9 +65,7 @@ export default function CategoryPage({ siteKey, tid, title, onBack, navigate }: 
     <section className="page">
       <header className="page-head">
         <div className="page-head__main">
-          <button type="button" className="btn btn--ghost" onClick={onBack}>
-            ← 返回
-          </button>
+          <IconButton name="back" label="返回" onClick={onBack} />
           <h1 className="page-title">{title}</h1>
         </div>
         <span className="page-meta">
@@ -109,25 +108,21 @@ export default function CategoryPage({ siteKey, tid, title, onBack, navigate }: 
       ) : null}
 
       <div className="pager">
-        <button
-          type="button"
-          className="btn"
+        <IconButton
+          name="back"
+          label="上一页"
           disabled={loading || page <= 1}
           onClick={() => setPage((value) => Math.max(1, value - 1))}
-        >
-          上一页
-        </button>
+        />
         <span className="pager__label">
           {current} / {pageCount}
         </span>
-        <button
-          type="button"
-          className="btn"
+        <IconButton
+          name="next"
+          label="下一页"
           disabled={loading || page >= pageCount}
           onClick={() => setPage((value) => value + 1)}
-        >
-          下一页
-        </button>
+        />
       </div>
     </section>
   );

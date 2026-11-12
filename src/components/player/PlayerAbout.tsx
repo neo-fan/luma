@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useProxiedImage } from "../../hooks/useProxiedImage";
+import IconButton from "../IconButton";
 import { plainText } from "../../lib/format";
 import type { VodInfo } from "../../types/tvbox";
 
@@ -64,13 +65,9 @@ export default function PlayerAbout({
           </h2>
           <div className="player-about__actions">
             {onSwitchSource ? (
-              <button type="button" className="btn btn--sm" onClick={onSwitchSource}>
-                ⇄ 换源
-              </button>
+              <IconButton name="swap" label="换源" onClick={onSwitchSource} />
             ) : null}
-            <button type="button" className="btn btn--sm" onClick={onPlayExternal}>
-              ↗ 外部播放
-            </button>
+            <IconButton name="external" label="外部播放" onClick={onPlayExternal} />
           </div>
         </div>
 
@@ -109,13 +106,13 @@ export default function PlayerAbout({
               {description}
             </p>
             {description.length > CLAMP_AT ? (
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm player-about__more"
+              <IconButton
+                name="chevron"
+                label={expanded ? "收起简介" : "展开简介"}
+                expanded={expanded}
+                className="icon-btn--sm icon-btn--rotate player-about__more"
                 onClick={() => setExpanded((value) => !value)}
-              >
-                {expanded ? "收起简介" : "展开简介"}
-              </button>
+              />
             ) : null}
           </>
         ) : null}

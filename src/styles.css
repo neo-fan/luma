@@ -32,6 +32,16 @@
   /* 收藏星专用金色：与强调色蓝紫区分，见 .fav-star */
   --star: #f2c14e;
 
+  /* 主按钮的「实心白」：参照 DSH 的黑白设计语言——主操作靠明度对比，
+     不靠品牌色块。强调色（--accent）只保留给焦点环、进度、状态点这类
+     小面积指示，界面主体（按钮 / 侧栏 / 卡片）一律中性灰阶。 */
+  --solid: #e8ecf4;
+  --solid-hover: #f4f7fc;
+  --solid-ink: #0b0d12;
+  /* 图标按钮的悬浮底板：比 --panel-hover 更轻，密排时不糊成一片 */
+  --icon-hover: rgba(233, 237, 245, 0.08);
+  --icon-on: rgba(233, 237, 245, 0.13);
+
   --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.18);
   --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.32);
   --shadow-lg: 0 28px 80px rgba(0, 0, 0, 0.55);
@@ -278,9 +288,12 @@ textarea {
   color: var(--text);
 }
 
+/* 当前页：中性白叠层 + 左侧细白条（DSH 的选中态语言）。
+   之前用 --accent-soft 蓝紫底 + 渐变竖条，整条侧栏像被点了色；改中性后
+   焦点只剩「白 10%」的明度差，跟图标态、chip 选中保持一致。 */
 .nav__item.is-active {
-  background: var(--accent-soft);
-  color: var(--accent-ink);
+  background: var(--icon-on);
+  color: var(--text);
   font-weight: 600;
 }
 
@@ -290,10 +303,10 @@ textarea {
   left: 0;
   top: 50%;
   transform: translateY(-50%);
-  width: 3px;
-  height: 18px;
-  border-radius: 0 3px 3px 0;
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  width: 2px;
+  height: 16px;
+  border-radius: 0 2px 2px 0;
+  background: var(--text-soft);
 }
 
 .sidebar__bottom {
@@ -520,19 +533,33 @@ textarea {
   cursor: not-allowed;
 }
 
+/* 主操作＝实心浅色块 + 深色字（DSH 的黑白按钮）。之前是蓝紫渐变，一屏
+   出现两个主按钮时整页都在发光；改成中性实心后，主次靠明度就够分辨。 */
 .btn--primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--solid);
   border-color: transparent;
-  color: #fff;
+  color: var(--solid-ink);
   font-weight: 600;
-  box-shadow: 0 4px 14px rgba(110, 139, 255, 0.22);
 }
 
 .btn--primary:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: var(--solid-hover);
   border-color: transparent;
-  color: #fff;
-  box-shadow: 0 6px 20px rgba(110, 139, 255, 0.34);
+  color: var(--solid-ink);
+}
+
+.btn--primary:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+/* 主按钮里的图标比文字重一档，播放三角才立得住 */
+.btn--primary svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
 }
 
 .btn--ghost {
@@ -562,6 +589,134 @@ textarea {
 .btn--sm {
   padding: 4px 10px;
   font-size: 12px;
+}
+
+/* ---------- 图标按钮 ----------
+ * 界面里「不用解释的动作」统一走这里（换源 / 刷新 / 返回 / 倒序 / 删除…），
+ * 文字让位给图形，语义落在 aria-label 与悬浮提示上。
+ * 三种状态靠图标自己表达：hover 亮一档、pressed 换底色（必要时整枚翻转）、
+ * busy 自转。不额外加外框或颜色块，密排一行时才不会显得碎。
+ */
+.icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    transform 0.12s var(--ease);
+}
+
+.icon-btn--md {
+  width: 32px;
+  height: 32px;
+}
+
+.icon-btn--sm {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  transition: transform 0.2s var(--ease);
+}
+
+.icon-btn--sm svg {
+  width: 15px;
+  height: 15px;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--icon-hover);
+  color: var(--text);
+}
+
+.icon-btn:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.icon-btn.is-on {
+  background: var(--icon-on);
+  color: var(--text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.icon-btn--danger:hover:not(:disabled) {
+  background: rgba(255, 123, 131, 0.12);
+  color: var(--danger);
+}
+
+/* 状态用图形方向表达：倒序翻转上下箭头，展开旋转折叠箭头 */
+.icon-btn--flip[aria-pressed="true"] svg {
+  transform: scaleY(-1);
+}
+
+.icon-btn--rotate[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.icon-btn.is-busy svg {
+  animation: icon-spin 0.9s linear infinite;
+}
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 悬浮提示：CSS 气泡，比原生 title 快（0.24s 后出现）且配色跟随主题。
+   靠近容器边缘时由调用方传 tip="none" 退回原生 title，避免被裁切。 */
+.icon-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  z-index: 80;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-soft);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -3px);
+  transition:
+    opacity 0.12s var(--ease),
+    transform 0.12s var(--ease);
+}
+
+.icon-btn[data-tip-pos="up"]::after {
+  top: auto;
+  bottom: calc(100% + 7px);
+  transform: translate(-50%, 3px);
+}
+
+.icon-btn[data-tip]:hover::after,
+.icon-btn[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: 0.24s;
 }
 
 /* 收藏星：单图标按钮，紧贴剧名右侧。
@@ -749,14 +904,19 @@ textarea {
 }
 
 .recent-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   background: transparent;
   color: var(--faint);
-  font: inherit;
-  font-size: 14px;
-  line-height: 1;
   padding: 5px 10px 5px 4px;
   cursor: pointer;
+}
+
+.recent-chip__remove svg {
+  width: 11px;
+  height: 11px;
 }
 
 .recent-chip__remove:hover {
@@ -795,10 +955,12 @@ textarea {
   border-color: var(--border-strong);
 }
 
+/* 选中态：中性高亮（DSH 的「白 10% 叠层」），不用品牌色块——一屏里同时
+   有线路 chip、剧集格、侧栏项三处选中，全染色会让界面发紫。 */
 .chip.is-active {
-  background: var(--accent-soft);
-  border-color: rgba(110, 139, 255, 0.42);
-  color: var(--accent-ink);
+  background: var(--icon-on);
+  border-color: rgba(233, 237, 245, 0.24);
+  color: var(--text);
   font-weight: 500;
 }
 
@@ -1002,7 +1164,7 @@ textarea {
 .error-bar__actions {
   display: flex;
   flex: none;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
 }
 
@@ -1021,6 +1183,14 @@ textarea {
   font-size: 13px;
   min-width: 72px;
   text-align: center;
+}
+
+/* 图标键密排容器：页头右侧成对的换源/刷新、卡片操作区都用它。
+   2px 间距配 32px 热区，既不会挤在一起，也不会因为 8px gap 显得散。 */
+.iconbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 /* ---------- 详情 ---------- */
@@ -1167,28 +1337,36 @@ textarea {
   visibility: hidden;
 }
 
-/* 播放器内的上/下一集：贴在左右边缘、垂直居中，默认半透明，鼠标进画面才实心。
-   放在 .player-art 之外（它内部归 ArtPlayer 管理），层级高于视频、低于解析遮罩。 */
+/* 播放器内的上/下一集：贴在左右边缘、垂直居中的圆形图标键，默认半透明，
+   鼠标进画面才实心。没有文字，靠两侧位置表达方向；disabled 直接透明隐藏，
+   所以第 1 集不会留下一枚「不能点」的空壳。
+   放在 .player-art 之外（它内部归 ArtPlayer 管理），层级高于视频、低于遮罩。 */
 .player-nav {
   position: absolute;
   top: 50%;
   z-index: 3;
   transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 9px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
-  background: rgba(10, 12, 18, 0.55);
+  background: rgba(10, 12, 18, 0.52);
   backdrop-filter: blur(10px);
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 13px;
-  white-space: nowrap;
-  cursor: pointer;
-  opacity: 0.55;
-  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease),
+  color: rgba(255, 255, 255, 0.86);
+  opacity: 0.5;
+  transition:
+    opacity var(--dur) var(--ease),
+    background var(--dur) var(--ease),
     color var(--dur) var(--ease);
+}
+
+.player-nav svg {
+  width: 20px;
+  height: 20px;
+}
+
+.player-nav:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.94);
 }
 
 .player-nav--prev {
@@ -1328,7 +1506,7 @@ textarea {
 .player-about__actions {
   display: flex;
   flex: 0 0 auto;
-  gap: 8px;
+  gap: 2px;
 }
 
 .player-about__meta {
@@ -1350,7 +1528,7 @@ textarea {
 
 .player-about__more {
   margin-top: 6px;
-  padding-left: 0;
+  align-self: flex-start;
 }
 
 .player-about .chip-row {
@@ -1403,9 +1581,9 @@ textarea {
 }
 
 .episode.is-active {
-  background: var(--accent-soft);
-  border-color: rgba(110, 139, 255, 0.42);
-  color: var(--accent-ink);
+  background: var(--icon-on);
+  border-color: rgba(233, 237, 245, 0.24);
+  color: var(--text);
   font-weight: 500;
 }
 
@@ -1473,13 +1651,34 @@ textarea {
   padding-right: 4px;
 }
 
-/* 当前集：多一行小字提示，避免只靠背景色分辨（尤其色弱用户）。 */
+/* 当前集：右上角一枚状态点（DSH 的 running dot 语义），文字留给读屏。
+   只靠背景色区分选中与「正在播放」不够，点比一行小字更省地方、也不挤集名。 */
+.episode {
+  position: relative;
+}
+
 .episode__now {
-  display: block;
-  color: var(--accent-ink);
-  font-size: 10px;
-  line-height: 1.2;
-  opacity: 0.9;
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(74, 222, 155, 0.14);
+}
+
+/* 只给读屏的文本：视觉上 1px 隐藏，不进布局 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* 遮罩点击 / ESC 关闭；列表区独立滚动，头尾固定。 */
@@ -1705,9 +1904,14 @@ textarea {
 }
 
 .fav-remove:hover:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: rgba(255, 123, 131, 0.18);
+  border-color: rgba(255, 123, 131, 0.45);
+  color: var(--danger);
+}
+
+.fav-remove svg {
+  width: 13px;
+  height: 13px;
 }
 
 /* ---------- 设置 ---------- */

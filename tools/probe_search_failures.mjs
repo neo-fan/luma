@@ -124,7 +124,10 @@ const ROWS = `(() => {
   const items = [...document.querySelectorAll('.failure-item')].map((el) => ({
     name: el.querySelector('.failure-item__name')?.innerText.trim() || '',
     reason: el.querySelector('.failure-item__reason')?.innerText.trim() || '',
-    buttons: [...el.querySelectorAll('button')].map((b) => b.textContent.trim()),
+    // 重试是图标按钮，语义在 aria-label 上。
+    buttons: [...el.querySelectorAll('button')].map(
+      (b) => (b.getAttribute('aria-label') || b.textContent || '').trim(),
+    ),
   }));
   return JSON.stringify(items);
 })()`;
@@ -232,7 +235,15 @@ try {
   // 单站重试：本地失败太快，抓不住「重试中…」，改从日志确认请求真的发出去了。
   const logFile = todayLogFile();
   const before = readLog(logFile);
-  assert((await cdp.eval(CLICK("重试", ".failure-item button"))) === "CLICKED", "click 重试");
+  assert(
+    (await cdp.eval(`(() => {
+      const b = document.querySelector('.failure-item button[aria-label="重试"]');
+      if (!b) return 'MISSING';
+      b.click();
+      return 'CLICKED';
+    })()`)) === "CLICKED",
+    "click 重试",
+  );
   await sleep(2500);
   const after = readLog(logFile);
   assert(

@@ -67,8 +67,9 @@ class Cdp {
   }
 
   async shot(name) {
-    const res = await this.send("Page.captureScreenshot", { format: "png" });
-    const path = `.workbuddy/${name}.png`;
+    // png 在本机 WebView2 上偶发超时（已踩多次），jpeg 稳定且足够看清布局。
+    const res = await this.send("Page.captureScreenshot", { format: "jpeg", quality: 85 });
+    const path = `.workbuddy/${name}.jpg`;
     writeFileSync(path, Buffer.from(res.data, "base64"));
     console.log(`[shot] ${path}`);
   }
@@ -94,11 +95,13 @@ async function waitForPage(timeoutMs = 30000) {
 }
 
 // 按文本点按钮：先精确匹配，再退回包含匹配（兼容图标/空白），selector 收窄范围。
+// 图标按钮没有 textContent，所以同时匹配 aria-label（UI 已改成图标态）。
 const CLICK = (label, selector = "button, a") => `(() => {
   const nodes = [...document.querySelectorAll(${JSON.stringify(selector)})];
   const text = (n) => (n.textContent || '').trim();
-  const target = nodes.find((n) => text(n) === ${JSON.stringify(label)})
-              || nodes.find((n) => text(n).includes(${JSON.stringify(label)}));
+  const aria = (n) => n.getAttribute('aria-label') || '';
+  const target = nodes.find((n) => text(n) === ${JSON.stringify(label)} || aria(n) === ${JSON.stringify(label)})
+              || nodes.find((n) => text(n).includes(${JSON.stringify(label)}) || aria(n).includes(${JSON.stringify(label)}));
   if (!target) return 'MISSING';
   target.click();
   return 'CLICKED';
@@ -182,15 +185,42 @@ try {
   assert(cards > 0, "search .vod-card results rendered", `${cards} cards`);
 
   // 2. 详情：等「播放线路」，记录切换前 .detail-source 文本。
-  const opened = await cdp.eval(FIRST_CLICK(".vod-card"));
-  assert(opened === "CLICKED", "open first .vod-card", opened);
-  const detail = await cdp.eval(
-    WAIT("return document.body.innerText.includes('播放线路') ? 'OK' : null;", 30000),
-  );
-  assert(detail === "OK", "detail page rendered (播放线路)", String(detail));
+  // 聚合结果是多源混排，第一张卡可能是只给推荐的发现源（空详情是已知缺口），
+  // 换下一张继续，最多试 5 张。
+  let detail = null;
+  let cardIndex = 0;
+  for (; cardIndex < 5; cardIndex += 1) {
+    const opened = await cdp.eval(`(() => {
+      const card = document.querySelectorAll('.vod-card')[${cardIndex}];
+      if (!card) return 'MISSING';
+      card.click();
+      return 'CLICKED';
+    })()`);
+    if (opened !== "CLICKED") break;
+    detail = await cdp.eval(
+      WAIT("return document.body.innerText.includes('播放线路') ? 'OK' : null;", 25000),
+    );
+    if (detail === "OK") break;
+    await cdp.eval(`(() => {
+      const b = [...document.querySelectorAll('.page-head button')].find(
+        (n) => (n.getAttribute('aria-label') || '') === '返回',
+      );
+      if (b) b.click();
+      return !!b;
+    })()`);
+    await cdp.eval(WAIT("return document.querySelector('.search-bar input.input') ? 'OK' : null;", 15000));
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  assert(detail === "OK", `detail page rendered (播放线路) after ${cardIndex + 1} card(s)`, String(detail));
   const detailRaw = await cdp.eval(`(() => {
     const head = document.querySelector('.page-head');
-    const swap = head ? [...head.querySelectorAll('button, a')].some((n) => (n.textContent || '').includes('⇄ 换源')) : false;
+    const swap = head
+      ? [...head.querySelectorAll('button, a')].some(
+          (n) =>
+            (n.textContent || '').includes('换源') ||
+            (n.getAttribute('aria-label') || '') === '换源',
+        )
+      : false;
     const src = document.querySelector('.detail-source');
     const title = document.querySelector('.detail-title');
     return JSON.stringify({
@@ -206,13 +236,13 @@ try {
   })()`);
   const d = JSON.parse(detailRaw || "{}");
   assert(!!d.hasPageHead, ".page-head present", JSON.stringify(d));
-  assert(!!d.hasSwapBtn, ".page-head has ⇄ 换源 button", JSON.stringify(d));
+  assert(!!d.hasSwapBtn, ".page-head has 换源 icon button", JSON.stringify(d));
   assert(!!d.hasDetailTitle && !!d.titleText, ".detail-title present and non-empty", JSON.stringify(d));
   assert(!!d.hasDetailSource && !!d.sourceText, ".detail-source present and non-empty", JSON.stringify(d));
   const beforeSource = d.sourceText;
 
-  // 3. ⇄ 换源 → .source-picker，等候选行，校验完整 DOM 契约并截图。
-  const openPicker = await cdp.eval(CLICK("⇄ 换源", ".page-head button, .page-head a"));
+  // 3. 换源图标 → .source-picker，等候选行，校验完整 DOM 契约并截图。
+  const openPicker = await cdp.eval(CLICK("换源", ".page-head button, .page-head a"));
   assert(openPicker === "CLICKED", "open source-picker from detail .page-head", openPicker);
   const pickerShown = await cdp.eval(
     WAIT("return document.querySelector('.source-picker') ? 'OPEN' : null;", 10000),
@@ -230,7 +260,10 @@ try {
     const metaEl = picker.querySelector('.source-picker__meta');
     const filterToggle = picker.querySelector('.filter-toggle');
     const checkbox = picker.querySelector('.filter-toggle input');
-    const closeBtn = [...picker.querySelectorAll('button, a')].some((n) => (n.textContent || '').includes('✕'));
+    // 关闭是图标按钮（没有 ✕ 文案），按 aria-label 判定。
+    const closeBtn = [...picker.querySelectorAll('button, a')].some(
+      (n) => (n.getAttribute('aria-label') || '') === '关闭' || (n.textContent || '').includes('✕'),
+    );
     const items = [...picker.querySelectorAll('.source-item')];
     const first = items[0];
     return JSON.stringify({
@@ -264,7 +297,8 @@ try {
     assert(!!snap.firstItemHasSite, "first .source-item__site present", JSON.stringify(snap));
     assert(!!snap.firstItemHasTitle, "first .source-item__title present", JSON.stringify(snap));
     assert(!!snap.firstItemHasSwitch, "first row 切换 button present", JSON.stringify(snap));
-    assert(!!snap.hasCloseBtn, "✕ close button present", JSON.stringify(snap));
+    // 关闭是图标按钮，语义在 aria-label 上。
+    assert(!!snap.hasCloseBtn, "关闭 icon button present", JSON.stringify(snap));
   }
   await cdp.shot("source-picker");
 
@@ -337,10 +371,14 @@ try {
   const aboutRaw = await cdp.eval(`(() => {
     const card = document.querySelector('.player-about');
     if (!card) return null;
-    return JSON.stringify([...card.querySelectorAll('button, a')].map((n) => (n.textContent || '').trim()));
+    return JSON.stringify(
+      [...card.querySelectorAll('button, a')].map(
+        (n) => (n.getAttribute('aria-label') || n.textContent || '').trim(),
+      ),
+    );
   })()`);
   const aboutButtons = JSON.parse(aboutRaw || "[]");
-  assert(aboutButtons.some((t) => t.includes("⇄ 换源")), ".player-about has ⇄ 换源", JSON.stringify(aboutButtons));
+  assert(aboutButtons.some((t) => t.includes("换源")), ".player-about has 换源 icon", JSON.stringify(aboutButtons));
   // 选集改为常驻：不再有「选集」按钮，剧集列表拉到就直接出现在信息卡下面。
   const episodesReady = await cdp.eval(
     WAIT("return document.querySelector('.player-episodes .episode') ? 'OK' : null;", 30000),
@@ -361,19 +399,19 @@ try {
   assert(panel.active > 0, ".player-episodes current .episode.is-active present", JSON.stringify(panel));
   await cdp.shot("player-episodes");
 
-  // 7. 播放页 ⇄ 换源 → picker 出现 → ✕ 关闭。
-  const openFromPlayer = await cdp.eval(CLICK("⇄ 换源", ".player-about button, .player-about a"));
+  // 7. 播放页换源图标 → picker 出现 → 关闭图标。
+  const openFromPlayer = await cdp.eval(CLICK("换源", ".player-about button, .player-about a"));
   assert(openFromPlayer === "CLICKED", "open source-picker from player-about", openFromPlayer);
   const pickerFromPlayer = await cdp.eval(
     WAIT("return document.querySelector('.source-picker') ? 'OPEN' : null;", 10000),
   );
   assert(pickerFromPlayer === "OPEN", ".source-picker opened on player page", String(pickerFromPlayer));
-  const closeIt = await cdp.eval(CLICK("✕"));
-  assert(closeIt === "CLICKED", "click ✕ close button", String(closeIt));
+  const closeIt = await cdp.eval(CLICK("关闭", ".source-picker button"));
+  assert(closeIt === "CLICKED", "click close icon button", String(closeIt));
   const closedByX = await cdp.eval(
     WAIT("return document.querySelector('.source-picker') ? null : 'CLOSED';", 10000),
   );
-  assert(closedByX === "CLOSED", ".source-picker closed by ✕", String(closedByX));
+  assert(closedByX === "CLOSED", ".source-picker closed by close icon", String(closedByX));
 } catch (err) {
   console.log(`[diag] unexpected error: ${String((err && err.stack) || err)}`);
   try {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
+import IconButton from "../components/IconButton";
 import Spinner from "../components/Spinner";
 import { api, errorMessage } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
@@ -131,14 +132,13 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
           <h1 className="page-title">直播</h1>
           <span className="page-meta">{total > 0 ? `${total} 个频道` : "—"}</span>
         </div>
-        <button
-          type="button"
-          className="btn btn--ghost"
-          onClick={() => setReload((value) => value + 1)}
+        <IconButton
+          name="refresh"
+          label="刷新"
+          busy={loading}
           disabled={loading}
-        >
-          刷新
-        </button>
+          onClick={() => setReload((value) => value + 1)}
+        />
       </header>
 
       <div className="search-bar">

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
+import Icon from "../components/Icon";
+import IconButton from "../components/IconButton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -122,9 +124,12 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
           <span className="page-meta">共 {items.length} 条</span>
         </div>
         {items.length > 0 ? (
-          <button type="button" className="btn btn--ghost" onClick={() => void clearAll()}>
-            清空历史
-          </button>
+          <IconButton
+            name="trash"
+            label="清空历史"
+            tone="danger"
+            onClick={() => void clearAll()}
+          />
         ) : null}
       </header>
 
@@ -175,10 +180,11 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
                   type="button"
                   className="fav-remove"
                   title="删除这条历史"
+                  aria-label="删除这条历史"
                   disabled={busyKey === key}
                   onClick={() => void remove(item)}
                 >
-                  ×
+                  <Icon name="close" />
                 </button>
               </div>
             );

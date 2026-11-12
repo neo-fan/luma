@@ -102,11 +102,13 @@ async function waitForPage(timeoutMs = 30000) {
 }
 
 // 按文本点按钮：先精确匹配，再退回包含匹配，selector 收窄范围。
+// 图标按钮没有 textContent，所以同时匹配 aria-label（UI 已改成图标态）。
 const CLICK = (label, selector = "button, a") => `(() => {
   const nodes = [...document.querySelectorAll(${JSON.stringify(selector)})];
   const text = (n) => (n.textContent || '').trim();
-  const target = nodes.find((n) => text(n) === ${JSON.stringify(label)})
-              || nodes.find((n) => text(n).includes(${JSON.stringify(label)}));
+  const aria = (n) => n.getAttribute('aria-label') || '';
+  const target = nodes.find((n) => text(n) === ${JSON.stringify(label)} || aria(n) === ${JSON.stringify(label)})
+              || nodes.find((n) => text(n).includes(${JSON.stringify(label)}) || aria(n).includes(${JSON.stringify(label)}));
   if (!target) return 'MISSING';
   target.click();
   return 'CLICKED';
@@ -285,16 +287,42 @@ try {
   const cards = Number(await cdp.eval(`document.querySelectorAll('.vod-card').length`));
   assert(cards > 0, ".vod-card results rendered", `${cards} cards`);
 
-  // --- Step 3: 第一个 .vod-card → 详情页，记录 c1 / 剧集数 / 滚动位置 ---
-  const opened = await cdp.eval(FIRST_CLICK(".vod-card"));
-  assert(opened === "CLICKED", "open first .vod-card", opened);
-  // 明确等待「详情页」：.detail-title 存在、.player-about 不存在、且 .episode 已出现。
-  const detailReady = await cdp.eval(WAIT(`
-    const eps = document.querySelectorAll('.episode');
-    const onDetail = !!document.querySelector('.detail-title') && !document.querySelector('.player-about');
-    return onDetail && eps.length > 0 ? 'DETAIL' : null;
-  `, 40000));
-  assert(detailReady === "DETAIL", "detail page rendered (.detail-title + .episode, no .player-about)", String(detailReady));
+  // --- Step 3: 找一张「有剧集」的卡 → 详情页，记录 c1 / 剧集数 / 滚动位置 ---
+  // 聚合搜索是多源混排，第一张卡可能落在「只给推荐、没有播放列表」的发现源上
+  // （空详情是已知能力缺口，不是缓存回归）。最多试 5 张，避免探针被数据带偏。
+  let detailReady = null;
+  let tried = 0;
+  for (; tried < 5; tried += 1) {
+    const opened = await cdp.eval(`(() => {
+      const card = document.querySelectorAll('.vod-card')[${tried}];
+      if (!card) return 'MISSING';
+      card.click();
+      return 'CLICKED';
+    })()`);
+    if (opened !== "CLICKED") break;
+    // 明确等待「详情页」：.detail-title 存在、.player-about 不存在、且 .episode 已出现。
+    detailReady = await cdp.eval(WAIT(`
+      const eps = document.querySelectorAll('.episode');
+      const onDetail = !!document.querySelector('.detail-title') && !document.querySelector('.player-about');
+      return onDetail && eps.length > 0 ? 'DETAIL' : null;
+    `, 30000));
+    if (detailReady === "DETAIL") break;
+    // 这张卡没有剧集：返回搜索结果，换下一张。
+    await cdp.eval(`(() => {
+      const b = [...document.querySelectorAll('.page-head button')].find(
+        (n) => (n.getAttribute('aria-label') || '') === '返回',
+      );
+      if (b) b.click();
+      return !!b;
+    })()`);
+    await cdp.eval(WAIT("return document.querySelector('.search-bar input.input') ? 'OK' : null;", 15000));
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  assert(
+    detailReady === "DETAIL",
+    `detail page rendered (.detail-title + .episode, no .player-about) after ${tried + 1} card(s)`,
+    String(detailReady),
+  );
   if (detailReady !== "DETAIL") await diag("detail-load-failed");
   await logState("detail-ready");
 
@@ -340,8 +368,8 @@ try {
   if (cPlay !== c1) await diag("cPlay-mismatch");
 
   // --- Step 5: ← 返回详情 → 详情页；c2 === c1，剧集数/无 spinner/滚动恢复 ---
-  const back = await cdp.eval(CLICK("← 返回详情", "button, a"));
-  assert(back === "CLICKED", "click player header ← 返回详情", back);
+  const back = await cdp.eval(CLICK("返回详情", "button, a"));
+  assert(back === "CLICKED", "click player header 返回详情 icon", back);
   if (back !== "CLICKED") await diag("back-button-missing");
   // 用 .player-about / .detail-title 区分，确保回到的是详情页而非播放页。
   const backReady = await cdp.eval(WAIT(`
@@ -366,8 +394,8 @@ try {
   assert(scrollDiff <= 30, ".content.scrollTop restored after back (diff <= 30)", `saved=${savedScroll} restored=${restoredScroll} diff=${scrollDiff}`);
 
   // --- Step 6: ↻ 刷新 → 强制重新请求；c3 >= c2 + 1 ---
-  const refresh = await cdp.eval(CLICK("↻ 刷新", ".page-head button, .page-head a"));
-  assert(refresh === "CLICKED", "click detail .page-head ↻ 刷新", refresh);
+  const refresh = await cdp.eval(CLICK("刷新", ".page-head button, .page-head a"));
+  assert(refresh === "CLICKED", "click detail .page-head 刷新 icon", refresh);
   if (refresh !== "CLICKED") await diag("refresh-button-missing");
   const refreshThreshold = c2 + 1;
   // 等一个「短暂无 spinner 的稳定态」且 detailContent 计数确实已 +1（刷新完成）。
@@ -383,13 +411,29 @@ try {
   if (c3 < c2 + 1) await diag("c3-no-refresh");
   // 强制刷新会重新拉源站，慢源可能十几秒后才把剧集渲染回来；等它出现再断言，
   // 而不是在固定尾随等待后立刻读一次 DOM（那样会把加载中误判成数据丢失）。
-  const epCount3 = Number(
+  // 外网源偶发「force 一次返回空列表」：再点一次刷新，别把源的瞬时抖动记成回归。
+  let epCount3 = Number(
     (await cdp.eval(WAIT(`
     const n = document.querySelectorAll('.episode').length;
     return n > 0 ? String(n) : null;
   `, 30000))) || 0,
   );
-  assert(epCount3 > 0, ".episode still rendered after refresh", `episodes=${epCount3}`);
+  if (epCount3 === 0) {
+    console.log("[info] first forced refresh came back empty, retrying once");
+    await cdp.eval(CLICK("刷新", ".page-head button, .page-head a"));
+    epCount3 = Number(
+      (await cdp.eval(WAIT(`
+      const n = document.querySelectorAll('.episode').length;
+      return n > 0 ? String(n) : null;
+    `, 40000))) || 0,
+    );
+  }
+  const errText = await cdp.eval(`document.querySelector('.error-bar__text')?.textContent?.trim() || ''`);
+  assert(
+    epCount3 > 0,
+    ".episode still rendered after refresh",
+    `episodes=${epCount3}${errText ? ` error=${errText}` : ""}`,
+  );
 } catch (err) {
   console.log(`[diag] unexpected error: ${String((err && err.stack) || err)}`);
   await diag("unexpected-error");

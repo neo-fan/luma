@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
+import Icon from "../components/Icon";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -152,10 +153,11 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
                 type="button"
                 className="fav-remove"
                 title="取消收藏"
+                aria-label="取消收藏"
                 disabled={busyKey === `${item.siteKey}-${item.vodId}`}
                 onClick={() => void remove(item)}
               >
-                ×
+                <Icon name="close" />
               </button>
             </div>
           ))}

@@ -3,6 +3,8 @@ import type { FormEvent } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
+import Icon from "../components/Icon";
+import IconButton from "../components/IconButton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -184,7 +186,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
           `${agg.ok}/${agg.total} 个站点响应，耗时 ${(agg.tookMs / 1000).toFixed(1)} 秒`,
         );
         // 搜索结果就是换源候选：立刻发布给 sourceCache，点进详情后
-        // 「⇄ 换源」直接读缓存，不必再发一次 20s 全站聚合。
+        // 换源图标直接读缓存，不必再发一次 20s 全站聚合。
         // 单站搜索只覆盖一个站点，不发布（否则会被误判为「已检索全站」），
         // 由详情页的后台预取补全。
         publishSearchResults(
@@ -376,6 +378,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
           ))}
         </select>
         <button type="submit" className="btn btn--primary" disabled={loading}>
+          <Icon name="search" />
           {loading ? "搜索中…" : "搜索"}
         </button>
       </form>
@@ -384,9 +387,13 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
         <div className="recent-searches">
           <div className="recent-searches__head">
             <span className="recent-searches__label">最近搜索</span>
-            <button type="button" className="btn btn--ghost btn--sm" onClick={onRecentClear}>
-              清空
-            </button>
+            <IconButton
+              name="trash"
+              label="清空最近搜索"
+              size="sm"
+              tone="danger"
+              onClick={onRecentClear}
+            />
           </div>
           <div className="recent-row">
             {recent.map((word) => (
@@ -407,7 +414,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
                   title="删除"
                   onClick={() => onRecentRemove(word)}
                 >
-                  ×
+                  <Icon name="close" />
                 </button>
               </span>
             ))}
@@ -454,14 +461,14 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
                   <span className="failure-item__reason" title={row.message}>
                     {row.message}
                   </span>
-                  <button
-                    type="button"
-                    className="btn btn--sm"
+                  <IconButton
+                    name="refresh"
+                    label={row.busy ? "重试中" : "重试"}
+                    size="sm"
+                    busy={row.busy}
                     disabled={row.busy}
                     onClick={() => void retrySite(row)}
-                  >
-                    {row.busy ? "重试中…" : "重试"}
-                  </button>
+                  />
                 </li>
               ))}
             </ul>

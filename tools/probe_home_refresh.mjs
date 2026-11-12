@@ -216,8 +216,10 @@ try {
   // 手动刷新按钮：立即 force 一次，不经过站点切换防抖。
   await cdp.eval(RESET);
   const refreshed = await cdp.eval(`(() => {
-    const btn = [...document.querySelectorAll('.page-head button')].find((n) => (n.textContent || '').trim() === '刷新');
+    const btn = document.querySelector('.page-head .icon-btn[aria-label="刷新"]');
     if (!btn) return 'MISSING';
+    // 页面还在加载时按钮是 disabled，脚本点击会被静默吞掉：先等它可点。
+    if (btn.disabled) return 'DISABLED:' + btn.className;
     btn.click();
     return 'CLICKED';
   })()`);

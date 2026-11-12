@@ -409,7 +409,7 @@ try {
   // 会被拒。用 CDP 真实鼠标事件点在按钮中心，模拟用户点击后再验证。
   const box = await cdp.eval(`(() => {
     const b = [...document.querySelectorAll('.error-bar__actions button')]
-      .find(x => x.textContent.includes('复制错误'));
+      .find(x => (x.getAttribute('aria-label') || '').includes('复制'));
     if (!b) return 'MISSING';
     const r = b.getBoundingClientRect();
     return JSON.stringify({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });

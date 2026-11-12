@@ -196,7 +196,11 @@ const ROW_BUTTON = (name, label) => `(() => {
   const row = rows.find((el) =>
     (el.querySelector('.config-item__name')?.innerText || '').replace('当前', '').trim() === ${JSON.stringify(name)});
   if (!row) return 'MISSING';
-  const btn = [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === ${JSON.stringify(label)});
+  const btn = [...row.querySelectorAll('button')].find(
+    (b) =>
+      b.textContent.trim() === ${JSON.stringify(label)} ||
+      (b.getAttribute('aria-label') || '') === ${JSON.stringify(label)},
+  );
   if (!btn) return 'NO_BUTTON';
   btn.click();
   return 'CLICKED';

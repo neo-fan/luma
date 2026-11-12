@@ -1,4 +1,5 @@
 import FavStar from "../FavStar";
+import IconButton from "../IconButton";
 
 interface PlayerHeaderProps {
   vodName: string;
@@ -32,9 +33,7 @@ export default function PlayerHeader({
   return (
     <header className="page-head">
       <div className="page-head__main">
-        <button type="button" className="btn btn--ghost" onClick={onBack}>
-          ← 返回详情
-        </button>
+        <IconButton name="back" label="返回详情" onClick={onBack} />
         <h1 className="page-title">
           <span className="page-title__name">{vodName || "播放"}</span>
           {favorite === null || !onToggleFavorite ? null : (

@@ -140,7 +140,9 @@ try {
       break;
     }
     await cdp.eval(`(() => {
-      const btn = [...document.querySelectorAll('.page-head button')].find((n) => (n.textContent || '').includes('返回'));
+      const btn = [...document.querySelectorAll('.page-head button')].find((n) =>
+        ((n.getAttribute('aria-label') || '') + (n.textContent || '')).includes('返回'),
+      );
       if (btn) btn.click();
     })()`);
     await sleep(1200);
@@ -199,10 +201,14 @@ try {
       ),
     );
     assert(!!after, "title subtitle switched to episode 2", String(after));
-    // 应用走内部路由状态（不改 location.hash），用信息卡上的「线路 · 第 N 集」判断换集生效。
+    // 应用走内部路由状态（不改 location.hash），用信息卡上的「线路 · 集名」判断换集生效。
+    // 集名不一定是「第 N 集」（采集源常见「第 N 期 / 第 N 话」），所以比对副标题里的
+    // 实际集名，而不是写死「第 2 集」的正则——否则换个源就假红。
     const aboutNow = await cdp.eval(
       WAIT(
-        "const el = document.querySelector('.player-about__now'); const t = el?.textContent?.trim() || ''; return /第\\s*2\\s*集/.test(t) ? t : null;",
+        `const el = document.querySelector('.player-about__now');
+         const t = el ? el.textContent.trim() : '';
+         return t && t.includes(${JSON.stringify(String(after))}) ? t : null;`,
         20000,
       ),
     );

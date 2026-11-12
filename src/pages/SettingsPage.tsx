@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
+import IconButton from "../components/IconButton";
 import Spinner from "../components/Spinner";
 import {
   cleanConfigName,
@@ -657,16 +658,19 @@ export default function SettingsPage({
                         {switching === meta.id ? "切换中…" : "切换"}
                       </button>
                     )}
-                    <button type="button" className="btn btn--sm" onClick={() => startRename(meta)}>
-                      重命名
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--danger btn--sm"
+                    <IconButton
+                      name="pencil"
+                      label="重命名"
+                      size="sm"
+                      onClick={() => startRename(meta)}
+                    />
+                    <IconButton
+                      name="trash"
+                      label="删除"
+                      size="sm"
+                      tone="danger"
                       onClick={() => void removeConfig(meta)}
-                    >
-                      删除
-                    </button>
+                    />
                   </div>
                 )}
               </li>

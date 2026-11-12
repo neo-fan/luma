@@ -7,6 +7,7 @@ docs/verification-config.md
 
 # 联调产物：UI 截图、临时日志与一次性诊断脚本（.workbuddy/memory 仍需入库）
 .workbuddy/*.png
+.workbuddy/*.jpg
 .workbuddy/*.txt
 .workbuddy/q_*
 .workbuddy/probe_*

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { copyText } from "../lib/clipboard";
+import IconButton from "./IconButton";
 
 interface ErrorBarProps {
   message: string;
@@ -38,21 +39,18 @@ export default function ErrorBar({ message, onRetry, copyable = true }: ErrorBar
       <span className="error-bar__text">{message}</span>
       <div className="error-bar__actions">
         {copyable ? (
-          <button
-            type="button"
-            className="btn btn--sm btn--ghost"
+          <IconButton
+            name={copyState === "ok" ? "check" : "copy"}
+            label={
+              copyState === "ok" ? "已复制" : copyState === "failed" ? "复制失败" : "复制错误"
+            }
+            size="sm"
+            className={copyState === "ok" ? "is-on" : ""}
             onClick={onCopy}
             data-copy-state={copyState}
-            aria-label="复制错误"
-          >
-            {copyState === "ok" ? "已复制" : copyState === "failed" ? "复制失败" : "复制错误"}
-          </button>
+          />
         ) : null}
-        {onRetry ? (
-          <button type="button" className="btn btn--sm" onClick={onRetry}>
-            重试
-          </button>
-        ) : null}
+        {onRetry ? <IconButton name="refresh" label="重试" size="sm" onClick={onRetry} /> : null}
       </div>
     </div>
   );

@@ -181,10 +181,9 @@ try {
   assert(afterRemove === "OK", "单条删除从列表移除", String(afterRemove));
   assert((await readStored()).length === 9, "单条删除同步落盘");
 
-  // 4. 清空。
+  // 4. 清空（图标按钮，按 aria-label 定位）。
   const cleared = await cdp.eval(`(() => {
-    const b = [...document.querySelectorAll('.recent-searches__head button')]
-      .find(x => (x.textContent || '').trim() === '清空');
+    const b = document.querySelector('.recent-searches__head button[aria-label="清空最近搜索"]');
     if (!b) return 'MISSING';
     b.click();
     return 'OK';

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
+import IconButton from "../components/IconButton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -132,6 +133,10 @@ export default function HomePage({
     // 注意用 hasList 而非 home：空结果（如只给分类的豆瓣源、或一次网络
     // 抖动）绝不缓存，否则「有缓存就跳过」会让首页永久停在空态、无法自愈。
     if (home && hasList && reload === 0 && !force) {
+      // 走到这里说明本次不需要请求，但上一个 effect 可能在被取消时留下
+      // loading=true（切站/StrictMode 双跑都会）：不清掉的话刷新图标会一直
+      // 转、按钮一直 disabled，用户点不动刷新。命中缓存直接收敛成静止态。
+      setLoading(false);
       return;
     }
     let alive = true;
@@ -269,14 +274,13 @@ export default function HomePage({
             })}
           </select>
         </div>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => setReload((value) => value + 1)}
+        <IconButton
+          name="refresh"
+          label="刷新"
+          busy={loading}
           disabled={!siteKey || loading}
-        >
-          刷新
-        </button>
+          onClick={() => setReload((value) => value + 1)}
+        />
       </header>
 
       {error ? <ErrorBar message={`首页加载失败：${error}`} onRetry={() => setReload((v) => v + 1)} /> : null}

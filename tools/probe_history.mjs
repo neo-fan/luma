@@ -194,8 +194,8 @@ try {
   const title = await cdp.eval(`document.querySelector('.page-title')?.innerText.trim() || ''`);
   assert(title === "历史", "page title is 历史", title);
   assert(
-    (await cdp.eval(`!!document.querySelector('.page-head button')`)) === true,
-    "清空历史 button present",
+    (await cdp.eval(`!!document.querySelector('.page-head .icon-btn[aria-label="清空历史"]')`)) === true,
+    "清空历史 icon button present",
   );
 
   const cards = JSON.parse((await cdp.eval(CARDS)) || "[]");

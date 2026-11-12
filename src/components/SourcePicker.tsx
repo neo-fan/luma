@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import Empty from "./Empty";
 import ErrorBar from "./ErrorBar";
+import IconButton from "./IconButton";
 import Spinner from "./Spinner";
 import { errorMessage } from "../lib/invoke";
 import {
@@ -231,9 +232,7 @@ export default function SourcePicker({
               <span className="source-picker__badge">{currentSiteKey}</span>
             </p>
           </div>
-          <button type="button" className="btn btn--ghost" onClick={onClose} aria-label="关闭">
-            ✕
-          </button>
+          <IconButton name="close" label="关闭" onClick={onClose} />
         </header>
 
         <form className="source-picker__search" onSubmit={onSubmit}>

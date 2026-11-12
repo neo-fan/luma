@@ -4,6 +4,8 @@ import { useProxiedImage } from "../hooks/useProxiedImage";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import FavStar from "../components/FavStar";
+import Icon from "../components/Icon";
+import IconButton from "../components/IconButton";
 import SourcePicker from "../components/SourcePicker";
 import Spinner from "../components/Spinner";
 import { formatDuration, parsePlayLines, plainText, toVodRef } from "../lib/format";
@@ -67,7 +69,7 @@ export default function DetailPage({
   const [resume, setResume] = useState<HistoryItem | null>(null);
 
   useEffect(() => {
-    // reload>0 是用户点了「↻ 刷新」；此时忽略缓存强制拉取最新播放列表。
+    // reload>0 是用户点了刷新图标；此时忽略缓存强制拉取最新播放列表。
     if (vod && reload === 0) {
       return;
     }
@@ -261,9 +263,7 @@ export default function DetailPage({
       <section className="page">
         <header className="page-head">
           <div className="page-head__main">
-            <button type="button" className="btn btn--ghost" onClick={onBack}>
-              ← 返回
-            </button>
+            <IconButton name="back" label="返回" onClick={onBack} />
             {/* 换源瞬间就能看到新源名，不必等详情请求回来。 */}
             <span className="detail-source" title={siteKey}>
               当前源：{siteName || siteKey}
@@ -279,12 +279,8 @@ export default function DetailPage({
     return (
       <section className="page">
         <header className="page-head">
-          <button type="button" className="btn btn--ghost" onClick={onBack}>
-            ← 返回
-          </button>
-          <button type="button" className="btn" onClick={() => setShowSources(true)}>
-            ⇄ 换源
-          </button>
+          <IconButton name="back" label="返回" onClick={onBack} />
+          <IconButton name="swap" label="换源" onClick={() => setShowSources(true)} />
         </header>
         <ErrorBar
           message={`详情加载失败：${error || "影片不存在"}`}
@@ -292,7 +288,7 @@ export default function DetailPage({
         />
         <p className="tip">
           {title ? `《${title}》` : "该影片"}在此源暂无可用详情：TVBox 中部分源只提供发现/推荐、没有播放列表，
-          也可能是影片 id 失效或网络波动。点「⇄ 换源」按片名从其它站点查找，或点「重试」重新拉取。
+          也可能是影片 id 失效或网络波动。点右上角的换源图标按片名从其它站点查找，或点错误条上的重试图标重新拉取。
         </p>
         {showSources ? (
           <SourcePicker
@@ -328,31 +324,25 @@ export default function DetailPage({
     <section className="page">
       <header className="page-head">
         <div className="page-head__main">
-          <button type="button" className="btn btn--ghost" onClick={onBack}>
-            ← 返回
-          </button>
+          <IconButton name="back" label="返回" onClick={onBack} />
           <span className="detail-source" title={siteKey}>
             当前源：{siteName || siteKey}
           </span>
           {cacheLabel ? (
-            <span className="page-meta" title="播放列表来自本次会话的缓存，点「↻ 刷新」可强制重新拉取">
+            <span className="page-meta" title="播放列表来自本次会话的缓存，点刷新可强制重新拉取">
               {cacheLabel}
             </span>
           ) : null}
         </div>
-        <div className="detail-actions">
-          <button type="button" className="btn" onClick={() => setShowSources(true)}>
-            ⇄ 换源
-          </button>
-          <button
-            type="button"
-            className="btn"
+        <div className="iconbar">
+          <IconButton name="swap" label="换源" onClick={() => setShowSources(true)} />
+          <IconButton
+            name="refresh"
+            label="刷新"
+            busy={loading}
             onClick={() => setReload((value) => value + 1)}
             disabled={loading}
-            title="忽略缓存，重新拉取播放列表"
-          >
-            ↻ 刷新
-          </button>
+          />
         </div>
       </header>
 
@@ -394,13 +384,13 @@ export default function DetailPage({
           </p>
           <div className="detail-actions detail-actions--inline">
             {description.length > 120 ? (
-              <button
-                type="button"
-                className="btn btn--ghost"
+              <IconButton
+                name="chevron"
+                label={expanded ? "收起简介" : "展开简介"}
+                expanded={expanded}
+                className="icon-btn--rotate"
                 onClick={() => setExpanded((value) => !value)}
-              >
-                {expanded ? "收起简介" : "展开简介"}
-              </button>
+              />
             ) : null}
             <button
               type="button"
@@ -408,9 +398,10 @@ export default function DetailPage({
               disabled={!quickPlay}
               onClick={() => quickPlay && playEpisode(quickPlay.line, quickPlay.episode)}
             >
+              <Icon name="play" />
               {resume && quickPlay
-                ? `▶ 继续播放 ${resume.playFrom ? `${resume.playFrom} ` : ""}第 ${quickPlay.index + 1} 集（${formatDuration(resume.positionMs ?? 0)}）`
-                : "▶ 播放第 1 集"}
+                ? `继续播放 ${resume.playFrom ? `${resume.playFrom} ` : ""}第 ${quickPlay.index + 1} 集（${formatDuration(resume.positionMs ?? 0)}）`
+                : "播放第 1 集"}
             </button>
           </div>
         </div>
@@ -457,9 +448,13 @@ export default function DetailPage({
                 aria-label="筛选剧集"
                 onChange={(event) => setEpisodeQuery(event.target.value)}
               />
-              <button type="button" className="btn" onClick={() => setReverse((value) => !value)}>
-                {reverse ? "正序" : "倒序"}
-              </button>
+              <IconButton
+                name="sort"
+                label={reverse ? "正序" : "倒序"}
+                pressed={reverse}
+                className="icon-btn--flip"
+                onClick={() => setReverse((value) => !value)}
+              />
               <span className="page-meta">显示 {episodes.length} 集</span>
             </div>
 

@@ -321,9 +321,17 @@ export function usePlayerEngine({
       if (videoRef.current !== video) {
         return;
       }
+      // 倍速：ArtPlayer 的倍速设置初始化晚于构造参数，会把刚设的值覆盖回 1。
       const wanted = readPlayerPrefs().rate;
       if (Math.abs(video.playbackRate - wanted) > 0.01) {
         video.playbackRate = wanted;
+      }
+      // 音量同理：构造时的 `volume` 会被 ArtPlayer 自己恢复的持久化音量盖掉，
+      // 结果换集后音量回到 100%——而卸载时又把 100% 写回偏好，用户的音量被
+      // 永久冲掉。这里按「当前偏好」再对一次，静默期内用户没动就一定是噪声。
+      const wantedVolume = readPlayerPrefs().volume;
+      if (Math.abs(video.volume - wantedVolume) > 0.01) {
+        video.volume = wantedVolume;
       }
     }, 1200);
     // 音量拖动会连发 volumechange，做 500ms 前缘节流；被跳过的最后一次变更
@@ -337,6 +345,16 @@ export function usePlayerEngine({
     let volumeTrailing: number | null = null;
     const persistVolume = () => {
       if (videoRef.current !== video) {
+        return;
+      }
+      // 静默期内 ArtPlayer 会把自己缓存的音量写回来（100%），那不是用户操作：
+      // 不落盘、并即时纠正回记忆值。否则换集后音量被顶到最大，卸载时又把
+      // 最大值写回偏好，用户调好的音量就永久丢了（实测复现）。
+      if (Date.now() < rateReadyAt) {
+        const wantedVolume = readPlayerPrefs().volume;
+        if (Math.abs(video.volume - wantedVolume) > 0.01) {
+          video.volume = wantedVolume;
+        }
         return;
       }
       const now = Date.now();

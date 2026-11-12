@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import IconButton from "../IconButton";
 import Spinner from "../Spinner";
 
 interface StageNav {
@@ -53,26 +54,22 @@ export default function PlayerStage({
       {nav && playable ? (
         <>
           <span className="player-stage__badge">{nav.label}</span>
-          <button
-            type="button"
+          <IconButton
+            name="back"
+            label="上一集"
+            tip="none"
             className="player-nav player-nav--prev"
             onClick={nav.onPrev}
             disabled={!nav.canPrev}
-            title="上一集"
-            aria-label="上一集"
-          >
-            ‹ 上一集
-          </button>
-          <button
-            type="button"
+          />
+          <IconButton
+            name="next"
+            label="下一集"
+            tip="none"
             className="player-nav player-nav--next"
             onClick={nav.onNext}
             disabled={!nav.canNext}
-            title="下一集"
-            aria-label="下一集"
-          >
-            下一集 ›
-          </button>
+          />
         </>
       ) : null}
 
