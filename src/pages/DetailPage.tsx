@@ -5,7 +5,7 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import SourcePicker from "../components/SourcePicker";
 import Spinner from "../components/Spinner";
-import { formatDuration, parsePlayLines, toVodRef } from "../lib/format";
+import { formatDuration, parsePlayLines, plainText, toVodRef } from "../lib/format";
 import type { Episode, PlayLine } from "../lib/format";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { pageCache } from "../lib/pageCache";
@@ -314,7 +314,7 @@ export default function DetailPage({
     vod.vod_remarks,
   ].filter((item): item is string => Boolean(item && item.trim()));
   const site = sites.find((item) => item.key === siteKey);
-  const description = vod.vod_content?.trim() || "暂无简介";
+  const description = plainText(vod.vod_content) || "暂无简介";
   const cacheAge = pageCache.age(detailKey);
   const cacheLabel =
     cacheAge === undefined
@@ -388,8 +388,12 @@ export default function DetailPage({
               ))}
             </div>
           ) : null}
-          {vod.vod_director ? <p className="detail-line">导演：{vod.vod_director}</p> : null}
-          {vod.vod_actor ? <p className="detail-line">主演：{vod.vod_actor}</p> : null}
+          {vod.vod_director ? (
+            <p className="detail-line">导演：{plainText(vod.vod_director)}</p>
+          ) : null}
+          {vod.vod_actor ? (
+            <p className="detail-line">主演：{plainText(vod.vod_actor)}</p>
+          ) : null}
           <p className={expanded ? "detail-content" : "detail-content is-clamped"}>
             {description}
           </p>

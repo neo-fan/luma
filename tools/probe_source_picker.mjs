@@ -323,31 +323,29 @@ try {
   assert(!!after.source && after.source !== beforeSource, ".detail-source changed after 切换", JSON.stringify({ before: beforeSource, after: after.source }));
   assert(!!after.title, ".detail-title still non-empty", JSON.stringify(after.title));
 
-  // 6. 详情页第一个 .episode → 播放页 → 选集面板 → 截图。
+  // 6. 详情页第一个 .episode → 播放页（播放器 + 信息卡 + 常驻选集）。
   const epClick = await cdp.eval(FIRST_CLICK(".episode"));
   assert(epClick === "CLICKED", "click first .episode to open player", epClick);
   if (epClick !== "CLICKED") {
     console.log(`[diag] detail page text: ${String(await cdp.eval("document.body.innerText.slice(0, 800)"))}`);
     console.log(`[diag] exceptions: ${cdp.errors.slice(0, 5).join(" | ").slice(0, 1200)}`);
   }
-  const playerBar = await cdp.eval(
-    WAIT("return document.querySelector('.player-bar') ? 'OK' : null;", 30000),
+  const aboutReady = await cdp.eval(
+    WAIT("return document.querySelector('.player-about') ? 'OK' : null;", 30000),
   );
-  assert(playerBar === "OK", ".player-bar rendered", String(playerBar));
-  const barRaw = await cdp.eval(`(() => {
-    const bar = document.querySelector('.player-bar');
-    if (!bar) return null;
-    return JSON.stringify([...bar.querySelectorAll('button, a')].map((n) => (n.textContent || '').trim()));
+  assert(aboutReady === "OK", ".player-about rendered", String(aboutReady));
+  const aboutRaw = await cdp.eval(`(() => {
+    const card = document.querySelector('.player-about');
+    if (!card) return null;
+    return JSON.stringify([...card.querySelectorAll('button, a')].map((n) => (n.textContent || '').trim()));
   })()`);
-  const bar = JSON.parse(barRaw || "[]");
-  assert(bar.some((t) => t.includes("选集")) && bar.some((t) => t.includes("⇄ 换源")), ".player-bar has 选集 / ⇄ 换源", JSON.stringify(bar));
-  // 剧集列表是异步拉的，选集按钮在拿到 lines 前 disabled。
+  const aboutButtons = JSON.parse(aboutRaw || "[]");
+  assert(aboutButtons.some((t) => t.includes("⇄ 换源")), ".player-about has ⇄ 换源", JSON.stringify(aboutButtons));
+  // 选集改为常驻：不再有「选集」按钮，剧集列表拉到就直接出现在信息卡下面。
   const episodesReady = await cdp.eval(
-    WAIT("const b = [...document.querySelectorAll('.player-bar button')].find((n) => (n.textContent || '').includes('选集')); return b && !b.disabled ? 'OK' : null;", 30000),
+    WAIT("return document.querySelector('.player-episodes .episode') ? 'OK' : null;", 30000),
   );
-  assert(episodesReady === "OK", "选集 button enabled after lines loaded", String(episodesReady));
-  const openEpisodes = await cdp.eval(CLICK("选集", ".player-bar button, .player-bar a"));
-  assert(openEpisodes === "CLICKED", "open .player-episodes via 选集", openEpisodes);
+  assert(episodesReady === "OK", "选集常驻在信息卡下方", String(episodesReady));
   const panelRaw = await cdp.eval(`(() => {
     const panel = document.querySelector('.player-episodes');
     if (!panel) return null;
@@ -364,8 +362,8 @@ try {
   await cdp.shot("player-episodes");
 
   // 7. 播放页 ⇄ 换源 → picker 出现 → ✕ 关闭。
-  const openFromPlayer = await cdp.eval(CLICK("⇄ 换源", ".player-bar button, .player-bar a"));
-  assert(openFromPlayer === "CLICKED", "open source-picker from player-bar", openFromPlayer);
+  const openFromPlayer = await cdp.eval(CLICK("⇄ 换源", ".player-about button, .player-about a"));
+  assert(openFromPlayer === "CLICKED", "open source-picker from player-about", openFromPlayer);
   const pickerFromPlayer = await cdp.eval(
     WAIT("return document.querySelector('.source-picker') ? 'OPEN' : null;", 10000),
   );

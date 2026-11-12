@@ -183,11 +183,11 @@ let restoredScroll = -1;
 
 const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
 
-// 当前页面 DOM 快照：用 .player-bar / .detail-title 区分详情页与播放页，并给出诊断文本。
+// 当前页面 DOM 快照：用 .player-about / .detail-title 区分详情页与播放页，并给出诊断文本。
 const pageState = () => cdp.eval(`(() => {
   const c = document.querySelector('.content');
   return JSON.stringify({
-    playerBar: !!document.querySelector('.player-bar'),
+    playerBar: !!document.querySelector('.player-about'),
     detailTitle: !!document.querySelector('.detail-title'),
     pageHead: !!document.querySelector('.page-head'),
     episodeCount: document.querySelectorAll('.episode').length,
@@ -288,13 +288,13 @@ try {
   // --- Step 3: 第一个 .vod-card → 详情页，记录 c1 / 剧集数 / 滚动位置 ---
   const opened = await cdp.eval(FIRST_CLICK(".vod-card"));
   assert(opened === "CLICKED", "open first .vod-card", opened);
-  // 明确等待「详情页」：.detail-title 存在、.player-bar 不存在、且 .episode 已出现。
+  // 明确等待「详情页」：.detail-title 存在、.player-about 不存在、且 .episode 已出现。
   const detailReady = await cdp.eval(WAIT(`
     const eps = document.querySelectorAll('.episode');
-    const onDetail = !!document.querySelector('.detail-title') && !document.querySelector('.player-bar');
+    const onDetail = !!document.querySelector('.detail-title') && !document.querySelector('.player-about');
     return onDetail && eps.length > 0 ? 'DETAIL' : null;
   `, 40000));
-  assert(detailReady === "DETAIL", "detail page rendered (.detail-title + .episode, no .player-bar)", String(detailReady));
+  assert(detailReady === "DETAIL", "detail page rendered (.detail-title + .episode, no .player-about)", String(detailReady));
   if (detailReady !== "DETAIL") await diag("detail-load-failed");
   await logState("detail-ready");
 
@@ -326,11 +326,11 @@ try {
   const epClick = await cdp.eval(FIRST_CLICK(".episode"));
   assert(epClick === "CLICKED", "click first .episode to open player", epClick);
   if (epClick !== "CLICKED") await diag("episode-click-failed");
-  // 明确等待「播放页」：.player-bar 存在且 .detail-title 不存在。
+  // 明确等待「播放页」：.player-about 存在且 .detail-title 不存在。
   const playerReady = await cdp.eval(WAIT(`
-    return document.querySelector('.player-bar') && !document.querySelector('.detail-title') ? 'PLAYER' : null;
+    return document.querySelector('.player-about') && !document.querySelector('.detail-title') ? 'PLAYER' : null;
   `, 40000));
-  assert(playerReady === "PLAYER", "player page rendered (.player-bar present, .detail-title absent)", String(playerReady));
+  assert(playerReady === "PLAYER", "player page rendered (.player-about present, .detail-title absent)", String(playerReady));
   if (playerReady !== "PLAYER") await diag("player-load-failed");
   await logState("player-ready");
 
@@ -343,13 +343,13 @@ try {
   const back = await cdp.eval(CLICK("← 返回详情", "button, a"));
   assert(back === "CLICKED", "click player header ← 返回详情", back);
   if (back !== "CLICKED") await diag("back-button-missing");
-  // 用 .player-bar / .detail-title 区分，确保回到的是详情页而非播放页选集面板。
+  // 用 .player-about / .detail-title 区分，确保回到的是详情页而非播放页。
   const backReady = await cdp.eval(WAIT(`
     const eps = document.querySelectorAll('.episode');
-    const onDetail = !!document.querySelector('.detail-title') && !document.querySelector('.player-bar');
+    const onDetail = !!document.querySelector('.detail-title') && !document.querySelector('.player-about');
     return onDetail && eps.length > 0 ? 'DETAIL' : null;
   `, 40000));
-  assert(backReady === "DETAIL", "returned to detail page (.detail-title + .episode, no .player-bar)", String(backReady));
+  assert(backReady === "DETAIL", "returned to detail page (.detail-title + .episode, no .player-about)", String(backReady));
   if (backReady !== "DETAIL") await diag("back-to-detail-failed");
   await logState("back-to-detail");
 

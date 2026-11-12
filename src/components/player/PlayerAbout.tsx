@@ -1,0 +1,125 @@
+import { useState } from "react";
+import { useProxiedImage } from "../../hooks/useProxiedImage";
+import { plainText } from "../../lib/format";
+import type { VodInfo } from "../../types/tvbox";
+
+interface PlayerAboutProps {
+  vod: VodInfo | null;
+  /** 详情还没回来时的片名兜底（路由参数）。 */
+  fallbackName: string;
+  siteKey: string;
+  siteName?: string;
+  /** 当前线路名，展示成「正在播放：线路 · 第 N 集」。 */
+  lineName?: string;
+  episodeLabel?: string;
+  /** 直播频道没有「换源」概念，传 undefined 即不渲染该按钮。 */
+  onSwitchSource?: () => void;
+  onPlayExternal: () => void;
+}
+
+const CLAMP_AT = 160;
+
+/**
+ * 播放器下方的影片信息卡：海报 + 片名 + 年份/地区/类型 + 导演主演 + 简介，
+ * 换源与外部播放放在卡片操作区。详情拿不到时只显示片名与站点，不留白板。
+ */
+export default function PlayerAbout({
+  vod,
+  fallbackName,
+  siteKey,
+  siteName,
+  lineName,
+  episodeLabel,
+  onSwitchSource,
+  onPlayExternal,
+}: PlayerAboutProps) {
+  const poster = useProxiedImage(vod?.vod_pic);
+  const [expanded, setExpanded] = useState(false);
+  const title = vod?.vod_name?.trim() || fallbackName || "未命名";
+  const chips = [vod?.vod_year, vod?.vod_area, vod?.type_name, vod?.vod_remarks]
+    .map((item) => item?.trim())
+    .filter((item): item is string => Boolean(item));
+  const description = plainText(vod?.vod_content);
+  const hasPoster = Boolean(poster.src) && !poster.broken;
+
+  return (
+    <section className="player-about">
+      <div className="player-about__poster">
+        {hasPoster ? (
+          <img
+            src={poster.src ?? ""}
+            alt={title}
+            referrerPolicy="no-referrer"
+            onError={poster.onError}
+          />
+        ) : (
+          <span className="player-about__ph">无封面</span>
+        )}
+      </div>
+
+      <div className="player-about__body">
+        <div className="player-about__top">
+          <h2 className="player-about__title" title={title}>
+            {title}
+          </h2>
+          <div className="player-about__actions">
+            {onSwitchSource ? (
+              <button type="button" className="btn btn--sm" onClick={onSwitchSource}>
+                ⇄ 换源
+              </button>
+            ) : null}
+            <button type="button" className="btn btn--sm" onClick={onPlayExternal}>
+              ↗ 外部播放
+            </button>
+          </div>
+        </div>
+
+        <p className="player-about__meta">
+          <span className="detail-source" title={siteKey}>
+            {siteName || siteKey}
+          </span>
+          {lineName ? (
+            <span className="player-about__now">
+              {lineName}
+              {episodeLabel ? ` · ${episodeLabel}` : ""}
+            </span>
+          ) : null}
+        </p>
+
+        {chips.length > 0 ? (
+          <div className="chip-row chip-row--static">
+            {chips.map((chip, index) => (
+              <span className="chip chip--static" key={`${chip}-${index}`}>
+                {chip}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        {vod?.vod_director ? (
+          <p className="detail-line">导演：{plainText(vod.vod_director)}</p>
+        ) : null}
+        {vod?.vod_actor ? (
+          <p className="detail-line">主演：{plainText(vod.vod_actor)}</p>
+        ) : null}
+
+        {description ? (
+          <>
+            <p className={expanded ? "detail-content" : "detail-content is-clamped"}>
+              {description}
+            </p>
+            {description.length > CLAMP_AT ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm player-about__more"
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? "收起简介" : "展开简介"}
+              </button>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+    </section>
+  );
+}

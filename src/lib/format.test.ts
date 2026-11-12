@@ -5,6 +5,7 @@ import {
   parseEpisodes,
   parsePlayLines,
   rankByTitle,
+  plainText,
   splitFlag,
   titleMatchScore,
   toVodRef,
@@ -187,5 +188,25 @@ describe("rankByTitle", () => {
     const ranked = rankByTitle(rows, "  ", (row) => row.name);
     expect(ranked.map((row) => row.name)).toEqual(["b", "a"]);
     expect(ranked).not.toBe(rows);
+  });
+});
+
+describe("plainText", () => {
+  it("drops html tags and keeps paragraph breaks", () => {
+    expect(plainText("<p>第一段</p><p>第二段<br/>换行</p>")).toBe("第一段\n第二段\n换行");
+  });
+
+  it("decodes the entities that show up in CMS content", () => {
+    expect(plainText("A&nbsp;&amp;&nbsp;B &lt;剧&gt; &quot;x&quot;")).toBe('A & B <剧> "x"');
+  });
+
+  it("collapses the empty-paragraph noise real sources emit", () => {
+    expect(plainText("<p>正文</p><p><br/></p><p></p>")).toBe("正文");
+    expect(plainText("  \n\n 正文 \n\n\n\n 尾巴 ")).toBe("正文\n\n尾巴");
+  });
+
+  it("returns empty string for missing content", () => {
+    expect(plainText(undefined)).toBe("");
+    expect(plainText("   ")).toBe("");
   });
 });

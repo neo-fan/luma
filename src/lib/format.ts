@@ -76,6 +76,32 @@ export function parsePlayLines(
   return lines;
 }
 
+/**
+ * TVBox 的 `vod_content` / 演员字段常混着 `<p>` `<br/>` 这类 HTML 片段。
+ * 详情页与播放页都是纯文本展示，直接渲染会把标签当正文吐出来。
+ * 这里只做「换行标签转换 + 去标签 + 解常见实体 + 收敛空行」，不引解析器。
+ */
+export function plainText(input: string | undefined): string {
+  if (!input) {
+    return "";
+  }
+  return input
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li)>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&amp;/gi, "&")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /** 毫秒 → `mm:ss` 或 `h:mm:ss`。 */
 export function formatDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) {

@@ -192,7 +192,7 @@ for (let attempt = 0; attempt < 6 && !mounted; attempt += 1) {
   attempts = attempt + 1;
   if (attempt > 0) {
     const next = await cdp.eval(`(() => {
-      const b = [...document.querySelectorAll('button')].find((x) => (x.innerText || '').trim() === '下一集');
+      const b = [...document.querySelectorAll('button')].find((x) => (x.innerText || '').includes('下一集'));
       if (!b || b.disabled) return 'MISSING';
       b.click();
       return 'CLICKED';
@@ -226,7 +226,7 @@ for (let attempt = 0; attempt < 6 && mounted && !playing; attempt += 1) {
   lineAttempts = attempt + 1;
   if (attempt > 0) {
     const next = await cdp.eval(`(() => {
-      const b = [...document.querySelectorAll('button')].find((x) => (x.innerText || '').trim() === '下一集');
+      const b = [...document.querySelectorAll('button')].find((x) => (x.innerText || '').includes('下一集'));
       if (!b || b.disabled) return 'MISSING';
       b.click();
       return 'CLICKED';

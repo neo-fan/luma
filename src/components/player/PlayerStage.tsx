@@ -1,12 +1,23 @@
 import type { RefObject } from "react";
 import Spinner from "../Spinner";
 
+interface StageNav {
+  /** 顶部徽标：`360zy · 第 3 / 8 集`。 */
+  label: string;
+  canPrev: boolean;
+  canNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+}
+
 interface PlayerStageProps {
   resolving: boolean;
   playable: boolean;
   resolveError: string;
   /** ArtPlayer 挂载点：必须绑到 .player-art 这个空 div 本身，不能换成组件根。 */
   containerRef: RefObject<HTMLDivElement>;
+  /** 直播或没有剧集列表时传 null，不渲染上/下一集与徽标。 */
+  nav?: StageNav | null;
 }
 
 /**
@@ -19,12 +30,17 @@ interface PlayerStageProps {
  * `hls.destroy()`，残留解码流与新实例叠成「两个声音」。现在只切 visibility +
  * 用绝对定位覆盖层显示 Spinner / 兜底，DOM 生命周期完全交给内核 effect 的
  * `art.destroy()` 管理。
+ *
+ * 上/下一集与线路徽标是 `.player-stage` 的子节点（`z-index` 高于 ArtPlayer、
+ * 低于解析遮罩），不进入 `.player-art`：那层归 ArtPlayer 自己管，塞进去会被
+ * 它的模板替换掉，也会让「点画面暂停」误触。
  */
 export default function PlayerStage({
   resolving,
   playable,
   resolveError,
   containerRef,
+  nav,
 }: PlayerStageProps) {
   const hidden = resolving || !playable;
   return (
@@ -33,6 +49,32 @@ export default function PlayerStage({
         ref={containerRef}
         className={`player-art${hidden ? " player-art--hidden" : ""}`}
       />
+
+      {nav && playable ? (
+        <>
+          <span className="player-stage__badge">{nav.label}</span>
+          <button
+            type="button"
+            className="player-nav player-nav--prev"
+            onClick={nav.onPrev}
+            disabled={!nav.canPrev}
+            title="上一集"
+            aria-label="上一集"
+          >
+            ‹ 上一集
+          </button>
+          <button
+            type="button"
+            className="player-nav player-nav--next"
+            onClick={nav.onNext}
+            disabled={!nav.canNext}
+            title="下一集"
+            aria-label="下一集"
+          >
+            下一集 ›
+          </button>
+        </>
+      ) : null}
 
       {resolving ? (
         <div className="player-overlay">

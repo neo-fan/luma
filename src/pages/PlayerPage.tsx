@@ -4,7 +4,7 @@ import ErrorBar from "../components/ErrorBar";
 import SourcePicker from "../components/SourcePicker";
 import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
-import PlayerControls from "../components/player/PlayerControls";
+import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
 import { formatDuration, parsePlayLines, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
@@ -72,7 +72,6 @@ export default function PlayerPage({
   /** 同一轮播放只允许一次「找下一条线路」，防止多个失败信号并发触发。 */
   const lineSwitchStarted = useRef(false);
 
-  const [panelOpen, setPanelOpen] = useState(false);
   const [showSources, setShowSources] = useState(false);
   /** 收藏状态：与详情页共用同一份 SQLite 数据，这里只做镜像。 */
   const [favorite, setFavorite] = useState(false);
@@ -670,6 +669,9 @@ export default function PlayerPage({
     }
   };
 
+  /** 当前集名：剧集列表到达后用列表里的名字，否则用路由参数。 */
+  const nowEpisode = currentLine?.episodes[episodeIndex]?.name || episodeName;
+
   const progressLabel = useMemo(
     () => `${formatDuration(timeMs)} / ${durationMs > 0 ? formatDuration(durationMs) : "--:--"}`,
     [timeMs, durationMs],
@@ -680,8 +682,6 @@ export default function PlayerPage({
       <PlayerHeader
         vodName={vodName}
         episodeName={episodeName}
-        siteKey={siteKey}
-        siteName={siteName}
         progressLabel={progressLabel}
         onBack={onBack}
         favorite={siteKey === "live" ? null : favorite}
@@ -698,25 +698,33 @@ export default function PlayerPage({
         playable={playable}
         resolveError={resolveError}
         containerRef={containerRef}
+        nav={
+          siteKey === "live" || !currentLine
+            ? null
+            : {
+                label: `${currentLine.name} · 第 ${episodeIndex + 1} / ${currentLine.episodes.length} 集`,
+                canPrev,
+                canNext,
+                onPrev: () => goEpisode(-1),
+                onNext: () => goEpisode(1),
+              }
+        }
       />
 
-      <PlayerControls
+      {/* 影片信息卡：片名/年份/简介 + 换源/外部播放，紧跟在播放器下方。 */}
+      <PlayerAbout
+        vod={vod}
+        fallbackName={vodName}
         siteKey={siteKey}
-        vodName={vodName}
-        canPrev={canPrev}
-        canNext={canNext}
-        goEpisode={goEpisode}
-        currentLine={currentLine}
-        episodeIndex={episodeIndex}
-        lineCount={lines.length}
-        panelOpen={panelOpen}
-        setPanelOpen={setPanelOpen}
-        setShowSources={setShowSources}
-        playExternal={() => void playExternal()}
+        siteName={siteName}
+        lineName={currentLine?.name}
+        episodeLabel={nowEpisode || undefined}
+        onSwitchSource={siteKey === "live" ? undefined : () => setShowSources(true)}
+        onPlayExternal={() => void playExternal()}
       />
 
-      {/* 选集面板：线路切换 + 任意一集直达，替代只能上一集/下一集的旧交互。 */}
-      {panelOpen && lines.length > 0 ? (
+      {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
+      {siteKey !== "live" && lines.length > 0 ? (
         <EpisodePanel
           lines={lines}
           panelLine={panelLine}
