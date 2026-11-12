@@ -410,6 +410,32 @@ impl Db {
         })
     }
 
+    /// 只补元数据（封面 / 备注 / 站点名 / 片名），用于列表页回填早先没存
+    /// 封面的记录。**空参数不覆盖已有值**，也不碰 `added_at`：收藏顺序不能
+    /// 因为一次补封面就整体重排。
+    pub fn patch_favorite_meta(
+        &self,
+        site_key: &str,
+        vod_id: &str,
+        name: &str,
+        pic: &str,
+        remarks: &str,
+        site_name: &str,
+    ) -> Result<bool, AppError> {
+        self.with("patch favourite meta", |conn| {
+            let changed = conn.execute(
+                "UPDATE favorites SET
+                     name = CASE WHEN ?3 <> '' THEN ?3 ELSE name END,
+                     pic = CASE WHEN ?4 <> '' THEN ?4 ELSE pic END,
+                     remarks = CASE WHEN ?5 <> '' THEN ?5 ELSE remarks END,
+                     site_name = CASE WHEN ?6 <> '' THEN ?6 ELSE site_name END
+                 WHERE site_key = ?1 AND vod_id = ?2",
+                params![site_key, vod_id, name, pic, remarks, site_name],
+            )?;
+            Ok(changed > 0)
+        })
+    }
+
     // ---- history ----------------------------------------------------------
 
     pub fn history(&self) -> Result<Vec<HistoryRow>, AppError> {
@@ -436,9 +462,11 @@ impl Db {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                  ON CONFLICT(site_key, vod_id) DO UPDATE SET
                      name = excluded.name,
-                     pic = excluded.pic,
-                     remarks = excluded.remarks,
-                     site_name = excluded.site_name,
+                     -- 详情还没拉到时写入的是空封面；不能用空串覆盖掉库里已有的
+                     -- 封面 / 备注 / 站点名，否则一次「先播放后详情」就把列表打回空白。
+                     pic = CASE WHEN excluded.pic <> '' THEN excluded.pic ELSE pic END,
+                     remarks = CASE WHEN excluded.remarks <> '' THEN excluded.remarks ELSE remarks END,
+                     site_name = CASE WHEN excluded.site_name <> '' THEN excluded.site_name ELSE site_name END,
                      play_url = excluded.play_url,
                      position_ms = excluded.position_ms,
                      duration_ms = excluded.duration_ms,
@@ -467,6 +495,31 @@ impl Db {
                 params![MAX_HISTORY as i64],
             )?;
             tx.commit()
+        })
+    }
+
+    /// 历史记录补元数据（封面 / 备注 / 站点名 / 片名）。与收藏同理：空参数
+    /// 不覆盖，**`updated_at` 保持不变**——回填封面不能把老记录顶到列表最前。
+    pub fn patch_history_meta(
+        &self,
+        site_key: &str,
+        vod_id: &str,
+        name: &str,
+        pic: &str,
+        remarks: &str,
+        site_name: &str,
+    ) -> Result<bool, AppError> {
+        self.with("patch history meta", |conn| {
+            let changed = conn.execute(
+                "UPDATE history SET
+                     name = CASE WHEN ?3 <> '' THEN ?3 ELSE name END,
+                     pic = CASE WHEN ?4 <> '' THEN ?4 ELSE pic END,
+                     remarks = CASE WHEN ?5 <> '' THEN ?5 ELSE remarks END,
+                     site_name = CASE WHEN ?6 <> '' THEN ?6 ELSE site_name END
+                 WHERE site_key = ?1 AND vod_id = ?2",
+                params![site_key, vod_id, name, pic, remarks, site_name],
+            )?;
+            Ok(changed > 0)
         })
     }
 
@@ -653,6 +706,74 @@ mod tests {
         assert_eq!(top.play_from, "线路B");
         db.clear_history().unwrap();
         assert!(db.history().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回填封面：补到该补的行、空值不覆盖、而且绝不能改变历史顺序或收藏顺序。
+    #[test]
+    fn meta_patch_fills_cover_without_reordering() {
+        let dir = temp_dir("meta");
+        let db = Db::at(dir.clone()).expect("open db");
+        let history = |id: &str, pic: &str, updated_at: u64| HistoryRow {
+            site_key: "cms".into(),
+            vod_id: id.into(),
+            name: "Sample".into(),
+            pic: pic.into(),
+            remarks: String::new(),
+            site_name: "CMS".into(),
+            play_url: String::new(),
+            episode_name: String::new(),
+            play_from: String::new(),
+            position_ms: 0,
+            duration_ms: 0,
+            updated_at,
+        };
+        db.upsert_history(&history("1", "", 100)).unwrap();
+        db.upsert_history(&history("2", "http://old/2.jpg", 200)).unwrap();
+
+        // 详情页回填：命中一行，`updated_at` 不变（否则老记录会被顶到最前）。
+        assert!(db
+            .patch_history_meta("cms", "1", "", "http://new/1.jpg", "HD", "CMS")
+            .unwrap());
+        let rows = db.history().unwrap();
+        let one = rows.iter().find(|row| row.vod_id == "1").unwrap();
+        assert_eq!(one.pic, "http://new/1.jpg");
+        assert_eq!(one.remarks, "HD");
+        assert_eq!(one.updated_at, 100);
+
+        // 空参数不覆盖已有值；不存在的行返回 false。
+        assert!(db
+            .patch_history_meta("cms", "2", "", "", "", "")
+            .unwrap());
+        let rows = db.history().unwrap();
+        let two = rows.iter().find(|row| row.vod_id == "2").unwrap();
+        assert_eq!(two.pic, "http://old/2.jpg");
+        assert!(!db
+            .patch_history_meta("cms", "missing", "", "http://x/y.jpg", "", "")
+            .unwrap());
+
+        // 播放页在详情没到时写的空封面不能把已有封面清掉。
+        db.upsert_history(&history("2", "", 300)).unwrap();
+        let rows = db.history().unwrap();
+        let two = rows.iter().find(|row| row.vod_id == "2").unwrap();
+        assert_eq!(two.pic, "http://old/2.jpg");
+
+        let fav = FavoriteRow {
+            site_key: "cms".into(),
+            vod_id: "1".into(),
+            name: "Sample".into(),
+            pic: String::new(),
+            remarks: String::new(),
+            site_name: "CMS".into(),
+            added_at: 7,
+        };
+        assert!(db.toggle_favorite(&fav).unwrap());
+        assert!(db
+            .patch_favorite_meta("cms", "1", "", "http://new/1.jpg", "", "")
+            .unwrap());
+        let favorites = db.favorites().unwrap();
+        assert_eq!(favorites[0].pic, "http://new/1.jpg");
+        assert_eq!(favorites[0].added_at, 7, "backfill must not reorder favourites");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

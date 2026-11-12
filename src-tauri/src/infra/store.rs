@@ -68,6 +68,22 @@ pub(crate) fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 只合并非空字段：补元数据不能把已知道的封面 / 备注 / 站点名抹成空串。
+fn merge_meta(dst: &mut VodRef, src: &VodRef) {
+    if !src.name.is_empty() {
+        dst.name = src.name.clone();
+    }
+    if !src.pic.is_empty() {
+        dst.pic = src.pic.clone();
+    }
+    if !src.remarks.is_empty() {
+        dst.remarks = src.remarks.clone();
+    }
+    if !src.site_name.is_empty() {
+        dst.site_name = src.site_name.clone();
+    }
+}
+
 pub fn data_dir() -> PathBuf {
     // `LUMA_DATA_DIR` is the documented override; `env::get` still accepts
     // the pre-rename `TVBOX_DATA_DIR`.
@@ -191,6 +207,28 @@ impl LibraryStore {
             .any(|item| item.vod.site_key == site_key && item.vod.vod_id == vod_id)
     }
 
+    /// 补收藏条目的元数据（老记录没有封面）。返回是否命中一行。
+    pub fn patch_favorite_meta(&self, vod: VodRef) -> Result<bool, AppError> {
+        let hit = self.db.patch_favorite_meta(
+            &vod.site_key,
+            &vod.vod_id,
+            &vod.name,
+            &vod.pic,
+            &vod.remarks,
+            &vod.site_name,
+        )?;
+        if hit {
+            let mut guard = self.favorites.write().unwrap_or_else(|p| p.into_inner());
+            if let Some(item) = guard
+                .iter_mut()
+                .find(|item| item.vod.site_key == vod.site_key && item.vod.vod_id == vod.vod_id)
+            {
+                merge_meta(&mut item.vod, &vod);
+            }
+        }
+        Ok(hit)
+    }
+
     pub fn list_history(&self) -> Vec<HistoryItem> {
         // Same as `list_favorites`: sort the copy outside the read lock.
         let mut items = self
@@ -231,6 +269,28 @@ impl LibraryStore {
         Ok(())
     }
 
+    /// 补历史条目的元数据（老记录没有封面）。不改 `updated_at`，顺序不变。
+    pub fn patch_history_meta(&self, vod: VodRef) -> Result<bool, AppError> {
+        let hit = self.db.patch_history_meta(
+            &vod.site_key,
+            &vod.vod_id,
+            &vod.name,
+            &vod.pic,
+            &vod.remarks,
+            &vod.site_name,
+        )?;
+        if hit {
+            let mut guard = self.history.write().unwrap_or_else(|p| p.into_inner());
+            if let Some(item) = guard
+                .iter_mut()
+                .find(|item| item.vod.site_key == vod.site_key && item.vod.vod_id == vod.vod_id)
+            {
+                merge_meta(&mut item.vod, &vod);
+            }
+        }
+        Ok(hit)
+    }
+
     pub fn clear_history(&self) -> Result<(), AppError> {
         self.db.clear_history()?;
         self.history
@@ -261,6 +321,15 @@ pub fn favorites_toggle(state: tauri::State<'_, LibraryStore>, vod: VodRef) -> R
     state.toggle_favorite(vod)
 }
 
+/// 老收藏没存封面时由列表页回填；不改收藏时间。
+#[tauri::command]
+pub fn favorites_patch_meta(
+    state: tauri::State<'_, LibraryStore>,
+    vod: VodRef,
+) -> Result<bool, AppError> {
+    state.patch_favorite_meta(vod)
+}
+
 #[tauri::command]
 pub fn history_list(state: tauri::State<'_, LibraryStore>) -> Vec<HistoryItem> {
     state.list_history()
@@ -269,6 +338,15 @@ pub fn history_list(state: tauri::State<'_, LibraryStore>) -> Vec<HistoryItem> {
 #[tauri::command]
 pub fn history_upsert(state: tauri::State<'_, LibraryStore>, item: HistoryItem) -> Result<(), AppError> {
     state.upsert_history(item)
+}
+
+/// 老历史缺封面时由历史页回填；不改 `updatedAt`，列表顺序保持。
+#[tauri::command]
+pub fn history_patch_meta(
+    state: tauri::State<'_, LibraryStore>,
+    vod: VodRef,
+) -> Result<bool, AppError> {
+    state.patch_history_meta(vod)
 }
 
 #[tauri::command]

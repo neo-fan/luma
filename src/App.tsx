@@ -23,6 +23,7 @@ import { api, errorMessage } from "./lib/invoke";
 import { pageCache } from "./lib/pageCache";
 import { clearSourceCache, setSourceCacheScope } from "./lib/sourceCache";
 import { clearPageStates } from "./lib/usePageState";
+import { clearCoverAttempts } from "./lib/coverBackfill";
 import { log } from "./lib/logger";
 import { APP_VERSION } from "./lib/version";
 import type { ConfigSnapshot, LiveSource, Site } from "./types/tvbox";
@@ -269,6 +270,7 @@ export default function App() {
     setSourceCacheScope(snapshot.id);
     clearSourceCache();
     clearPageStates();
+    clearCoverAttempts();
     scrollPositions.current.clear();
     const next: SiteCache = {
       configId: snapshot.id,
@@ -287,6 +289,7 @@ export default function App() {
     pageCache.clear();
     clearSourceCache();
     clearPageStates();
+    clearCoverAttempts();
     scrollPositions.current.clear();
     setCache((current) => {
       if (!current || current.configId !== id) {

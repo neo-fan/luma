@@ -144,8 +144,10 @@ pub fn run() {
             mpv::mpv_play,
             store::favorites_list,
             store::favorites_toggle,
+            store::favorites_patch_meta,
             store::history_list,
             store::history_upsert,
+            store::history_patch_meta,
             store::history_clear,
             store::history_remove,
             // Trial-run diagnostics: UI log sink, one-click report, log folder.

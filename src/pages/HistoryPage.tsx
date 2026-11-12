@@ -5,6 +5,7 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { historySubtitle } from "../lib/history";
 import { log } from "../lib/logger";
 import { usePageState } from "../lib/usePageState";
@@ -53,6 +54,31 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
     // items 故意不进依赖：只在挂载 / 手动刷新时读库，渲染写入不再触发。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reload]);
+
+  // 早先写入的历史没有封面：按需回查详情补一次。后端不动 updatedAt，
+  // 补封面不会把这些记录顶到列表最前。
+  useEffect(() => {
+    if (items.length === 0) {
+      return;
+    }
+    let alive = true;
+    void backfillCovers(items, "history", (patch) => {
+      if (!alive) {
+        return;
+      }
+      setItems((list) =>
+        list.map((one) =>
+          one.siteKey === patch.siteKey && one.vodId === patch.vodId
+            ? mergeMeta(one, patch)
+            : one,
+        ),
+      );
+    });
+    return () => {
+      alive = false;
+    };
+    // 只跟条数：回填改写条目时长度不变，不会重跑。
+  }, [items.length, setItems]);
 
   const remove = async (item: HistoryItem) => {
     const key = `${item.siteKey}-${item.vodId}`;

@@ -24,8 +24,26 @@ describe("player favourites & history line contract", () => {
 
   it("toggles favourites through the shared library store", () => {
     const page = read("src/pages/PlayerPage.tsx");
-    expect(page).toContain("api.favoritesToggle(toVodRef(siteKey, siteName, favVod))");
+    expect(page).toContain("toVodRef(siteKey, siteName, favVod)");
+    expect(page).toContain("api.favoritesToggle(favRef)");
     expect(page).toContain("api.favoritesList()");
+  });
+
+  it("carries the cover and site name into history and favourites", () => {
+    const page = read("src/pages/PlayerPage.tsx");
+    expect(page).toContain("pic: historyMetaRef.current.pic");
+    expect(page).toContain("remarks: historyMetaRef.current.remarks");
+    expect(page).toContain("siteName: historyMetaRef.current.siteName");
+    // 详情没到就点收藏时，等详情回来补一次元数据。
+    expect(page).toContain("api.favoritesPatchMeta(toVodRef(siteKey, siteName, vod))");
+  });
+
+  it("backfills covers on both list pages", () => {
+    for (const page of ["src/pages/HistoryPage.tsx", "src/pages/FavoritesPage.tsx"]) {
+      const source = read(page);
+      expect(source).toContain("backfillCovers(");
+      expect(source).toContain("mergeMeta(");
+    }
   });
 
   it("writes the current line and episode into history", () => {

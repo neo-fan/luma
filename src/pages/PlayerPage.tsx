@@ -131,6 +131,33 @@ export default function PlayerPage({
     return { vod_id: vodId, vod_name: vodName, vod_pic: "", vod_play_from: "", vod_play_url: "" };
   }, [vod, vodId, vodName]);
 
+  /**
+   * 历史要带封面 / 备注 / 站点名。详情与播放进度是两条并行链路，详情常晚于
+   * 第一次写入到达；用 ref 取最新值，后续 5 秒节流的写入会把元数据补上，
+   * 且 DB 侧空值不覆盖已有封面。
+   */
+  const historyMetaRef = useRef({ pic: "", remarks: "", siteName: "" });
+  historyMetaRef.current = {
+    pic: vod?.vod_pic?.trim() || "",
+    remarks: vod?.vod_remarks?.trim() || "",
+    siteName: siteName || "",
+  };
+
+  /**
+   * 详情没到就点了收藏 → 当时只能存空封面。等详情到达后补一次元数据，
+   * 只补一次，不动收藏时间。
+   */
+  const favNeedsCover = useRef(false);
+  useEffect(() => {
+    if (!favNeedsCover.current || !favorite || !vod?.vod_pic?.trim()) {
+      return;
+    }
+    favNeedsCover.current = false;
+    void api.favoritesPatchMeta(toVodRef(siteKey, siteName, vod)).catch(() => {
+      // 补封面失败不影响收藏本身。
+    });
+  }, [favorite, vod, siteKey, siteName]);
+
   useEffect(() => {
     if (siteKey === "live") {
       setFavorite(false);
@@ -160,8 +187,11 @@ export default function PlayerPage({
     }
     setFavBusy(true);
     try {
-      const next = await api.favoritesToggle(toVodRef(siteKey, siteName, favVod));
+      const favRef = toVodRef(siteKey, siteName, favVod);
+      const next = await api.favoritesToggle(favRef);
       setFavorite(next);
+      // 加收藏时详情还没到（没有封面）：等详情回来补，别让收藏列表留空图。
+      favNeedsCover.current = next && !favRef.pic;
       setSwitchTip(next ? "已加入收藏" : "已取消收藏");
     } catch (err) {
       setVideoError(`收藏操作失败：${errorMessage(err)}`);
@@ -480,6 +510,9 @@ export default function PlayerPage({
         siteKey,
         vodId,
         name: vodName,
+        pic: historyMetaRef.current.pic,
+        remarks: historyMetaRef.current.remarks,
+        siteName: historyMetaRef.current.siteName,
         playUrl,
         episodeName: historyLabelRef.current.episodeName,
         playFrom: historyLabelRef.current.playFrom,

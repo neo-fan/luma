@@ -309,12 +309,22 @@ export const api = {
     return call("favorites_toggle", { vod });
   },
 
+  /** 只补收藏条目的元数据（老记录缺封面时用），不改收藏时间。 */
+  favoritesPatchMeta(vod: VodRef): Promise<boolean> {
+    return call("favorites_patch_meta", { vod });
+  },
+
   historyList(): Promise<HistoryItem[]> {
     return call("history_list");
   },
 
   historyUpsert(item: HistoryItem): Promise<void> {
     return call("history_upsert", { item });
+  },
+
+  /** 只补历史条目的元数据（老记录缺封面时用），不改 `updatedAt`。 */
+  historyPatchMeta(vod: VodRef): Promise<boolean> {
+    return call("history_patch_meta", { vod });
   },
 
   historyClear(): Promise<void> {

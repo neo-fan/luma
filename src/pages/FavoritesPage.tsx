@@ -5,6 +5,7 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { usePageState } from "../lib/usePageState";
 import type { FavoriteItem, VodRef } from "../types/tvbox";
 
@@ -52,6 +53,30 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
     // items 故意不进依赖：只在挂载 / 手动刷新时读库，渲染写入不再触发。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reload]);
+
+  // 从播放页「详情还没到就点收藏」产生的条目没有封面：回查一次详情补上。
+  useEffect(() => {
+    if (items.length === 0) {
+      return;
+    }
+    let alive = true;
+    void backfillCovers(items, "favorites", (patch) => {
+      if (!alive) {
+        return;
+      }
+      setItems((list) =>
+        list.map((one) =>
+          one.siteKey === patch.siteKey && one.vodId === patch.vodId
+            ? mergeMeta(one, patch)
+            : one,
+        ),
+      );
+    });
+    return () => {
+      alive = false;
+    };
+    // 只跟条数：回填改写条目时长度不变，不会重跑。
+  }, [items.length, setItems]);
 
   const remove = async (item: FavoriteItem) => {
     const key = `${item.siteKey}-${item.vodId}`;
