@@ -15,6 +15,13 @@ pub async fn invoke(
     method: SpiderMethod,
     args: &[Value],
 ) -> Result<Value, AppError> {
+    // CMS has no `playerContent`: play URLs ship inside `detailContent`'s
+    // `vod_play_url`. Return an empty object rather than INVALID_ARGUMENT —
+    // the caller (usePlayResolution) then keeps the detail URL, and the app
+    // log stops reporting a capability gap as a failed IPC call.
+    if matches!(&method, SpiderMethod::PlayerContent) {
+        return Ok(json!({}));
+    }
     let api = site.get("api").and_then(Value::as_str).unwrap_or("");
     if api.is_empty() {
         return Err(AppError::new(code::INVALID_ARGUMENT, "cms site has no api"));
@@ -187,6 +194,25 @@ mod tests {
         .expect("two-arg search must still build");
         assert!(legacy.contains("pg=2"), "{legacy}");
         assert_eq!(extra["pg"], 2);
+    }
+
+    #[tokio::test]
+    async fn player_content_is_an_empty_result_not_an_error() {
+        // CMS 的播放地址随 detailContent 下发；这里必须返回空对象，让前端
+        // 沿用详情地址，也避免把能力缺口记成一次失败的 IPC。
+        let site = json!({"key": "c", "type": 1, "api": "http://127.0.0.1:1/cms"});
+        let out = invoke(
+            &site,
+            SpiderMethod::PlayerContent,
+            &[json!("line"), json!("id"), json!([])],
+        )
+        .await
+        .expect("playerContent must not fail for CMS");
+        assert_eq!(out, json!({}));
+        // No api at all must behave the same (no network attempt).
+        let bare = json!({"key": "c", "type": 1});
+        let out = invoke(&bare, SpiderMethod::PlayerContent, &[]).await;
+        assert_eq!(out.expect("no api is fine here"), json!({}));
     }
 
     #[test]
