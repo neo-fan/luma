@@ -40,12 +40,17 @@ export function relativeTime(ms: number, now = Date.now()): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-/** 卡片副标题：站点 · 线路 · 集数 · 进度 · 时间（空字段自动省略）。 */
+/**
+ * 卡片副标题：线路 · 集数 · 站点 · 进度 · 时间（空字段自动省略）。
+ *
+ * 线路与集数排在最前：卡片宽度有限且 `text-overflow: ellipsis`，站点/时间被截
+ * 不影响「上次从哪条线看到第几集」这个核心信息。
+ */
 export function historySubtitle(item: HistoryItem, now = Date.now()): string {
   return [
-    item.siteName || item.siteKey,
     item.playFrom ? `线路 ${item.playFrom}` : "",
     item.episodeName ? `看到 ${item.episodeName}` : "",
+    item.siteName || item.siteKey,
     progressText(item),
     relativeTime(item.updatedAt, now),
   ]

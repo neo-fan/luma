@@ -49,7 +49,7 @@ describe("relativeTime", () => {
 describe("historySubtitle", () => {
   it("includes the line and episode recorded by the player", () => {
     const sub = historySubtitle({ ...base, updatedAt: 1_000_000 }, 1_060_000);
-    expect(sub).toBe("量子 · 线路 线路A · 看到 第 3 集 · 已看 50% · 1 分钟前");
+    expect(sub).toBe("线路 线路A · 看到 第 3 集 · 量子 · 已看 50% · 1 分钟前");
   });
 
   it("keeps old rows readable when line/episode are absent", () => {
