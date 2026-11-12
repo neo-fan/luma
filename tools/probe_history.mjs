@@ -126,6 +126,23 @@ try {
     "app rendered",
   );
 
+  // 样式表守卫：dev 的 CSS HMR 偶发把 `__vite__css` 写成空串，页面会退化成
+  // 无样式堆叠（DOM 断言却全部通过）。这里用「规则数 + 侧栏 flex」兜住，
+  // 避免把「样式没加载」误判成布局回归。
+  const css = await cdp.eval(`(() => {
+    const nav = document.querySelector('.nav');
+    const rules = [...document.styleSheets].reduce((sum, sheet) => {
+      try { return sum + sheet.cssRules.length; } catch { return sum; }
+    }, 0);
+    return JSON.stringify({ rules, navDisplay: nav ? getComputedStyle(nav).display : null });
+  })()`);
+  const cssInfo = JSON.parse(css || "{}");
+  assert(
+    (cssInfo.rules ?? 0) > 100 && cssInfo.navDisplay === "flex",
+    "project stylesheet applied",
+    css,
+  );
+
   // 合成一条历史：进度 50%，2 分钟时长；带线路名与集数名（播放页写入的字段）。
   const seeded = await cdp.eval(`(async () => {
     try {
