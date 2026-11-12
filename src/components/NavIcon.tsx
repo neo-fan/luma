@@ -13,8 +13,8 @@ export type NavIconName =
   | "favorites"
   | "history"
   | "settings"
-  | "collapse-left"
-  | "collapse-right";
+  /** 收起/展开共用一枚：收缩态由 CSS 整体旋转 180°，方向连续翻转更顺。 */
+  | "collapse";
 
 const PATHS: Record<NavIconName, ReactNode> = {
   home: (
@@ -52,8 +52,7 @@ const PATHS: Record<NavIconName, ReactNode> = {
       <path d="M12 7.6V12l3.1 1.9" />
     </>
   ),
-  "collapse-left": <path d="m14.5 6-6 6 6 6" />,
-  "collapse-right": <path d="m9.5 6 6 6-6 6" />,
+  "collapse": <path d="m14.5 6-6 6 6 6" />,
 };
 
 export default function NavIcon({ name }: { name: NavIconName }) {

@@ -99,10 +99,16 @@ const SNAPSHOT = `(() => {
   if (!bar) return null;
   const icons = [...bar.querySelectorAll('.nav__item .nav__icon')];
   const labels = [...bar.querySelectorAll('.nav__label')];
-  const visible = (el) => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0;
+  // 收缩后用 opacity 淡出而不是 display:none（保留占位，行高才不跳），
+  // 所以「隐藏」的判定要带透明度，光看 display 会把淡出的文字算成可见。
+  const visible = (el) => {
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && Number(cs.opacity) > 0.05 && el.getBoundingClientRect().width > 0;
+  };
   return JSON.stringify({
     collapsed: bar.classList.contains('is-collapsed'),
     width: Math.round(bar.getBoundingClientRect().width),
+    railWidth: Math.round(parseFloat(getComputedStyle(document.querySelector('.app')).paddingLeft) || 0),
     icons: icons.length,
     visibleIcons: icons.filter(visible).length,
     collapseIconVisible: (() => {
@@ -116,6 +122,7 @@ const SNAPSHOT = `(() => {
     stored: localStorage.getItem('luma:sidebar:v1'),
   });
 })()`;
+
 
 let failures = 0;
 const assert = (ok, label, detail = "") => {
@@ -171,8 +178,24 @@ try {
   })()`);
   assert(collapse === "CLICKED", "click 收起", collapse);
   await cdp.eval(WAIT("return document.querySelector('.sidebar.is-collapsed') ? 'OK' : null;", 5000));
-  // 宽度过渡 180ms，等动画结束再读像素尺寸。
-  await sleep(350);
+  // 收放必须是**过渡**而不是瞬切：点击后约 90ms 采样，宽度应停在两端之间；
+  // 同时 .app 的左侧留白要跟侧栏同宽同帧，否则内容区会先跳一格再慢慢跟上。
+  await sleep(90);
+  const mid = JSON.parse((await cdp.eval(SNAPSHOT)) || "null");
+  console.log(`[info] mid-flight: ${JSON.stringify(mid)}`);
+  assert(
+    mid?.width > 74 && mid?.width < 198,
+    "collapse animates instead of snapping",
+    String(mid?.width),
+  );
+  assert(
+    mid !== null && Math.abs((mid.railWidth ?? 0) - (mid.width ?? 0)) <= 1,
+    "content gutter tracks sidebar width",
+    JSON.stringify(mid),
+  );
+  // 宽度过渡 260ms，等动画结束再读像素尺寸。
+  await sleep(420);
+
   const collapsed = JSON.parse((await cdp.eval(SNAPSHOT)) || "null");
   console.log(`[info] collapsed: ${JSON.stringify(collapsed)}`);
   assert(collapsed?.collapsed === true, "sidebar collapsed", JSON.stringify(collapsed));
@@ -203,7 +226,15 @@ try {
   })()`);
   assert(expand === "CLICKED", "click 展开", expand);
   await cdp.eval(WAIT("return !document.querySelector('.sidebar.is-collapsed') ? 'OK' : null;", 5000));
-  await sleep(350);
+  await sleep(90);
+  const midExpand = JSON.parse((await cdp.eval(SNAPSHOT)) || "null");
+  assert(
+    midExpand?.width > 74 && midExpand?.width < 198,
+    "expand animates instead of snapping",
+    String(midExpand?.width),
+  );
+  await sleep(420);
+
   const restored = JSON.parse((await cdp.eval(SNAPSHOT)) || "null");
   console.log(`[info] restored: ${JSON.stringify(restored)}`);
   assert(restored?.width >= 180, "width restored", String(restored?.width));

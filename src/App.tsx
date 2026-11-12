@@ -480,7 +480,7 @@ export default function App() {
             title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
           >
             <span className="nav__icon">
-              <NavIcon name={sidebarCollapsed ? "collapse-right" : "collapse-left"} />
+              <NavIcon name="collapse" />
             </span>
             <span className="nav__label">{sidebarCollapsed ? "展开" : "收起"}</span>
           </button>

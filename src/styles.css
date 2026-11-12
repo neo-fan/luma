@@ -42,6 +42,15 @@
 
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --dur: 0.18s;
+
+  /* 侧栏收放：宽度与内容让位共用一条曲线，收尾缓停（emphasized
+     decelerate）。刻意没用「前段很陡」的 (0.32, 0.72, 0, 1) —— 那条曲线
+     在 1/4 时间里就走完 78%，观感是「猛拽一下 + 尾巴空等」，反而生硬。
+     这条在 25%/40%/55% 时间点分别推进 38%/69%/86%，全程都有可见变化。 */
+  --sidebar-w: 204px;
+  --sidebar-w-collapsed: 68px;
+  --sidebar-dur: 0.28s;
+  --sidebar-ease: cubic-bezier(0.32, 0.08, 0.18, 1);
 }
 
 * {
@@ -105,22 +114,26 @@ textarea {
 /* ---------- 布局 ---------- */
 
 /* 侧栏脱离文档流固定在左侧窗口边缘：即使内容区滚动、或将来 .app 被撑高，
-   导航也绝不跟着走。左侧空间由 .app 的 padding-left 让出，随收缩态切换。 */
+   导航也绝不跟着走。左侧空间由 .app 的 padding-left 让出，与侧栏宽度
+   同曲线、同时长过渡 —— 内容区整体平移让位，不会在收起瞬间跳一格。 */
 .app {
   display: flex;
   height: 100vh;
   height: 100dvh;
-  padding-left: 204px;
+  padding-left: var(--sidebar-w);
   overflow: hidden;
+  transition: padding-left var(--sidebar-dur) var(--sidebar-ease);
 }
 
 .app.is-sidebar-collapsed {
-  padding-left: 68px;
+  padding-left: var(--sidebar-w-collapsed);
 }
 
 /* 侧栏与画布**同色**：之前用 --bg-soft 比内容区亮一档，在深色窗口里像贴着
    一条突兀的浅色板子（用户反馈「标题和侧边颜色不协调」），现在只靠 1px 描边
-   与会话高亮区分层级。整块固定，不参与任何滚动，也没有宽度过渡动画。 */
+   与会话高亮区分层级。整块固定，不参与任何滚动。
+   收放只动 width、**不动 padding**：图标所在的那条轴恒定，文字被收窄的
+   宽度自然「挤出」并同步淡出，没有位移抖动。 */
 .sidebar {
   position: fixed;
   top: 0;
@@ -129,19 +142,19 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 26px;
-  width: 204px;
+  width: var(--sidebar-w);
   height: 100vh;
   height: 100dvh;
   padding: 22px 12px 16px;
   background: var(--bg);
   border-right: 1px solid var(--border);
   overflow: hidden;
+  transition: width var(--sidebar-dur) var(--sidebar-ease);
 }
 
-/* 收缩态：只留 68px 图标轨道；文字统一由 .nav__label 控制显隐 */
+/* 收缩态：只留 68px 图标轨道；文字统一由 .nav__label 系列控制显隐 */
 .sidebar.is-collapsed {
-  width: 68px;
-  padding: 22px 8px 16px;
+  width: var(--sidebar-w-collapsed);
 }
 
 .brand {
@@ -176,6 +189,9 @@ textarea {
   font-weight: 650;
   letter-spacing: -0.02em;
   line-height: 1.2;
+  /* nowrap：收缩时宽度不足也不换行。一旦换行会撑高 .brand，
+     把下面所有导航项一起顶下去 —— 那才是「动画很脏」的主因。 */
+  white-space: nowrap;
 }
 
 .brand__text small {
@@ -224,6 +240,35 @@ textarea {
 
 .nav__label {
   white-space: nowrap;
+}
+
+/* ---------- 侧栏收放：文字层 ---------- *
+ * 之前用 display:none 一刀切，文字是「啪」地消失；下面改成透明度 + 极小幅
+ * 左移，配合宽度收窄形成「被挤出去」的连续感。
+ * 两个方向给不同 delay：收起时立刻淡出（0ms，别拖着残影），展开时等宽度
+ * 走了六成再淡入（100ms），避免文字在 68px 的窄轨道里先糊成一团。
+ * 时长与宽度同为 0.28s：文字消失/出现和轨道到位是同一拍收尾的。 */
+.nav__label,
+.brand__text,
+.sidebar__foot {
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 0.18s var(--ease) 0.1s,
+    transform var(--sidebar-dur) var(--sidebar-ease);
+}
+
+.sidebar.is-collapsed .nav__label,
+.sidebar.is-collapsed .brand__text,
+.sidebar.is-collapsed .sidebar__foot {
+  opacity: 0;
+  transform: translateX(-6px);
+  pointer-events: none;
+  /* 保留占位（不 display:none）：底部「收起」按钮与导航行高全程不动，
+     否则文字一消失，按钮会跟着上下弹一下。 */
+  transition:
+    opacity 0.18s var(--ease) 0s,
+    transform var(--sidebar-dur) var(--sidebar-ease);
 }
 
 .nav__item:hover {
@@ -277,6 +322,15 @@ textarea {
   color: var(--text-soft);
 }
 
+/* 箭头用同一个图形旋转 180°：点下去方向连续翻转，比换一个 icon 更顺。 */
+.sidebar__collapse .nav__icon svg {
+  transition: transform var(--sidebar-dur) var(--sidebar-ease);
+}
+
+.sidebar.is-collapsed .sidebar__collapse .nav__icon svg {
+  transform: rotate(180deg);
+}
+
 .sidebar__foot {
   display: flex;
   flex-direction: column;
@@ -285,25 +339,13 @@ textarea {
   color: var(--faint);
   font-size: 11px;
   border-top: 1px solid var(--border);
+  white-space: nowrap;
 }
 
-/* 收缩态：品牌文字、导航文字、页脚全部隐藏，只留图标与提示 */
-.sidebar.is-collapsed .brand {
-  justify-content: center;
-  padding: 0;
-}
-
-.sidebar.is-collapsed .brand__text,
-.sidebar.is-collapsed .nav__label,
-.sidebar.is-collapsed .sidebar__foot {
-  display: none;
-}
-
-.sidebar.is-collapsed .nav__item,
-.sidebar.is-collapsed .sidebar__collapse {
-  justify-content: center;
-  padding: 10px 0;
-}
+/* 收缩态**不动任何 padding**：图标轴（左侧 26px）在收放全程一像素都不移，
+   视觉上就是「右边的墙推过来」，没有横向抖动。轨道 68px 下图标中心 36，
+   与轨道中心 34 只差 2px，肉眼不可辨；为对齐这 2px 去改 padding 反而会
+   在动画中途引入一段横移，得不偿失。 */
 
 .content {
   flex: 1;
@@ -1880,5 +1922,7 @@ button:focus:not(:focus-visible) {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    /* 侧栏文字的淡入带 90ms 延迟，只清时长会留下「晚一拍才出现」的空白帧。 */
+    transition-delay: 0ms !important;
   }
 }
