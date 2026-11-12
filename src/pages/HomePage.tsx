@@ -8,7 +8,7 @@ import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { usableHomeSites } from "../lib/format";
 import { usePageState } from "../lib/usePageState";
-import type { HomeResult, Site } from "../types/tvbox";
+import type { HomeResult, ResultPage, Site } from "../types/tvbox";
 
 interface HomePageProps {
   sites: Site[];
@@ -60,7 +60,15 @@ export async function findHomeSiteWithList(
  */
 const SWITCH_DEBOUNCE_MS = 300;
 
-/** 首页：站点切换 + 分类标签 + 推荐网格。 */
+/** 首页内联的分类选择：tid="" 表示回到推荐流。存站点 key 是为了切站后
+ *  不把上一个站点的 type_id 带过去（TVBox 的 tid 只在产生它的站点有效）。 */
+interface CategorySelection {
+  siteKey: string;
+  tid: string;
+  page: number;
+}
+
+/** 首页：站点切换 + 分类标签（页内切换）+ 推荐/分类网格。 */
 export default function HomePage({
   sites,
   siteKey,
@@ -73,6 +81,23 @@ export default function HomePage({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  /**
+   * 分类直接切换底下这张网格，不再 push 一个二级页面：选中态、页码跨
+   * 「看详情 → 返回」保留，和原 CategoryPage 的体验一致。
+   */
+  const [selection, setSelection] = usePageState<CategorySelection>("home:category:v1", {
+    siteKey,
+    tid: "",
+    page: 1,
+  });
+  const activeTid = selection.siteKey === siteKey ? selection.tid : "";
+  const catPage = selection.siteKey === siteKey ? selection.page : 1;
+  const [catData, setCatData] = useState<ResultPage | null>(null);
+  const [catLoading, setCatLoading] = useState(false);
+  const [catError, setCatError] = useState("");
+  const [catReload, setCatReload] = useState(0);
+  /** 强制刷新只用一次：不像「reload>0 常驻」那样把后续翻页都变成绕过缓存。 */
+  const catForceRef = useRef(false);
   /** 下拉的即时值；真正的 siteKey 由防抖后的 onSiteChange 更新。 */
   const [draftSite, setDraftSite] = useState(siteKey);
   /** 下一次 siteKey 生效时是否跳过缓存（用户主动切换 = 自动刷新）。 */
@@ -211,6 +236,74 @@ export default function HomePage({
     };
   }, [siteKey, reload]);
 
+  /**
+   * 选中分类后只替换下方网格，页面本身不动（页头、站点下拉、分类 chip 常驻）。
+   * 数据走 api.category 的 pageCache：看完详情返回时是 0 IPC 直出。
+   */
+  useEffect(() => {
+    if (!activeTid || !siteKey) {
+      setCatData(null);
+      setCatError("");
+      setCatLoading(false);
+      return;
+    }
+    let alive = true;
+    const run = async () => {
+      setCatLoading(true);
+      setCatError("");
+      // 换分类/翻页时先清掉旧列表，避免新 chip 已高亮、下面还挂着上一个分类的卡片。
+      setCatData(null);
+      const force = catForceRef.current;
+      catForceRef.current = false;
+      try {
+        const result = await api.category(siteKey, activeTid, catPage, force);
+        if (alive) {
+          setCatData(result);
+        }
+      } catch (err) {
+        if (alive) {
+          setCatData(null);
+          setCatError(errorMessage(err));
+        }
+      } finally {
+        if (alive) {
+          setCatLoading(false);
+        }
+      }
+    };
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [siteKey, activeTid, catPage, catReload]);
+
+  const isCategory = activeTid !== "";
+  const catList = catData?.list ?? [];
+  const currentPage = catData?.page ?? catPage;
+  const rawPageCount = catData?.pagecount ?? 1;
+  // py 源常用 9999 表示「还有下一页」，把它当真实总页数会显示成「1 / 9999」。
+  const endless = rawPageCount >= 999;
+  // 部分 py 源翻到第 2 页会把 pagecount 报成 1，取「当前页 + 源报的总数」的
+  // 较大值，避免出现「2 / 1」这种自相矛盾的页码。
+  const pageCount = Math.max(1, rawPageCount, currentPage);
+  const pageLabel = endless ? `第 ${currentPage} 页` : `${currentPage} / ${pageCount}`;
+  const shownList = isCategory ? catList : list;
+  const busy = isCategory ? catLoading : loading;
+  const shownError = isCategory ? catError : error;
+  const selectCategory = (tid: string) =>
+    setSelection({ siteKey, tid: activeTid === tid ? "" : tid, page: 1 });
+  const setPage = (page: number) =>
+    setSelection({ siteKey, tid: activeTid, page: Math.max(1, page) });
+  /** 刷新的是「当前看得见的那张网格」：分类态刷分类，推荐态刷首页。 */
+  const refreshVisible = () => {
+    if (isCategory) {
+      catForceRef.current = true;
+      setCatReload((value) => value + 1);
+    } else {
+      setReload((value) => value + 1);
+    }
+  };
+
   if (sites.length === 0) {
     return (
       <section className="page">
@@ -277,13 +370,18 @@ export default function HomePage({
         <IconButton
           name="refresh"
           label="刷新"
-          busy={loading}
-          disabled={!siteKey || loading}
-          onClick={() => setReload((value) => value + 1)}
+          busy={busy}
+          disabled={!siteKey || busy}
+          onClick={refreshVisible}
         />
       </header>
 
-      {error ? <ErrorBar message={`首页加载失败：${error}`} onRetry={() => setReload((v) => v + 1)} /> : null}
+      {shownError ? (
+        <ErrorBar
+          message={`${isCategory ? "分类" : "首页"}加载失败：${shownError}`}
+          onRetry={refreshVisible}
+        />
+      ) : null}
 
       {!siteKey ? (
         <Empty
@@ -292,8 +390,17 @@ export default function HomePage({
         />
       ) : null}
 
+      {/* 分类 chip 是「切换下方网格」，不再是路由跳转：点同一个可取消回到推荐。 */}
       {siteKey ? (
         <div className="chip-row">
+          <button
+            type="button"
+            className={isCategory ? "chip" : "chip is-active"}
+            aria-pressed={!isCategory}
+            onClick={() => selectCategory("")}
+          >
+            推荐
+          </button>
           {classes.length === 0 ? (
             <span className="chip chip--muted">暂无分类</span>
           ) : (
@@ -301,15 +408,9 @@ export default function HomePage({
               <button
                 key={item.type_id}
                 type="button"
-                className="chip"
-                onClick={() =>
-                  navigate({
-                    name: "category",
-                    siteKey,
-                    tid: item.type_id,
-                    title: item.type_name || "分类",
-                  })
-                }
+                className={activeTid === item.type_id ? "chip is-active" : "chip"}
+                aria-pressed={activeTid === item.type_id}
+                onClick={() => selectCategory(item.type_id)}
               >
                 {item.type_name || item.type_id}
               </button>
@@ -318,15 +419,20 @@ export default function HomePage({
         </div>
       ) : null}
 
-      {loading && list.length === 0 ? <Spinner label="正在加载首页内容…" /> : null}
-
-      {!loading && siteKey && !error && list.length === 0 ? (
-        <Empty title="该站点暂无推荐内容" description="可以换一个站点，或直接使用搜索。" />
+      {busy && shownList.length === 0 ? (
+        <Spinner label={isCategory ? "正在加载分类内容…" : "正在加载首页内容…"} />
       ) : null}
 
-      {list.length > 0 ? (
+      {!busy && siteKey && !shownError && shownList.length === 0 ? (
+        <Empty
+          title={isCategory ? "该分类暂无内容" : "该站点暂无推荐内容"}
+          description={isCategory ? "换个分类或回到推荐试试。" : "可以换一个站点，或直接使用搜索。"}
+        />
+      ) : null}
+
+      {shownList.length > 0 ? (
         <div className="vod-grid">
-          {list.map((vod, index) => (
+          {shownList.map((vod, index) => (
             <VodCard
               key={`${vod.vod_id}-${index}`}
               title={vod.vod_name}
@@ -342,6 +448,24 @@ export default function HomePage({
               }
             />
           ))}
+        </div>
+      ) : null}
+
+      {isCategory ? (
+        <div className="pager">
+          <IconButton
+            name="back"
+            label="上一页"
+            disabled={catLoading || catPage <= 1}
+            onClick={() => setPage(catPage - 1)}
+          />
+          <span className="pager__label">{pageLabel}</span>
+          <IconButton
+            name="next"
+            label="下一页"
+            disabled={catLoading || (!endless && catPage >= pageCount)}
+            onClick={() => setPage(catPage + 1)}
+          />
         </div>
       ) : null}
     </section>

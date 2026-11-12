@@ -36,6 +36,7 @@ const PROBES = [
   { key: "rust_commands", script: "tools/probe_rust_commands.mjs", label: "Rust command 连通性（分层后不丢 command）" },
   { key: "search_ui", script: "tools/probe_search_ui.mjs", label: "真实配置 导入→搜索→详情→播放", needsStub: true },
   { key: "home_site", script: "tools/probe_home_site.mjs", label: "首页站点记忆 + 默认站内容/自动顺延" },
+  { key: "home_category", script: "tools/probe_home_category.mjs", label: "首页分类原地切换（不进二级页）+ 分页" },
   { key: "home_video", script: "tools/probe_home_video.mjs", label: "homeVideoContent 推荐流兜底（豆瓣出卡片）", needsStub: true },
   { key: "py_framework", script: "tools/probe_py_framework.mjs", label: "py 框架对齐 TVBox（类属性 header 不被 __init__ 覆盖）", needsStub: true },
   { key: "cover", script: "tools/probe_cover.mjs", label: "封面图经 /image 代理出真图（内嵌 header）" },

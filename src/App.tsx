@@ -10,7 +10,6 @@ import {
 } from "react";
 import Spinner from "./components/Spinner";
 import NavIcon from "./components/NavIcon";
-import CategoryPage from "./pages/CategoryPage";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
 import HistoryPage from "./pages/HistoryPage";
@@ -38,7 +37,6 @@ const PlayerPage = lazy(() => import("./pages/PlayerPage"));
 /** 单窗口内的视图联合类型；不使用 react-router。 */
 export type View =
   | { name: "home" }
-  | { name: "category"; siteKey: string; tid: string; title: string }
   | { name: "search" }
   | { name: "detail"; siteKey: string; vodId: string; /** 搜索/列表已知片名，用于提前预取换源候选 */ title?: string }
   | {
@@ -80,8 +78,6 @@ function readSidebarCollapsed(): boolean {
 /** 视图标识：用于按「栈深度 + 页面」保存滚动位置，同名页面不同深度互不覆盖。 */
 function viewKey(view: View): string {
   switch (view.name) {
-    case "category":
-      return `category:${view.siteKey}:${view.tid}`;
     case "detail":
       return `detail:${view.siteKey}:${view.vodId}`;
     case "player":
@@ -357,7 +353,7 @@ export default function App() {
   }, []);
 
   const section =
-    view.name === "category" || view.name === "detail" || view.name === "player"
+    view.name === "detail" || view.name === "player"
       ? "home"
       : view.name;
 
@@ -370,16 +366,6 @@ export default function App() {
             siteKey={siteKey}
             onSiteChange={setPreferredSite}
             isDefaultSite={!preferredSite}
-            navigate={navigate}
-          />
-        );
-      case "category":
-        return (
-          <CategoryPage
-            siteKey={view.siteKey}
-            tid={view.tid}
-            title={view.title}
-            onBack={back}
             navigate={navigate}
           />
         );
