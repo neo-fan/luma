@@ -127,20 +127,58 @@ zyfun **完全不带 JVM**，`DEFAULT_BINARIES = ['uv','bun','ffmpeg','ffprobe']
 
 ---
 
-## 8. 差距清单与建议优先级
+## 8. 差距清单（已按 2026-11-12 晚代码现状校正）
 
-按"投入产出 + 是否卡住真实可用率"排序，供拍板：
+> 下表原为初版结论，其中两项与实测代码不符，在此**更正**，避免按错误前提排期。
 
-| 优先级 | 事项 | 现状 | 建议做法 | 成本 |
-|---|---|---|---|---|
-| **P0** | drpy2 / 用户 JS 源 | quickjs 缺 ESM+cheerio，6 个站全废。**注意：工作区已有未提交改动在做同一件事**——`sidecars/qjs-runner` 增加 ESM resolver + `assets://` 映射，`sidecars/qjs-assets/` 内置 cheerio(356K)/crypto-js/node-rsa/pako/gbk/json5/jinja/template 并带 sha256 清单 | 先验证这版：drpy2 标准模板 + 全站扫描里 6 个 quickjs 站复测；再补 `req`/`localProxy` 垫片、墙钟与内存边界（与 zyfun 的 `workerpool{maxWorkers:1}` 一致：一站点一串行队列） | 中（把在做的收口，比新起一套便宜） |
-| **P0** | 配置解密导入 | 只认明文 JSON/变体 | 移植 `aesDecode/base64` 常见包装识别（自写，不抄）；失败给明确原因 | 低（半天） |
-| **P1** | T0_XML 适配 | 无 | CMS 家族的 XML 分支，接口面很小 | 低 |
-| **P1** | 应用内站点体检 | 只有离线报告 | 把 `scan_site_compat` 结果进库 + PQueue 串行体检 + UI 状态色 | 中 |
-| **P1** | 本地 API（只读 + token） | 无 | 复用现有 axum：`/api/sites`、`/api/search`、`/api/play`，必须绑 127.0.0.1 + Bearer token | 中 |
-| **P2** | py 依赖在线补齐 | 纯离线 | 内置 `uv` 作为**可选**兜底（默认关），失败仍回落到随包环境 | 中 |
-| **P2** | libVLC 兜底 | 只有 mpv | 先做"探测系统 VLC lib 并可选启用"，不随包分发 | 中 |
-| **P3** | AList / AppYS / AppGet / XBPQ / XYQ | 无 | 属"扩品类"，非播放链路必需；先把 P0/P1 做完 | 高 |
-| **P3** | EPG / 弹幕 / 云同步 / i18n / 自动更新 | 无 | 产品加分项，与"空壳播放框架"的定位要另议 | 高 |
+| 事项 | 初版结论 | 实测代码现状 | 更正 |
+|---|---|---|---|
+| 配置解密 | "只认明文，需半天补齐" | `sidecars/py/decrypt.py` 已有 6 级链路：`<image>**` seed / 明文（含 JSONC 去注释+尾逗号）/ `****`+XOR / 数字前缀+gzip / base64 / gzip+base64 | 主体已做，缺口只是 zyfun 那两种 **AES** 包装，不是从零 |
+| qjs 串行化 | "需补 workerpool{maxWorkers:1} 式串行队列" | `quickjs.rs` 是 **单常驻 runner + 全局 tokio Mutex**（`RUNNER: OnceLock<Mutex<Option<Runner>>>`），比一站点一串行更严格 | 已具备，无需改动 |
+| JS/drpy | "6 个站全废" | 已提交 `11e0b34`/`b78bbc4`：ESM resolver + 8 个内置资源 + `req`/`local`/`md5X` 垫片，真实 6 源里 **4 个出数据** | 剩余是覆盖率与报告口径，不是能力缺失 |
 
-**一句话结论**：zyfun 是"广度换维护成本"的路线（12 个适配器、下载式运行时、AGPL），我们是"深度换确定性"的路线（离线随包、真 JVM、强回归）。**短期最该补的是 JS/drpy 这一块（它直接决定 6~10% 站点的可用率），最不该动的是离线随包与测试体系。**
+---
+
+## 9. 可借鉴项落地计划（含工作量）
+
+**口径**：工作量为「含自测」的净开发日（1d ≈ 6 小时有效编码 + 验证），不含打包发版；估算依据是同类改动在本仓库的历史实际耗时（如 `do=py` 反代 1d、嗅探 1.5d、JS 解禁 2.5d）。
+
+### 9.1 值得做（按顺序，前一阶段不完成不启下一阶段）
+
+| # | 借鉴点 | 我们的缺口 | 落点（文件/模块） | 工作量 | 验收标准 |
+|---|---|---|---|---|---|
+| 1 | **报告口径校正**（不是抄，是还债） | `docs/site-compat-report.md` 仍写"JS 源暂不支持"，已与代码不符 | `tools/scan_site_compat.mjs` 复跑 + 重生成报告 | **0.5d** | 6 个 quickjs 站有真实四能力结果；报告"导入侧屏蔽"从 34 降到 28 |
+| 2 | **配置解密补 AES 分支** | 缺 `[A-Z0-9]{8}**` 任意位置匹配、`2423` 段 AES-CBC（key 自 `$#…#$`、iv 取尾 13 位补 `0`）、用户 `configKey` 的 AES-ECB | `sidecars/py/decrypt.py` 加两级；`config.rs` 已透传 `configKey` 则只需 py 侧 | **0.5d** | `tests/e2e/py_compat_check.py` 增 3 例；真实配置样本解密成功率不下降 |
+| 3 | **T0_XML 适配** | 无 XML 采集（`?ac=list/videolist/detail`） | 新 `src-tauri/src/domain/spider/xml.rs` + `runtime_for()` 增加分支 | **0.5d** | fixture 单测 6 条；扫描报告新增 type=0 站点可列出内容 |
+| 4 | **应用内站点体检** | 只有离线 `scan_site_compat.mjs`，用户拿不到 | Rust command `check_sites`（并发 1、单站 15s、复用 `homeContent`）+ `site_health` 表 + 设置页状态色/重试 | **2d** | 101 站全量体检 ≤ 8 分钟可中断；结果落库重启仍在；UI 三色（可用/空/失败）与原因一致 |
+| 5 | **本地脚本目录自动成站点** | 无（用户须手改配置） | 导入流程扫描 `data/js`、`data/py`，`.js`→quickjs 站点（`api` 指内置 drpy2）、`.py`→python 站点 | **1d** | 放两个脚本进目录→导入后多两个站点且能搜到；不写回用户原始配置文件 |
+| 6 | **只读本地 API + token**（借"能力 HTTP 化"思路，不借它的安全配置） | 9978 只有 `/proxy` `/image` `/health` | 复用 axum 加 `/api/v1/{sites,search,detail,play}`；**强制绑 127.0.0.1**、Bearer token（首次启动生成存 db）、Origin 白名单、只读 | **2d** | 无 token 返回 401；`curl` 带 token 能搜出结果；外部网页 fetch 被 CORS/Origin 拦 |
+| 7 | **嗅探可配置钩子** | 扩展名白名单写死 | `sniff.rs` 读站点级 `sniffScript/sniffRegex`，注入 `initScript`、命中前 `runScript` | **1d** | 至少 1 个需点击才出 m3u8 的站，注入脚本后可命中；无配置时行为与现在完全一致 |
+| 8 | **py 依赖在线补齐（可选，默认关）** | 纯离线，新源缺库必死 | 设置项 `allowOnlineDeps`；开启时才允许 `uv`/`pip` 装到 `data/pydeps`，失败回落随包 | **2d** | 默认关时进程不发任何外部请求；开启后装一个缺库源成功、断网时报明确错误 |
+
+**合计 9.5d**（1~3 为一批 1.5d，4~5 一批 3d，6 一天 2d，7~8 一批 3d）。
+
+### 9.2 视情况做（先验证价值再动手）
+
+| 借鉴点 | 前置判断 | 工作量 |
+|---|---|---|
+| libVLC 兜底 | 我们已有 mpv 兜底；先统计真实触发率，<1% 就不做 | 1d（仅探测系统 VLC，不随包） |
+| XBPQ / XYQ 规则引擎 | 先统计目标配置里 type=9/10 的占比；占比 <5% 不做（实现成本高、规则易失配） | 各 5~8d |
+| AList | 只对网盘用户有价值，与"空壳播放框架"定位需产品决策 | 3~5d |
+| i18n / EPG / 弹幕 | 产品加分项，非可用率问题 | 各 2~4d |
+
+### 9.3 明确不做
+
+| 不做 | 理由 |
+|---|---|
+| 12 个 adapter 里的站点专属硬编码（`t3Xbpq` 66KB / `t3Xyq` 23KB / `t3AppGet`） | 与"不内置任何片源/规则"硬边界冲突，且解释了它 2276 次提交仍追不上源站变化 |
+| `origin:'*'` + `host:'0.0.0.0'` | 本机任意网页可读配置、可触发任意源请求（SSRF 到内网）。要做 API 就必须先加 token + 绑回环 |
+| 首启下载运行时（uv/bun/ffmpeg） | 国内网络/代理/离线三连崩；离线随包是卖点 |
+| AppYS / AppGet / AppQi / AppFox 私有协议 | 各家 App 逆向协议，维护成本极高，无公开文档 |
+| 抄 `drpy2.min.js` 打包产物 | AGPL-3.0 + 上游 `hjdhnx/drpy-node` 许可待核实；我们已用自研 qjs loader + 原样携带依赖实现同等能力 |
+
+### 9.4 一个待核实风险
+
+`decrypt.py` 的 `****` 分支用 `KEY = b"tvbox-stub-key"`（命名上像占位实现）。真实 TVBox 生态的 `****` 包装算法需拿**至少 2 份真实配置**验证；若不匹配，第 2 项（解密）要从 0.5d 上调到 1.5d，且优先级升到最前。**这一条建议先做，成本 0.2d（找配置试一次）。**
+
+**一句话结论**：zyfun 是"广度换维护成本"（12 适配器、下载式运行时、AGPL），我们是"深度换确定性"（离线随包、真 JVM、强回归）。**真正值得抄的只有 4 件事——体检、解密兜底、XML、只读 API；JS/drpy 这块我们已经追上，剩下的是把报告口径和覆盖率收口。最不该动的是离线随包与测试体系。**
