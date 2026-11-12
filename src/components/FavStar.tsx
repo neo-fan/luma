@@ -33,7 +33,9 @@ export default function FavStar({ on, busy = false, onToggle }: FavStarProps) {
         aria-hidden="true"
         focusable="false"
       >
-        <path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.3 7.2 18.9l.9-5.4L4.2 9.7l5.4-.8z" />
+        {/* 外半径 10 / 内半径 4.3，星形占满 24 视口的约 79%。旧路径只占
+            65%，即使把 svg 放大，肉眼仍觉得「图标小」——这是根因，别只调 CSS 尺寸。 */}
+        <path d="M12 2 14.5 8.5 21.5 8.9 16.1 13.3 17.9 20.1 12 16.3 6.1 20.1 7.9 13.3 2.5 8.9 9.5 8.5Z" />
       </svg>
     </button>
   );

@@ -727,12 +727,14 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  /* 热区比图标大一圈（22 → 34），点按仍然好点；两处标题字号 23/26px，
+     22px 的星形实际占 17px，视觉上与片名同量级而不抢戏。 */
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   padding: 0;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   background: transparent;
   /* 未收藏用 --muted 而不是 --faint：这是可点的操作入口，不能像装饰文字那么暗 */
   color: var(--muted);
@@ -747,8 +749,8 @@ textarea {
 }
 
 .fav-star svg {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
 }
 
 .fav-star:hover:not(:disabled) {
