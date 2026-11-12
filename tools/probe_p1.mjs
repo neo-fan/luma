@@ -77,18 +77,26 @@ const cdp = new Cdp(page.webSocketDebuggerUrl);
 const invoke = (cmd, args) =>
   `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args || {})})`;
 
-// 0. isolate: drop previously imported configs so fan-out only sees this fixture
-const cleaned = await cdp.eval(
-  `(async () => { const list = await ${invoke("config_list")}; for (const item of list) { try { await window.__TAURI_INTERNALS__.invoke('config_remove', { id: item.id }); } catch (e) {} } return list.length; })()`,
+// 0. isolate: remember the existing configs/active id, then import the fixture.
+// NEVER delete existing configs here — an earlier version wiped a real 101-site
+// config. Fan-out is scoped to the active config, so importing + activating is
+// enough isolation.
+const previous = JSON.parse(
+  (await cdp.eval(
+    `(async () => { const list = await ${invoke("config_list")}; const active = await ${invoke("config_active")}; return JSON.stringify({ active: (active && active.id) || "", count: list.length }); })()`,
+  )) || "{}",
 );
-console.log(`[info] removed configs: ${cleaned}`);
+console.log(`[info] configs before: ${previous.count ?? 0}, active=${previous.active || "-"}`);
 
 // 1. import the py-focused config
-const imported = await cdp.eval(
+const importedRaw = await cdp.eval(
   `(async () => { const r = await ${invoke("config_import", {
     source: { kind: "url", value: `${STUB}/config-py.json` },
-  })}; return r.sites.map(s => s.key + ':' + s.runtime).join(','); })()`,
+  })}; return JSON.stringify({ id: r.id, sites: r.sites.map(s => s.key + ':' + s.runtime).join(',') }); })()`,
 );
+const importedInfo = JSON.parse(String(importedRaw) || "{}");
+const imported = importedInfo.sites || "";
+const fixtureId = importedInfo.id || "";
 assert(typeof imported === "string" && imported.includes("stub_py:python"), "py config imported", imported);
 
 const pyKeys = String(imported)
@@ -139,18 +147,17 @@ assert(fan.ok >= 2 && fan.failed >= 1, "fan-out partial success", fanout);
 assert(fan.byKey && fan.byKey.stub_py_slow === "SITE_TIMEOUT", "slow source timed out alone", String(fan.byKey?.stub_py_slow));
 assert(fan.tookMs < 12000, "fan-out finishes near the deadline", `${fan.tookMs}ms`);
 
-// 5b. JS sites are intentionally disabled by the imported/runtime split:
-// `derive_runtime` blocks quickjs (drpy2 / ES modules), and a single-site
-// spider_invoke call must not bypass that policy. The qjs-runner binary itself
-// is still covered offline by tests/e2e/p1.py::qjs_phase.
+// 5b. JS 源已解禁：stub_js2 用 classic `var spider` 模板，不再被运行策略
+// 一刀切屏蔽。qjs-runner 能否执行属于 policies 之外的能力判定（QuickJS ESM
+// 加载器 / assets:// / drpy2 依赖），这里只验证单站 spider_invoke 能成功返回。
 const jsHome = await cdp.eval(
   `(async () => { try { const r = await ${invoke("spider_invoke", {
     request: { siteKey: "stub_js2", method: "homeContent", args: [] },
   })}; return JSON.stringify({ ok: true, count: (r.list||[]).length, name: (r.list||[])[0]?.vod_name, ext: r.ext }); } catch (e) { return JSON.stringify({ ok: false, error: e && (e.code || e.message) }); } })()`,
 );
 const jsData = JSON.parse(jsHome);
-assert(jsData.ok === false && jsData.error === "RUNTIME_UNAVAILABLE",
-  "quickjs site is blocked by runtime policy", jsHome);
+assert(jsData.ok === true && jsData.count >= 1,
+  "quickjs homeContent returns a list after JS sources are unblocked", jsHome);
 
 const jsPlayer = await cdp.eval(
   `(async () => { try { const r = await ${invoke("spider_invoke", {
@@ -158,8 +165,8 @@ const jsPlayer = await cdp.eval(
   })}; return JSON.stringify({ ok: true, ext: r.ext, url: r.url }); } catch (e) { return JSON.stringify({ ok: false, error: e && (e.code || e.message) }); } })()`,
 );
 const jsPlayerData = JSON.parse(jsPlayer);
-assert(jsPlayerData.ok === false && jsPlayerData.error === "RUNTIME_UNAVAILABLE",
-  "quickjs ext call is blocked too", jsPlayer);
+assert(jsPlayerData.ok === true && typeof jsPlayerData.url === "string" && jsPlayerData.url.length > 0 && Boolean(jsPlayerData.ext),
+  "quickjs playerContent returns url/ext", jsPlayer);
 
 // 6. no orphan python processes afterwards
 const orphan = await cdp.eval(
@@ -168,6 +175,20 @@ const orphan = await cdp.eval(
   })}; return "ALIVE"; } catch (e) { return "ERR"; } })()`,
 );
 assert(orphan === "ALIVE", "adapter usable after fan-out", String(orphan));
+
+// 7. cleanup: remove ONLY the fixture imported above and restore the previous
+// active config. Existing user configs must never be deleted by a probe.
+if (fixtureId) {
+  const restore = previous.active
+    ? `try { await ${invoke("config_activate", { id: previous.active })}; } catch (e) {}`
+    : "";
+  await cdp.eval(
+    `(async () => { try { await ${invoke("config_remove", { id: fixtureId })}; } catch (e) {} ${restore} return "OK"; })()`,
+  );
+  console.log(
+    `[info] cleanup: removed fixture ${fixtureId}${previous.active ? `, restored active ${previous.active}` : ""}`,
+  );
+}
 
 cdp.close();
 console.log(failures === 0 ? "\nP1 APP OK" : `\nP1 APP FAIL: ${failures}`);

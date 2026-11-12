@@ -240,6 +240,24 @@ def py_config(port: int) -> dict:
                 "type": 1,
                 "api": f"http://127.0.0.1:{port}/cms/vod",
             },
+            {
+                # JS `req` capability probe: reports whether an external http /
+                # https request really returned content from inside qjs-runner.
+                "key": "stub_net",
+                "name": "Stub JS Net",
+                "jar": "js",
+                "api": f"http://127.0.0.1:{port}/spider/net.js",
+                "ext": "",
+            },
+            {
+                # JS sources are runnable now; the import-time block is still
+                # exercised by an Android dex jar site (site_health / settings
+                # probe needs a genuinely locked row).
+                "key": "csp_stub_blocked",
+                "name": "Stub Jar (blocked)",
+                "jar": f"http://127.0.0.1:{port}/spider.jar",
+                "ext": "stub-ext-jar",
+            },
         ]
     }
 
@@ -376,6 +394,7 @@ def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
         "/spider/broken.py": fixture("broken.py", "text/x-python; charset=utf-8"),
         "/spider/slow.py": fixture("slow.py", "text/x-python; charset=utf-8"),
         "/spider/template.js": fixture("template.js", "application/javascript; charset=utf-8"),
+        "/spider/net.js": fixture("net.js", "application/javascript; charset=utf-8"),
         "/probe": as_json({"code": 1, "list": []}),
         "/parse": as_json({"code": 200, "url": f"http://127.0.0.1:{port}/play.m3u8"}),
         "/wallpaper.jpg": (b"\xff\xd8\xff\xd9", "image/jpeg"),

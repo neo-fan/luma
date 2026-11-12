@@ -128,11 +128,14 @@ const snapshot = (cdp) =>
     empty: !!document.querySelector('.empty'),
   })`);
 
-/** 找到一个首页有 list 的站（探测前 12 个启用站，取其 key）。 */
+/**
+ * 找到一个首页有 list 的站（探测前 12 个启用站，取其 key）。
+ * 口径与 usableHomeSites 一致：只排除 jvm，quickjs 已解禁同样可作候选。
+ */
 async function findDataSite(cdp) {
   const raw = await cdp.eval(`(async () => {
     const snap = await window.__TAURI_INTERNALS__.invoke('config_active');
-    const sites = (snap?.sites||[]).filter(s => s.enabled !== false && s.api && s.runtime !== 'jvm' && s.runtime !== 'quickjs');
+    const sites = (snap?.sites||[]).filter(s => s.enabled !== false && s.api && s.runtime !== 'jvm');
     for (const s of sites.slice(0, 12)) {
       try {
         const r = await Promise.race([

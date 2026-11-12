@@ -38,16 +38,17 @@ interface HealthDisplayRow {
   tookMs: number;
   message?: string;
   count?: number;
-  /** jvm / quickjs 屏蔽源：后端会拒绝手动启用，前端先挡掉。 */
+  /** jvm 屏蔽源：后端会拒绝手动启用，前端先挡掉。 */
   blocked: boolean;
 }
 
 /**
- * 屏蔽源（导入时禁用的 jar / JS 源）挡住「启用」：后端会拒绝手动启用，
- * 前端先挡掉，避免无谓 IPC。手动禁用的 cms / python 站不在此列，仍可启用。
+ * 屏蔽源（导入时禁用的 jvm / Android dex jar 源）挡住「启用」：后端会拒绝
+ * 手动启用，前端先挡掉，避免无谓 IPC。手动禁用的 cms / python / quickjs 站
+ * 不在此列，仍可启用。
  */
 function isBlockedSource(site: Site): boolean {
-  return site.runtime === "jvm" || site.runtime === "quickjs";
+  return site.runtime === "jvm";
 }
 
 function formatBytes(bytes: number): string {
@@ -237,7 +238,7 @@ export default function SettingsPage({
       const blocked = snapshot.sites.filter((site) => site.disabledReason).length;
       setNotice(
         `已导入「${snapshot.name}」，${usable} 个可用站点` +
-          (blocked > 0 ? `；已屏蔽 ${blocked} 个不支持的 jar / JS 源` : ""),
+          (blocked > 0 ? `；已屏蔽 ${blocked} 个不支持的 jar 源` : ""),
       );
       log.info("config imported", {
         id: snapshot.id,
@@ -453,7 +454,7 @@ export default function SettingsPage({
    * 合并 sites（全量，含禁用站）与 healthRows（仅探测到的 enabled 站）：
    * 1. 探测行按后端排序原样铺开，但被 disabledKeys 标记 / 快照里已禁用的行
    *    覆盖为「已禁用」展示态（不改动 healthRows state，不伪造探测结果）；
-   * 2. 从未进入探测结果的禁用站（导入屏蔽的 jvm/quickjs、体检后新禁用的等）
+   * 2. 从未进入探测结果的禁用站（导入屏蔽的 jvm、体检后新禁用的等）
    *    合成「已禁用」行追加在后，保证禁用后一定能重新启用。
    * 未体检时探测行是空数组，清单只剩「已禁用」分组。
    */
@@ -715,7 +716,7 @@ export default function SettingsPage({
             {healthDisplayRows.map((row) => {
               // 任一启停在途就锁全部按钮：site_set_enabled 返回整份 ConfigSnapshot，
               // onImported 会整体替换 sites 缓存，并发切换会让后到的快照覆盖先到的。
-              // healthToggling 非空即表示有在途切换；屏蔽源的启用按钮始终禁用。
+              // healthToggling 非空即表示有在途切换；jvm 屏蔽源的启用按钮始终禁用。
               const locked = healthToggling !== "" || row.blocked;
               return (
                 <li className="health-item" key={row.siteKey}>

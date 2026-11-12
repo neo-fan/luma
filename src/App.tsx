@@ -172,7 +172,7 @@ export default function App() {
 
   const sites = cache?.sites ?? EMPTY_SITES;
   const lives = cache?.lives ?? [];
-  // py / js 运行时已在 P1 落地，只有 jvm（P2）暂时不可用。过滤口径与
+  // py/js 运行时已在 P1 落地，只有 jvm 暂不可用。过滤口径与
   // 首页「空站自动顺延」共用 usableHomeSites，避免两处规则漂移。
   const usableSites = useMemo(() => usableHomeSites(sites), [sites]);
   const siteKey = useMemo(() => {

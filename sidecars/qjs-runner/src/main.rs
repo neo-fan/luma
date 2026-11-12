@@ -1,20 +1,63 @@
 //! QuickJS sidecar for TVBox JS spiders (spec 7.3 / 7.2 `spider.js` / T-16).
 //!
 //! One JSON frame per line on stdin/stdout, same shape as the Python adapter.
-//! The script runs in a dedicated `Context`; only `req`, `local`, `console` and
-//! the ECMAScript builtins are injected. `require`, `process`, `fetch` and
-//! friends stay undefined, which is what the "越权 API 被拒" assertion checks.
+//! Two execution modes, auto-detected from the source:
+//!   * classic scripts (`var spider = {...}`, `__JS_SPIDER__ = {...}`);
+//!   * ES modules (`export default {...}`, `export function __jsEvalReturn`,
+//!     `import ... from "assets://..."`, `import "./lib.js"`).
+//!
+//! Modules are resolved through a custom rquickjs `Resolver`/`Loader` that maps
+//! `assets://js/lib/*` and relative imports onto a bundled asset directory, and
+//! falls back to HTTP for anything else. Only `req`, `local`, `console`, `md5X`
+//! and a few `__tvbox_*` internals are injected; `require`, `process`, `fetch`
+//! stay undefined (verified by `tests/e2e/p1.py`).
 //!
 //! A hard wall-clock limit interrupts the interpreter, so an infinite loop
 //! cannot wedge the sidecar; the host additionally kills the process tree.
 
-use rquickjs::{Context, Ctx, Function, Object, Runtime};
+use rquickjs::{
+    loader::{Loader, Resolver},
+    module::Declared,
+    CatchResultExt, Context, Ctx, Error as JsError, Function, Module, Object, Runtime, Value,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::io::{BufRead, Write};
-use std::time::{Duration, Instant};
+use serde_json::{json, Value as JsonValue};
+use std::{
+    collections::HashMap,
+    fs,
+    io::{BufRead, Write},
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
 const DEFAULT_TIMEOUT_MS: u64 = 15_000;
+
+/// Resources shipped with the client. `assets://js/lib/<name>` and any
+/// relative import whose basename matches one of these is served locally.
+const BUNDLED: &[&str] = &[
+    "cheerio.min.js",
+    "crypto-js.js",
+    "node-rsa.js",
+    "pako.min.js",
+    "gbk.js",
+    "json5.js",
+    "jinja.js",
+    "template.js",
+];
+
+/// UMD bundles have no ESM exports; evaluating them as a module still needs a
+/// default export so `import cheerio from ...` / `import 模板 from ...` work.
+fn umd_global(name: &str) -> &'static str {
+    match name {
+        "crypto-js.js" => "CryptoJS",
+        "node-rsa.js" => "JSEncrypt",
+        "pako.min.js" => "pako",
+        "json5.js" => "JSON5",
+        "jinja.js" => "jinja",
+        _ => "__tvbox_unknown",
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -23,11 +66,25 @@ struct Request {
     #[serde(default)]
     method: String,
     #[serde(default)]
-    args: Vec<Value>,
+    args: Vec<JsonValue>,
     #[serde(default)]
     ext: String,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    /// Absolute path to `sidecars/qjs-assets` (see `quickjs.rs::resolve_assets_dir`).
+    #[serde(default)]
+    assets_dir: String,
+    /// Original script URL: used as the base for relative module imports.
+    #[serde(default)]
+    api: String,
+    /// Site-level headers, merged into every `req` call.
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    #[serde(default)]
+    site_key: String,
+    /// "auto" (default) | "classic" | "module".
+    #[serde(default)]
+    script_kind: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -35,7 +92,7 @@ struct Response {
     id: u64,
     ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
+    result: Option<JsonValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<ErrorBody>,
 }
@@ -60,92 +117,421 @@ impl Response {
     }
 }
 
-fn install_host(ctx: &Ctx<'_>, ext: &str) -> Result<(), rquickjs::Error> {
+// ---------------------------------------------------------------------------
+// Host API
+// ---------------------------------------------------------------------------
+
+fn local_store() -> &'static Mutex<HashMap<String, String>> {
+    static STORE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Dedicated HTTP agent.
+///
+/// Environment proxies are ignored on purpose: desktop TVBox sources are
+/// fetched directly by the original clients, and a system/CONNECT proxy in the
+/// host environment produced `Unexpected EOF` on plain-http source APIs while
+/// the same request succeeded outside the app.
+fn http_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().try_proxy_from_env(false).build())
+}
+
+/// `req(url, options)` -> `{ code, content, headers }`, matching FongMi's
+/// `QuickJS.Text(json, "content", body)`. Options: method, headers, body,
+/// timeout (ms), postType/json-ish body objects are stringified.
+fn http_request(url: &str, options: &str) -> String {
+    let opts: JsonValue = serde_json::from_str(options).unwrap_or_else(|_| json!({}));
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return json!({"code": 0, "content": "", "error": "scheme not allowed"}).to_string();
+    }
+    let method = opts
+        .get("method")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("GET")
+        .to_ascii_uppercase();
+    let timeout = opts
+        .get("timeout")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(10_000)
+        .max(1)
+        .min(30_000);
+    let extra_headers = opts.get("headers").and_then(JsonValue::as_object);
+    let body = opts.get("body").map(|value| match value {
+        JsonValue::String(text) => text.clone(),
+        other => other.to_string(),
+    });
+    let build = || {
+        let mut request = http_agent()
+            .request(&method, url)
+            .timeout(Duration::from_millis(timeout));
+        if let Some(headers) = extra_headers {
+            for (key, value) in headers {
+                if let Some(text) = value.as_str() {
+                    request = request.set(key, text);
+                }
+            }
+        }
+        request
+    };
+    let send = || match &body {
+        Some(text) if !text.is_empty() => build().send_string(text),
+        _ => build().call(),
+    };
+    let response = match send() {
+        // Some source APIs close an idle keep-alive connection mid-response
+        // ("Unexpected EOF"); one immediate retry on GET is cheap and fixes it.
+        Err(ureq::Error::Transport(_)) if method == "GET" => {
+            std::thread::sleep(Duration::from_millis(120));
+            send()
+        }
+        other => other,
+    };
+    match response {
+        Ok(resp) => {
+            let code = resp.status();
+            let mut headers = serde_json::Map::new();
+            for name in resp.headers_names() {
+                if let Some(value) = resp.header(&name) {
+                    headers.insert(name, json!(value));
+                }
+            }
+            let content = resp.into_string().unwrap_or_default();
+            json!({ "code": code, "content": content, "headers": headers }).to_string()
+        }
+        Err(err) => {
+            json!({ "code": 0, "content": "", "error": err.to_string() }).to_string()
+        }
+    }
+}
+
+/// UMD libraries used as globals (`CryptoJS` for `md5X`) are evaluated once in
+/// classic mode. ESM-only files (cheerio / gbk / template) are left to the
+/// module loader, because `eval` would reject their `export` statements.
+fn preload_umd(ctx: &Ctx<'_>, assets_dir: &str) {
+    if assets_dir.is_empty() {
+        return;
+    }
+    let lib = PathBuf::from(assets_dir).join("js").join("lib");
+    for name in ["crypto-js.js", "node-rsa.js", "pako.min.js", "json5.js", "jinja.js"] {
+        let path = lib.join(name);
+        if let Ok(source) = fs::read_to_string(&path) {
+            let _ = ctx.eval::<(), _>(source.as_bytes());
+        }
+    }
+}
+
+/// JS shim injected after the Rust primitives. Kept as text so the public API
+/// stays plain JS objects/functions (the sandbox assertions check `typeof`).
+const HOST_JS: &str = r#"(function () {
+  var DEFAULT_HEADERS = __TVBOX_HEADERS__;
+  var PREFIX = __TVBOX_SITE__ + ':';
+  var raw = globalThis.__tvbox_req_raw;
+  globalThis.req = function (url, options) {
+    var opts = options || {}, merged = {}, h = {}, k;
+    for (k in opts) merged[k] = opts[k];
+    for (k in DEFAULT_HEADERS) h[k] = DEFAULT_HEADERS[k];
+    if (opts.headers) for (k in opts.headers) h[k] = opts.headers[k];
+    merged.headers = h;
+    var text = raw(String(url), JSON.stringify(merged));
+    var out;
+    try { out = JSON.parse(text); } catch (e) { out = { code: 0, content: text, headers: {} }; }
+    if (out.code === 0 && out.error) console.error('req failed: ' + url + ' :: ' + out.error);
+    return Promise.resolve(out);
+  };
+  globalThis.local = {
+    get: function (k) { return globalThis.__tvbox_local_get(PREFIX + String(k)); },
+    set: function (k, v) { return globalThis.__tvbox_local_set(PREFIX + String(k), String(v)); },
+    'delete': function (k) { return globalThis.__tvbox_local_del(PREFIX + String(k)); }
+  };
+  globalThis.md5X = function (s) {
+    if (typeof globalThis.CryptoJS !== 'undefined') return CryptoJS.MD5(String(s)).toString();
+    return '';
+  };
+  // jsjiami-obfuscated sources (live2vod.js) assign/read this host global.
+  if (!('__JS_SPIDER__' in globalThis)) globalThis.__JS_SPIDER__ = undefined;
+  // drpy2.min.js is an engine bundle: FongMi/drpy-node inject an `initEnv`
+  // polyfill before the first export, and its top-level code references these
+  // names before its own definitions are reachable in strict ESM scope. Provide
+  // inert fallbacks so module evaluation can finish; real definitions in the
+  // module shadow them. Never define require/process/fetch (sandbox contract).
+  var STUBS = {
+    pdfh: function () { return ''; }, pdfa: function () { return []; },
+    pd: function () { return ''; }, jsp: function () { return {}; },
+    print: function () {}, log: function () {},
+    VERSION: '0.0.0-luma', RKEY: '', OCR_API: '',
+    OcrApi: function () { return {}; }, getProxyUrl: function () { return ''; },
+    rule: {}, os: {}, initEnv: function () {}, _ENV: {},
+    joinUrl: function (a, b) { return (a || '') + (b || ''); }
+  };
+  for (var sk in STUBS) if (!(sk in globalThis)) globalThis[sk] = STUBS[sk];
+})()"#;
+
+fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
     let globals = ctx.globals();
 
-    // `req`: blocking HTTP. Only http/https; 10s per request.
-    let req = Function::new(
-        ctx.clone(),
-        |url: String| -> String {
-            if !(url.starts_with("http://") || url.starts_with("https://")) {
-                return "{\"code\":\"INVALID_ARGUMENT\",\"message\":\"scheme not allowed\"}".to_string();
-            }
-            match ureq::get(&url).timeout(Duration::from_secs(10)).call() {
-                Ok(response) => response.into_string().unwrap_or_default(),
-                Err(err) => format!(
-                    "{{\"code\":\"SITE_TIMEOUT\",\"message\":\"{}\"}}",
-                    err.to_string().replace('"', "'")
-                ),
-            }
-        },
-    )?;
-    globals.set("req", req)?;
-
-    // `local`: in-memory key/value, wiped with the context.
-    let local = Object::new(ctx.clone())?;
-    local.set(
-        "get",
-        Function::new(ctx.clone(), |key: String| -> String { key })?,
-    )?;
-    local.set(
-        "set",
-        Function::new(ctx.clone(), |key: String, _value: String| -> bool {
-            let _ = key;
-            true
+    globals.set(
+        "__tvbox_req_raw",
+        Function::new(ctx.clone(), |url: String, options: String| -> String {
+            http_request(&url, &options)
         })?,
     )?;
-    globals.set("local", local)?;
+    globals.set(
+        "__tvbox_local_get",
+        Function::new(ctx.clone(), |key: String| -> String {
+            local_store()
+                .lock()
+                .map(|guard| guard.get(&key).cloned().unwrap_or_default())
+                .unwrap_or_default()
+        })?,
+    )?;
+    globals.set(
+        "__tvbox_local_set",
+        Function::new(ctx.clone(), |key: String, value: String| -> bool {
+            local_store()
+                .lock()
+                .map(|mut guard| {
+                    guard.insert(key, value);
+                    true
+                })
+                .unwrap_or(false)
+        })?,
+    )?;
+    globals.set(
+        "__tvbox_local_del",
+        Function::new(ctx.clone(), |key: String| -> bool {
+            local_store()
+                .lock()
+                .map(|mut guard| guard.remove(&key).is_some())
+                .unwrap_or(false)
+        })?,
+    )?;
 
     let console = Object::new(ctx.clone())?;
-    console.set(
-        "log",
-        Function::new(ctx.clone(), |line: String| {
-            eprintln!("[qjs] {line}");
-        })?,
-    )?;
+    for level in ["log", "error", "warn", "info"] {
+        console.set(
+            level,
+            Function::new(ctx.clone(), |line: String| {
+                eprintln!("[qjs] {line}");
+            })?,
+        )?;
+    }
     globals.set("console", console)?;
-    globals.set("__tvbox_ext", ext.to_string())?;
+    globals.set("__tvbox_ext", request.ext.clone())?;
+    globals.set(
+        "__tvbox_site",
+        if request.site_key.is_empty() {
+            "default".to_string()
+        } else {
+            request.site_key.clone()
+        },
+    )?;
+    globals.set("__tvbox_api", request.api.clone())?;
 
+    preload_umd(ctx, &request.assets_dir);
+    let headers = serde_json::to_string(&request.headers).unwrap_or_else(|_| "{}".to_string());
+    let site = js_literal(&if request.site_key.is_empty() {
+        "default".to_string()
+    } else {
+        request.site_key.clone()
+    });
+    let shim = HOST_JS
+        .replace("__TVBOX_HEADERS__", &headers)
+        .replace("__TVBOX_SITE__", &site);
+    ctx.eval::<(), _>(shim.as_bytes())?;
     Ok(())
 }
 
-fn call_method(ctx: &Ctx<'_>, method: &str, args: &[Value], ext: &str) -> Result<Value, String> {
-    let bootstrap = format!(
-        r#"(function () {{
-            var ext = {ext};
-            var spider = globalThis.spider;
-            if (!spider && typeof globalThis.Spider === 'function') {{
-                spider = new globalThis.Spider(ext);
-            }}
-            if (!spider) throw new Error('spider object not found');
-            if (typeof spider.init === 'function' && !spider.__tvbox_inited) {{
-                spider.init(ext);
-                spider.__tvbox_inited = true;
-            }}
-            globalThis.spider = spider;
-            return true;
-        }})()"#,
-        ext = serde_json::to_string(ext).unwrap_or_else(|_| "\"\"".to_string())
-    );
-    ctx.eval::<bool, _>(bootstrap.as_bytes())
-        .map_err(|err| err.to_string())?;
+// ---------------------------------------------------------------------------
+// ES module resolver / loader
+// ---------------------------------------------------------------------------
 
-    let call = format!(
-        r#"(function () {{
-            var s = globalThis.spider;
-            var f = s[{method}];
-            if (typeof f !== 'function') throw new Error('method ' + {method} + ' missing');
-            var out = f.apply(s, {args});
-            return JSON.stringify(out === undefined ? null : out);
-        }})()"#,
-        method = serde_json::to_string(method).unwrap_or_else(|_| "\"\"".to_string()),
-        args = serde_json::to_string(args).unwrap_or_else(|_| "[]".to_string()),
-    );
+fn basename(path: &str) -> String {
+    let clean = path.split('?').next().unwrap_or(path);
+    clean
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(clean)
+        .to_string()
+}
 
-    let encoded: String = ctx
-        .eval::<String, _>(call.as_bytes())
-        .map_err(|err| err.to_string())?;
-    serde_json::from_str(&encoded).map_err(|err| err.to_string())
+/// QuickJS module names are virtual: `asset:<file>` for bundled resources,
+/// `net:<url>` for remote ones. Every relative import first tries the bundled
+/// basename (the upstream repo has no `js/lib/` and no `lib/template.js`), so
+/// `./template.js` and `./lib/crypto-js.js` resolve locally instead of 404.
+fn normalize_module(base: &str, name: &str, api: &str) -> String {
+    let n = name.trim();
+    if n.starts_with("assets://") || n.starts_with("asset:") {
+        return format!("asset:{}", basename(n));
+    }
+    if n.starts_with("http://") || n.starts_with("https://") || n.starts_with("net:") {
+        return format!("net:{}", n.trim_start_matches("net:"));
+    }
+    let relative = n.trim_start_matches("./").trim_start_matches("../");
+    let file = basename(relative);
+    if BUNDLED.contains(&file.as_str()) {
+        return format!("asset:{file}");
+    }
+    let parent = if let Some(url) = base.strip_prefix("net:") {
+        url
+    } else if base.starts_with("http") {
+        base
+    } else {
+        api
+    };
+    if parent.starts_with("http") {
+        let dir = parent.rsplit_once('/').map(|(d, _)| d).unwrap_or(parent);
+        return format!("net:{dir}/{relative}");
+    }
+    format!("asset:{file}")
+}
+
+struct TvResolver {
+    api: String,
+}
+
+impl Resolver for TvResolver {
+    fn resolve<'js>(
+        &mut self,
+        _ctx: &Ctx<'js>,
+        base: &str,
+        name: &str,
+    ) -> rquickjs::Result<String> {
+        Ok(normalize_module(base, name, &self.api))
+    }
+}
+
+fn looks_like_esm(source: &str) -> bool {
+    source.contains("export default")
+        || source.contains("export function")
+        || source.contains("export{")
+        || source.contains("export {")
+        || source.trim_start_matches('\u{feff}').trim_start().starts_with("import ")
+        || source.trim_start_matches('\u{feff}').trim_start().starts_with("import\"")
+}
+
+fn load_source(assets_dir: &PathBuf, name: &str) -> Result<String, JsError> {
+    if let Some(file) = name.strip_prefix("asset:") {
+        let path = assets_dir.join("js").join("lib").join(file);
+        fs::read_to_string(&path).map_err(|err| {
+            JsError::new_loading_message(file.to_string(), format!("{}: {err}", path.display()))
+        })
+    } else if let Some(url) = name.strip_prefix("net:") {
+        ureq::get(url)
+            .timeout(Duration::from_secs(10))
+            .call()
+            .map_err(|err| JsError::new_loading_message(url.to_string(), err.to_string()))?
+            .into_string()
+            .map_err(|err| JsError::new_loading_message(url.to_string(), err.to_string()))
+    } else {
+        Err(JsError::new_loading_message(
+            name.to_string(),
+            "unsupported module specifier",
+        ))
+    }
+}
+
+struct TvLoader {
+    assets_dir: PathBuf,
+}
+
+impl Loader for TvLoader {
+    fn load<'js>(
+        &mut self,
+        ctx: &Ctx<'js>,
+        name: &str,
+    ) -> rquickjs::Result<Module<'js, Declared>> {
+        let source = load_source(&self.assets_dir, name)?;
+        let file = basename(name);
+        let text = if looks_like_esm(&source) {
+            source
+        } else {
+            format!(
+                "(function () {{\n{source}\n}}).call(globalThis);\nexport default (globalThis.{g} || {{}});\n",
+                g = umd_global(&file)
+            )
+        };
+        Module::declare(ctx.clone(), name.to_string(), text)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Export discovery + method dispatch
+// ---------------------------------------------------------------------------
+
+/// TVBox ships four export conventions. Collect every plausible "spider
+/// object" and let dispatch pick the first one exposing the requested method.
+const BOOTSTRAP_JS: &str = r#"(function () {
+  var ext = __TVBOX_EXT__;
+  var mod = globalThis.__tvbox_exports || null;
+  var cands = [];
+  function add(x) {
+    if (x && (typeof x === 'object' || typeof x === 'function') && cands.indexOf(x) < 0) cands.push(x);
+  }
+  if (mod) {
+    if (mod.default && typeof mod.default !== 'function') add(mod.default);
+    if (typeof mod.__jsEvalReturn === 'function') { try { add(mod.__jsEvalReturn()); } catch (e) {} }
+    add(mod);
+  }
+  if (globalThis.__JS_SPIDER__) add(globalThis.__JS_SPIDER__);
+  if (globalThis.spider) add(globalThis.spider);
+  if (typeof globalThis.Spider === 'function') { try { add(new globalThis.Spider(ext)); } catch (e) {} }
+  add(globalThis);
+  globalThis.__tvbox_candidates = cands;
+  for (var i = 0; i < cands.length; i++) {
+    var o = cands[i];
+    if (typeof o.init === 'function' && !o.__tvbox_inited) {
+      try { o.init(ext); } catch (e) { console.error('init: ' + e); }
+      try { o.__tvbox_inited = true; } catch (e) {}
+    }
+  }
+  return true;
+})()"#;
+
+/// Long TVBox method names map to the short names used by JS0 / drpy2 sources.
+const CALL_JS: &str = r#"(async function () {
+  var TARGET = __TVBOX_METHOD__;
+  var ARGS = __TVBOX_ARGS__;
+  var MAP = {
+    homeContent: 'home', homeVideoContent: 'homeVod', categoryContent: 'category',
+    detailContent: 'detail', searchContent: 'search', playerContent: 'play',
+    liveContent: 'live'
+  };
+  var short = MAP[TARGET] || TARGET;
+  var pool = globalThis.__tvbox_candidates || [];
+  var fn = null, owner = null;
+  for (var i = 0; i < pool.length; i++) {
+    var o = pool[i];
+    if (typeof o[TARGET] === 'function') { fn = o[TARGET]; owner = o; break; }
+    if (typeof o[short] === 'function') { fn = o[short]; owner = o; break; }
+  }
+  if (!fn) throw new Error('method ' + TARGET + ' missing');
+  var a = ARGS.slice();
+  if (TARGET === 'detailContent' && a.length && Array.isArray(a[0])) a = [a[0][0]];
+  if (TARGET === 'playerContent' && a.length && Array.isArray(a[0])) a = [a[0][0], a[1]];
+  var out = fn.apply(owner, a);
+  var value = await Promise.resolve(out === undefined ? null : out);
+  // TVBox scripts return either a plain object or an already-encoded JSON
+  // string (FongMi JS0 does `return JSON.stringify({...})`). Double encoding
+  // would hand Rust a JSON *string* instead of the page object, which reads as
+  // an empty result. Decode one level when it is JSON, keep other strings as-is.
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch (e) { /* not JSON: keep the text */ }
+  }
+  return JSON.stringify(value === undefined ? null : value);
+})()"#;
+
+fn js_literal<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+}
+
+fn is_module_source(source: &str, hint: &str) -> bool {
+    match hint {
+        "classic" => false,
+        "module" => true,
+        _ => looks_like_esm(source),
+    }
 }
 
 fn handle(request: Request) -> Response {
@@ -158,16 +544,64 @@ fn handle(request: Request) -> Response {
     let deadline = Instant::now() + timeout;
     runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
 
+    let assets_dir = PathBuf::from(&request.assets_dir);
+    runtime.set_loader(
+        TvResolver {
+            api: request.api.clone(),
+        },
+        TvLoader {
+            assets_dir: assets_dir.clone(),
+        },
+    );
+
     let ctx = match Context::full(&runtime) {
         Ok(ctx) => ctx,
         Err(err) => return Response::fail(request.id, "RUNTIME_UNAVAILABLE", err.to_string()),
     };
 
-    let outcome = ctx.with(|ctx| {
-        install_host(&ctx, &request.ext).map_err(|err| err.to_string())?;
-        ctx.eval::<(), _>(request.source.as_bytes())
-            .map_err(|err| err.to_string())?;
-        call_method(&ctx, &request.method, &request.args, &request.ext)
+    let outcome: Result<JsonValue, String> = ctx.with(|ctx| {
+        install_host(&ctx, &request).catch(&ctx).map_err(|err| err.to_string())?;
+
+        if is_module_source(&request.source, &request.script_kind) {
+            let name = if request.api.is_empty() {
+                "tvbox:main.js".to_string()
+            } else {
+                request.api.clone()
+            };
+            let declared = Module::declare(ctx.clone(), name, request.source.clone())
+                .catch(&ctx).map_err(|err| err.to_string())?;
+            let (evaluated, promise) = declared.eval().catch(&ctx).map_err(|err| err.to_string())?;
+            // Draining the job queue is mandatory: a module with imports is not
+            // fully linked (and its `default` export not initialized) until its
+            // evaluation promise settles. Never swallow a rejected promise here,
+            // or the failure resurfaces later as an opaque TDZ error.
+            promise
+                .finish::<()>()
+                .catch(&ctx)
+                .map_err(|err| err.to_string())?;
+            while ctx.execute_pending_job() {}
+            let namespace = evaluated.namespace().catch(&ctx).map_err(|err| err.to_string())?;
+            ctx.globals()
+                .set("__tvbox_exports", namespace)
+                .catch(&ctx).map_err(|err| err.to_string())?;
+        } else {
+            ctx.eval::<(), _>(request.source.as_bytes())
+                .catch(&ctx).map_err(|err| err.to_string())?;
+        }
+
+        let bootstrap = BOOTSTRAP_JS.replace("__TVBOX_EXT__", &js_literal(&request.ext));
+        ctx.eval::<bool, _>(bootstrap.as_bytes())
+            .catch(&ctx).map_err(|err| err.to_string())?;
+
+        let call = CALL_JS
+            .replace("__TVBOX_METHOD__", &js_literal(&request.method))
+            .replace("__TVBOX_ARGS__", &js_literal(&request.args));
+        let value: Value = ctx.eval(call.as_bytes()).catch(&ctx).map_err(|err| err.to_string())?;
+        let promise = value
+            .into_promise()
+            .ok_or_else(|| "dispatch did not return a promise".to_string())?;
+        let encoded: String = promise.finish().catch(&ctx).map_err(|err| err.to_string())?;
+        serde_json::from_str::<JsonValue>(&encoded).map_err(|err| err.to_string())
     });
 
     match outcome {
@@ -207,5 +641,4 @@ fn main() {
             let _ = stdout.flush();
         }
     }
-    let _ = json!({});
 }

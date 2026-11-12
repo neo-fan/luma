@@ -103,8 +103,8 @@ export function collectSourceOptions(
       continue;
     }
     const site = byKey.get(row.siteKey);
-    // 运行配置已屏蔽 jar / JS 源；后端不会返回它们，这里再兜一层。
-    if (site && (!site.enabled || site.runtime === "jvm" || site.runtime === "quickjs")) {
+    // 运行配置已屏蔽 jvm（Android dex/jar）源；后端不会返回它们，这里再兜一层。
+    if (site && (!site.enabled || site.runtime === "jvm")) {
       continue;
     }
     for (const vod of row.data.list) {
@@ -146,7 +146,7 @@ export async function fetchSourceRows(
 ): Promise<{ rows: AggregateRow[]; stats: SourceSearchStats }> {
   const word = keyword.trim();
   const eligible = sites.filter(
-    (site) => site.enabled && site.runtime !== "jvm" && site.runtime !== "quickjs",
+    (site) => site.enabled && site.runtime !== "jvm",
   );
   if (!word || eligible.length === 0) {
     return { rows: [], stats: { ...EMPTY_SOURCE_STATS } };

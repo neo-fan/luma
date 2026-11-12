@@ -6,22 +6,27 @@
   2. Python 3.11 embeddable -> sidecars/python-embed（含第三方依赖，见第 2.5 步）
   2.5 按 tools/python-requirements.txt 装回 py 采集源依赖（Crypto/requests/lxml…）
   3. Tauri externalBin staging -> src-tauri/binaries
+  4. 随包 JS 依赖资源校验 -> sidecars/qjs-assets（只读、离线，不下载）
 
 约定：
   * 脚本自身只用标准库，不 import 任何第三方包（装依赖通过 subprocess 调 pip）。
   * 所有路径相对项目根（本文件上一级），不硬编码盘符。
   * 已存在即跳过，可重复执行。
+  * 第 4 步是入库源码资源的只读体检，离线可用，绝不联网下载资源。
   * JDK 解析顺序：LUMA_JDK17_HOME -> JAVA_HOME -> 默认开发机路径。
 
 用法：
-  python tools/prepare_runtime.py            # 全量（缺失项补齐）
-  python tools/prepare_runtime.py --force    # 强制重做 jre / python-embed
-  python tools/prepare_runtime.py --check    # 只体检，不写文件
+  python tools/prepare_runtime.py                    # 全量（缺失项补齐）
+  python tools/prepare_runtime.py --force            # 强制重做 jre / python-embed
+  python tools/prepare_runtime.py --check            # 只体检，不写文件
+  python tools/prepare_runtime.py --skip-qjs-sha     # 跳过 JS 资源的 SHA256 校验
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -61,6 +66,22 @@ PY_MIRROR = (
 )
 
 TARGET_SUFFIX = "-x86_64-pc-windows-msvc.exe"
+
+# 随包 QuickJS ESM 依赖资源（入库源码资源，不由本脚本下载/重建）。
+QJS_ASSETS_DIR = ROOT / "sidecars" / "qjs-assets"
+QJS_ASSETS_LIB = QJS_ASSETS_DIR / "js" / "lib"
+QJS_ASSETS_MANIFEST = QJS_ASSETS_DIR / "manifest.json"
+# 与 sidecars/qjs-runner/src/main.rs::BUNDLED 保持一致的 8 个文件。
+QJS_ASSET_FILES = (
+    "cheerio.min.js",
+    "crypto-js.js",
+    "node-rsa.js",
+    "pako.min.js",
+    "gbk.js",
+    "json5.js",
+    "jinja.js",
+    "template.js",
+)
 
 
 # ---------------------------------------------------------------- helpers
@@ -117,7 +138,7 @@ def resolve_jdk17() -> Path | None:
 
 
 def step_jre(force: bool = False) -> bool:
-    print("[1/3] jlink 裁剪 JRE -> sidecars/jre")
+    print("[1/4] jlink 裁剪 JRE -> sidecars/jre")
     java_exe = JRE_DIR / "bin" / "java.exe"
     if java_exe.exists() and not force:
         print("  已存在，跳过 jlink")
@@ -211,7 +232,7 @@ def ensure_site_packages_in_pth(py_dir: Path) -> None:
 
 
 def step_python(force: bool = False) -> bool:
-    print("[2/3] Python embeddable -> sidecars/python-embed")
+    print("[2/4] Python embeddable -> sidecars/python-embed")
     py_exe = PY_DIR / "python.exe"
     if py_exe.exists() and not force:
         print("  已存在，跳过下载")
@@ -352,7 +373,7 @@ def stage(src: Path, name: str) -> bool:
 
 
 def step_binaries() -> bool:
-    print("[3/3] Tauri externalBin staging -> src-tauri/binaries")
+    print("[3/4] Tauri externalBin staging -> src-tauri/binaries")
     BIN_DIR.mkdir(parents=True, exist_ok=True)
 
     # jvm：不生成 externalBin 副本。实测（2026-11）把 sidecars/jre/bin/java.exe
@@ -390,6 +411,77 @@ def step_binaries() -> bool:
     return True
 
 
+# ---------------------------------------------------------------- step 4
+
+
+def qjs_assets_hint() -> None:
+    """缺文件/校验不一致时给出可操作的补齐提示（不联网、不自动下载）。"""
+    print("  [hint] 请重新运行资源下载脚本，按固定 commit 把 8 个文件抓回")
+    print("         sidecars/qjs-assets/js/lib/，并核对 sidecars/qjs-assets/manifest.json；")
+    print("         可下载 URL 前缀与整仓 zip 见 docs/js-support.md。本脚本只校验、不下载。")
+
+
+def step_qjs_assets(verify_sha: bool = True) -> bool:
+    """[4/4] 校验随包 QuickJS ESM 依赖资源（只读、离线、幂等）。
+
+    sidecars/qjs-assets/ 是入库源码资源，不由本脚本下载/重建。这里只做交付前
+    体检：8 个文件是否齐全，并可选按 manifest.json 校验字节数与 SHA256。
+    缺文件或与清单不一致时给出可操作的补齐提示，不联网、不中断打包。
+    """
+    print("[4/4] 随包 JS 依赖资源校验 -> sidecars/qjs-assets")
+
+    missing = [name for name in QJS_ASSET_FILES if not (QJS_ASSETS_LIB / name).is_file()]
+    print(f"  {len(QJS_ASSET_FILES) - len(missing)}/{len(QJS_ASSET_FILES)} 个文件齐全，"
+          f"js/lib 合计 {fmt(du(QJS_ASSETS_LIB))}")
+
+    bad: list[str] = []
+    sha_checked = False
+    if verify_sha and QJS_ASSETS_MANIFEST.is_file():
+        try:
+            entries = json.loads(QJS_ASSETS_MANIFEST.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"  [warn] manifest.json 解析失败，跳过 SHA256 校验：{exc}")
+            entries = []
+        by_local: dict[str, dict] = {}
+        if isinstance(entries, list):
+            by_local = {
+                str(item["local"]): item
+                for item in entries
+                if isinstance(item, dict) and item.get("local")
+            }
+        for name in QJS_ASSET_FILES:
+            item = by_local.get(name)
+            path = QJS_ASSETS_LIB / name
+            if not item or not path.is_file():
+                continue
+            expected_bytes = item.get("bytes")
+            if isinstance(expected_bytes, int) and path.stat().st_size != expected_bytes:
+                bad.append(f"{name} 字节数 {path.stat().st_size} != {expected_bytes}")
+            expected_sha = item.get("sha256")
+            if isinstance(expected_sha, str) and expected_sha:
+                actual = hashlib.sha256(path.read_bytes()).hexdigest()
+                sha_checked = True
+                if actual != expected_sha.lower():
+                    bad.append(f"{name} SHA256 不一致")
+    elif verify_sha:
+        print(f"  [warn] {QJS_ASSETS_MANIFEST.relative_to(ROOT)} 缺失，跳过 SHA256 校验")
+    else:
+        print("  [info] 已按 --skip-qjs-sha 跳过 SHA256 校验")
+
+    report_size("sidecars/qjs-assets", QJS_ASSETS_DIR)
+
+    if missing:
+        print("  [fail] 缺失文件：" + ", ".join(missing))
+        qjs_assets_hint()
+        return False
+    if bad:
+        print("  [fail] 与 manifest.json 不一致：" + "; ".join(bad))
+        qjs_assets_hint()
+        return False
+    print("  [ok] 8 个 JS 依赖齐全" + ("，字节数/SHA256 校验通过" if sha_checked else ""))
+    return True
+
+
 # ---------------------------------------------------------------- main
 
 
@@ -397,30 +489,37 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="准备 P3 打包期运行时产物（幂等）")
     parser.add_argument("--force", action="store_true", help="强制重做 jre 与 python-embed")
     parser.add_argument("--check", action="store_true", help="只体检，不写文件")
+    parser.add_argument("--skip-qjs-sha", action="store_true",
+                        help="跳过 qjs-assets 的 SHA256/字节数校验，只查文件齐全")
     args = parser.parse_args()
 
     print(f"项目根：{ROOT}")
+    verify_sha = not args.skip_qjs_sha
     if args.check:
         report_size("sidecars/jre", JRE_DIR)
         report_size("sidecars/python-embed", PY_DIR)
         report_size("src-tauri/binaries", BIN_DIR)
+        report_size("sidecars/qjs-assets", QJS_ASSETS_DIR)
         report_size("dist", ROOT / "dist")
         missing = python_missing_modules()
         print("  [deps] 随包 Python 第三方依赖：" + ("齐全" if not missing else "缺 " + ", ".join(missing)))
-        return 0 if not missing else 1
+        ok_qjs = step_qjs_assets(verify_sha=verify_sha)
+        return 0 if (not missing and ok_qjs) else 1
 
     ok_jre = step_jre(force=args.force)
     ok_py = step_python(force=args.force)
     ok_deps = step_python_deps(force=args.force)
     ok_bin = step_binaries()
+    ok_qjs = step_qjs_assets(verify_sha=verify_sha)
 
     print("\n汇总")
     report_size("sidecars/jre", JRE_DIR)
     report_size("sidecars/python-embed", PY_DIR)
     report_size("src-tauri/binaries", BIN_DIR)
+    report_size("sidecars/qjs-assets", QJS_ASSETS_DIR)
     report_size("dist", ROOT / "dist")
 
-    return 0 if (ok_jre and ok_py and ok_deps and ok_bin) else 1
+    return 0 if (ok_jre and ok_py and ok_deps and ok_bin and ok_qjs) else 1
 
 
 if __name__ == "__main__":

@@ -109,15 +109,16 @@ describe("usableHomeSites", () => {
     expect(usableHomeSites(sites).map((s) => s.key)).toEqual(["a", "b", "c"]);
   });
 
-  it("drops disabled, jvm and quickjs sites (runtime-blocked red line)", () => {
+  it("keeps quickjs sites; drops disabled / jvm / disabledReason sites", () => {
     const sites = [
       { key: "cms", runtime: "cms", enabled: true },
       { key: "off", runtime: "cms", enabled: false },
       { key: "jar", runtime: "jvm", enabled: true },
       { key: "js", runtime: "quickjs", enabled: true },
       { key: "stale", runtime: "jvm", enabled: true, disabledReason: "x" },
+      { key: "rejected", runtime: "cms", enabled: true, disabledReason: "x" },
     ];
-    expect(usableHomeSites(sites).map((s) => s.key)).toEqual(["cms"]);
+    expect(usableHomeSites(sites).map((s) => s.key)).toEqual(["cms", "js"]);
   });
 
   it("treats missing runtime/enabled as usable (old cache compatibility)", () => {

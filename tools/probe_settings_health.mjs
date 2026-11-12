@@ -4,7 +4,7 @@
  *
  * 素材是桩服务 /config-py.json（带 ?probe=health 独立 origin，避免覆盖别的
  * 探针留下的同名配置）：健康 py + broken py（必失败）+ slow py（必超时）+
- * JS 屏蔽源 + 健康 CMS，一次覆盖 ok / failed / timeout / disabled 四态，
+ * jar 屏蔽源 + 健康 CMS + 可运行的 JS 源，一次覆盖 ok / failed / timeout / disabled 四态，
  * 全程不碰外网、不依赖真实站点波动。
  *
  * 断言：
@@ -16,7 +16,7 @@
  *   5. 禁用一个健康站 → 该行转「已禁用」并出现「启用」按钮（onImported 换缓存）；
  *   6. reload 后从后端真源读回，该站仍禁用（跨 reload 持久化）；
  *   7. 重新启用 → 恢复为可禁用态；
- *   8. JS 屏蔽源显示「已禁用」，且其「启用」按钮 disabled；
+ *   8. jar 屏蔽源显示「已禁用」，且其「启用」按钮 disabled；
  *   9. 无未捕获页面异常；收尾恢复原 active、删探针配置。
  *
  * 依赖：dev 窗口（CDP 9222）+ python tests/stub_server.py（8787）。
@@ -252,7 +252,7 @@ try {
   console.log(`[info] imported: ${imported}`);
   const importedObj = typeof imported === "string" && imported.startsWith("{") ? JSON.parse(imported) : null;
   assert(!!importedObj && importedObj.total >= 5, "probe config imported with all site kinds", String(imported));
-  assert(!!importedObj && importedObj.blocked >= 1, "JS source blocked at import", String(imported));
+  assert(!!importedObj && importedObj.blocked >= 1, "jar source blocked at import", String(imported));
 
   // 用导入后的配置重载，进设置页，确认体检区块与按钮存在。
   assert((await reloadReady(cdp)) === "OK", "reloaded with probe config active");

@@ -150,7 +150,7 @@ describe("collectSourceOptions", () => {
     ).toEqual(["other"]);
   });
 
-  it("跳过 enabled:false / jvm / quickjs 站点，保留 python / cms", () => {
+  it("保留 quickjs 站点，跳过 enabled:false / jvm 站点", () => {
     const sites: SourceSite[] = [
       makeSite("normal", "正常"),
       makeSite("off", "停用", "python", false),
@@ -160,7 +160,7 @@ describe("collectSourceOptions", () => {
     ];
     const rows: AggregateRow[] = sites.map((site) => makeRow(site.key, [makeVod()]));
     const result = collectSourceOptions(rows, keyword, sites);
-    expect(result.map((r) => r.siteKey).sort()).toEqual(["cms", "normal"]);
+    expect(result.map((r) => r.siteKey).sort()).toEqual(["cms", "js", "normal"]);
   });
 
   it("同分按站点名 localeCompare('zh-CN') 排序（安 < 波 < 中）", () => {

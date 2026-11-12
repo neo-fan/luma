@@ -42,9 +42,21 @@ luma.db
 luma.db-wal
 luma.db-shm
 
+# ---- 随包 JS 依赖资源（入库源码资源，不是运行时产物，必须跟踪）----
+# sidecars/qjs-assets/ 下 8 个 JS 依赖与 manifest.json 由上游固定 commit 抓取后
+# 直接入库，是客户端 QuickJS ESM 模块加载的交付内容本身。与下面「随包运行时产物」
+# 段落刻意区分：那些目录由 tools/prepare_runtime.py 下载/裁剪重建、整目录忽略；
+# 这里只由 tools/prepare_runtime.py::step_qjs_assets() 做只读齐全性/SHA256 校验，
+# 不下载、不可重建。下面三行把「必须跟踪」显式写进配置（当前并无规则误伤），
+# 与产物段落形成对照；若将来新增宽泛规则，请同步在此补否定项。
+!sidecars/qjs-assets/
+!sidecars/qjs-assets/manifest.json
+!sidecars/qjs-assets/js/lib/*.js
+
 # 随包运行时产物（非编译生成：由 tools/prepare_runtime.py 下载/裁剪重建，不入库）
 # 整目录忽略，不保留任何 .gitkeep 占位；sidecars/py、sidecars/java、sidecars/qjs-runner
-# 是源码（入库），与下面三个二进制产物目录区分开。
+# 是源码（入库），sidecars/qjs-assets 是入库资源（见上一段），与下面三个二进制
+# 产物目录区分开。
 sidecars/jre/
 sidecars/python-embed/
 sidecars/mpv/

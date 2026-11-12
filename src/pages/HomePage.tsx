@@ -255,8 +255,9 @@ export default function HomePage({
             aria-label="选择站点"
           >
             {sites.map((item) => {
-              // Old localStorage caches have no disabledReason: a jvm site is
-              // still blocked there even though `enabled` says true.
+              // 新策略只屏蔽 jvm（Android dex/jar）源，quickjs 已解禁。
+              // 旧 localStorage 缓存没有 disabledReason：这里按 runtime 兜一层，
+              // 保证 enabled=true 的 jvm 站仍被判为屏蔽。
               const blocked = Boolean(item.disabledReason) || item.runtime === "jvm";
               const suffix = blocked ? "（已屏蔽）" : item.enabled ? "" : "（已禁用）";
               return (

@@ -185,9 +185,9 @@ export default function SourcePicker({
   const visible = onlyMatch ? view.options.filter((item) => item.matchScore >= 2) : view.options;
   const stats = view.stats;
   const missed = stats.failed + stats.skipped;
-  // 运行配置里已屏蔽的 jar / JS 源不参与聚合，进度文案要按可用站点数算。
+  // 运行配置里已屏蔽的 jvm（Android dex/jar）源不参与聚合，进度文案按可用站点数算。
   const eligibleCount = sites.filter(
-    (site) => site.enabled && site.runtime !== "jvm" && site.runtime !== "quickjs",
+    (site) => site.enabled && site.runtime !== "jvm",
   ).length;
 
   const statsLine =

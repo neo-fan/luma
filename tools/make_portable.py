@@ -11,6 +11,9 @@ in place. Layout produced:
       sidecars/jre/              jlink-trimmed JDK 17
       sidecars/java/runner.jar   JVM spider bridge
       sidecars/mpv/              optional, only with --with-mpv
+      sidecars/qjs-assets/       QuickJS ESM 模块加载所需 8 个 JS 依赖 + manifest.json
+      qjs-runner.exe             QuickJS 侧载可执行文件（exe 同目录，运行时首选命中点）
+      sidecars/qjs-runner/qjs-runner.exe   同上，resource_dir 布局副本
       data/                      portable data dir (luma.db + legacy json backup)
       使用说明.txt
 
@@ -59,6 +62,19 @@ ZIP_PATH = ROOT / "release" / f"{APP_NAME}-{conf_version()}-portable.zip"
 PY_SKIP_NAMES = {"scripts", "__pycache__", "pip", "setuptools", "wheel", "_distutils_hack"}
 PY_SKIP_PREFIXES = ("pip-", "setuptools-", "wheel-")
 
+# qjs-runner.exe 候选源，按优先级：prepare_runtime.py staging 出的 externalBin
+# 优先，其次 qjs-runner 自身 target/release、target/debug（与 step_binaries 一致）。
+QJS_RUNNER_SOURCES = (
+    ROOT / "src-tauri" / "binaries" / "qjs-runner-x86_64-pc-windows-msvc.exe",
+    ROOT / "sidecars" / "qjs-runner" / "target" / "release" / "qjs-runner.exe",
+    ROOT / "sidecars" / "qjs-runner" / "target" / "debug" / "qjs-runner.exe",
+)
+# 便携包内两个落点：exe 同目录（resolve_runner 首选命中点）+ sidecars 布局。
+QJS_RUNNER_TARGETS = (
+    APP_DIR / "qjs-runner.exe",
+    APP_DIR / "sidecars" / "qjs-runner" / "qjs-runner.exe",
+)
+
 
 def log(message: str) -> None:
     print(message, flush=True)
@@ -99,6 +115,25 @@ def build_release() -> None:
         raise SystemExit("cargo build failed; run it from the documented MSVC shell first")
 
 
+def copy_qjs_runner() -> None:
+    """把 qjs-runner.exe 复制到便携包内运行时能解析到的位置。
+
+    src-tauri 侧 resolve_runner() 的查找顺序为：QJS_RUNNER 环境变量 → exe
+    同目录 → 编译期 source_root 下 sidecars/qjs-runner/target/{release,debug}。
+    便携包分发到别的机器后编译期绝对路径失效，故主副本落在 exe 同目录；
+    同时在 sidecars/qjs-runner/ 放一份，便于按 resource_dir 布局解析。
+    源文件一个都找不到时只 warn，不中断打包（保持 --check 类宽松行为）。
+    """
+    source = next((p for p in QJS_RUNNER_SOURCES if p.is_file()), None)
+    if source is None:
+        log("!! 未找到 qjs-runner.exe，跳过；请先 cargo build --release 并运行 tools/prepare_runtime.py 重新 stage")
+        return
+    for target in QJS_RUNNER_TARGETS:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        log(f"  {target.relative_to(APP_DIR)}  {human(source.stat().st_size)}")
+
+
 def prepare_app_dir() -> None:
     if APP_DIR.exists():
         # 目录可能已被外部清空（robocopy /MIR 清场）：空目录直接 rmdir，
@@ -126,6 +161,18 @@ def prepare_app_dir() -> None:
         APP_DIR / "sidecars" / "python-embed",
         ignore=lambda d, n: ignore_generic(d, n) | ignore_python(d, n),
     )
+
+    log("== copying qjs assets ==")
+    qjs_assets_src = ROOT / "sidecars" / "qjs-assets"
+    qjs_assets_dst = APP_DIR / "sidecars" / "qjs-assets"
+    if qjs_assets_src.is_dir():
+        shutil.copytree(qjs_assets_src, qjs_assets_dst, ignore=ignore_generic)
+        log(f"  sidecars/qjs-assets  {human(tree_size(qjs_assets_dst))}")
+    else:
+        log("!! sidecars/qjs-assets 不存在，跳过（JS ESM 源将缺内置依赖）")
+
+    log("== copying qjs-runner ==")
+    copy_qjs_runner()
 
     log("== portable data dir ==")
     (APP_DIR / "data").mkdir()
@@ -173,7 +220,8 @@ def make_zip() -> None:
 
 def report() -> None:
     log("\n=== PORTABLE SUMMARY ===")
-    for name in ("data", "sidecars/py", "sidecars/python-embed", "sidecars/jre", "sidecars/java", "sidecars/mpv"):
+    for name in ("data", "sidecars/py", "sidecars/python-embed", "sidecars/jre", "sidecars/java",
+                 "sidecars/mpv", "sidecars/qjs-assets", "sidecars/qjs-runner", "qjs-runner.exe"):
         path = APP_DIR / name
         if path.exists():
             log(f"  {name:28} {human(tree_size(path)):>10}")

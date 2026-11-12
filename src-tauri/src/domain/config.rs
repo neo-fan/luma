@@ -86,16 +86,62 @@ struct StoredConfig {
 /// Runtimes deliberately excluded from the runtime snapshot.
 ///
 /// Community configs ship Android dex jars (`csp_*` sites + a config-level
-/// `spider` jar) and drpy2 / ES-module JS sources. Both fail on Win x64 no
-/// matter how often we retry, and each one used to add a failure line to every
-/// aggregate search. They stay intact in `imported` so the user's config is
-/// preserved and can be re-derived if support is added later.
+/// `spider` jar); those need an Android runtime on Win x64 and only add a
+/// failure line to every aggregate search. JS sources used to be blocked here
+/// too, but the qjs-runner now implements ESM loading + `assets://` resources
+/// (see `docs/js-support.md`), so `quickjs` joins cms/python as a runnable
+/// runtime. Blocked rows stay intact in `imported` so a policy change can be
+/// re-derived without losing the user's original config.
 pub(crate) fn blocked_reason(site: &Value) -> Option<&'static str> {
     match site.get("runtime").and_then(Value::as_str) {
         Some("jvm") => Some("jar 源为 Android dex，Windows 端暂不支持"),
-        Some("quickjs") => Some("JS 源（drpy2 / ES 模块）暂不支持"),
         _ => None,
     }
+}
+
+/// Reasons written by an *older* blocking policy. A row still carrying one of
+/// these is stale: the policy no longer blocks that runtime, so a restart must
+/// re-enable it instead of keeping the user's sources hidden forever.
+const STALE_BLOCK_REASONS: &[&str] = &["JS 源（drpy2 / ES 模块）暂不支持"];
+
+/// Replay the current blocking policy onto an existing runtime snapshot.
+///
+/// Unlike `derive_runtime` (which starts from `imported` and would drop manual
+/// disables), this only touches rows that are stale or newly blocked:
+///   * blocked now (jvm) -> force disabled + current reason;
+///   * stale reason from a retired policy -> re-enable + clear the reason;
+///   * user disables ("已在站点体检中手动禁用") -> untouched.
+/// Returns true when the snapshot changed and needs persisting.
+fn refresh_policy(runtime: &mut ConfigSnapshot) -> bool {
+    let mut changed = false;
+    for site in runtime.sites.iter_mut() {
+        let reason = site
+            .get("disabledReason")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let enabled = site.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        match blocked_reason(site) {
+            Some(blocked) => {
+                if enabled || reason != blocked {
+                    if let Some(map) = site.as_object_mut() {
+                        map.insert("enabled".into(), Value::Bool(false));
+                        map.insert("disabledReason".into(), Value::String(blocked.to_string()));
+                    }
+                    changed = true;
+                }
+            }
+            None if STALE_BLOCK_REASONS.contains(&reason.as_str()) => {
+                if let Some(map) = site.as_object_mut() {
+                    map.insert("enabled".into(), Value::Bool(true));
+                    map.remove("disabledReason");
+                }
+                changed = true;
+            }
+            None => {}
+        }
+    }
+    changed
 }
 
 /// imported -> runtime, one way and idempotent.
@@ -232,6 +278,13 @@ impl ConfigStore {
                 let derived = derive_runtime(&stored.imported);
                 db.set_runtime_json(&stored.imported.id, &serde_json::to_string(&derived)?)?;
                 stored.runtime = Some(derived);
+            } else if let Some(runtime) = stored.runtime.as_mut() {
+                // Policy replay: unblocks JS sources imported before the qjs
+                // ESM loader landed, and keeps jvm blocked. Persist only when
+                // something actually changed.
+                if refresh_policy(runtime) {
+                    db.set_runtime_json(&stored.imported.id, &serde_json::to_string(runtime)?)?;
+                }
             }
             entries.push(stored);
         }
@@ -425,8 +478,8 @@ impl ConfigStore {
             if site.get("key").and_then(Value::as_str) != Some(site_key) {
                 continue;
             }
-            // 屏蔽源（jvm / quickjs）不允许手动打开，否则会把不支持的站点放回
-            // fan-out；禁用则始终允许。
+            // 屏蔽源（当前只有 jvm / Android dex）不允许手动打开，否则会把
+            // 不支持的站点放回 fan-out；JS 源已解禁，禁用则始终允许。
             if enabled && blocked_reason(site).is_some() {
                 return Err(AppError::new(
                     code::INVALID_ARGUMENT,
@@ -936,7 +989,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_runtime_blocks_jar_and_js_without_rewriting_the_import() {
+    fn derive_runtime_blocks_only_jar_and_keeps_js_runnable() {
         let mut imported = snapshot("box", &[]);
         imported.sites = vec![
             json!({"key": "cms", "runtime": "cms", "enabled": true}),
@@ -958,20 +1011,63 @@ mod tests {
                 .expect("site present")
                 .clone()
         };
-        for key in ["jar", "js"] {
-            assert_eq!(site(key).get("enabled").and_then(Value::as_bool), Some(false));
-            assert!(site(key).get("disabledReason").and_then(Value::as_str).is_some());
-        }
-        for key in ["cms", "py"] {
+        // jar / Android dex is the only blocked runtime now.
+        assert_eq!(site("jar").get("enabled").and_then(Value::as_bool), Some(false));
+        assert!(site("jar").get("disabledReason").and_then(Value::as_str).is_some());
+        // JS sources have a real runtime (ESM loader + assets://), so they must
+        // stay enabled with no disabledReason. This is the regression guard for
+        // the old runtime==quickjs blanket block.
+        for key in ["cms", "py", "js"] {
             assert_eq!(site(key).get("enabled").and_then(Value::as_bool), Some(true));
             assert!(site(key).get("disabledReason").is_none());
         }
+        assert_eq!(blocked_reason(&site("js")), None);
         assert_eq!(site("divider").get("enabled").and_then(Value::as_bool), Some(false));
         // Config-level fields are inherited, not rebuilt from scratch.
         assert_eq!(runtime.id, imported.id);
         assert_eq!(runtime.headers, imported.headers);
         // Re-deriving from the same import is idempotent (no stacked policy).
         assert_eq!(derive_runtime(&imported).sites, runtime.sites);
+    }
+
+    #[test]
+    fn policy_replay_unblocks_js_but_keeps_manual_disables() {
+        let mut runtime = snapshot("box", &[]);
+        runtime.sites = vec![
+            json!({"key": "js", "runtime": "quickjs", "enabled": false,
+                   "disabledReason": "JS 源（drpy2 / ES 模块）暂不支持"}),
+            json!({"key": "js_manual", "runtime": "quickjs", "enabled": false,
+                   "disabledReason": "已在站点体检中手动禁用"}),
+            json!({"key": "jar", "runtime": "jvm", "enabled": true}),
+            json!({"key": "cms", "runtime": "cms", "enabled": true}),
+        ];
+        assert!(refresh_policy(&mut runtime));
+        let site = |key: &str| -> Value {
+            runtime
+                .sites
+                .iter()
+                .find(|site| site.get("key").and_then(Value::as_str) == Some(key))
+                .expect("site present")
+                .clone()
+        };
+        // Retired JS block is reverted.
+        assert_eq!(site("js").get("enabled").and_then(Value::as_bool), Some(true));
+        assert!(site("js").get("disabledReason").is_none());
+        // A user disable is not a policy row and must survive.
+        assert_eq!(
+            site("js_manual").get("enabled").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            site("js_manual").get("disabledReason").and_then(Value::as_str),
+            Some("已在站点体检中手动禁用")
+        );
+        // jvm is still blocked and gets the current reason.
+        assert_eq!(site("jar").get("enabled").and_then(Value::as_bool), Some(false));
+        assert!(site("jar").get("disabledReason").and_then(Value::as_str).is_some());
+        assert_eq!(site("cms").get("enabled").and_then(Value::as_bool), Some(true));
+        // Idempotent: nothing left to replay.
+        assert!(!refresh_policy(&mut runtime));
     }
 
     #[test]

@@ -349,7 +349,9 @@ function buildReport({ sites, rows, seed, startedAt, durationMs, keyword }) {
   const blockedReasons = {};
   for (const s of blocked) {
     const reason = s.disabledReason || "手动禁用";
-    const k = /jar|jvm|dex/i.test(reason) ? "jar/jvm(dex)" : /js|quickjs|drpy/i.test(reason) ? "quickjs/drpy2" : reason.slice(0, 40);
+    // 新策略下导入不再因 quickjs/drpy2 屏蔽源；命中该分支通常是旧缓存里的
+    // 历史 disabledReason，故标注为历史口径，报告结构保持不变。
+    const k = /jar|jvm|dex/i.test(reason) ? "jar/jvm(dex)" : /js|quickjs|drpy/i.test(reason) ? "js 源(历史口径)" : reason.slice(0, 40);
     blockedReasons[k] = (blockedReasons[k] || 0) + 1;
   }
   const runtimeStats = {};

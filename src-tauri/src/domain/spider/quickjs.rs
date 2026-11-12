@@ -137,12 +137,30 @@ fn resolve_runner() -> Option<PathBuf> {
     None
 }
 
-/// drpy2 and friends start with `import ... from "assets://..."`, which plain
-/// QuickJS cannot resolve; fail fast with a readable reason instead of a
-/// SyntaxError.
-fn looks_like_es_module(source: &str) -> bool {
-    let head = source.trim_start();
-    head.starts_with("import ") || head.starts_with("import{") || head.starts_with("import\"")
+/// Bundled `assets://` resources. The sidecar resolves every `assets://` and
+/// relative import against `<dir>/js/lib`; see `docs/js-support.md`.
+fn resolve_assets_dir() -> PathBuf {
+    if let Some(custom) = crate::env::get("QJS_ASSETS_DIR") {
+        let path = PathBuf::from(custom);
+        if path.is_dir() {
+            return path;
+        }
+    }
+    // Portable layout: <luma.exe>/sidecars/qjs-assets.
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(dir) = current.parent() {
+            let beside = dir.join("sidecars").join("qjs-assets");
+            if beside.is_dir() {
+                return beside;
+            }
+        }
+    }
+    // Dev layout: source root/sidecars/qjs-assets.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    root.join("sidecars").join("qjs-assets")
 }
 
 fn cache() -> &'static StdMutex<HashMap<String, (String, Instant)>> {
@@ -181,12 +199,8 @@ async fn source_for(site: &Value) -> Result<String, AppError> {
         timeout_ms: Some(10_000),
     })
     .await?;
-    if looks_like_es_module(&response.body) {
-        return Err(AppError::new(
-            code::RUNTIME_UNAVAILABLE,
-            "该 js 源是 ES 模块（drpy2 等），需要 cheerio/import 加载器，暂不支持",
-        ));
-    }
+    // ES modules are NOT rejected here anymore: the sidecar auto-detects
+    // `import`/`export` and evaluates them with its custom ModuleLoader.
 
     let mut guard = cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if guard.len() >= 64 {
@@ -230,12 +244,20 @@ impl SpiderRuntime for QuickJsRuntime {
         timeout: Duration,
     ) -> Result<Value, AppError> {
         let source = source_for(site).await?;
+        let api = site.get("api").and_then(Value::as_str).unwrap_or("");
         let payload = json!({
             "source": source,
             "method": method.as_str(),
             "args": args,
             "ext": site.get("ext").and_then(Value::as_str).unwrap_or(""),
             "timeout_ms": timeout.as_millis() as u64,
+            // Module loading, relative-import base, UA/Referer and local KV
+            // isolation all live in the sidecar (see docs/js-support.md).
+            "assets_dir": resolve_assets_dir().to_string_lossy(),
+            "api": api,
+            "headers": site.get("headers").cloned().unwrap_or_else(|| json!({})),
+            "site_key": site.get("key").and_then(Value::as_str).unwrap_or(""),
+            "script_kind": "auto",
         });
 
         let mut slot = runner_slot().lock().await;
@@ -294,5 +316,22 @@ mod tests {
             Some(path) => assert!(path.is_file()),
             None => assert!(crate::process::call_timeout() >= Duration::from_millis(100)),
         }
+    }
+
+    #[test]
+    fn assets_dir_resolves_without_panicking() {
+        let dir = resolve_assets_dir();
+        assert!(!dir.as_os_str().is_empty());
+        // Dev and portable layouts both end in sidecars/qjs-assets.
+        assert!(dir.to_string_lossy().replace('\\', "/").ends_with("sidecars/qjs-assets"));
+    }
+
+    #[test]
+    fn es_module_sources_are_no_longer_rejected_by_policy() {
+        // The old `looks_like_es_module` fast-fail lived in source_for(). Now
+        // drpy2 / JS0 modules must reach the sidecar; guard the intent here.
+        let drpy_head = "import cheerio from\"assets://js/lib/cheerio.min.js\";";
+        assert!(drpy_head.contains("import "));
+        assert_eq!(crate::config::blocked_reason(&json!({"runtime": "quickjs"})), None);
     }
 }

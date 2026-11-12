@@ -1,0 +1,58 @@
+[
+  {
+    "upstream": "lib/cheerio.min.js",
+    "local": "cheerio.min.js",
+    "bytes": 356588,
+    "sha256": "b4a69e4925383dd19df67ef048639b2d7ef86f3b187e18b2471b405d9f9a19cd",
+    "usage": "drpy2 assets:// 默认导入；$.html/jinja2"
+  },
+  {
+    "upstream": "lib/crypto-js.js",
+    "local": "crypto-js.js",
+    "bytes": 204310,
+    "sha256": "731c9606953ddedd5bafe52e32eeced73f2a3750fbdac3c812b4a04881e48c07",
+    "usage": "drpy2 与聚合短剧的 CryptoJS 副作用导入"
+  },
+  {
+    "upstream": "lib/node-rsa.js",
+    "local": "node-rsa.js",
+    "bytes": 167481,
+    "sha256": "b2e1d9c402ce06c19d08e1659624bfbbda91994d06339300970c395977e6d37c",
+    "usage": "drpy2 ./node-rsa.js，RSA/JSEncrypt 全局"
+  },
+  {
+    "upstream": "lib/pako.min.js",
+    "local": "pako.min.js",
+    "bytes": 46859,
+    "sha256": "7b7a3b8db4d7b65846b807f1309688a8955961dbde5538694862a6c5cbc932cf",
+    "usage": "drpy2 ./pako.min.js，inflate/deflate"
+  },
+  {
+    "upstream": "lib/gbk.js",
+    "local": "gbk.js",
+    "bytes": 56313,
+    "sha256": "28097cea4538c34653cd1e2c39aef3ad5bc892caa54b0761105f26fa4a3a339a",
+    "usage": "drpy2 ./gbk.js，export gbkTool"
+  },
+  {
+    "upstream": "lib/json5.js",
+    "local": "json5.js",
+    "bytes": 60431,
+    "sha256": "1b3d54f76b9106641e540b6561dc950ffe281590f8546b88f26fc7a91c225e10",
+    "usage": "drpy2 ./json5.js 副作用导入"
+  },
+  {
+    "upstream": "lib/jinja.js",
+    "local": "jinja.js",
+    "bytes": 22706,
+    "sha256": "6cf1781f0c32206236049d392383dbc558b530244926d93762dfa3362967bff2",
+    "usage": "drpy2 ./jinja.js 副作用导入"
+  },
+  {
+    "upstream": "js/template.js",
+    "local": "template.js",
+    "bytes": 15217,
+    "sha256": "60bc13ee04302db0fd9b0061e234a8d2ae624e0836e8e9c50e7735425ab63bea",
+    "usage": "drpy2 ./template.js（仓库 lib/ 下无此文件，需重写）"
+  }
+]

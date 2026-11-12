@@ -9,7 +9,7 @@ name = "qjs-runner"
 path = "src/main.rs"
 
 [dependencies]
-rquickjs = "0.9"
+rquickjs = { version = "0.9", features = ["loader"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", features = ["json", "tls"] }
