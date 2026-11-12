@@ -8,6 +8,12 @@ import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
 import { rankByTitle, titleMatchScore } from "../lib/format";
+import {
+  clearSearchHistory,
+  pushSearchHistory,
+  readSearchHistory,
+  removeSearchHistory,
+} from "../lib/searchHistory";
 import { publishSearchResults } from "../lib/sourceCache";
 import { log } from "../lib/logger";
 import type { ResultPage, Site, VodInfo } from "../types/tvbox";
@@ -80,13 +86,17 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
   const [searched, setSearched] = usePageState<boolean>(`${K}searched`, false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  /** 用户实际搜过的词，跨重启保留；与页面快照分开存。 */
+  const [recent, setRecent] = useState<string[]>(() => readSearchHistory());
 
-  const runSearch = async () => {
-    const word = keyword.trim();
+  const runSearch = async (wordOverride?: string) => {
+    const word = (wordOverride ?? keyword).trim();
     if (!word) {
       setError("请输入搜索关键词");
       return;
     }
+    // 提交一次就记一次（即使这次失败，用户意图也值得保留）。
+    setRecent(pushSearchHistory(word));
     const startedAt = Date.now();
     /** 聚合统计（日志用）；单站搜索补一条等价结构。 */
     let aggregateStats: {
@@ -261,6 +271,18 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
     void runSearch();
   };
 
+  /** 点历史词直接重搜：setKeyword 是异步的，所以把词显式传给 runSearch。 */
+  const onRecentPick = (word: string) => {
+    if (loading) {
+      return;
+    }
+    setKeyword(word);
+    void runSearch(word);
+  };
+
+  const onRecentClear = () => setRecent(clearSearchHistory());
+  const onRecentRemove = (word: string) => setRecent(removeSearchHistory(word));
+
   /**
    * 单站重试：聚合时超时的慢源往往单独再跑一次就能出结果。成功则把结果
    * 合并进当前列表（仍按片名相关度排序），并把该站从失败明细里移除。
@@ -357,6 +379,41 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
           {loading ? "搜索中…" : "搜索"}
         </button>
       </form>
+
+      {recent.length > 0 ? (
+        <div className="recent-searches">
+          <div className="recent-searches__head">
+            <span className="recent-searches__label">最近搜索</span>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={onRecentClear}>
+              清空
+            </button>
+          </div>
+          <div className="recent-row">
+            {recent.map((word) => (
+              <span className="recent-chip" key={word}>
+                <button
+                  type="button"
+                  className="recent-chip__word"
+                  title={word}
+                  disabled={loading}
+                  onClick={() => onRecentPick(word)}
+                >
+                  {word}
+                </button>
+                <button
+                  type="button"
+                  className="recent-chip__remove"
+                  aria-label={`删除搜索词 ${word}`}
+                  title="删除"
+                  onClick={() => onRecentRemove(word)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {error ? <ErrorBar message={error} /> : null}
 

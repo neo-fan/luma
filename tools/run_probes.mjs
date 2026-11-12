@@ -13,6 +13,8 @@
  *     `probe_py_framework` 另有豆瓣 frodo 外网正向观察项，偶发超时不影响本地断言；
  *   - `probe_cover` 只 reload、不切配置，验证封面经 Rust `/image` 代理出真图（豆瓣图床外网，
  *     偶发不可达时单跑复测；JPEG magic + 安全边界断言聚焦代理逻辑）。
+ *   - `probe_search_history` 只改 localStorage 的搜索词历史并在收尾恢复；点历史词会触发一次
+ *     后台聚合搜索，探针随即 reload 打断、不等待 20s 结果。
  *
  * 跑之前先记住「原 active 配置 id」和「已有配置 id」，跑完恢复 active 并删掉
  * 本轮新建的配置——否则几轮探针下来 SQLite 里会堆一堆 stub 配置。
@@ -44,6 +46,7 @@ const PROBES = [
   { key: "playback_ux", script: "tools/probe_playback_ux.mjs", label: "连看体验（偏好记忆/自动下一集/Esc/复制错误）" },
   { key: "flv", script: "tools/probe_flv.mjs", label: "FLV 经 mpegts.js 出画", needsStub: true },
   { key: "search_failures", script: "tools/probe_search_failures.mjs", label: "搜索失败源明细与重试", needsStub: true },
+  { key: "search_history", script: "tools/probe_search_history.mjs", label: "最近搜索词（10 条上限 / 点击重搜 / 删除清空）" },
   { key: "history", script: "tools/probe_history.mjs", label: "历史页（合成记录，不留痕）" },
   { key: "settings_logs", script: "tools/probe_settings_logs.mjs", label: "版本 / 诊断 / 复制诊断" },
   { key: "settings_health", script: "tools/probe_settings_health.mjs", label: "站点体检（并发测活 / 禁用持久化）", needsStub: true },

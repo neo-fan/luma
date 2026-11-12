@@ -574,6 +574,82 @@ textarea {
   margin-bottom: 20px;
 }
 
+/* ---------- 最近搜索词 ---------- */
+
+.recent-searches {
+  margin: -8px 0 18px;
+}
+
+.recent-searches__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.recent-searches__label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.recent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.recent-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  overflow: hidden;
+  transition: border-color var(--dur) var(--ease);
+}
+
+.recent-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.recent-chip__word {
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 4px 5px 12px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.recent-chip__word:hover:not(:disabled) {
+  color: var(--accent-ink);
+}
+
+.recent-chip__word:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.recent-chip__remove {
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 5px 10px 5px 4px;
+  cursor: pointer;
+}
+
+.recent-chip__remove:hover {
+  color: var(--danger);
+}
+
 /* ---------- 分类标签 ---------- */
 
 .chip-row {
