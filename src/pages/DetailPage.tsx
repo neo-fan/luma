@@ -392,16 +392,21 @@ export default function DetailPage({
                 onClick={() => setExpanded((value) => !value)}
               />
             ) : null}
+            {/* 按钮只留动作本身：线路有 chip 的「上次」角标、集数有剧集格的「上次看到」，
+                进度这类细节放 hover 提示里，不占按钮文案。 */}
             <button
               type="button"
               className="btn btn--primary"
               disabled={!quickPlay}
               onClick={() => quickPlay && playEpisode(quickPlay.line, quickPlay.episode)}
+              title={
+                resume && quickPlay
+                  ? `上次看到：${resume.episodeName || `第 ${quickPlay.index + 1} 集`} · ${formatDuration(resume.positionMs ?? 0)}`
+                  : undefined
+              }
             >
               <Icon name="play" />
-              {resume && quickPlay
-                ? `继续播放 ${resume.playFrom ? `${resume.playFrom} ` : ""}第 ${quickPlay.index + 1} 集（${formatDuration(resume.positionMs ?? 0)}）`
-                : "播放第 1 集"}
+              {resume && quickPlay ? "继续播放" : "播放第 1 集"}
             </button>
           </div>
         </div>
