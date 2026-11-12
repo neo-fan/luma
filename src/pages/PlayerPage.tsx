@@ -61,6 +61,8 @@ export default function PlayerPage({
 
   const [videoError, setVideoError] = useState("");
   const [switchTip, setSwitchTip] = useState("");
+  /** 本次挂载是否已从 sessionStorage 恢复过一次性提示。 */
+  const tipRestored = useRef(false);
   const triedSites = useRef<string[]>([]);
   const failoverStarted = useRef(false);
   /** 已经自动处理过的地址，避免切线路 / 换源之间来回跳转。 */
@@ -126,12 +128,16 @@ export default function PlayerPage({
     triedSites.current = [siteKey];
     failoverStarted.current = false;
     lineSwitchStarted.current = false;
-    // 换源跳转会重建本页，提示通过 sessionStorage 带过来一次。
+    // 换源/换集跳转会重建本页，提示通过 sessionStorage 带过来一次。
+    // dev 的 React.StrictMode 会把挂载 effect 连跑两次：第一次读走并删掉
+    // 提示，第二次就会读到 null。若此时无条件清空，用户永远看不到提示，
+    // 所以用 ref 记住「本次挂载已恢复过」，第二次不再覆盖。
     const carried = window.sessionStorage.getItem("luma:autoSwitch");
     if (carried) {
       window.sessionStorage.removeItem("luma:autoSwitch");
       setSwitchTip(carried);
-    } else {
+      tipRestored.current = true;
+    } else if (!tipRestored.current) {
       setSwitchTip("");
     }
   }, [siteKey, playUrl]);

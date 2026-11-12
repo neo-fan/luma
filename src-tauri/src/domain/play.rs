@@ -71,12 +71,31 @@ fn kind_of(url: &str) -> String {
 /// `https`, which would split off the wrong target.
 fn split_scheme_link(url: &str) -> Option<(String, String)> {
     let idx = url.find("://")?;
-    let scheme = url[..idx].to_string();
+    let scheme = &url[..idx];
+    // RFC 3986: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ).
+    // Without this check a URL with an embedded `://` in its query — e.g.
+    // `magnet:?xt=...&tr=udp://tracker.example` — is mistaken for a named
+    // parse link and produces a bogus "available parsers" error.
+    let mut chars = scheme.chars();
+    if !matches!(chars.next(), Some(c) if c.is_ascii_alphabetic()) {
+        return None;
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')) {
+        return None;
+    }
     if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
         return None;
     }
     let target = url[idx + 3..].to_string();
-    Some((scheme, target))
+    Some((scheme.to_string(), target))
+}
+
+/// Protocols a WebView-based player cannot open. Report them explicitly instead
+/// of sending them through the parse pool / sniffer (which only wastes 15s).
+fn non_web_media_scheme(url: &str) -> Option<&'static str> {
+    const BLOCKED: &[&str] = &["magnet:", "ed2k:", "thunder:", "ftp:", "file:", "qbittorrent:"];
+    let lower = url.trim_start().to_ascii_lowercase();
+    BLOCKED.iter().copied().find(|prefix| lower.starts_with(prefix))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -169,6 +188,16 @@ pub async fn resolve_play(
                 .with_cause(err.message));
             }
         }
+    }
+
+    if let Some(prefix) = non_web_media_scheme(&effective_url) {
+        return Err(AppError::new(
+            code::PLAY_RESOLVE_FAIL,
+            format!(
+                "源返回 {} 链接，桌面播放器不支持，请换源",
+                prefix.trim_end_matches(':')
+            ),
+        ));
     }
 
     let parsed = Url::parse(&effective_url)
@@ -335,5 +364,36 @@ mod tests {
         assert_eq!(split_scheme_link("HTTP://example.com/x"), None);
         // No scheme separator at all.
         assert_eq!(split_scheme_link("just-a-relative-path"), None);
+    }
+
+    #[test]
+    fn split_scheme_link_rejects_embedded_scheme_in_query() {
+        // A `://` buried in a query string is not a scheme separator.
+        assert_eq!(
+            split_scheme_link("magnet:?xt=urn:btih:abc&tr=udp://tracker.example.com/announce"),
+            None
+        );
+        assert_eq!(
+            split_scheme_link("https://a.example/x?next=https://b.example/y"),
+            None
+        );
+        // RFC 3986 scheme syntax: must start with a letter, no separators.
+        assert_eq!(split_scheme_link("1bad://target"), None);
+        assert_eq!(split_scheme_link("bad_scheme://target"), None);
+        assert_eq!(split_scheme_link("bad?query://target"), None);
+        // `+` / `-` / `.` are legal inside a scheme.
+        assert_eq!(
+            split_scheme_link("json+player://page"),
+            Some(("json+player".to_string(), "page".to_string()))
+        );
+    }
+
+    #[test]
+    fn non_web_media_schemes_get_an_actionable_error() {
+        assert_eq!(non_web_media_scheme("magnet:?xt=urn:btih:abc"), Some("magnet:"));
+        assert_eq!(non_web_media_scheme("ED2K://|file|abc|/"), Some("ed2k:"));
+        assert_eq!(non_web_media_scheme("  thunder://abc"), Some("thunder:"));
+        assert_eq!(non_web_media_scheme("https://example.com/a.m3u8"), None);
+        assert_eq!(non_web_media_scheme("huangdou2://https://example.com/p"), None);
     }
 }
