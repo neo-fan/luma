@@ -5,45 +5,13 @@ import ErrorBar from "../components/ErrorBar";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { historySubtitle } from "../lib/history";
 import { log } from "../lib/logger";
 import { usePageState } from "../lib/usePageState";
 import type { HistoryItem } from "../types/tvbox";
 
 interface HistoryPageProps {
   navigate: Navigate;
-}
-
-/** 播放进度：拿不到时长时只显示已看时长。 */
-function progressText(item: HistoryItem): string {
-  const position = item.positionMs ?? 0;
-  if (!item.durationMs || item.durationMs <= 0) {
-    return position > 0 ? `已看 ${Math.round(position / 1000)} 秒` : "";
-  }
-  const percent = Math.min(99, Math.round((position / item.durationMs) * 100));
-  return `已看 ${percent}%`;
-}
-
-/** 相对时间：历史列表里「3 小时前」比一串 ISO 更好扫。 */
-function relativeTime(ms: number): string {
-  if (!ms) {
-    return "";
-  }
-  const diff = Date.now() - ms;
-  if (diff < 60_000) {
-    return "刚刚";
-  }
-  if (diff < 3_600_000) {
-    return `${Math.floor(diff / 60_000)} 分钟前`;
-  }
-  if (diff < 86_400_000) {
-    return `${Math.floor(diff / 3_600_000)} 小时前`;
-  }
-  if (diff < 7 * 86_400_000) {
-    return `${Math.floor(diff / 86_400_000)} 天前`;
-  }
-  const date = new Date(ms);
-  const pad = (input: number) => String(input).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 /** 历史页：最近观看的影片 + 进度，点开回到详情页继续播放。 */
@@ -158,11 +126,9 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
         <div className="vod-grid">
           {items.map((item) => {
             const key = `${item.siteKey}-${item.vodId}`;
-            const progress = progressText(item);
-            const when = relativeTime(item.updatedAt);
-            const sub = [item.siteName || item.siteKey, progress, when]
-              .filter(Boolean)
-              .join(" · ");
+            // 线路名与集数名来自播放页写入：换过源 / 换过线路后，
+            // 用户能一眼看出上次是从哪条线看到第几集。
+            const sub = historySubtitle(item);
             return (
               <div className="fav-item" key={key}>
                 <VodCard

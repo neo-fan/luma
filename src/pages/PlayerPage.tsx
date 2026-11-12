@@ -6,14 +6,14 @@ import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
 import PlayerControls from "../components/player/PlayerControls";
 import EpisodePanel from "../components/player/EpisodePanel";
-import { formatDuration, parsePlayLines } from "../lib/format";
+import { formatDuration, parsePlayLines, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
-import type { HistoryItem, PlayResolved, ResultPage, Site } from "../types/tvbox";
+import type { HistoryItem, PlayResolved, ResultPage, Site, VodInfo } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
@@ -74,6 +74,9 @@ export default function PlayerPage({
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [showSources, setShowSources] = useState(false);
+  /** 收藏状态：与详情页共用同一份 SQLite 数据，这里只做镜像。 */
+  const [favorite, setFavorite] = useState(false);
+  const [favBusy, setFavBusy] = useState(false);
 
   // 地址解析编排：playUrl → PlayResolved（effect 体与依赖数组原样保留在 hook 内）。
   const {
@@ -104,7 +107,69 @@ export default function PlayerPage({
     currentLine,
     canPrev,
     canNext,
+    vod,
   } = useEpisodeList(siteKey, vodId, playUrl);
+
+  /**
+   * 历史写入需要「当前线路名 / 当前集名」，但两个值随异步剧集列表到达才确定。
+   * 用 ref 取值，避免把 lines 放进历史 effect 依赖（那会重建监听并立刻写一次）。
+   * 自动换线路 / 自动换源时 navigate 没有带 playFrom，currentLine.name 才可靠。
+   */
+  const historyLabelRef = useRef({ episodeName: "", playFrom: "" });
+  historyLabelRef.current = {
+    episodeName: currentLine?.episodes[episodeIndex]?.name || episodeName,
+    playFrom: currentLine?.name || playFrom || "",
+  };
+
+  /** 收藏需要完整 vod（封面 / 备注）；详情还没到时用路由参数兜底，先收藏不误事。 */
+  const favVod = useMemo<VodInfo | null>(() => {
+    if (vod) {
+      return vod;
+    }
+    if (!vodName.trim()) {
+      return null;
+    }
+    return { vod_id: vodId, vod_name: vodName, vod_pic: "", vod_play_from: "", vod_play_url: "" };
+  }, [vod, vodId, vodName]);
+
+  useEffect(() => {
+    if (siteKey === "live") {
+      setFavorite(false);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const list = await api.favoritesList();
+        if (alive) {
+          setFavorite(list.some((item) => item.siteKey === siteKey && item.vodId === vodId));
+        }
+      } catch {
+        if (alive) {
+          setFavorite(false);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [siteKey, vodId]);
+
+  const toggleFavorite = async () => {
+    if (!favVod || favBusy) {
+      return;
+    }
+    setFavBusy(true);
+    try {
+      const next = await api.favoritesToggle(toVodRef(siteKey, siteName, favVod));
+      setFavorite(next);
+      setSwitchTip(next ? "已加入收藏" : "已取消收藏");
+    } catch (err) {
+      setVideoError(`收藏操作失败：${errorMessage(err)}`);
+    } finally {
+      setFavBusy(false);
+    }
+  };
 
   const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
 
@@ -417,6 +482,8 @@ export default function PlayerPage({
         vodId,
         name: vodName,
         playUrl,
+        episodeName: historyLabelRef.current.episodeName,
+        playFrom: historyLabelRef.current.playFrom,
         positionMs: snapshot?.positionMs ?? Math.round(video.currentTime * 1000),
         durationMs:
           snapshot?.durationMs ??
@@ -617,6 +684,9 @@ export default function PlayerPage({
         siteName={siteName}
         progressLabel={progressLabel}
         onBack={onBack}
+        favorite={siteKey === "live" ? null : favorite}
+        favBusy={favBusy}
+        onToggleFavorite={() => void toggleFavorite()}
       />
 
       {switchTip ? <p className="tip">{switchTip}</p> : null}

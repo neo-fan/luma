@@ -65,6 +65,10 @@ pub struct HistoryRow {
     pub remarks: String,
     pub site_name: String,
     pub play_url: String,
+    /// 最近观看的集数名（源自己给的剧集标题）。
+    pub episode_name: String,
+    /// 线路名，即 TVBox `vod_play_from` 里的一段。
+    pub play_from: String,
     pub position_ms: u64,
     pub duration_ms: u64,
     pub updated_at: u64,
@@ -161,6 +165,8 @@ impl Db {
                      remarks     TEXT NOT NULL DEFAULT '',
                      site_name   TEXT NOT NULL DEFAULT '',
                      play_url    TEXT NOT NULL DEFAULT '',
+                     episode_name TEXT NOT NULL DEFAULT '',
+                     play_from   TEXT NOT NULL DEFAULT '',
                      position_ms INTEGER NOT NULL DEFAULT 0,
                      duration_ms INTEGER NOT NULL DEFAULT 0,
                      updated_at  INTEGER NOT NULL,
@@ -170,8 +176,30 @@ impl Db {
                      ON favorites(added_at DESC);
                  CREATE INDEX IF NOT EXISTS idx_history_updated
                      ON history(updated_at DESC);",
-            )
+            )?;
+            // `CREATE TABLE IF NOT EXISTS` never alters an existing table, so a
+            // database created before episode/line tracking keeps its 10-column
+            // `history` until the columns are added explicitly.
+            Self::ensure_history_columns(conn)
         })
+    }
+
+    /// Additive, idempotent migration for `history`.
+    fn ensure_history_columns(conn: &Connection) -> rusqlite::Result<()> {
+        let existing: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(history)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for column in ["episode_name", "play_from"] {
+            if !existing.iter().any(|name| name == column) {
+                conn.execute(
+                    &format!("ALTER TABLE history ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"),
+                    [],
+                )?;
+            }
+        }
+        Ok(())
     }
 
     // ---- meta -------------------------------------------------------------
@@ -388,7 +416,8 @@ impl Db {
         self.with("load history", |conn| {
             let mut stmt = conn.prepare(
                 "SELECT site_key, vod_id, name, pic, remarks, site_name,
-                        play_url, position_ms, duration_ms, updated_at
+                        play_url, position_ms, duration_ms, updated_at,
+                        episode_name, play_from
                  FROM history",
             )?;
             let rows = stmt.query_map([], history_from_row)?;
@@ -402,8 +431,9 @@ impl Db {
             tx.execute(
                 "INSERT INTO history
                      (site_key, vod_id, name, pic, remarks, site_name,
-                      play_url, position_ms, duration_ms, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                      play_url, position_ms, duration_ms, updated_at,
+                      episode_name, play_from)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                  ON CONFLICT(site_key, vod_id) DO UPDATE SET
                      name = excluded.name,
                      pic = excluded.pic,
@@ -412,7 +442,9 @@ impl Db {
                      play_url = excluded.play_url,
                      position_ms = excluded.position_ms,
                      duration_ms = excluded.duration_ms,
-                     updated_at = excluded.updated_at",
+                     updated_at = excluded.updated_at,
+                     episode_name = excluded.episode_name,
+                     play_from = excluded.play_from",
                 params![
                     row.site_key,
                     row.vod_id,
@@ -424,6 +456,8 @@ impl Db {
                     row.position_ms as i64,
                     row.duration_ms as i64,
                     row.updated_at as i64,
+                    row.episode_name,
+                    row.play_from,
                 ],
             )?;
             // Keep the newest MAX_HISTORY rows instead of rebuilding a Vec.
@@ -480,6 +514,8 @@ fn history_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRow> {
         position_ms: row.get::<_, i64>(7)? as u64,
         duration_ms: row.get::<_, i64>(8)? as u64,
         updated_at: row.get::<_, i64>(9)? as u64,
+        episode_name: row.get(10)?,
+        play_from: row.get(11)?,
     })
 }
 
@@ -580,6 +616,8 @@ mod tests {
                 remarks: String::new(),
                 site_name: "CMS".into(),
                 play_url: String::new(),
+                episode_name: format!("第 {index} 集"),
+                play_from: "线路A".into(),
                 position_ms: 100,
                 duration_ms: 1000,
                 updated_at: index as u64,
@@ -596,14 +634,63 @@ mod tests {
             remarks: String::new(),
             site_name: "CMS".into(),
             play_url: String::new(),
+            episode_name: "第 5 集".into(),
+            play_from: "线路B".into(),
             position_ms: 999,
             duration_ms: 1000,
             updated_at: 9999,
         })
         .unwrap();
         assert_eq!(db.history().unwrap().len(), MAX_HISTORY);
+        // 集数与线路名随 UPSERT 一起更新，历史页才能显示「看到第几集」。
+        let top = db
+            .history()
+            .unwrap()
+            .into_iter()
+            .find(|row| row.vod_id == "0")
+            .expect("row 0 survives the cap");
+        assert_eq!(top.episode_name, "第 5 集");
+        assert_eq!(top.play_from, "线路B");
         db.clear_history().unwrap();
         assert!(db.history().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 老版本库只有 10 列：打开时必须补齐集数/线路列，且旧行照常可读。
+    #[test]
+    fn legacy_history_table_gains_episode_and_line_columns() {
+        let dir = temp_dir("migrate");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        {
+            let conn = Connection::open(dir.join(DB_FILE)).expect("open legacy db");
+            conn.execute_batch(
+                "CREATE TABLE history (
+                     site_key    TEXT NOT NULL,
+                     vod_id      TEXT NOT NULL,
+                     name        TEXT NOT NULL,
+                     pic         TEXT NOT NULL DEFAULT '',
+                     remarks     TEXT NOT NULL DEFAULT '',
+                     site_name   TEXT NOT NULL DEFAULT '',
+                     play_url    TEXT NOT NULL DEFAULT '',
+                     position_ms INTEGER NOT NULL DEFAULT 0,
+                     duration_ms INTEGER NOT NULL DEFAULT 0,
+                     updated_at  INTEGER NOT NULL,
+                     PRIMARY KEY (site_key, vod_id)
+                 );
+                 INSERT INTO history VALUES
+                     ('cms', '1', 'Old', '', '', 'CMS', 'http://x', 1000, 2000, 5);",
+            )
+            .expect("create legacy schema");
+        }
+        let db = Db::at(dir.clone()).expect("open db");
+        let rows = db.history().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].position_ms, 1000);
+        assert_eq!(rows[0].episode_name, "");
+        assert_eq!(rows[0].play_from, "");
+        drop(db);
+        // 第二次打开：列已存在，ALTER 不能重复执行。
+        assert!(Db::at(dir.clone()).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

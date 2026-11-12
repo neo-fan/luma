@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/invoke";
 import { parsePlayLines } from "../lib/format";
 import type { PlayLine } from "../lib/format";
+import type { VodInfo } from "../types/tvbox";
 
 export interface EpisodeList {
   lines: PlayLine[];
@@ -19,10 +20,13 @@ export interface EpisodeList {
   currentLine: PlayLine | null;
   canPrev: boolean;
   canNext: boolean;
+  /** 详情原始条目：播放页的收藏按钮要 pic / remarks 才能存成完整收藏项。 */
+  vod: VodInfo | null;
 }
 
 export function useEpisodeList(siteKey: string, vodId: string, playUrl: string): EpisodeList {
   const [lines, setLines] = useState<PlayLine[]>([]);
+  const [vod, setVod] = useState<VodInfo | null>(null);
   const [lineIndex, setLineIndex] = useState(0);
   const [episodeIndex, setEpisodeIndex] = useState(0);
   const [panelLine, setPanelLine] = useState(0);
@@ -32,6 +36,7 @@ export function useEpisodeList(siteKey: string, vodId: string, playUrl: string):
     // 直播没有剧集概念，去拿 detailContent 只会多一次必败请求。
     if (siteKey === "live") {
       setLines([]);
+      setVod(null);
       return;
     }
     let alive = true;
@@ -42,10 +47,12 @@ export function useEpisodeList(siteKey: string, vodId: string, playUrl: string):
           return;
         }
         const first = list && list.length > 0 ? list[0] : null;
+        setVod(first);
         setLines(first ? parsePlayLines(first.vod_play_from, first.vod_play_url) : []);
       } catch {
         if (alive) {
           setLines([]);
+          setVod(null);
         }
       }
     };
@@ -83,5 +90,6 @@ export function useEpisodeList(siteKey: string, vodId: string, playUrl: string):
     currentLine,
     canPrev,
     canNext,
+    vod,
   };
 }

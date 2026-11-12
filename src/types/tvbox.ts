@@ -220,6 +220,10 @@ export interface FavoriteItem extends VodRef {
 
 export interface HistoryItem extends VodRef {
   playUrl?: string;
+  /** 最近观看的集数名，历史页直接展示，详情页按它回查续播。 */
+  episodeName?: string;
+  /** 最近观看的线路名（`vod_play_from` 的一段），换源后仍能定位。 */
+  playFrom?: string;
   positionMs?: number;
   durationMs?: number;
   updatedAt: number;

@@ -42,6 +42,12 @@ pub struct HistoryItem {
     pub vod: VodRef,
     #[serde(default)]
     pub play_url: String,
+    /// 最近观看的集数名；用于历史列表显示「看到第几集」与详情页续播定位。
+    #[serde(default)]
+    pub episode_name: String,
+    /// 线路名（TVBox `vod_play_from` 的一段）；换源后线路名会变，必须记录。
+    #[serde(default)]
+    pub play_from: String,
     #[serde(default)]
     pub position_ms: u64,
     #[serde(default)]
@@ -109,6 +115,8 @@ fn history_from_row(row: HistoryRow) -> HistoryItem {
             site_name: row.site_name,
         },
         play_url: row.play_url,
+        episode_name: row.episode_name,
+        play_from: row.play_from,
         position_ms: row.position_ms,
         duration_ms: row.duration_ms,
         updated_at: row.updated_at,
@@ -203,6 +211,8 @@ impl LibraryStore {
             remarks: item.vod.remarks.clone(),
             site_name: item.vod.site_name.clone(),
             play_url: item.play_url.clone(),
+            episode_name: item.episode_name.clone(),
+            play_from: item.play_from.clone(),
             position_ms: item.position_ms,
             duration_ms: item.duration_ms,
             // Always use a fresh timestamp: the caller's value may be stale
@@ -323,6 +333,8 @@ mod tests {
                 .upsert_history(HistoryItem {
                     vod: sample("9"),
                     play_url: "http://127.0.0.1/x".into(),
+                    episode_name: "第 2 集".into(),
+                    play_from: "线路A".into(),
                     position_ms: position,
                     duration_ms: 60000,
                     updated_at: 0,
@@ -332,6 +344,8 @@ mod tests {
         let items = store.list_history();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].position_ms, 2000);
+        assert_eq!(items[0].episode_name, "第 2 集");
+        assert_eq!(items[0].play_from, "线路A");
         assert_eq!(LibraryStore::at(dir.clone()).list_history().len(), 1);
         store.clear_history().unwrap();
         assert!(store.list_history().is_empty());

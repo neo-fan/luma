@@ -126,7 +126,7 @@ try {
     "app rendered",
   );
 
-  // 合成一条历史：进度 50%，2 分钟时长。
+  // 合成一条历史：进度 50%，2 分钟时长；带线路名与集数名（播放页写入的字段）。
   const seeded = await cdp.eval(`(async () => {
     try {
       await window.__TAURI_INTERNALS__.invoke('history_upsert', {
@@ -138,13 +138,22 @@ try {
           remarks: '探针',
           siteName: 'Stub History',
           playUrl: '',
+          episodeName: '第 2 集',
+          playFrom: '线路A',
           positionMs: 60000,
           durationMs: 120000,
           updatedAt: Date.now(),
         },
       });
       const list = await window.__TAURI_INTERNALS__.invoke('history_list');
-      return JSON.stringify({ ok: true, total: list.length, top: list[0]?.name });
+      const top = list.find((one) => one.vodId === ${JSON.stringify(VOD_ID)});
+      return JSON.stringify({
+        ok: true,
+        total: list.length,
+        top: top?.name,
+        episodeName: top?.episodeName,
+        playFrom: top?.playFrom,
+      });
     } catch (err) {
       return 'ERR:' + JSON.stringify(err);
     }
@@ -179,6 +188,16 @@ try {
   assert(
     (probeCard?.sub || "").includes("已看 50%"),
     "progress percent rendered",
+    String(probeCard?.sub),
+  );
+  assert(
+    (probeCard?.sub || "").includes("线路 线路A"),
+    "line name rendered from history.playFrom",
+    String(probeCard?.sub),
+  );
+  assert(
+    (probeCard?.sub || "").includes("看到 第 2 集"),
+    "episode name rendered from history.episodeName",
     String(probeCard?.sub),
   );
   assert(

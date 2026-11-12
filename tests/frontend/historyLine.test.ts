@@ -1,0 +1,51 @@
+/**
+ * 播放页收藏 / 历史线路的源码契约。
+ *
+ * 这两条都是「UI 在，但数据没写」的典型退化点：收藏按钮漏了 toVodRef 会存空条目，
+ * 历史漏了 playFrom / episodeName 则历史页与详情页续播都退回到「只按地址匹配」。
+ * 与 `playerLifecycle.test.ts` 一样，用源码不变量守住，避免后续重构悄悄回退。
+ */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+// tests/frontend -> project root
+const root = resolve(__dirname, "../..");
+const read = (file: string) => readFileSync(resolve(root, file), "utf8");
+
+describe("player favourites & history line contract", () => {
+  it("renders a favourite button in the player header", () => {
+    const header = read("src/components/player/PlayerHeader.tsx");
+    expect(header).toContain('btn--fav');
+    expect(header).toContain("onToggleFavorite");
+    // 直播没有 vod 条目，传 null 隐藏按钮。
+    expect(header).toContain("favorite === null");
+  });
+
+  it("toggles favourites through the shared library store", () => {
+    const page = read("src/pages/PlayerPage.tsx");
+    expect(page).toContain("api.favoritesToggle(toVodRef(siteKey, siteName, favVod))");
+    expect(page).toContain("api.favoritesList()");
+  });
+
+  it("writes the current line and episode into history", () => {
+    const page = read("src/pages/PlayerPage.tsx");
+    expect(page).toContain("episodeName: historyLabelRef.current.episodeName");
+    expect(page).toContain("playFrom: historyLabelRef.current.playFrom");
+    // 自动换线路时 navigate 不带 playFrom，必须优先取当前线路名。
+    expect(page).toContain("currentLine?.name || playFrom");
+    expect(page).toContain("currentLine?.episodes[episodeIndex]?.name || episodeName");
+  });
+
+  it("resumes on the recorded line before falling back to the first one", () => {
+    const detail = read("src/pages/DetailPage.tsx");
+    expect(detail).toContain("resume.playFrom");
+    expect(detail).toContain("resume.episodeName");
+  });
+
+  it("surfaces line and episode in the history list", () => {
+    const history = read("src/lib/history.ts");
+    expect(history).toContain("item.playFrom");
+    expect(history).toContain("item.episodeName");
+  });
+});

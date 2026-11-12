@@ -188,10 +188,26 @@ export default function DetailPage({
   /** 「继续播放」优先回到历史里的那一集，否则从第一集开始。 */
   const quickPlay = useMemo(() => {
     if (resume) {
-      for (const item of lines) {
+      // 首选上次那条线路：同一部剧的线路顺序可能变，按名字定位更稳。
+      const preferred = resume.playFrom
+        ? lines.find((item) => item.name === resume.playFrom)
+        : undefined;
+      const order = preferred
+        ? [preferred, ...lines.filter((item) => item !== preferred)]
+        : lines;
+      for (const item of order) {
         const index = item.episodes.findIndex((episode) => episode.url === resume.playUrl);
         if (index >= 0) {
           return { line: item, episode: item.episodes[index], index };
+        }
+      }
+      // 源的剧集地址换了（CDN 轮换很常见）：回到同线路、同名的那一集。
+      if (preferred && resume.episodeName) {
+        const index = preferred.episodes.findIndex(
+          (episode) => episode.name === resume.episodeName,
+        );
+        if (index >= 0) {
+          return { line: preferred, episode: preferred.episodes[index], index };
         }
       }
     }
@@ -394,7 +410,7 @@ export default function DetailPage({
               onClick={() => quickPlay && playEpisode(quickPlay.line, quickPlay.episode)}
             >
               {resume && quickPlay
-                ? `▶ 继续播放 第 ${quickPlay.index + 1} 集（${formatDuration(resume.positionMs ?? 0)}）`
+                ? `▶ 继续播放 ${resume.playFrom ? `${resume.playFrom} ` : ""}第 ${quickPlay.index + 1} 集（${formatDuration(resume.positionMs ?? 0)}）`
                 : "▶ 播放第 1 集"}
             </button>
           </div>
@@ -419,9 +435,16 @@ export default function DetailPage({
                   type="button"
                   className={index === lineIndex ? "chip is-active" : "chip"}
                   onClick={() => setLineIndex(index)}
-                  title={`${item.episodes.length} 集`}
+                  title={
+                    resume?.playFrom === item.name
+                      ? `${item.episodes.length} 集 · 上次观看的线路`
+                      : `${item.episodes.length} 集`
+                  }
                 >
                   {item.name}（{item.episodes.length}）
+                  {resume?.playFrom === item.name ? (
+                    <span className="chip__flag">上次</span>
+                  ) : null}
                 </button>
               ))}
             </div>
@@ -443,22 +466,27 @@ export default function DetailPage({
 
             {line ? (
               <div className="episode-grid">
-                {episodes.map(({ episode, index }) => (
-                  <button
-                    key={`${episode.url}-${index}`}
-                    type="button"
-                    className={
-                      resume?.playUrl === episode.url ? "episode is-seen" : "episode"
-                    }
-                    onClick={() => playEpisode(line, episode)}
-                    title={episode.name}
-                  >
-                    {episode.name}
-                    {resume?.playUrl === episode.url ? (
-                      <span className="episode__flag">上次看到</span>
-                    ) : null}
-                  </button>
-                ))}
+                {episodes.map(({ episode, index }) => {
+                  // 地址可能被源换过 CDN，地址匹配不上时用「同线路 + 同集名」兜底。
+                  const seen = resume
+                    ? resume.playUrl === episode.url ||
+                      (!!resume.episodeName &&
+                        resume.playFrom === line.name &&
+                        resume.episodeName === episode.name)
+                    : false;
+                  return (
+                    <button
+                      key={`${episode.url}-${index}`}
+                      type="button"
+                      className={seen ? "episode is-seen" : "episode"}
+                      onClick={() => playEpisode(line, episode)}
+                      title={episode.name}
+                    >
+                      {episode.name}
+                      {seen ? <span className="episode__flag">上次看到</span> : null}
+                    </button>
+                  );
+                })}
               </div>
             ) : null}
             {episodes.length === 0 ? (

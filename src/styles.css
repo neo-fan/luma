@@ -689,6 +689,13 @@ textarea {
   font-weight: 500;
 }
 
+/* 详情页线路 chip 上的「上次」角标：历史记录的线路名命中这一条。 */
+.chip__flag {
+  margin-left: 5px;
+  color: var(--ok);
+  font-size: 11px;
+}
+
 .chip--static,
 .chip--muted {
   cursor: default;

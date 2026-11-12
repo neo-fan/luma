@@ -48,6 +48,7 @@ const PROBES = [
   { key: "search_failures", script: "tools/probe_search_failures.mjs", label: "搜索失败源明细与重试", needsStub: true },
   { key: "search_history", script: "tools/probe_search_history.mjs", label: "最近搜索词（10 条上限 / 点击重搜 / 删除清空）" },
   { key: "history", script: "tools/probe_history.mjs", label: "历史页（合成记录，不留痕）" },
+  { key: "player_fav", script: "tools/probe_player_fav.mjs", label: "播放页收藏按钮（加/减后恢复初始集合）" },
   { key: "settings_logs", script: "tools/probe_settings_logs.mjs", label: "版本 / 诊断 / 复制诊断" },
   { key: "settings_health", script: "tools/probe_settings_health.mjs", label: "站点体检（并发测活 / 禁用持久化）", needsStub: true },
   { key: "sidebar", script: "tools/probe_sidebar.mjs", label: "侧边栏收缩 / 展开" },
