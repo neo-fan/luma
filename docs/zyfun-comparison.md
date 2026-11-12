@@ -211,20 +211,30 @@ import { cheerio, 模板, gbkTool, CryptoJS, JSEncrypt, NODERSA, pako,
 import { batchFetch, joinUrl, local, pd, pdfa, pdfh, req } from './inject';
 ```
 
-它依赖同目录 `drpy-core-lite.min.js`（1,230 B 胶水）与 `inject.ts`（他们自己写的宿主垫片，由 electron-vite 打包时内联）。**换句话说：它跑得起来是因为 zyfun 给它配了一套宿主；换个宿主就得重写那层 `inject`。** 我们其实已经有等价物（`HOST_JS` 里的 `req` / `local` / `pdfh` / `pdfa` / `pd` 惰性 STUBS），缺的是**完整性**而不是有没有。
+它依赖同目录 `drpy-core-lite.min.js`（1,230 B 胶水）与 `inject.ts`（他们自己写的宿主垫片，由 electron-vite 打包时内联）。**换句话说：它跑得起来是因为 zyfun 给它配了一套宿主；换个宿主就得重写那层 `inject`。**
+
+> **实测修正（同日）**：拿 `cluntop/tvbox` 的真实引擎 `lib/drpy2.min.js`（67 KB）做探针后发现，
+> `pdfh`/`pdfa`/`pd`/`jsp` 是**引擎自己定义的**，`MY_URL` 也自声明——宿主根本不需要提供它们。
+> 真正挡住 drpy2 的是另外三件事：Web 全局缺失、`req` 的**同步语义**、以及引擎自己的
+> `getProxyUrl()` 依赖 `getProxy(boolean)`。详见 D2 行与 `docs/js-support.md` §5.5。
 
 | # | 子项 | 为什么必须 | 工作量 | 验收 |
 |---|---|---|---|---|
 | D1 | **`do=js` 本地代理路由** | drpy2 规则大量返回 `getProxyUrl()` 生成的 `127.0.0.1:<port>/proxy?do=js&...`。我们现在 `do=py` 有、`do=js` 直接报「runtime 不支持 proxy」→ 这类站点**能搜到但一律播不出** | **1.5d** | 一个返回 `do=js` 的规则，`proxy` 方法被调到、m3u8 能 200 返回并被重写；`do=jar` 仍明确报不支持 |
-| D2 | **`initEnv` 垫片补全** | 现只够「让顶层代码求值完」，`pdfh/pdfa/pd/jsp/joinUrl` 是惰性 STUB。drpy2 规则真正调用时会拿到空值或抛错——这就是「空 class」的另一半原因 | **1.5d** | 用 1 份真实 drpy2 规则 + 本地 fixture，`home/category/detail/search` 四方法至少各返回 1 条真实数据 |
+| D2 | **运行时兼容（Web 全局 + `req` 同步语义）** | 真引擎自带 `pdfh/pdfa/jsp`，宿主要补的是 `TextEncoder`/`TextDecoder`/`URLSearchParams`，以及**把 `req` 从 Promise 改成同步可读**——drpy2 写 `req(url).content`，拿到 Promise 就等于恒空列表 | **0.5d**（原估 1.5d） | 真实引擎 + 真实 CMS，`homeVideo/category/search` 各返回 20 条真实数据 |
 | D3 | **引擎随包（离线兜底）** | 现在引擎靠站点 `api` 远程加载（实测能加载，8 个 import 全过）。仅当远程挂了/被墙才需要本地副本 | **0.5d** | 断网时 drpy2 站点仍能启动；资源清单登记来源+版本+sha256 |
 | D4 | **class-based `Spider` 规范对齐** | 新版 FongMi 用 class 构造，我们只做粗粒度 `new Spider(ext)` | **1d** | fixture 里 class 形态能 `init` 并被短名派发命中 |
 
-**合计 4.5d**，建议顺序 **D1 → D2 → D4 → D3**（D1 是「搜到播不出」的元凶，D3 收益最低）。
+**合计 4.5d → 实际 D1+D2 已完成，剩 D4/D3 共 1.5d**，顺序 **D1 → D2 → D4 → D3**（D1 是「搜到播不出」的元凶，D3 收益最低）。
 
 > **D1 已交付（2026-11-12）**：`/proxy?do=js` 接通 + `getProxyUrl()` 返回宿主真实端口，
 > `p1.py --adapter` 21/21、`cargo test --lib` 84/84、`pnpm test` 145/145。细节见
-> `docs/js-support.md` §5.4。剩余 D2/D4/D3 共 3d。
+> `docs/js-support.md` §5.4。
+>
+> **D2 已交付（2026-11-12，实际 0.5d 而非 1.5d）**：补 Web 全局 + 修 `req` 同步语义 +
+> 修 `console.log(undefined)` 中断脚本 + 修 `atob` padding 泄漏 + 补 `getProxy`。真引擎跑真实
+> CMS 三条链路各 20 条数据。`p1.py --adapter` **22/22**（新增 9 条断言）。细节见
+> `docs/js-support.md` §5.5。**剩余 D4/D3 共 1.5d。**
 
 **两个不要误解的点：**
 

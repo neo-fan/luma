@@ -502,6 +502,91 @@ def python_children() -> int:
     return sum(1 for line in output.splitlines() if "python.exe" in line.lower())
 
 
+def qjs_env_phase() -> None:
+    """Web globals + the synchronous `req` contract drpy2 relies on.
+
+    drpy2 calls `req(url).content` synchronously (FongMi convention). Returning a
+    bare Promise handed every rule a Promise object, so `.content` was undefined
+    and the rule silently produced an empty list. Both the sync read and the
+    `await` path must work, and `console.log(undefined)` must not abort a script.
+    """
+    binary = qjs_binary()
+    if binary is None:
+        record("T-16 qjs", "web globals", "SKIP", "build sidecars/qjs-runner first")
+        return
+
+    src = """
+globalThis.spider = {
+  homeContent: async function () {
+    var R = {};
+    function t(k, fn) { try { R[k] = String(fn()); } catch (e) { R[k] = 'ERR:' + e.message; } }
+    t('reqSync', function () {
+      var r = req('http://127.0.0.1:8787/config.json');
+      return (r && typeof r.content === 'string' && r.content.length > 0) ? 'ok' : 'empty';
+    });
+    try {
+      var awaited = await req('http://127.0.0.1:8787/config.json');
+      R.reqAwait = (awaited && typeof awaited.content === 'string' && awaited.content.length > 0) ? 'ok' : 'empty';
+    } catch (e) { R.reqAwait = 'ERR:' + e.message; }
+    t('logUndefined', function () { console.log(undefined); return 'ok'; });
+    t('atobPad', function () {
+      var s = atob('aGVsbG8='), b = [];
+      for (var i = 0; i < s.length; i++) b.push(s.charCodeAt(i));
+      return b.join(',');
+    });
+    t('btoa', function () { return btoa('hello'); });
+    t('utf8Encode', function () { return Array.from(new TextEncoder().encode('你a')).join(','); });
+    t('utf8RoundTrip', function () { return new TextDecoder().decode(new TextEncoder().encode('中文😀')); });
+    t('urlSearchParams', function () {
+      var p = new URLSearchParams({ a: 1, b: 'x y' });
+      p.append('c', '2');
+      return p.toString();
+    });
+    t('getProxy', function () { return getProxy(true); });
+    return { list: Object.keys(R).map(function (k) { return { vod_id: k, vod_name: R[k] }; }) };
+  }
+};
+"""
+    payload = json.dumps(
+        {
+            "id": 1,
+            "source": src,
+            "method": "homeContent",
+            "args": [],
+            "proxy_port": 9978,
+            "timeout_ms": 8000,
+        }
+    )
+    proc = subprocess.run(
+        [str(binary)],
+        input=(payload + "\n").encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=40,
+    )
+    try:
+        frame = json.loads(proc.stdout.decode("utf-8").strip().splitlines()[0])
+        got = {item["vod_id"]: item["vod_name"] for item in frame["result"]["list"]}
+    except Exception:  # noqa: BLE001
+        record("T-16 qjs", "web globals + sync req", "FAIL", proc.stdout.decode("utf-8", "replace")[:80])
+        return
+
+    expect = {
+        "reqSync": "ok",
+        "reqAwait": "ok",
+        "logUndefined": "ok",
+        # 'hello' as char codes: padding must not leak a trailing NUL.
+        "atobPad": "104,101,108,108,111",
+        "btoa": "aGVsbG8=",
+        "utf8Encode": "228,189,160,97",
+        "utf8RoundTrip": "中文😀",
+        "urlSearchParams": "a=1&b=x%20y&c=2",
+        "getProxy": "http://127.0.0.1:9978/proxy?do=js",
+    }
+    bad = [f"{k}={got.get(k)!r}" for k, want in expect.items() if got.get(k) != want]
+    check(not bad, "T-16 qjs", "web globals + sync req", ",".join(bad) or f"{len(expect)} checks")
+
+
 def app_phase_simple() -> None:
     if not cdp_page():
         for name in [
@@ -544,6 +629,7 @@ def main() -> int:
 
     adapter_phase()
     qjs_phase()
+    qjs_env_phase()
     if not args.adapter:
         app_phase_simple()
 

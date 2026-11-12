@@ -294,20 +294,69 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 - `Uint8Array` 体 → `b64 = AP8QIA==`，解码回 `00 ff 10 20`；
 - `getProxyUrl('vod')` → `http://127.0.0.1:9978/proxy?do=js&from=vod`。
 
-**未做**：真窗口下用一个返回 `do=js` 的真实 drpy2 规则跑通「搜索→详情→播放」出画，
-需要等 D2 的 `initEnv` 补齐（否则规则本身拿不到数据）。当前只能保证**路由与协议层**就绪。
+**未做**：真窗口下用一个返回 `do=js` 的真实 drpy2 规则跑通「搜索→详情→播放」出画。D2
+（§5.5）已经证明引擎侧不再挡路，剩下的是真实规则文件与出画验证。
+
+
+### 5.5 D2：drpy2 引擎端到端跑通（2026-11-12）
+
+**原计划「补 `initEnv` 垫片，1.5 天」被实测推翻。** 拿真实引擎（`cluntop/tvbox` 的
+`lib/drpy2.min.js`，67 KB）跑探针，得到的事实与原判断几乎相反：
+
+| 原判断 | 实测 |
+|---|---|
+| `pdfh`/`pdfa`/`pd` 是惰性 STUB，要我们实现 | **引擎自己定义** `function pdfh` / `function pdfa` / `const jsp`，不依赖宿主；`jsp`/`jpg` 中 `jpg` 是 `.jpg` 后缀的误匹配，不是函数 |
+| `MY_URL`/`HOST` 要宿主注入 | 引擎自己 `if(typeof MY_URL==="undefined"){var MY_URL}` |
+| 要补一堆 DOM 工具 | 真正缺的只有 3 个 **Web 全局**：`TextEncoder`/`TextDecoder`/`URLSearchParams`（`Uint8Array`/`DataView`/`Promise`/`Proxy` 都在） |
+
+顺着探针又挖出 **3 个宿主真 bug**，每一个都能单独让整站变空：
+
+| bug | 现象 | 后果 |
+|---|---|---|
+| **`req` 返回 Promise** | FongMi 约定 `req(url)` 是同步的，引擎写 `let res=req(url,obj); let html=res.content` | 拿到的是 Promise 对象，`.content` 为 `undefined`，`JSON.parse('undefined')` 抛错被引擎吞掉 → **所有 drpy2 规则恒空列表**。这就是之前 `live2vod` 报 `unexpected token: 'undefined'` 的同一个根因 |
+| **`console.log(undefined)` 抛异常** | Rust 侧参数类型是 `String` | `console.log(RKEY)`（RKEY 未定义）直接 `Error converting from js 'undefined' into type 'string'`，**整个脚本中断**；源码里到处都是可选值日志 |
+| **`atob` padding 泄漏** | 剥掉 `=` 后 `charAt` 越界，`B64C.indexOf('')` 返回 0 | `atob('aGVsbG8=')` 解出 `hello\u0000`，二进制签名类工具全错 |
+
+改动：
+
+| 位置 | 改动 |
+|---|---|
+| `HOST_JS.req` | 改为**同步返回结果对象**，并挂一个不递归的 `then`/`catch`，让 `req(x).content` 与 `await req(x)` 两种写法同时成立 |
+| `HOST_JS` | 新增 `console`（JS 侧扁平化任意参数/undefined/Error）、`atob`/`btoa`（保留 `=` 判边界）、`TextEncoder`/`TextDecoder`（UTF-8 + 代理对；`gbk` 走引擎自带的 `gbkTool().decode`，输入是 percent 串不是字节）、`URLSearchParams`、`setTimeout`（微任务降级，无事件循环） |
+| `HOST_JS` | 新增 `getProxy(true)`：引擎自己的 `getProxyUrl()` 优先调它、**fallback 硬编码 9978**；不提供时端口回退就会指向错端口 |
+| Rust | 去掉 `console` Object，改为单一 `__tvbox_log` 字符串 sink |
+
+端到端证据（真实引擎 + 配置里的真实 CMS `cj.ffzyapi.com`，非 fixture）：
+
+| 方法 | 结果 |
+|---|---|
+| `homeContent` | 4 个分类（`class_name`/`class_url` 生效） |
+| `homeVideoContent` | **20 条**，`vod_name=黄金渔场`、`vod_remarks=更新至第20261111期` |
+| `categoryContent` | **20 条**，URL 正确替换 `fyclass=27` / `fypage=1` |
+| `searchContent` | **20 条**，`**` 正确替换为关键词 |
+
+4 个自包含真实源（荐片/金牌/apple/聚合短剧）在改动后仍正常出数据，无回归。
+
+**踩坑记录（写给下一个改规则的人）**：drpy2 的 `一级`/`二级`/`搜索` 必须用 `;` 分成
+**至少 5 段**，顺序是 `解析器;名称;图片;备注;id`。只写 `json:list` 会在
+`categoryParse` 里被 `if(p.length<5){return "{}"}` 直接短路，表现为「URL 打得开、页面全空」，
+极易误判成引擎或网络问题。
+
+验收：`p1.py --adapter` **22/22**（新增 `web globals + sync req`，内含 9 条断言：
+同步/await 两条 req 路径、`console.log(undefined)`、`atob` padding、`btoa`、UTF-8 编码与
+含 emoji 的往返、`URLSearchParams`、`getProxy` 端口）；`cargo test --lib` 84/84；
+`pnpm test` 145/145。
 
 
 ---
 
 ## 6. 仍需补齐
 
-1. **drpy2 的 `initEnv` polyfill 完整性**：目前 `HOST_JS` 只提供惰性 STUBS 让模块求值能跑完，
-   并非完整的 `initEnv` 注入；drpy2 真实依赖的全局/工具函数仍可能缺失，需对照 drpy-node 的
-   `drpyS` 沙箱逐项补齐。
-2. **本地代理**：`proxy` 已接通——`/proxy?do=js` 会把 query map 原样交给脚本的
-   `proxy(params)`，`getProxyUrl()` 也改为返回宿主真实端口（见 §5.3）。仍缺的是 `action`
-   方法路由（drpy2 用它做换线路/清缓存/登录）。
+1. **`action` 方法路由**：drpy2 用 `action` 做换线路/清缓存/登录，目前只接了 `proxy`（§5.4），
+   `action` 未接。`initEnv` 已不再是缺口——见 §5.5 的实测结论。
+2. **真实规则文件的上游缺失**：`js_KTV歌厅` 的 `ext` 指向 `./js/drpy2.js`，该文件在
+   `cluntop/tvbox` 上游 404。引擎侧已能跑真实规则（§5.5），这条属于站点资源缺失；按既有
+   边界**不硬编码规则**，报告里如实标注即可。
 3. **当前 FongMi class-based `Spider` 规范**：现只做 `new Spider(ext)` 的粗粒度兼容，新版
    class-based 规范（构造参数、`init` 时机、方法签名）尚未逐条对齐。
 4. **便携包实机验证**：本轮按约定**停在 debug、不打包**；`make_portable.py` 的新复制项

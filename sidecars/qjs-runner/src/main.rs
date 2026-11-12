@@ -21,7 +21,7 @@ use percent_encoding::percent_decode_str;
 use rquickjs::{
     loader::{Loader, Resolver},
     module::Declared,
-    CatchResultExt, Context, Ctx, Error as JsError, Function, Module, Object, Runtime, Value,
+    CatchResultExt, Context, Ctx, Error as JsError, Function, Module, Runtime, Value,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
@@ -238,6 +238,38 @@ const HOST_JS: &str = r#"(function () {
   var DEFAULT_HEADERS = __TVBOX_HEADERS__;
   var PREFIX = __TVBOX_SITE__ + ':';
   var PROXY_PORT = __TVBOX_PROXY_PORT__ || 0;
+
+  // -- console ---------------------------------------------------------------
+  // Flattened on the JS side: a typed `String` parameter in Rust rejects
+  // `console.log(undefined)`, and real sources log optional values constantly.
+  var _fmt = function (x) {
+    if (typeof x === 'undefined') return 'undefined';
+    if (typeof x === 'string') return x;
+    if (x === null) return 'null';
+    if (x instanceof Error) return x.name + ': ' + x.message;
+    try { return JSON.stringify(x); } catch (e) { return String(x); }
+  };
+  var _emit = function (prefix, args) {
+    var parts = [], i;
+    for (i = 0; i < args.length; i++) parts.push(_fmt(args[i]));
+    __tvbox_log(prefix + parts.join(' '));
+  };
+  globalThis.console = {
+    log: function () { _emit('', arguments); },
+    info: function () { _emit('', arguments); },
+    debug: function () { _emit('', arguments); },
+    warn: function () { _emit('[warn] ', arguments); },
+    error: function () { _emit('[error] ', arguments); }
+  };
+
+  // FongMi native bridge. drpy2 defines its own `getProxyUrl()` which calls
+  // `getProxy(true)` and *falls back to a hardcoded 9978*. Without this global
+  // a port fallback (9978 taken) pointed playback at the wrong port, and the
+  // host's own getProxyUrl stub never got a chance to run.
+  globalThis.getProxy = function () {
+    if (!PROXY_PORT) return '';
+    return 'http://127.0.0.1:' + PROXY_PORT + '/proxy?do=js';
+  };
   var raw = globalThis.__tvbox_req_raw;
   globalThis.req = function (url, options) {
     var opts = options || {}, merged = {}, h = {}, k;
@@ -249,7 +281,21 @@ const HOST_JS: &str = r#"(function () {
     var out;
     try { out = JSON.parse(text); } catch (e) { out = { code: 0, content: text, headers: {} }; }
     if (out.code === 0 && out.error) console.error('req failed: ' + url + ' :: ' + out.error);
-    return Promise.resolve(out);
+    // FongMi's `req` is synchronous and drpy2 reads `req(url).content` directly
+    // (no await). Returning a bare Promise handed every drpy2 rule a Promise
+    // object, so `.content` was undefined and JSON.parse got 'undefined' — the
+    // rule then silently produced an empty list. Returning the plain object
+    // keeps that path working, and the injected `then` keeps `await req(...)`
+    // working for the spiders that do await.
+    if (out && typeof out === 'object' && typeof out.then !== 'function') {
+      out.then = function (ok, fail) {
+        var plain = {};
+        for (var f in out) if (f !== 'then' && f !== 'catch') plain[f] = out[f];
+        return Promise.resolve(plain).then(ok, fail);
+      };
+      out.catch = function (fail) { return out.then(null, fail); };
+    }
+    return out;
   };
   globalThis.local = {
     get: function (k) { return globalThis.__tvbox_local_get(PREFIX + String(k)); },
@@ -263,6 +309,198 @@ const HOST_JS: &str = r#"(function () {
   };
   // jsjiami-obfuscated sources (live2vod.js) assign/read this host global.
   if (!('__JS_SPIDER__' in globalThis)) globalThis.__JS_SPIDER__ = undefined;
+
+  // -- Web globals -----------------------------------------------------------
+  // rquickjs ships the JS core (Uint8Array/DataView/Promise/Proxy) but none of
+  // the Web layer. drpy2 rules call atob/btoa when signing requests,
+  // TextDecoder for charset repair and URLSearchParams for form bodies; each
+  // missing global surfaces as "x is not a function" deep inside a minified
+  // engine, which is why they are installed unconditionally.
+  var B64C = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  globalThis.btoa = function (input) {
+    var s = String(input == null ? '' : input), out = '', i;
+    for (i = 0; i < s.length; i += 3) {
+      var c1 = s.charCodeAt(i) & 255;
+      var c2 = i + 1 < s.length ? s.charCodeAt(i + 1) & 255 : -1;
+      var c3 = i + 2 < s.length ? s.charCodeAt(i + 2) & 255 : -1;
+      out += B64C.charAt(c1 >> 2);
+      out += B64C.charAt(((c1 & 3) << 4) | (c2 < 0 ? 0 : c2 >> 4));
+      out += c2 < 0 ? '=' : B64C.charAt(((c2 & 15) << 2) | (c3 < 0 ? 0 : c3 >> 6));
+      out += c3 < 0 ? '=' : B64C.charAt(c3 & 63);
+    }
+    return out;
+  };
+  globalThis.atob = function (input) {
+    // Keep '=' so a short final quartet is detectable. Stripping it made
+    // `charAt` run past the end, and `B64C.indexOf('')` returned 0 — which
+    // decoded `aGVsbG8=` to "hello\u0000" instead of "hello".
+    var s = String(input == null ? '' : input).replace(/[^A-Za-z0-9+/=]/g, ''), out = '', i;
+    for (i = 0; i < s.length; i += 4) {
+      var n1 = B64C.indexOf(s.charAt(i));
+      var n2 = B64C.indexOf(s.charAt(i + 1));
+      var n3 = s.charAt(i + 2) === '=' || s.charAt(i + 2) === '' ? -1 : B64C.indexOf(s.charAt(i + 2));
+      var n4 = s.charAt(i + 3) === '=' || s.charAt(i + 3) === '' ? -1 : B64C.indexOf(s.charAt(i + 3));
+      if (n1 < 0 || n2 < 0) break;
+      out += String.fromCharCode((n1 << 2) | (n2 >> 4));
+      if (n3 >= 0) out += String.fromCharCode(((n2 & 15) << 4) | (n3 >> 2));
+      if (n4 >= 0) out += String.fromCharCode(((n3 & 3) << 6) | n4);
+    }
+    return out;
+  };
+
+  function _utf8Encode(str) {
+    str = String(str == null ? '' : str);
+    var out = [], i = 0;
+    while (i < str.length) {
+      var c = str.charCodeAt(i++);
+      // Join a surrogate pair before encoding, otherwise emoji in titles
+      // become two lone surrogates (invalid UTF-8).
+      if (c >= 0xD800 && c <= 0xDBFF && i < str.length) {
+        var lo = str.charCodeAt(i);
+        if (lo >= 0xDC00 && lo <= 0xDFFF) { c = ((c - 0xD800) << 10) + (lo - 0xDC00) + 0x10000; i++; }
+      }
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xC0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xF0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return out;
+  }
+  function _toBytes(buf) {
+    if (!buf) return [];
+    if (typeof buf === 'string') return _utf8Encode(buf);
+    if (buf.buffer) return [].slice.call(new Uint8Array(buf.buffer, buf.byteOffset || 0, buf.byteLength));
+    return [].slice.call(buf);
+  }
+  if (typeof globalThis.TextEncoder === 'undefined') {
+    globalThis.TextEncoder = function () {};
+    globalThis.TextEncoder.prototype.encode = function (s) {
+      return new Uint8Array(_utf8Encode(s));
+    };
+  }
+  if (typeof globalThis.TextDecoder === 'undefined') {
+    // `label` is honoured for gbk/gb2312 only when the engine brought its own
+    // gbkTool (drpy2 imports it); plain UTF-8 otherwise. A silent wrong charset
+    // is worse than a loud one, so unknown labels fall back to utf-8.
+    globalThis.TextDecoder = function (label) {
+      this.encoding = String(label || 'utf-8').toLowerCase();
+    };
+    globalThis.TextDecoder.prototype.decode = function (buf) {
+      var bytes = _toBytes(buf);
+      if (this.encoding === 'gbk' || this.encoding === 'gb2312' || this.encoding === 'gb18030') {
+        // drpy2 ships gbkTool as a factory; its `decode` consumes a
+        // percent-encoded GBK string (`%C4%E3`), not raw bytes.
+        var tool = globalThis.gbkTool;
+        if (typeof tool === 'function') { try { tool = tool(); } catch (e) { tool = null; } }
+        if (tool && typeof tool.decode === 'function') {
+          try {
+            var pct = [];
+            for (var g = 0; g < bytes.length; g++) {
+              pct.push('%' + (bytes[g] < 16 ? '0' : '') + bytes[g].toString(16).toUpperCase());
+            }
+            return tool.decode(pct.join(''));
+          } catch (e) { console.error('gbk decode failed: ' + e); }
+        }
+      }
+      var s = '', i = 0;
+      while (i < bytes.length) {
+        var b = bytes[i++];
+        if (b < 0x80) { s += String.fromCharCode(b); continue; }
+        if (b >= 0xC0 && b < 0xE0 && i < bytes.length) {
+          s += String.fromCharCode(((b & 31) << 6) | (bytes[i++] & 63));
+        } else if (b >= 0xE0 && b < 0xF0 && i + 1 < bytes.length) {
+          s += String.fromCharCode(((b & 15) << 12) | ((bytes[i++] & 63) << 6) | (bytes[i++] & 63));
+        } else if (b >= 0xF0 && i + 2 < bytes.length) {
+          var cp = ((b & 7) << 18) | ((bytes[i++] & 63) << 12) | ((bytes[i++] & 63) << 6) | (bytes[i++] & 63);
+          cp -= 0x10000;
+          s += String.fromCharCode(0xD800 + (cp >> 10), 0xDC00 + (cp & 1023));
+        }
+      }
+      return s;
+    };
+  }
+
+  if (typeof globalThis.URLSearchParams === 'undefined') {
+    var _pairs = function (init) {
+      var list = [];
+      if (!init) return list;
+      if (typeof init === 'string') {
+        var raw = init.charAt(0) === '?' ? init.slice(1) : init;
+        if (!raw) return list;
+        var parts = raw.split('&');
+        for (var i = 0; i < parts.length; i++) {
+          if (!parts[i]) continue;
+          var kv = parts[i].split('=');
+          list.push([
+            decodeURIComponent(kv[0].replace(/\+/g, ' ')),
+            decodeURIComponent((kv[1] || '').replace(/\+/g, ' '))
+          ]);
+        }
+        return list;
+      }
+      if (typeof init.length === 'number' && typeof init !== 'function' && init.charAt === undefined) {
+        for (var j = 0; j < init.length; j++) list.push([String(init[j][0]), String(init[j][1])]);
+      } else {
+        for (var k in init) if (Object.prototype.hasOwnProperty.call(init, k)) list.push([k, String(init[k])]);
+      }
+      return list;
+    };
+    var USP = function (init) { this._l = _pairs(init); };
+    USP.prototype.append = function (k, v) { this._l.push([String(k), String(v)]); };
+    USP.prototype.set = function (k, v) {
+      k = String(k);
+      for (var i = this._l.length - 1; i >= 0; i--) if (this._l[i][0] === k) this._l.splice(i, 1);
+      this._l.push([k, String(v)]);
+    };
+    USP.prototype.get = function (k) {
+      k = String(k);
+      for (var i = 0; i < this._l.length; i++) if (this._l[i][0] === k) return this._l[i][1];
+      return null;
+    };
+    USP.prototype.getAll = function (k) {
+      k = String(k);
+      var out = [];
+      for (var i = 0; i < this._l.length; i++) if (this._l[i][0] === k) out.push(this._l[i][1]);
+      return out;
+    };
+    USP.prototype.has = function (k) { return this.get(k) !== null; };
+    USP.prototype['delete'] = function (k) {
+      k = String(k);
+      for (var i = this._l.length - 1; i >= 0; i--) if (this._l[i][0] === k) this._l.splice(i, 1);
+    };
+    USP.prototype.forEach = function (fn, thisArg) {
+      for (var i = 0; i < this._l.length; i++) fn.call(thisArg, this._l[i][1], this._l[i][0], this);
+    };
+    USP.prototype.keys = function () { return this._l.map(function (p) { return p[0]; }); };
+    USP.prototype.values = function () { return this._l.map(function (p) { return p[1]; }); };
+    USP.prototype.entries = function () { return this._l.slice(); };
+    USP.prototype.toString = function () {
+      var out = [];
+      for (var i = 0; i < this._l.length; i++) {
+        out.push(encodeURIComponent(this._l[i][0]) + '=' + encodeURIComponent(this._l[i][1]));
+      }
+      return out.join('&');
+    };
+    globalThis.URLSearchParams = USP;
+  }
+
+  // Timer shims: sources await `sleep` helpers before retries. There is no
+  // event loop in a single request, so run the callback as a microtask —
+  // ordering is preserved and the delay collapses to zero.
+  if (typeof globalThis.setTimeout === 'undefined') {
+    var _timerSeq = 0;
+    globalThis.setTimeout = function (fn) {
+      var args = [].slice.call(arguments, 2);
+      var id = ++_timerSeq;
+      if (typeof fn === 'function') {
+        queueMicrotask(function () {
+          try { fn.apply(null, args); } catch (e) { console.error('timer: ' + e); }
+        });
+      }
+      return id;
+    };
+    globalThis.clearTimeout = function () {};
+  }
   // drpy2.min.js is an engine bundle: FongMi/drpy-node inject an `initEnv`
   // polyfill before the first export, and its top-level code references these
   // names before its own definitions are reachable in strict ESM scope. Provide
@@ -335,16 +573,17 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
         })?,
     )?;
 
-    let console = Object::new(ctx.clone())?;
-    for level in ["log", "error", "warn", "info"] {
-        console.set(
-            level,
-            Function::new(ctx.clone(), |line: String| {
-                eprintln!("[qjs] {line}");
-            })?,
-        )?;
-    }
-    globals.set("console", console)?;
+    // Single-string sink; the JS side in HOST_JS flattens
+    // `console.log(a, b, undefined)`. Declaring the parameter as `String` made
+    // `console.log(RKEY)` throw "Error converting from js 'undefined' into type
+    // 'string'" and abort the whole script — real sources log optional values
+    // all the time, so this was a silent whole-site killer.
+    globals.set(
+        "__tvbox_log",
+        Function::new(ctx.clone(), |line: String| {
+            eprintln!("[qjs] {line}");
+        })?,
+    )?;
     globals.set("__tvbox_ext", request.ext.clone())?;
     globals.set(
         "__tvbox_site",

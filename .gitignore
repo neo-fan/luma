@@ -11,6 +11,10 @@ docs/verification-config.md
 .workbuddy/q_*
 .workbuddy/probe_*
 .workbuddy/*.json
+# 一次性验证用的真实配置副本、站点脚本与探针（含外部地址，禁止入库）
+.workbuddy/tmp/
+# Windows 设备名残留（误写 `> nul` 产生，无法常规删除）
+/nul
 # 便携版/安装包的本机解压验证目录
 .workbuddy/*-test/
 .workbuddy/user-config.b64
