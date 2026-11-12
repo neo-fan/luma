@@ -175,8 +175,8 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 | 环节 | 实现 |
 |------|------|
 | **Resolver / Loader** | `TvResolver::resolve` 调 `normalize_module()` 把说明符归一化为 `asset:<file>` / `net:<url>`；`TvLoader::load` 用 `load_source()` 从 `assets_dir/js/lib/` 读本地文件或 `ureq` 走 HTTP（10s 超时） |
-| **UMD 包装** | 非 ESM 的 UMD 包（无 `export`）被包成 `(function(){...}).call(globalThis); export default (globalThis.<全局名> || {});`，使 `import cheerio from ...` 之类可用；全局名由 `umd_global()` 给出：`crypto-js.js→CryptoJS`、`node-rsa.js→JSEncrypt`、`pako.min.js→pako`、`json5.js→JSON5`、`jinja.js→jinja`。classic 模式下 `preload_umd()` 先 `eval` 这几个 UMD 全局 |
-| **宿主注入 API** | `install_host()` 注入 `req`、`local`、`md5X`、`console`、`__tvbox_ext / __tvbox_site / __tvbox_api`，并 `eval` `HOST_JS` 垫片；垫片还预置 `__JS_SPIDER__ = undefined` 和一组惰性 STUBS（`pdfh/pdfa/pd/jsp/print/log/VERSION/RKEY/OCR_API/OcrApi/getProxyUrl/rule/os/initEnv/_ENV/joinUrl`），让 drpy2 顶层代码在严格 ESM 作用域里能求值完；**不定义 `require/process/fetch`** |
+| **UMD 包装** | 非 ESM 的 UMD 包（无 `export`）被包成 `(function(){...}).call(globalThis); export default (globalThis.<全局名> || {});`，使 `import cheerio from ...` 之类可用；全局名由 `umd_global()` 给出：`crypto-js.js→CryptoJS`、`node-rsa.js→JSEncrypt`、`pako.min.js→pako`、`json5.js→JSON5`、`jinja.js→jinja`。**不做全量预加载**：只有脚本真的 import 时才由 Loader 加载（每帧 eval 500 KB UMD 纯属浪费） |
+| **宿主注入 API** | `install_host()` 注入 `req`、`local`、`md5X`、`console`、`__tvbox_ext / __tvbox_site / __tvbox_api`，并 `eval` `HOST_JS` 垫片；`md5X` 走 `md-5` crate（不为了一个 md5 去 eval 204 KB crypto-js）；垫片还预置 `__JS_SPIDER__ = undefined` 和一组惰性 STUBS（`pdfh/pdfa/pd/jsp/print/log/VERSION/RKEY/OCR_API/OcrApi/getProxyUrl/rule/os/initEnv/_ENV/joinUrl`），让 drpy2 顶层代码在严格 ESM 作用域里能求值完；**不定义 `require/process/fetch`** |
 | **导出发现** | `BOOTSTRAP_JS` 收集第 1.4 节的四类候选到 `globalThis.__tvbox_candidates`，并对有 `init` 的候选调用 `init(ext)` 一次 |
 | **短名映射 / 派发** | `CALL_JS` 的 `MAP` 实现第 1.5 节长名→短名回退；`detailContent` / `playerContent` 拆数组首参；结果 `await` + `JSON.stringify` |
 | **墙钟超时** | `DEFAULT_TIMEOUT_MS = 15000`；`runtime.set_interrupt_handler` 以 `Instant::now() + timeout` 为硬截止中断解释器，宿主另会 kill 整个进程树。超时返回 `SITE_TIMEOUT`，其它异常返回 `SPIDER_CRASH` |
@@ -196,7 +196,23 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 同帧还带 `id / source / method / args / ext / timeout_ms / script_kind`。qjs-runner 侧
 `Request` 结构体已按上述字段名定义（`#[serde(default)]`，缺字段不报错）。
 
-### 4.3 便携包落点（与 `tools/make_portable.py` 对应）
+### 4.3 依赖选择（能用库就不手搓）
+
+| 需求 | 依赖 | 为什么不自写 |
+|------|------|--------------|
+| HTTP | `ureq`，**`default-features = true`**（含 `tls` / `gzip` / `charset`） | 只列 `features` 会关掉 default；少了 `gzip` 压缩响应会解成乱码，少了 `charset` GBK 页面按 UTF-8 解坏 |
+| 编码转换 | `encoding_rs` | `req(..., {encoding:"gbk"})` 显式覆盖；GBK / GB18030 / Big5 映射表不自己维护 |
+| 二进制 | `base64` | `req(..., {buffer:2})` 按 TVBox 约定返回 base64 |
+| URL / 模块说明符 | `url` + `percent-encoding` | `Url::join` 正确处理 `../`、query、中文 percent-encoding；手写拼接这三处都会错 |
+| md5 | `md-5` | 一个 helper 不值得 eval 204 KB crypto-js |
+| JS 引擎 / ES module | `rquickjs`（`loader` feature） | 引擎与 `Resolver` / `Loader` trait 由库提供，我们只实现两个 trait |
+| JS 侧 HTML / 加密 / 压缩 | 随包 `cheerio.min.js` / `crypto-js.js` / `node-rsa.js` / `pako.min.js` | drpy2 的上游依赖，原样携带，不重写 |
+| 进程守护 | `tokio` + `windows` Job Object（主 crate） | 不在 sidecar 里另造进程管理 |
+
+刻意保留为“薄适配”的部分：`HOST_JS` 垫片、导出发现、长短名映射 —— 它们只做 TVBox 语义翻译，
+没有通用库可替代；但一旦涉及协议/编码/解析，就交给上面的库。
+
+### 4.4 便携包落点（与 `tools/make_portable.py` 对应）
 
 `src-tauri` 侧 `resolve_runner()` 的查找顺序为：`QJS_RUNNER` 环境变量 → **exe 同目录** →
 编译期 `source_root` 下 `sidecars/qjs-runner/target/{release,debug}`。便携包分发到别的机器后

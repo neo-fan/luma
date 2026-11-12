@@ -12,4 +12,15 @@ path = "src/main.rs"
 rquickjs = { version = "0.9", features = ["loader"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ureq = { version = "2", features = ["json", "tls"] }
+# default features are required: gzip + charset. Listing `features` alone would
+# disable them, and compressed source APIs would decode to garbage.
+ureq = { version = "2", default-features = true, features = ["json", "tls", "gzip", "charset"] }
+# Module specifier resolution (relative imports, percent-encoding, CJK paths).
+url = "2"
+percent-encoding = "2"
+# `req(..., {buffer: 2})` returns base64; TVBox sources use it for binaries.
+base64 = "0.22"
+# Explicit charset override (<meta charset=gbk> pages) when the server omits it.
+encoding_rs = "0.8"
+# `md5X` host helper — a 10-line crate instead of evaluating a 204 KB UMD bundle.
+md-5 = "0.10"

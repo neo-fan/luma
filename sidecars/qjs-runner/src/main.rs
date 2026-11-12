@@ -15,6 +15,9 @@
 //! A hard wall-clock limit interrupts the interpreter, so an infinite loop
 //! cannot wedge the sidecar; the host additionally kills the process tree.
 
+use base64::Engine as _;
+use md5::{Digest, Md5};
+use percent_encoding::percent_decode_str;
 use rquickjs::{
     loader::{Loader, Resolver},
     module::Declared,
@@ -25,11 +28,12 @@ use serde_json::{json, Value as JsonValue};
 use std::{
     collections::HashMap,
     fs,
-    io::{BufRead, Write},
+    io::{BufRead, Read, Write},
     path::PathBuf,
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
+use url::Url;
 
 const DEFAULT_TIMEOUT_MS: u64 = 15_000;
 
@@ -196,27 +200,31 @@ fn http_request(url: &str, options: &str) -> String {
                     headers.insert(name, json!(value));
                 }
             }
-            let content = resp.into_string().unwrap_or_default();
+            // TVBox `req` buffer modes: 0/omitted = text, 2 = base64. The
+            // explicit `encoding` option overrides a wrong/missing charset
+            // (common on GBK source pages); otherwise ureq's `charset`
+            // feature decodes from the response header.
+            let buffer = opts.get("buffer").and_then(JsonValue::as_u64).unwrap_or(0);
+            let encoding = opts.get("encoding").and_then(JsonValue::as_str);
+            let content = if buffer == 2 || encoding.is_some() {
+                let mut bytes = Vec::new();
+                let _ = resp.into_reader().read_to_end(&mut bytes);
+                match (buffer, encoding) {
+                    (2, _) => base64::engine::general_purpose::STANDARD.encode(&bytes),
+                    (_, Some(label)) => encoding_rs::Encoding::for_label(label.as_bytes())
+                        .unwrap_or(encoding_rs::UTF_8)
+                        .decode(&bytes)
+                        .0
+                        .into_owned(),
+                    _ => String::from_utf8_lossy(&bytes).into_owned(),
+                }
+            } else {
+                resp.into_string().unwrap_or_default()
+            };
             json!({ "code": code, "content": content, "headers": headers }).to_string()
         }
         Err(err) => {
             json!({ "code": 0, "content": "", "error": err.to_string() }).to_string()
-        }
-    }
-}
-
-/// UMD libraries used as globals (`CryptoJS` for `md5X`) are evaluated once in
-/// classic mode. ESM-only files (cheerio / gbk / template) are left to the
-/// module loader, because `eval` would reject their `export` statements.
-fn preload_umd(ctx: &Ctx<'_>, assets_dir: &str) {
-    if assets_dir.is_empty() {
-        return;
-    }
-    let lib = PathBuf::from(assets_dir).join("js").join("lib");
-    for name in ["crypto-js.js", "node-rsa.js", "pako.min.js", "json5.js", "jinja.js"] {
-        let path = lib.join(name);
-        if let Ok(source) = fs::read_to_string(&path) {
-            let _ = ctx.eval::<(), _>(source.as_bytes());
         }
     }
 }
@@ -245,6 +253,7 @@ const HOST_JS: &str = r#"(function () {
     'delete': function (k) { return globalThis.__tvbox_local_del(PREFIX + String(k)); }
   };
   globalThis.md5X = function (s) {
+    if (typeof globalThis.__tvbox_md5 === 'function') return globalThis.__tvbox_md5(String(s));
     if (typeof globalThis.CryptoJS !== 'undefined') return CryptoJS.MD5(String(s)).toString();
     return '';
   };
@@ -327,8 +336,18 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
         },
     )?;
     globals.set("__tvbox_api", request.api.clone())?;
+    // `md5X` is a host helper in FongMi. Use the md-5 crate instead of
+    // evaluating the 204 KB crypto-js UMD bundle for every call.
+    globals.set(
+        "__tvbox_md5",
+        Function::new(ctx.clone(), |text: String| -> String {
+            Md5::digest(text.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })?,
+    )?;
 
-    preload_umd(ctx, &request.assets_dir);
     let headers = serde_json::to_string(&request.headers).unwrap_or_else(|_| "{}".to_string());
     let site = js_literal(&if request.site_key.is_empty() {
         "default".to_string()
@@ -346,13 +365,16 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
 // ES module resolver / loader
 // ---------------------------------------------------------------------------
 
+/// Last path segment, percent-decoded. A CJK module name reaches us as
+/// `%E8%8D%90%E7%89%87.js` in a URL but is a real file name on disk.
 fn basename(path: &str) -> String {
-    let clean = path.split('?').next().unwrap_or(path);
-    clean
+    let clean = path.split(['?', '#']).next().unwrap_or(path);
+    let decoded = percent_decode_str(clean).decode_utf8_lossy().into_owned();
+    decoded
         .trim_end_matches('/')
         .rsplit('/')
         .next()
-        .unwrap_or(clean)
+        .unwrap_or(&decoded)
         .to_string()
 }
 
@@ -368,21 +390,17 @@ fn normalize_module(base: &str, name: &str, api: &str) -> String {
     if n.starts_with("http://") || n.starts_with("https://") || n.starts_with("net:") {
         return format!("net:{}", n.trim_start_matches("net:"));
     }
-    let relative = n.trim_start_matches("./").trim_start_matches("../");
-    let file = basename(relative);
+    let file = basename(n);
     if BUNDLED.contains(&file.as_str()) {
         return format!("asset:{file}");
     }
-    let parent = if let Some(url) = base.strip_prefix("net:") {
-        url
-    } else if base.starts_with("http") {
-        base
-    } else {
-        api
-    };
-    if parent.starts_with("http") {
-        let dir = parent.rsplit_once('/').map(|(d, _)| d).unwrap_or(parent);
-        return format!("net:{dir}/{relative}");
+    let parent = base
+        .strip_prefix("net:")
+        .unwrap_or(if base.starts_with("http") { base } else { api });
+    // `url::Url::join` handles `../`, query strings and percent-encoding; the
+    // hand-rolled concatenation got those wrong.
+    if let Ok(joined) = Url::parse(parent).and_then(|root| root.join(n)) {
+        return format!("net:{joined}");
     }
     format!("asset:{file}")
 }
