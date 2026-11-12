@@ -133,7 +133,7 @@ zyfun **完全不带 JVM**，`DEFAULT_BINARIES = ['uv','bun','ffmpeg','ffprobe']
 
 | 优先级 | 事项 | 现状 | 建议做法 | 成本 |
 |---|---|---|---|---|
-| **P0** | drpy2 / 用户 JS 源 | quickjs 缺 ESM+cheerio，6 个站全废 | 在 `qjs-runner` 里补 `cheerio`/`crypto-js`/`jinja` 等 CJS bundle + `globalThis.req`/`localProxy` 垫片；先做到"能跑 drpy2 标准模板"，再谈覆盖率 | 中（1~2 天出可验证样例） |
+| **P0** | drpy2 / 用户 JS 源 | quickjs 缺 ESM+cheerio，6 个站全废。**注意：工作区已有未提交改动在做同一件事**——`sidecars/qjs-runner` 增加 ESM resolver + `assets://` 映射，`sidecars/qjs-assets/` 内置 cheerio(356K)/crypto-js/node-rsa/pako/gbk/json5/jinja/template 并带 sha256 清单 | 先验证这版：drpy2 标准模板 + 全站扫描里 6 个 quickjs 站复测；再补 `req`/`localProxy` 垫片、墙钟与内存边界（与 zyfun 的 `workerpool{maxWorkers:1}` 一致：一站点一串行队列） | 中（把在做的收口，比新起一套便宜） |
 | **P0** | 配置解密导入 | 只认明文 JSON/变体 | 移植 `aesDecode/base64` 常见包装识别（自写，不抄）；失败给明确原因 | 低（半天） |
 | **P1** | T0_XML 适配 | 无 | CMS 家族的 XML 分支，接口面很小 | 低 |
 | **P1** | 应用内站点体检 | 只有离线报告 | 把 `scan_site_compat` 结果进库 + PQueue 串行体检 + UI 状态色 | 中 |
