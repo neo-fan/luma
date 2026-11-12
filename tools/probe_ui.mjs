@@ -144,6 +144,13 @@ const shell = await cdp.eval(`(async () => {
 })()`);
 assert(shell === "FOUND", "shell rendered", shell);
 
+// 记录原始 active 配置：本探针会通过 UI 导入桩配置，收尾必须切回去并删掉。
+// 不清理的话，后面单独跑 probe_config_manage 时「不应存在名为 127.0.0.1 的
+// 配置」这条断言会因为上一条探针的残留而假红。
+const originalActiveId = await cdp.eval(
+  `window.__TAURI_INTERNALS__.invoke('config_active').then(r => r?.id || '').catch(() => '')`,
+);
+
 // 2. settings + config import through the real UI
 await cdp.eval(CLICK("设置"));
 assert((await cdp.eval(WAIT_TEXT("导入配置（URL）"))) === "FOUND", "settings page", "");
@@ -236,6 +243,38 @@ const errors = await cdp.eval(`(() => {
   return el ? el.innerText : '';
 })()`);
 assert(!errors, "no error banner", errors || "clean");
+
+// 9. 收尾：删掉探针留下的收藏与桩配置，切回原配置并重载窗口。
+// 直接走 Tauri command（绕过 UI）是为了快且不依赖当前停留的页面；
+// 清 luma:sites:v1 + reload 让 App 从后端重新派生，避免前端内存仍是桩站点。
+const cleanup = await cdp.eval(`(async () => {
+  try {
+    const favs = await window.__TAURI_INTERNALS__.invoke('favorites_list');
+    for (const fav of favs) {
+      if ((fav.name || '').startsWith('Stub ')) {
+        await window.__TAURI_INTERNALS__.invoke('favorites_toggle', {
+          vod: { siteKey: fav.siteKey, vodId: fav.vodId, name: fav.name },
+        });
+      }
+    }
+    const rows = await window.__TAURI_INTERNALS__.invoke('config_list');
+    const original = ${JSON.stringify(String(originalActiveId || ""))};
+    if (original) {
+      await window.__TAURI_INTERNALS__.invoke('config_activate', { id: original });
+    }
+    for (const row of rows) {
+      if ((row?.source?.value || '').includes('127.0.0.1:8787')) {
+        await window.__TAURI_INTERNALS__.invoke('config_remove', { id: row.id });
+      }
+    }
+    localStorage.removeItem('luma:sites:v1');
+    return 'OK';
+  } catch (e) {
+    return 'ERR:' + JSON.stringify(e);
+  }
+})()`);
+console.log(`[info] cleanup: ${cleanup}`);
+await cdp.send("Page.reload", { ignoreCache: true });
 
 cdp.close();
 console.log(failures === 0 ? "\nUI SMOKE OK" : `\nUI SMOKE FAIL: ${failures}`);
