@@ -40,7 +40,9 @@ describe("player favourites & history line contract", () => {
     // 没有文字，状态只能落在 aria-pressed；探针也按它断言。
     expect(star).toContain("aria-pressed");
     expect(star).toContain("aria-label");
-    expect(star).toContain('"fav-star is-on"');
+    // 类名按需拼 `is-on`（收藏页会再叠一个 `.fav-item__unfav` 定位类）。
+    expect(star).toMatch(/fav-star.*is-on/);
+    expect(star).toContain("className");
     // 已收藏靠填充表达，样式里要能把描边星变实心。
     const css = read("src/styles.css");
     expect(css).toContain(".fav-star.is-on svg");

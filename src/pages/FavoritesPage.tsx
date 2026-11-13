@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Navigate } from "../App";
 import AsyncBoundary from "../components/AsyncBoundary";
-import Icon from "../components/Icon";
+import FavStar from "../components/FavStar";
 import PlayButton from "../components/PlayButton";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -176,16 +176,14 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
                   })
                 }
               />
-              <button
-                type="button"
-                className="fav-remove"
-                title="取消收藏"
-                aria-label="取消收藏"
-                disabled={busyKey === `${item.siteKey}-${item.vodId}`}
-                onClick={() => void remove(item)}
-              >
-                <Icon name="close" />
-              </button>
+              {/* 已收藏用实心金星表示，点它即取消——和详情页那颗星是同一套语言，
+                  比一个「×」更能说明「这条已经在收藏里」。 */}
+              <FavStar
+                on
+                busy={busyKey === `${item.siteKey}-${item.vodId}`}
+                onToggle={() => void remove(item)}
+                className="fav-item__unfav"
+              />
             </div>
           ))}
         </div>

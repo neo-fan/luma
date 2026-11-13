@@ -13,14 +13,16 @@ interface FavStarProps {
   on: boolean;
   busy?: boolean;
   onToggle: () => void;
+  /** 额外类名：收藏页把它摆在卡片角上（`.fav-item__unfav`）。 */
+  className?: string;
 }
 
-export default function FavStar({ on, busy = false, onToggle }: FavStarProps) {
+export default function FavStar({ on, busy = false, onToggle, className }: FavStarProps) {
   const label = on ? "取消收藏" : "加入收藏";
   return (
     <button
       type="button"
-      className={on ? "fav-star is-on" : "fav-star"}
+      className={`fav-star${on ? " is-on" : ""}${className ? ` ${className}` : ""}`}
       onClick={onToggle}
       disabled={busy}
       aria-pressed={on}

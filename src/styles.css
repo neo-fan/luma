@@ -2443,9 +2443,53 @@ textarea {
   color: var(--danger);
 }
 
+/* 历史 / 收藏卡片的右上角都放了一个动作按钮（× 或星），分辨率徽标必须让位，
+   否则会被压在下面（实测徽标 45px 宽、按钮压掉右侧 23px）。 */
+.fav-item .vod-card__res {
+  right: 42px;
+}
+
 .fav-remove svg {
   width: 13px;
   height: 13px;
+}
+
+/* 收藏页的「取消收藏」：卡片右上角的实心金星。
+   历史页仍用 ×（那是「删除记录」），收藏用星是为了说清「这条已经在收藏里」，
+   也跟详情页那颗星保持同一套语言。 */
+.fav-item__unfav {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(11, 13, 18, 0.72);
+  backdrop-filter: blur(8px);
+  opacity: 0.92;
+  transition:
+    opacity var(--dur) var(--ease),
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    transform 0.14s var(--ease);
+}
+
+.fav-item__unfav svg {
+  width: 15px;
+  height: 15px;
+}
+
+.fav-item__unfav:hover:not(:disabled) {
+  background: rgba(11, 13, 18, 0.94);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.fav-item__unfav:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* 分类无限滚动：底部加载更多 / 到底提示 + 滚动哨兵 */
