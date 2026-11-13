@@ -299,25 +299,13 @@ textarea {
   color: var(--text);
 }
 
-/* 当前页：中性白叠层 + 左侧细白条（DSH 的选中态语言）。
+/* 当前页：中性白叠层 + 白色图标（图标即高亮指示），去掉左侧竖条。
    之前用 --accent-soft 蓝紫底 + 渐变竖条，整条侧栏像被点了色；改中性后
-   焦点只剩「白 10%」的明度差，跟图标态、chip 选中保持一致。 */
+   焦点只剩「白 10%」的明度差 + 图标态，跟 chip 选中保持一致。 */
 .nav__item.is-active {
   background: var(--icon-on);
   color: var(--text);
   font-weight: 600;
-}
-
-.nav__item.is-active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 2px;
-  height: 16px;
-  border-radius: 0 2px 2px 0;
-  background: var(--text-soft);
 }
 
 .sidebar__bottom {
