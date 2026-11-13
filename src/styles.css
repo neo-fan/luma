@@ -291,8 +291,19 @@ textarea {
     max-width var(--sidebar-dur) var(--sidebar-ease);
 }
 
-/* 图标居中已由「label 收拢到 0 宽 + flex-start 不动」自然达成（见上方文字层规则），
-   不再用 justify-content:center 瞬切，避免收起瞬间图标位置跳变。 */
+/* 收起态（68px 图标轨道）：显式把图标在 44px 高亮块内水平居中。
+   配合上方 label 的 max-width 平滑坍缩，切换时图标随文字收拢自然滑到正中，
+   不会瞬跳；同时去掉 gap，避免 10px 留白把图标顶偏右。 */
+.sidebar.is-collapsed .nav__item {
+  justify-content: center;
+  gap: 0;
+}
+
+/* 品牌 logo 同步居中，避免收起后偏左。 */
+.sidebar.is-collapsed .brand {
+  justify-content: center;
+  padding: 0;
+}
 
 .nav__item:hover {
   background: var(--panel);
