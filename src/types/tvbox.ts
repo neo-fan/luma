@@ -263,6 +263,8 @@ export interface HistoryItem extends VodRef {
   episodeName?: string;
   /** 最近观看的线路名（`vod_play_from` 的一段），换源后仍能定位。 */
   playFrom?: string;
+  /** 播放时解码出的画面分辨率（`1080P` / `2K` / `4K`）；没真出过画就是空。 */
+  resolution?: string;
   positionMs?: number;
   durationMs?: number;
   updatedAt: number;

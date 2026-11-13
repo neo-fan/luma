@@ -28,6 +28,7 @@ import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
 import { describeHlsError } from "../lib/playErrors";
 import { readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
+import type { VideoMeta } from "../lib/resolution";
 import type { PlayResolved } from "../types/tvbox";
 
 /** 内置播放器能直接解码的 kind；page/share 之类要交给解析池或外部播放。 */
@@ -93,6 +94,15 @@ export interface UsePlayerEngineArgs {
   siteKey: string;
   vodName: string;
   vodId: string;
+  /** 画面尺寸 / 清单声明分辨率变化时回调；角标由调用方渲染进 `playerRoot`。 */
+  onVideoMeta?: (meta: VideoMeta) => void;
+  /**
+   * 播放器模板根节点（`.art-video-player`）就绪 / 销毁。
+   *
+   * 全屏请求的对象是它，不是外层 `.player-stage`，所以任何要「跟着画面走」
+   * 的浮层都必须挂进这个节点。
+   */
+  onPlayerRoot?: (root: HTMLDivElement | null) => void;
   setVideoError: Dispatch<SetStateAction<string>>;
 }
 
@@ -111,6 +121,8 @@ export function usePlayerEngine({
   siteKey,
   vodName,
   vodId,
+  onVideoMeta,
+  onPlayerRoot,
   setVideoError,
 }: UsePlayerEngineArgs): void {
   useEffect(() => {
@@ -183,6 +195,13 @@ export function usePlayerEngine({
             },
           ]
         : [];
+    /**
+     * HLS 清单 `#EXT-X-STREAM-INF:RESOLUTION` 声明的短边高度。
+     *
+     * 只是兜底：多数 TVBox 源单码率且不写 RESOLUTION，值一直是 0。真实的
+     * 分辨率以 `<video>` 解码出来的 `videoWidth/videoHeight` 为准。
+     */
+    let declaredHeight = 0;
     const art = new Artplayer({
       container,
       url: resolved.proxyUrl,
@@ -266,6 +285,15 @@ export function usePlayerEngine({
               | { update?: () => void }
               | undefined;
             control?.update?.();
+            // 清单里的 RESOLUTION 只有这一时刻拿得到，留作真实帧尺寸到达前的
+            // 兜底；没有声明值（多数源）就保持 0，角标等解码后再出现。
+            const heights = hls.levels
+              .map((level) => Math.round(level.height ?? 0))
+              .filter((height) => height > 0);
+            if (heights.length > 0) {
+              declaredHeight = Math.max(...heights);
+            }
+            reportMeta();
             // 上次选过清晰度且这一集仍有同档位时才套用，否则保持自动。
             const wanted = readPlayerPrefs().height;
             if (wanted) {
@@ -284,6 +312,9 @@ export function usePlayerEngine({
             if (disposed) {
               return;
             }
+            // 换档后画面尺寸会变；`resize` 事件本身也会到，这里补一枪避免某些
+            // 编码尺寸相同（只变码率）时角标读到旧值。
+            reportMeta();
             // 只在用户手动选档时记住；自动档每次切换都是不同码率，
             // 记下来会让下次错误地固定到某一档。
             if (hls.autoLevelEnabled) {
@@ -378,6 +409,23 @@ export function usePlayerEngine({
 
     const video = art.video;
     videoRef.current = video;
+    // 全屏元素是 `.art-video-player` 本身（ArtPlayer 的 `$player`），所以角标
+    // 这类要跟着画面走的浮层由调用方 portal 进这个节点，而不是排在 stage 里。
+    onPlayerRoot?.(art.template.$player);
+    /**
+     * 上报当前分辨率。`videoWidth/videoHeight` 是解码后的真实尺寸，HLS 换档、
+     * 自适应切码率都会触发 `resize`，因此不需要信清单里的声明值；清单一律
+     * 只作兜底（`declaredHeight`）。
+     */
+    const reportMeta = () => {
+      onVideoMeta?.({
+        width: video.videoWidth || 0,
+        height: video.videoHeight || 0,
+        declaredHeight,
+      });
+    };
+    video.addEventListener("loadedmetadata", reportMeta);
+    video.addEventListener("resize", reportMeta);
     video.playbackRate = prefs.rate;
     /**
      * 倍速初始化静默期。
@@ -519,6 +567,11 @@ export function usePlayerEngine({
       video.removeEventListener("error", onError);
       video.removeEventListener("volumechange", persistVolume);
       video.removeEventListener("ratechange", persistRate);
+      video.removeEventListener("loadedmetadata", reportMeta);
+      video.removeEventListener("resize", reportMeta);
+      // 先通知上层把 portal 里的角标摘掉，再销毁 ArtPlayer：反过来的话 React
+      // 会往一个已经被 remove() 的节点里做移除。
+      onPlayerRoot?.(null);
       // 只补写音量：拖动可能被节流/定时器延后，卸载时补一次最终值。
       // 倍速绝不能在这里覆盖——ended 触发卸载那一刻 video.playbackRate 可能已被
       // 播放内核重置为 1（实测），写回会抹掉用户刚选的倍速。倍速由 persistRate

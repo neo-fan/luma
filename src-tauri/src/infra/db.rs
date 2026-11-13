@@ -71,6 +71,11 @@ pub struct HistoryRow {
     pub play_from: String,
     pub position_ms: u64,
     pub duration_ms: u64,
+    /// 播放时解码出来的画面尺寸标签（`1080P` / `2K` / `4K`）。
+    ///
+    /// 站点不提供分辨率字段，只有真正播出画面才知道；写入时是空的（还没解码）
+    /// 就不覆盖库里已有值。
+    pub resolution: String,
     pub updated_at: u64,
 }
 
@@ -169,6 +174,7 @@ impl Db {
                      play_from   TEXT NOT NULL DEFAULT '',
                      position_ms INTEGER NOT NULL DEFAULT 0,
                      duration_ms INTEGER NOT NULL DEFAULT 0,
+                     resolution  TEXT NOT NULL DEFAULT '',
                      updated_at  INTEGER NOT NULL,
                      PRIMARY KEY (site_key, vod_id)
                  );
@@ -191,7 +197,7 @@ impl Db {
             let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
-        for column in ["episode_name", "play_from"] {
+        for column in ["episode_name", "play_from", "resolution"] {
             if !existing.iter().any(|name| name == column) {
                 conn.execute(
                     &format!("ALTER TABLE history ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"),
@@ -470,7 +476,7 @@ impl Db {
             let mut stmt = conn.prepare(
                 "SELECT site_key, vod_id, name, pic, remarks, site_name,
                         play_url, position_ms, duration_ms, updated_at,
-                        episode_name, play_from
+                        episode_name, play_from, resolution
                  FROM history",
             )?;
             let rows = stmt.query_map([], history_from_row)?;
@@ -485,8 +491,8 @@ impl Db {
                 "INSERT INTO history
                      (site_key, vod_id, name, pic, remarks, site_name,
                       play_url, position_ms, duration_ms, updated_at,
-                      episode_name, play_from)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                      episode_name, play_from, resolution)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT(site_key, vod_id) DO UPDATE SET
                      name = excluded.name,
                      -- 详情还没拉到时写入的是空封面；不能用空串覆盖掉库里已有的
@@ -499,7 +505,9 @@ impl Db {
                      duration_ms = excluded.duration_ms,
                      updated_at = excluded.updated_at,
                      episode_name = excluded.episode_name,
-                     play_from = excluded.play_from",
+                     play_from = excluded.play_from,
+                     -- 分辨率只有真出画后才拿得到，空值（还没解码）不能抹掉已有值。
+                     resolution = CASE WHEN excluded.resolution <> '' THEN excluded.resolution ELSE resolution END",
                 params![
                     row.site_key,
                     row.vod_id,
@@ -513,6 +521,7 @@ impl Db {
                     row.updated_at as i64,
                     row.episode_name,
                     row.play_from,
+                    row.resolution,
                 ],
             )?;
             // Keep the newest MAX_HISTORY rows instead of rebuilding a Vec.
@@ -596,6 +605,7 @@ fn history_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRow> {
         updated_at: row.get::<_, i64>(9)? as u64,
         episode_name: row.get(10)?,
         play_from: row.get(11)?,
+        resolution: row.get(12)?,
     })
 }
 
@@ -698,6 +708,7 @@ mod tests {
                 play_url: String::new(),
                 episode_name: format!("第 {index} 集"),
                 play_from: "线路A".into(),
+                resolution: String::new(),
                 position_ms: 100,
                 duration_ms: 1000,
                 updated_at: index as u64,
@@ -716,6 +727,7 @@ mod tests {
             play_url: String::new(),
             episode_name: "第 5 集".into(),
             play_from: "线路B".into(),
+            resolution: String::new(),
             position_ms: 999,
             duration_ms: 1000,
             updated_at: 9999,
@@ -736,6 +748,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 分辨率只有真出画后才拿得到：后续进度写入带空值时不能把已有值抹掉。
+    #[test]
+    fn history_resolution_survives_empty_upsert() {
+        let dir = temp_dir("resolution");
+        let db = Db::at(dir.clone()).expect("open db");
+        let row = |resolution: &str, position_ms: u64| HistoryRow {
+            site_key: "cms".into(),
+            vod_id: "1".into(),
+            name: "Sample".into(),
+            pic: String::new(),
+            remarks: String::new(),
+            site_name: "CMS".into(),
+            play_url: String::new(),
+            episode_name: String::new(),
+            play_from: String::new(),
+            resolution: resolution.into(),
+            position_ms,
+            duration_ms: 1000,
+            updated_at: position_ms,
+        };
+        db.upsert_history(&row("1080P", 100)).unwrap();
+        // 切集瞬间 videoWidth 还是 0，这时写入的是空串 —— 不能退回空白。
+        db.upsert_history(&row("", 200)).unwrap();
+        let hit = db
+            .history()
+            .unwrap()
+            .into_iter()
+            .find(|item| item.vod_id == "1")
+            .expect("row exists");
+        assert_eq!(hit.resolution, "1080P");
+        assert_eq!(hit.position_ms, 200);
+        // 换到 4K 线路时正常覆盖。
+        db.upsert_history(&row("4K", 300)).unwrap();
+        let hit = db
+            .history()
+            .unwrap()
+            .into_iter()
+            .find(|item| item.vod_id == "1")
+            .expect("row exists");
+        assert_eq!(hit.resolution, "4K");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 回填封面：补到该补的行、空值不覆盖、而且绝不能改变历史顺序或收藏顺序。
     #[test]
     fn meta_patch_fills_cover_without_reordering() {
@@ -751,6 +806,7 @@ mod tests {
             play_url: String::new(),
             episode_name: String::new(),
             play_from: String::new(),
+            resolution: String::new(),
             position_ms: 0,
             duration_ms: 0,
             updated_at,
@@ -804,9 +860,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 老版本库只有 10 列：打开时必须补齐集数/线路列，且旧行照常可读。
+    /// 老版本库只有 10 列：打开时必须补齐集数 / 线路 / 分辨率列，且旧行照常可读。
     #[test]
-    fn legacy_history_table_gains_episode_and_line_columns() {
+    fn legacy_history_table_gains_extra_columns() {
         let dir = temp_dir("migrate");
         std::fs::create_dir_all(&dir).expect("create temp dir");
         {
@@ -836,6 +892,8 @@ mod tests {
         assert_eq!(rows[0].position_ms, 1000);
         assert_eq!(rows[0].episode_name, "");
         assert_eq!(rows[0].play_from, "");
+        // 新列由迁移补上，老行取默认空串（没播过就没有分辨率）。
+        assert_eq!(rows[0].resolution, "");
         drop(db);
         // 第二次打开：列已存在，ALTER 不能重复执行。
         assert!(Db::at(dir.clone()).is_ok());

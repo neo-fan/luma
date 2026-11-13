@@ -1383,6 +1383,21 @@ textarea {
   text-overflow: ellipsis;
 }
 
+/* 播放过的分辨率（历史 / 收藏卡片）：右上角，与左下角的备注徽标错开。 */
+.vod-card__res {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(8, 10, 15, 0.72);
+  backdrop-filter: blur(4px);
+  color: rgba(241, 241, 246, 0.92);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
 /* 封面底部的信息条（历史页）：两行小字压在渐变压暗层上。
  * 放在封面里而不是标题下面 —— 标题行只留片名，长片名不再被副标题挤成两截。
  * pointer-events:none 保证点封面任一处都等于点卡片（父级 button 的点击区）。 */
@@ -1873,25 +1888,39 @@ textarea {
   cursor: default;
 }
 
-/* 当前线路/集数徽标：左上角，跟播放器同一层，不抢画面。 */
-.player-stage__badge {
+/* 画面左上角的分辨率角标。它由 portal 渲染进 ArtPlayer 的 `.art-video-player`
+   （全屏元素就是它），所以不能写成 `.player-stage .player-res`。数值来自解码后
+   的 videoWidth/videoHeight；窗口模式常驻，全屏空闲 3.2s 后淡出（.is-idle）。 */
+.player-res {
   position: absolute;
   top: 14px;
   left: 16px;
-  z-index: 3;
-  padding: 5px 12px;
-  border-radius: 999px;
-  background: rgba(10, 12, 18, 0.6);
-  backdrop-filter: blur(10px);
-  color: rgba(255, 255, 255, 0.78);
+  z-index: 35;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(10, 12, 18, 0.55);
+  backdrop-filter: blur(6px);
+  color: rgba(255, 255, 255, 0.82);
   font-size: 12px;
-  letter-spacing: 0.01em;
-  opacity: 0.7;
-  transition: opacity var(--dur) var(--ease);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  user-select: none;
+  transition:
+    opacity 0.24s var(--ease),
+    transform 0.24s var(--ease);
 }
 
-.player-stage:hover .player-stage__badge {
-  opacity: 1;
+.player-res.is-idle {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.art-fullscreen .player-res,
+.art-fullscreen-web .player-res {
+  top: 20px;
+  left: 24px;
+  font-size: 13px;
 }
 
 /* 解析中 / 不可播放时的提示层：绝对定位盖在常驻容器之上，不改动它的 DOM。 */

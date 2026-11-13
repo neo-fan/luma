@@ -187,6 +187,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
                   title={item.name}
                   pic={item.pic}
                   remarks={item.remarks}
+                  resolution={item.resolution || undefined}
                   coverMeta={meta}
                   hint={historySubtitle(item)}
                   onOpen={() =>

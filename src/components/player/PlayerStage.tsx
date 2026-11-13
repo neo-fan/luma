@@ -4,8 +4,6 @@ import Spinner from "../Spinner";
 import { EXTERNAL_PLAY_FALLBACK } from "../../lib/features";
 
 interface StageNav {
-  /** 顶部徽标：`360zy · 第 3 / 8 集`。 */
-  label: string;
   canPrev: boolean;
   canNext: boolean;
   onPrev: () => void;
@@ -33,9 +31,10 @@ interface PlayerStageProps {
  * 用绝对定位覆盖层显示 Spinner / 兜底，DOM 生命周期完全交给内核 effect 的
  * `art.destroy()` 管理。
  *
- * 上/下一集与线路徽标是 `.player-stage` 的子节点（`z-index` 高于 ArtPlayer、
+ * 上/下一集按钮是 `.player-stage` 的子节点（`z-index` 高于 ArtPlayer、
  * 低于解析遮罩），不进入 `.player-art`：那层归 ArtPlayer 自己管，塞进去会被
- * 它的模板替换掉，也会让「点画面暂停」误触。
+ * 它的模板替换掉，也会让「点画面暂停」误触。线路/集数徽标已移除（信息在
+ * 下方信息卡与选集面板里），画面上只留分辨率角标。
  */
 export default function PlayerStage({
   resolving,
@@ -54,7 +53,6 @@ export default function PlayerStage({
 
       {nav && playable ? (
         <>
-          <span className="player-stage__badge">{nav.label}</span>
           <IconButton
             name="back"
             label="上一集"

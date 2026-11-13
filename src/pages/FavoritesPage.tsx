@@ -7,7 +7,7 @@ import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { usePageState } from "../lib/usePageState";
-import type { FavoriteItem, VodRef } from "../types/tvbox";
+import type { FavoriteItem, HistoryItem, VodRef } from "../types/tvbox";
 
 interface FavoritesPageProps {
   navigate: Navigate;
@@ -18,6 +18,13 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
   // 收藏是本地 SQLite 读，成本极低：列表先直出，再静默刷新（详情页刚点过
   // 星标时能立刻反映出来），有数据时不再闪 Spinner。
   const [items, setItems] = usePageState<FavoriteItem[]>("favorites:items", []);
+  /**
+   * `siteKey:vodId → 分辨率`，来自历史记录。
+   *
+   * 收藏表本身不存分辨率：它只有「想看的」这层语义，而分辨率是「真播出过画」
+   * 才拿得到的事实。历史里既然存了，就在这里联查一次，收藏条目才显示角标。
+   */
+  const [resolutions, setResolutions] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
@@ -31,9 +38,21 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
       }
       setError("");
       try {
-        const list = await api.favoritesList();
+        const [list, history] = await Promise.all([
+          api.favoritesList(),
+          // 历史读取失败不影响收藏列表，最多是角标不显示。
+          api.historyList().catch(() => [] as HistoryItem[]),
+        ]);
         if (alive) {
           setItems(list);
+          setResolutions(
+            history.reduce<Record<string, string>>((acc, one) => {
+              if (one.resolution) {
+                acc[`${one.siteKey}:${one.vodId}`] = one.resolution;
+              }
+              return acc;
+            }, {}),
+          );
         }
       } catch (err) {
         if (alive) {
@@ -146,6 +165,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
                 title={item.name}
                 pic={item.pic}
                 remarks={item.remarks}
+                resolution={resolutions[`${item.siteKey}:${item.vodId}`]}
                 sub={item.siteName}
                 onOpen={() =>
                   navigate({

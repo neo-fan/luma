@@ -6,12 +6,15 @@ import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
 import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
+import PlayerResolution from "../components/player/PlayerResolution";
 import LiveEpgPanel from "../components/LiveEpgPanel";
 import { formatDuration, parsePlayLines, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
 import { probePlayable } from "../lib/playProbe";
+import { resolutionBadge, resolutionDetail, resolutionFromVideo } from "../lib/resolution";
+import type { VideoMeta } from "../lib/resolution";
 
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
@@ -92,6 +95,14 @@ export default function PlayerPage({
    * 实际赋值在 pickLiveLine 定义之后（render 期间完成，effect 执行时已是新值）。
    */
   const liveLineRef = useRef<LiveLineControl | null>(null);
+
+  /**
+   * 分辨率角标：数据只能从播放内核里的 `<video>` 读到（解码后的真实尺寸），
+   * 由内核通过 `onVideoMeta` 上报；`playerRoot` 是 ArtPlayer 的模板根节点，
+   * 也是全屏请求的对象，角标 portal 进它才能在满屏时仍然可见。
+   */
+  const [playerRoot, setPlayerRoot] = useState<HTMLDivElement | null>(null);
+  const [videoMeta, setVideoMeta] = useState<VideoMeta>({ width: 0, height: 0 });
 
   const [showSources, setShowSources] = useState(false);
   /** 收藏状态：与详情页共用同一份 SQLite 数据，这里只做镜像。 */
@@ -551,8 +562,16 @@ export default function PlayerPage({
     siteKey,
     vodName,
     vodId,
+    onVideoMeta: setVideoMeta,
+    onPlayerRoot: setPlayerRoot,
     setVideoError,
   });
+
+  // 换集 / 换源后旧分辨率不属于新画面：先清空，等新一集 `loadedmetadata`
+  // 再上报，避免切集瞬间角标还挂着上一集的 1080P。
+  useEffect(() => {
+    setVideoMeta({ width: 0, height: 0 });
+  }, [resolved]);
 
   // 播放进度 → 历史记录（5 秒节流，播放/暂停立即写）。
   useEffect(() => {
@@ -562,6 +581,14 @@ export default function PlayerPage({
     }
 
     let lastWrite = 0;
+    /**
+     * 本次播放已确认的分辨率。
+     *
+     * 直接从当前 `<video>` 读解码尺寸：切集瞬间 `videoWidth` 会变回 0，这一
+     * 帧写入的历史若带上空串就会把上一条记录的分辨率抹掉（后端也做了同样的
+     * 空值保护），所以再留一份最近值兜底。
+     */
+    let knownResolution = resolutionFromVideo(video);
     /** 卸载时 ArtPlayer 已清掉 src，最后一次写入用快照，不重读 currentTime。 */
     const write = async (force: boolean, snapshot?: { positionMs: number; durationMs?: number }) => {
       const now = Date.now();
@@ -569,6 +596,7 @@ export default function PlayerPage({
         return;
       }
       lastWrite = now;
+      knownResolution = resolutionFromVideo(video) || knownResolution;
       const item: HistoryItem = {
         siteKey,
         vodId,
@@ -579,6 +607,7 @@ export default function PlayerPage({
         playUrl,
         episodeName: historyLabelRef.current.episodeName,
         playFrom: historyLabelRef.current.playFrom,
+        resolution: knownResolution,
         positionMs: snapshot?.positionMs ?? Math.round(video.currentTime * 1000),
         durationMs:
           snapshot?.durationMs ??
@@ -841,13 +870,19 @@ export default function PlayerPage({
           siteKey === "live" || !currentLine
             ? null
             : {
-                label: `${currentLine.name} · 第 ${episodeIndex + 1} / ${currentLine.episodes.length} 集`,
                 canPrev,
                 canNext,
                 onPrev: () => goEpisode(-1),
                 onNext: () => goEpisode(1),
               }
         }
+      />
+
+      {/* 分辨率角标：真正渲染在 ArtPlayer 的全屏节点里（portal），这里只提供数据。 */}
+      <PlayerResolution
+        host={playerRoot}
+        label={resolutionBadge(videoMeta)}
+        detail={resolutionDetail(videoMeta.width, videoMeta.height)}
       />
 
       {/* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。

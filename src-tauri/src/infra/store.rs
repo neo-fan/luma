@@ -48,6 +48,12 @@ pub struct HistoryItem {
     /// 线路名（TVBox `vod_play_from` 的一段）；换源后线路名会变，必须记录。
     #[serde(default)]
     pub play_from: String,
+    /// 播放时解码出的画面分辨率标签（`720P` / `1080P` / `2K` / `4K`）。
+    ///
+    /// 站点侧没有这个字段，只有真出画后才拿得到；没播过就一直是空串，
+    /// 历史页据此决定要不要显示角标。
+    #[serde(default)]
+    pub resolution: String,
     #[serde(default)]
     pub position_ms: u64,
     #[serde(default)]
@@ -133,6 +139,7 @@ fn history_from_row(row: HistoryRow) -> HistoryItem {
         play_url: row.play_url,
         episode_name: row.episode_name,
         play_from: row.play_from,
+        resolution: row.resolution,
         position_ms: row.position_ms,
         duration_ms: row.duration_ms,
         updated_at: row.updated_at,
@@ -251,6 +258,7 @@ impl LibraryStore {
             play_url: item.play_url.clone(),
             episode_name: item.episode_name.clone(),
             play_from: item.play_from.clone(),
+            resolution: item.resolution.clone(),
             position_ms: item.position_ms,
             duration_ms: item.duration_ms,
             // Always use a fresh timestamp: the caller's value may be stale
@@ -413,6 +421,7 @@ mod tests {
                     play_url: "http://127.0.0.1/x".into(),
                     episode_name: "第 2 集".into(),
                     play_from: "线路A".into(),
+                    resolution: "1080P".into(),
                     position_ms: position,
                     duration_ms: 60000,
                     updated_at: 0,

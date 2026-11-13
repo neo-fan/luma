@@ -5,6 +5,13 @@ interface VodCardProps {
   title: string;
   pic?: string;
   remarks?: string;
+  /**
+   * 播放过的分辨率（`1080P` / `2K` / `4K`）。
+   *
+   * 站点数据里没有这个字段，只有真播出画面才拿得到——历史 / 收藏页把它当作
+   * 「确实播成功过」的证据展示，没播过的条目传空即可。
+   */
+  resolution?: string;
   /** 次要说明，收藏页用来显示站点名 */
   sub?: string;
   /**
@@ -27,6 +34,7 @@ function sameCard(a: VodCardProps, b: VodCardProps): boolean {
     a.title === b.title &&
     a.pic === b.pic &&
     a.remarks === b.remarks &&
+    a.resolution === b.resolution &&
     a.sub === b.sub &&
     a.hint === b.hint &&
     // coverMeta 每次渲染都是新数组，用内容比较而不是引用比较。
@@ -39,6 +47,7 @@ const VodCard = memo(function VodCard({
   title,
   pic,
   remarks,
+  resolution,
   sub,
   coverMeta,
   hint,
@@ -73,6 +82,7 @@ const VodCard = memo(function VodCard({
           <span className="vod-card__ph">{broken || pic?.trim() ? "无封面" : ""}</span>
         )}
         {remarks ? <span className="vod-card__badge">{remarks}</span> : null}
+        {resolution ? <span className="vod-card__res">{resolution}</span> : null}
         {meta.length > 0 ? (
           <span className="vod-card__meta">
             {meta.map((line, index) => (
