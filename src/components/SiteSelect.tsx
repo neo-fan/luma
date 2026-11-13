@@ -5,22 +5,38 @@ import type { Site } from "../types/tvbox";
 const ALL_SITES = "__all__";
 
 interface SiteSelectProps {
-  /** 可搜索的站点（已按 enabled 过滤）。 */
+  /** 站点列表（含禁用/屏蔽项——它们由 disabledKeys 标灰）。 */
   sites: Site[];
-  /** 当前选中：ALL_SITES 表示全部站点聚合搜索。 */
+  /** 当前选中 key。 */
   value: string;
   onChange: (value: string) => void;
+  /** 是否提供「全部站点」聚合项（搜索页 true，首页 false）。 */
+  allowAll?: boolean;
+  /** 不可选的站点 key：菜单里置灰、不可点（屏蔽的 jvm 源 / 已禁用源）。 */
+  disabledKeys?: ReadonlySet<string>;
+  /** 不可选原因，逐站可不同（如「已屏蔽」「已禁用」）；缺省「不可选」。 */
+  disabledHints?: ReadonlyMap<string, string>;
 }
 
 /**
- * 搜索页站点选择：globe 图标按钮 + 下拉菜单，替代原生 `<select>`。
+ * 站点选择：图标触发器 + 可点选下拉菜单，替代原生 `<select>`。
  *
- * 原生 select 在桌面端是操作系统控件，样式与软件设计语言脱节（用户反馈
- * 「全部站点下拉风格不搭」），且选项里塞不下图标。这里用图标触发器表达
- * 「全部站点」，下拉里列出各站点供单站检索——语义仍由 aria-label 承担。
- * 点击非菜单区域 / Esc 关闭。
+ * 原生 select 是操作系统控件，样式与软件设计语言脱节，且选项里塞不下
+ * 图标与标记。语义由 aria（haspopup/listbox/option）承担；点击菜单外
+ * 区域 / Esc 关闭。
+ *
+ * DOM 契约（探针依赖，勿改）：
+ * - 根节点 `.site-select` 带 `data-value={value}`
+ * - 菜单项 `.site-select__item` 带 `data-key={site.key}`
  */
-export default function SiteSelect({ sites, value, onChange }: SiteSelectProps) {
+export default function SiteSelect({
+  sites,
+  value,
+  onChange,
+  allowAll = true,
+  disabledKeys,
+  disabledHints,
+}: SiteSelectProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -50,8 +66,13 @@ export default function SiteSelect({ sites, value, onChange }: SiteSelectProps) 
   const current = isAll ? null : sites.find((item) => item.key === value);
   const triggerLabel = isAll ? "全部站点" : current?.name ?? "选择站点";
 
+  const pick = (key: string) => {
+    onChange(key);
+    setOpen(false);
+  };
+
   return (
-    <div className="site-select" ref={ref}>
+    <div className="site-select" ref={ref} data-value={value}>
       <button
         type="button"
         className={open ? "site-select__trigger is-on" : "site-select__trigger"}
@@ -59,46 +80,56 @@ export default function SiteSelect({ sites, value, onChange }: SiteSelectProps) 
         aria-expanded={open}
         aria-label={triggerLabel}
         title={triggerLabel}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOpen((prev) => !prev)}
       >
         <Icon name="globe" />
         <span className="site-select__label">{triggerLabel}</span>
         <Icon name="chevron" />
       </button>
       {open ? (
-        <div className="site-select__menu" role="listbox" aria-label="选择搜索范围">
-          <button
-            type="button"
-            role="option"
-            aria-selected={isAll}
-            className={isAll ? "site-select__item is-active" : "site-select__item"}
-            onClick={() => {
-              onChange(ALL_SITES);
-              setOpen(false);
-            }}
-          >
-            <Icon name="globe" />
-            <span className="site-select__name">全部站点</span>
-          </button>
-          {sites.map((site) => (
+        <div className="site-select__menu" role="listbox" aria-label="选择站点">
+          {allowAll ? (
             <button
               type="button"
               role="option"
-              aria-selected={site.key === value}
-              key={site.key}
-              className={site.key === value ? "site-select__item is-active" : "site-select__item"}
-              title={site.name}
-              onClick={() => {
-                onChange(site.key);
-                setOpen(false);
-              }}
+              aria-selected={isAll}
+              className={isAll ? "site-select__item is-active" : "site-select__item"}
+              onClick={() => pick(ALL_SITES)}
             >
-              <span className="site-select__name">{site.name}</span>
-              {site.runtime === "jvm" ? (
-                <small className="site-select__tag">jar 源</small>
-              ) : null}
+              <Icon name="globe" />
+              <span className="site-select__name">全部站点</span>
             </button>
-          ))}
+          ) : null}
+          {sites.map((site) => {
+            const blocked = disabledKeys?.has(site.key) ?? false;
+            return (
+              <button
+                type="button"
+                role="option"
+                aria-selected={site.key === value}
+                aria-disabled={blocked || undefined}
+                key={site.key}
+                data-key={site.key}
+                className={
+                  (site.key === value ? "site-select__item is-active" : "site-select__item") +
+                  (blocked ? " is-disabled" : "")
+                }
+                title={site.name}
+                onClick={() => {
+                  if (!blocked) pick(site.key);
+                }}
+              >
+                <span className="site-select__name">{site.name}</span>
+                {blocked ? (
+                  <small className="site-select__tag">
+                    {disabledHints?.get(site.key) ?? "不可选"}
+                  </small>
+                ) : site.runtime === "jvm" ? (
+                  <small className="site-select__tag">jar 源</small>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>

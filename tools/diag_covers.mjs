@@ -46,7 +46,7 @@ await sleep(600);
 await ev(`[...document.querySelectorAll('.search-bar button')].find(b => (b.textContent||'').includes('搜索'))?.click()`);
 for (let i = 0; i < 70; i++) {
   await sleep(2000);
-  const s = await ev(`({ l: !!document.querySelector('.spinner--center'), c: document.querySelectorAll('.vod-card').length })`);
+  const s = await ev(`({ l: !!document.querySelector('.search-progress'), c: document.querySelectorAll('.vod-card').length })`);
   if (s && !s.l && s.c > 100) break;
 }
 await sleep(3000);

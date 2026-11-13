@@ -169,8 +169,8 @@ report.pages.homeMeta = await ev(`(() => {
     chipCount: document.querySelectorAll('.chip-row .chip').length,
     posters: imgs.length,
     postersLoaded: imgs.filter(i => i.complete && i.naturalWidth > 0).length,
-    siteSelect: (() => { const s = document.querySelector('select.select'); if (!s) return null; const r = s.getBoundingClientRect();
-      return { w: Math.round(r.width), h: Math.round(r.height), opts: s.options.length, appearance: getComputedStyle(s).appearance }; })()
+    siteSelect: (() => { const s = document.querySelector('.site-select'); if (!s) return null; const r = s.getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height), value: s.getAttribute('data-value') }; })()
   };
 })()`);
 console.log("  首页:", JSON.stringify(report.pages.homeMeta));
@@ -221,7 +221,7 @@ let searchState = null;
 for (let i = 0; i < 45; i++) {
   await sleep(2000);
   searchState = await ev(`({
-    loading: !!document.querySelector('.spinner--center'),
+    loading: !!document.querySelector('.search-progress'),
     cards: document.querySelectorAll('.vod-card').length,
     meta: (document.querySelector('.result-meta')?.textContent||'').slice(0,200),
     failRows: document.querySelectorAll('.failure-item').length

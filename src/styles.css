@@ -1201,7 +1201,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--panel);
-  overflow: hidden;
+  /* 不设 overflow:hidden：会裁掉 .recent-chip__remove 靠 padding 撑出的点击热区。 */
   transition: border-color var(--dur) var(--ease);
 }
 
@@ -1239,13 +1239,16 @@ textarea {
   border: 0;
   background: transparent;
   color: var(--faint);
-  padding: 5px 10px 5px 4px;
+  /* 热区规格：≥32px 高（audit 实测旧值仅 25×21，误触率高）。
+   * 图标本体仍 12px，靠 padding 撑点击面积。 */
+  padding: 10px 12px 10px 5px;
+  margin: -10px -6px -10px 0;
   cursor: pointer;
 }
 
 .recent-chip__remove svg {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
 }
 
 .recent-chip__remove:hover {
@@ -1654,6 +1657,105 @@ textarea {
   letter-spacing: 0.01em;
 }
 
+/* ---------- 聚合搜索等待态：进度行 + 骨架网格 ---------- */
+
+/* 进度行：不假装有百分比（后端一次 IPC 扇出、无增量事件），
+ * 给「已耗时 N 秒 + 上限 + 取消」——可预期的等待。 */
+.search-progress {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.search-progress__label {
+  flex: 1;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 细进度条：不定长的往复扫光，表达「进行中」而非「进度百分比」。 */
+.search-progress__bar {
+  position: relative;
+  flex: 2.2;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--panel-sunken);
+  overflow: hidden;
+}
+
+.search-progress__bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 36%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: search-progress-sweep 1.3s ease-in-out infinite alternate;
+}
+
+@keyframes search-progress-sweep {
+  from {
+    transform: translateX(-20%);
+  }
+  to {
+    transform: translateX(190%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-progress__bar::after {
+    animation: none;
+    /* 静态时停在中间，仍是「进行中」的暗示而非死条。 */
+    left: 32%;
+  }
+}
+
+/* 骨架卡片：与 .vod-grid 同布局，结果到达时位置不跳变。
+ * 扫光复用 vod-skeleton 关键帧（封面加载中那套）。 */
+.sk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 24px 18px;
+}
+
+.sk-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sk-card__poster {
+  aspect-ratio: 2 / 3;
+  border-radius: var(--r-sm, 8px);
+  background: linear-gradient(
+    100deg,
+    var(--panel-sunken) 28%,
+    #1c232e 48%,
+    var(--panel-sunken) 68%
+  );
+  background-size: 220% 100%;
+  animation: vod-skeleton 1.4s linear infinite;
+}
+
+.sk-card__line {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--panel-sunken);
+}
+
+.sk-card__line--short {
+  width: 55%;
+  height: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-card__poster {
+    animation: none;
+    background: var(--panel-sunken);
+  }
+}
+
 .error-bar {
   display: flex;
   align-items: center;
@@ -1839,29 +1941,13 @@ textarea {
   z-index: 5;
   display: flex;
   gap: 8px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  /* 34+ 分组折行铺开，全部可见；横向滚动条没有可视提示，
+   * 用户不知道右边还有分组（audit 实测曾溢出到 2542px）。 */
+  flex-wrap: wrap;
   padding: 12px 0;
   margin-bottom: 8px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
-
-/* 横向分组栏的滚动条：WebView2(Chromium) 默认渲染成带箭头的粗灰条，压成细窄圆角。 */
-.group-tabs::-webkit-scrollbar {
-  height: 6px;
-}
-.group-tabs::-webkit-scrollbar-track {
-  background: transparent;
-}
-.group-tabs::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 999px;
-}
-.group-tabs::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
 }
 
 .group-tabs .chip {

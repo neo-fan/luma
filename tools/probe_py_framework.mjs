@@ -134,7 +134,7 @@ async function waitForPage() {
 
 const snapshot = (cdp) =>
   cdp.eval(`JSON.stringify({
-    selected: document.querySelector('select.select')?.value || null,
+    selected: document.querySelector('.site-select')?.getAttribute('data-value') || null,
     cards: [...document.querySelectorAll('.vod-card')].map(c => c.textContent || ''),
     chips: document.querySelectorAll('.chip:not(.chip--muted)').length,
     empty: !!document.querySelector('.empty'),
@@ -198,7 +198,7 @@ try {
 
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
-  await cdp.eval(WAIT("return document.querySelector('select.select') ? 'OK' : null;", 30000));
+  await cdp.eval(WAIT("return document.querySelector('.site-select__trigger') ? 'OK' : null;", 30000));
   const activeName = await cdp.eval(
     `window.__TAURI_INTERNALS__.invoke('config_active').then(a => a ? a.name : '')`,
   );
@@ -227,13 +227,19 @@ try {
     `expected "${EXPECT_ECHO}", got ${JSON.stringify(r.video?.names)}`);
 
   // 3. UI 兜底：切到 header_probe，出 1 卡片且卡片名回显自定义 UA，分类 chip 保留。
+  //    站点选择已是自研下拉（SiteSelect）：点触发器 → 点 data-key 菜单项。
   await cdp.eval(`(() => {
-    const s = document.querySelector('select.select');
-    if (!s) return 'NO_SELECT';
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
-    setter.call(s, ${JSON.stringify(PROBE_KEY)});
-    s.dispatchEvent(new Event('change', { bubbles: true }));
-    return s.value;
+    const t = document.querySelector('.site-select__trigger');
+    if (!t) return 'NO_TRIGGER';
+    t.click();
+    return 'OPENED';
+  })()`);
+  await sleep(300);
+  await cdp.eval(`(() => {
+    const item = document.querySelector('.site-select__item[data-key=${JSON.stringify(PROBE_KEY)}]');
+    if (!item) return 'NO_ITEM';
+    item.click();
+    return 'OK';
   })()`);
   const ui = await waitForCards(cdp, 1, 25000, "LumaProbeUA");
   const names = (ui.cards || []).join(" ");

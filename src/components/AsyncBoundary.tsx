@@ -14,6 +14,11 @@ interface AsyncBoundaryProps {
   /** 没有可展示的数据（初始加载、空结果、加载失败都算）。 */
   isEmpty: boolean;
   loadingLabel?: string;
+  /**
+   * 长等待期的骨架节点（如搜索的卡片网格）。传了就替代居中 Spinner——
+   * 转圈适合几秒内的短等待，10 秒以上的等待需要预示结果形态。
+   */
+  skeleton?: ReactNode;
   emptyTitle?: string;
   emptyDescription?: string;
   emptyAction?: ReactNode;
@@ -39,6 +44,7 @@ export default function AsyncBoundary({
   error,
   isEmpty,
   loadingLabel = "加载中…",
+  skeleton,
   emptyTitle = "暂无内容",
   emptyDescription,
   emptyAction,
@@ -51,7 +57,9 @@ export default function AsyncBoundary({
       {error ? (
         <ErrorBar message={error} onRetry={onRetry} copyable={errorCopyable} />
       ) : null}
-      {!error && loading && isEmpty ? <Spinner center label={loadingLabel} /> : null}
+      {!error && loading && isEmpty ? (
+        skeleton ?? <Spinner center label={loadingLabel} />
+      ) : null}
       {!error && !loading && isEmpty ? (
         <Empty title={emptyTitle} description={emptyDescription} action={emptyAction} />
       ) : null}

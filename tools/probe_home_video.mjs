@@ -125,7 +125,7 @@ async function waitForPage() {
 
 const snapshot = (cdp) =>
   cdp.eval(`JSON.stringify({
-    selected: document.querySelector('select.select')?.value || null,
+    selected: document.querySelector('.site-select')?.getAttribute('data-value') || null,
     cards: document.querySelectorAll('.vod-card').length,
     chips: document.querySelectorAll('.chip:not(.chip--muted)').length,
     empty: !!document.querySelector('.empty'),
@@ -200,7 +200,7 @@ try {
 
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
-  await cdp.eval(WAIT("return document.querySelector('select.select') ? 'OK' : null;", 30000));
+  await cdp.eval(WAIT("return document.querySelector('.site-select__trigger') ? 'OK' : null;", 30000));
   const activeName = await cdp.eval(
     `window.__TAURI_INTERNALS__.invoke('config_active').then(a => a ? a.name : '')`,
   );

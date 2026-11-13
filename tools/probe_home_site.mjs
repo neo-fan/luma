@@ -105,24 +105,34 @@ async function coldStart(cdp) {
   await cdp.eval(`localStorage.removeItem(${JSON.stringify(HOME_SITE_KEY)})`);
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
-  await cdp.eval(WAIT("return document.querySelector('select.select') ? 'OK' : null;", 30000));
+  await cdp.eval(WAIT("return document.querySelector('.site-select__trigger') ? 'OK' : null;", 30000));
 }
 
-/** 用真实 change 事件切站。 */
+/**
+ * 切站：打开 SiteSelect 下拉，点中带 data-key 的菜单项。
+ * （首页站点选择已从原生 select 换成自研下拉，DOM 契约见 SiteSelect.tsx）
+ */
 async function selectSite(cdp, key) {
+  const opened = await cdp.eval(`(() => {
+    const t = document.querySelector('.site-select__trigger');
+    if (!t) return 'NO_TRIGGER';
+    t.click();
+    return 'OPENED';
+  })()`);
+  if (opened !== "OPENED") return opened;
+  await sleep(300);
   return cdp.eval(`(() => {
-    const s = document.querySelector('select.select');
-    if (!s) return 'NO_SELECT';
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
-    setter.call(s, ${JSON.stringify(key)});
-    s.dispatchEvent(new Event('change', { bubbles: true }));
+    const item = document.querySelector('.site-select__item[data-key=${JSON.stringify(key)}]');
+    if (!item) return 'NO_ITEM';
+    if (item.getAttribute('aria-disabled') === 'true') return 'DISABLED';
+    item.click();
     return 'OK';
   })()`);
 }
 
 const snapshot = (cdp) =>
   cdp.eval(`JSON.stringify({
-    selected: document.querySelector('select.select')?.value || null,
+    selected: document.querySelector('.site-select')?.getAttribute('data-value') || null,
     cards: document.querySelectorAll('.vod-card').length,
     stored: localStorage.getItem(${JSON.stringify(HOME_SITE_KEY)}),
     empty: !!document.querySelector('.empty'),
@@ -192,8 +202,17 @@ try {
   // --- 1. 记住用户切换 ---
   await coldStart(cdp);
   assert((await selectSite(cdp, dataSiteKey)) === "OK", "switch to data site via select");
-  let cards = 0;
+  // 切站有 300ms 防抖 + 请求；默认站本身就有卡片（frodo 修复后），
+  // 「看到卡片」不再能证明切站完成——必须等 data-value 与 stored 都落到目标站。
+  let switched = null;
   for (let i = 0; i < 50; i += 1) {
+    switched = JSON.parse((await snapshot(cdp)) || "{}");
+    if (switched.selected === dataSiteKey && switched.stored === dataSiteKey && switched.cards > 0) break;
+    await sleep(400);
+  }
+  assert(switched?.selected === dataSiteKey, "switched to data site", JSON.stringify(switched));
+  let cards = switched?.cards ?? 0;
+  for (let i = 0; i < 50 && cards === 0; i += 1) {
     cards = (await cdp.eval(`document.querySelectorAll('.vod-card').length`)) || 0;
     if (cards > 0) break;
     await sleep(400);
@@ -204,10 +223,16 @@ try {
 
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
-  await cdp.eval(WAIT("return document.querySelector('select.select') ? 'OK' : null;", 30000));
-  const afterReload = JSON.parse((await snapshot(cdp)) || "{}");
-  assert(afterReload.selected === dataSiteKey, "reload keeps user-selected site", String(afterReload.selected));
-  assert(afterReload.cards > 0, "reload keeps cards", String(afterReload.cards));
+  await cdp.eval(WAIT("return document.querySelector('.site-select__trigger') ? 'OK' : null;", 30000));
+  // reload 后首屏请求需要几秒，立即快照会读到 cards=0。
+  let afterReload = null;
+  for (let i = 0; i < 50; i += 1) {
+    afterReload = JSON.parse((await snapshot(cdp)) || "{}");
+    if (afterReload.selected === dataSiteKey && afterReload.cards > 0) break;
+    await sleep(400);
+  }
+  assert(afterReload?.selected === dataSiteKey, "reload keeps user-selected site", String(afterReload?.selected));
+  assert(afterReload?.cards > 0, "reload keeps cards", String(afterReload?.cards));
 
   // --- 2. 冷启动默认站：自带内容 or 自动顺延 ---
   // py 框架对齐（修 __init__ 覆盖类属性 header）后，豆瓣默认站 homeVideoContent

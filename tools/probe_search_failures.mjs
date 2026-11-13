@@ -12,7 +12,7 @@
  * 依赖：dev 窗口（CDP 9222）+ python tests/stub_server.py。
  *   node tools/probe_search_failures.mjs
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -145,7 +145,15 @@ function todayLogFile() {
   const utc = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(
     now.getUTCDate(),
   ).padStart(2, "0")}`;
-  return path.join(os.homedir(), "AppData", "Roaming", "Luma", "logs", `luma-${utc}.log`);
+  const name = `luma-${utc}.log`;
+  const base = path.join(os.homedir(), "AppData", "Roaming");
+  // debug 构建的数据目录是 Luma-debug（见 store.rs 的 debug_assertions 分支）；
+  // 两个都试，取今天日志真实存在的那个。
+  for (const dir of [path.join(base, "Luma-debug", "logs"), path.join(base, "Luma", "logs")]) {
+    const file = path.join(dir, name);
+    if (existsSync(file)) return file;
+  }
+  return path.join(base, "Luma-debug", "logs", name);
 }
 
 function readLog(file) {
@@ -237,7 +245,11 @@ try {
   const before = readLog(logFile);
   assert(
     (await cdp.eval(`(() => {
-      const b = document.querySelector('.failure-item button[aria-label="重试"]');
+      // 明细里可能有多个失败源（JS 桩运行时不可用 + py 桩超时）：
+      // 只点 BROKEN_SITE 那一行的重试，日志断言才对得上目标站点。
+      const row = [...document.querySelectorAll('.failure-item')]
+        .find(li => (li.querySelector('.failure-item__name')?.textContent || '').includes(${JSON.stringify(BROKEN_SITE)}));
+      const b = row?.querySelector('button[aria-label="重试"]');
       if (!b) return 'MISSING';
       b.click();
       return 'CLICKED';

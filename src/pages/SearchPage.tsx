@@ -6,7 +6,7 @@ import ErrorBar from "../components/ErrorBar";
 import Icon from "../components/Icon";
 import IconButton from "../components/IconButton";
 import SiteSelect from "../components/SiteSelect";
-import Spinner from "../components/Spinner";
+import SearchSkeleton from "../components/Skeleton";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
@@ -99,8 +99,27 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
   const [searched, setSearched] = usePageState<boolean>(`${K}searched`, false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  /** 等待期已耗时（秒），驱动进度条文案；loading 结束即重置。 */
+  const [elapsed, setElapsed] = useState(0);
+  /**
+   * 用户取消标记。后端没有中断通道（一次 IPC 扇出到底），取消是纯前端语义：
+   * 立即退出等待态，迟到的结果整批丢弃不渲染。源站请求仍会跑完，
+   * 换取的是用户不用干等 20 秒（见 DESIGN-SPEC 待确认 #2）。
+   */
+  const cancelledRef = useRef(false);
   /** 用户实际搜过的词，跨重启保留；与页面快照分开存。 */
   const [recent, setRecent] = useState<string[]>(() => readSearchHistory());
+
+  // 等待期计时：500ms 粒度足够，结束/取消即停。
+  useEffect(() => {
+    if (!loading) return;
+    setElapsed(0);
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setElapsed(Math.round((Date.now() - startedAt) / 1000));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [loading]);
 
   const runSearch = async (wordOverride?: string) => {
     const word = (wordOverride ?? keyword).trim();
@@ -108,6 +127,7 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
       setError("请输入搜索关键词");
       return;
     }
+    cancelledRef.current = false;
     // 提交一次就记一次（即使这次失败，用户意图也值得保留）。
     setRecent(pushSearchHistory(word));
     const startedAt = Date.now();
@@ -143,6 +163,11 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
           return;
         }
         const result = await api.search(site.key, word, 1);
+        if (cancelledRef.current) {
+          // 用户已取消：迟到的结果整批丢弃，不污染已重置的界面。
+          log.info("search result discarded after cancel", { keyword: word.slice(0, 60), scope: target });
+          return;
+        }
         for (const vod of result.list ?? []) {
           merged.push({
             siteKey: site.key,
@@ -171,6 +196,11 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
           args: [word, false, 1],
           timeoutMs: ALL_TIMEOUT_MS,
         })) as AggregateResult;
+        if (cancelledRef.current) {
+          // 用户已取消：迟到的聚合结果整批丢弃（详见 cancelledRef 注释）。
+          log.info("search result discarded after cancel", { keyword: word.slice(0, 60), scope: "all" });
+          return;
+        }
         const names = new Map(selectableSites.map((item) => [item.key, item.name]));
         const seen = new Set<string>();
         for (const row of agg.results ?? []) {
@@ -305,6 +335,17 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
       return;
     }
     void runSearch();
+  };
+
+  /** 取消等待：立即退出 loading 态，迟到的结果由 cancelledRef 整批丢弃。 */
+  const onCancel = () => {
+    if (!loading) {
+      return;
+    }
+    cancelledRef.current = true;
+    setLoading(false);
+    setProgress("");
+    log.info("search cancelled by user");
   };
 
   /** 点历史词直接重搜：setKeyword 是异步的，所以把词显式传给 runSearch。 */
@@ -470,7 +511,23 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
 
       {error ? <ErrorBar message={error} /> : null}
 
-      {loading ? <Spinner center label={progress || "正在检索…"} /> : null}
+      {loading ? (
+        <>
+          {/* 进度行：真实语义是「无增量事件的等待」——不假装有百分比，
+           * 给已耗时 + 上限 + 取消入口，比孤立转圈可预期。 */}
+          <div className="search-progress" role="status" aria-live="polite">
+            <span className="search-progress__bar" aria-hidden="true" />
+            <span className="search-progress__label">
+              {progress || "正在检索…"} 已等待 {elapsed} 秒
+            </span>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={onCancel}>
+              取消
+            </button>
+          </div>
+          {/* 骨架网格预示结果形态；不用 .vod-card 类名，探针计数不受干扰。 */}
+          <SearchSkeleton count={12} />
+        </>
+      ) : null}
 
       {!loading && searched ? (
         <p className="result-meta">

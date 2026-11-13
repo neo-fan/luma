@@ -3,6 +3,7 @@ import type { Navigate } from "../App";
 import AsyncBoundary from "../components/AsyncBoundary";
 import Empty from "../components/Empty";
 import IconButton from "../components/IconButton";
+import SiteSelect from "../components/SiteSelect";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -137,6 +138,24 @@ export default function HomePage({
   /** 空结果不算有效缓存：只有真正拉到列表才阻止重复请求。 */
   const hasList = list.length > 0;
   const selectedSite = sites.some((item) => item.key === draftSite) ? draftSite : siteKey;
+
+  // 新策略只屏蔽 jvm（Android dex/jar）源，quickjs 已解禁。
+  // 旧 localStorage 缓存没有 disabledReason：这里按 runtime 兜一层，
+  // 保证 enabled=true 的 jvm 站仍被判为屏蔽。
+  const blockedKeys = new Set(
+    sites
+      .filter(
+        (item) =>
+          Boolean(item.disabledReason) || item.runtime === "jvm" || item.enabled === false,
+      )
+      .map((item) => item.key),
+  );
+  const blockedHints = new Map(
+    sites.map((item) => [
+      item.key,
+      Boolean(item.disabledReason) || item.runtime === "jvm" ? "已屏蔽" : "已禁用",
+    ]),
+  );
 
   // 外部 siteKey 变化（配置加载、App 恢复偏好）时同步下拉显示。
   useEffect(() => {
@@ -464,26 +483,14 @@ export default function HomePage({
       <header className="page-head">
         <div className="page-head__main">
           <h1 className="page-title">首页</h1>
-          <select
-            className="select"
+          <SiteSelect
+            sites={sites}
             value={selectedSite}
-            onChange={(event) => switchSite(event.target.value)}
-            aria-label="选择站点"
-          >
-            {sites.map((item) => {
-              // 新策略只屏蔽 jvm（Android dex/jar）源，quickjs 已解禁。
-              // 旧 localStorage 缓存没有 disabledReason：这里按 runtime 兜一层，
-              // 保证 enabled=true 的 jvm 站仍被判为屏蔽。
-              const blocked = Boolean(item.disabledReason) || item.runtime === "jvm";
-              const suffix = blocked ? "（已屏蔽）" : item.enabled ? "" : "（已禁用）";
-              return (
-                <option key={item.key} value={item.key} disabled={blocked || !item.enabled}>
-                  {item.name}
-                  {suffix}
-                </option>
-              );
-            })}
-          </select>
+            onChange={switchSite}
+            allowAll={false}
+            disabledKeys={blockedKeys}
+            disabledHints={blockedHints}
+          />
         </div>
         <IconButton
           name="refresh"

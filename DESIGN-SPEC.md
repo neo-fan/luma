@@ -348,6 +348,8 @@
 
 ## 11. 实施顺序（按「先止血、再治病」）
 
+> **状态（2026-11-14）**：S1 ✅（commit b3a7ca6，P0-1 根因修正见 §2）；S2 ✅（骨架网格 + 定长扫光进度条 + 纯前端取消[迟到结果整批丢弃，后端无中断通道]）；S3 部分完成（首页原生 select → 泛化 SiteSelect[allowAll/disabledKeys]，3 个探针同步改 `.site-select[data-value]` 契约；直播分组由横向滚动改折行铺开——侧栏式导航成本高、折行已消除溢出；热区 32px ✅）。S4 / S5 未开始。
+
 | 阶段 | 内容 | 触及文件 | 风险 |
 |---|---|---|---|
 | **S1 止血** | ① 卡片占位高度修正（`contain-intrinsic-size: auto 418px`）② 失败原因归类，原始报错只进日志 ③ 失败计数一致性 ④ `--faint` / `--badge-on-accent` 对比度 ⑤ `--panel-2` 补定义 | `styles.css`、`SearchPage.tsx`、`VodCard.tsx` | 低 |
