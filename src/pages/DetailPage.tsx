@@ -13,6 +13,7 @@ import type { Episode, PlayLine } from "../lib/format";
 import { findPlayableSource } from "../lib/crossSourceRecovery";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { pageCache } from "../lib/pageCache";
+import { recallCard } from "../lib/cardIndex";
 import { noDetailSources } from "../lib/noDetailSource";
 import { usePageState } from "../lib/usePageState";
 import { countEpisodes } from "../lib/sources";
@@ -62,6 +63,17 @@ export default function DetailPage({
   // TVBox `vod_pic` may carry inline @headers; route the hero image through
   // the same local /image proxy the cards use.
   const heroImage = useProxiedImage(vod?.vod_pic);
+  /**
+   * 空详情时回填的卡片：发现型源（豆瓣[py] 等）的 `detailContent` 恒为空，
+   * 但列表卡片自带海报、评分、年份——那是这个源能给出的全部信息。不显示就
+   * 等于把「有」说成「没有」。来源是 `cardIndex`（列表拉取时顺手记下）。
+   * 这正是 FongMi 的 `Vod.checkPic/checkName`（详情字段空就用卡片兜底）在
+   * 我们这套「详情页独立成页」架构里的等价物。
+   */
+  const [emptyCard, setEmptyCard] = useState<VodInfo | null>(null);
+  // 空态卡片的封面也走同一套 /image 代理：豆瓣的 pic 带内联 `@Referer=`，
+  // 直连会被防盗链挡成 403。
+  const emptyCardImage = useProxiedImage(emptyCard?.vod_pic);
   const [lineIndex, setLineIndex] = usePageState(`${detailKey}:line`, 0);
   const [episodeQuery, setEpisodeQuery] = usePageState(`${detailKey}:query`, "");
   const [reverse, setReverse] = usePageState(`${detailKey}:reverse`, false);
@@ -155,6 +167,8 @@ export default function DetailPage({
           // 不算异常：只是这个源没给播放列表（发现/榜单型源就是这样）。
           // 文案与后续动作分开处理，红色错误条只留给真正的请求失败。
           setEmpty(true);
+          // 列表卡片若还在索引里，空态就退化成「卡片详情」而不是白板。
+          setEmptyCard(recallCard(siteKey, vodId));
           // 发现型源（豆瓣[py] 等）连 searchContent 都没有，同站按名回查必然
           // 失败。改用片名在其它站点里找一个真能播的详情，成功就直接切过去；
           // 用户一旦手动操作（重试 / 打开换源面板）就中止，避免迟到结果跳页。
@@ -405,6 +419,12 @@ export default function DetailPage({
     // 这个源已被证实「详情空 + 按名也搜不到」（含本次请求刚判定的）：直接
     // 说明它是榜单/推荐源，不让用户以为是客户端坏了。
     const known = !error && empty && noDetailSources.has(siteKey);
+    // 卡片回填后，标题优先用卡片片名（`title` 只在从列表点进来时才有，
+    // 收藏/历史直链进详情时只剩卡片这一条线索）。
+    const cardTitle = (emptyCard?.vod_name || title || "").trim();
+    const emptyMeta = [emptyCard?.vod_remarks, emptyCard?.vod_year, emptyCard?.type_name]
+      .filter((item): item is string => Boolean(item && String(item).trim()))
+      .join(" · ");
     return (
       <section className="page">
         <header className="page-head">
@@ -414,31 +434,63 @@ export default function DetailPage({
         {error ? (
           <ErrorBar message={`详情加载失败：${error}`} onRetry={retry} />
         ) : (
-          <div className="detail-empty" role="status">
-            <p className="detail-empty__title">
-              {known
-                ? `「${siteName || siteKey}」不提供播放列表`
-                : title
-                  ? `《${title}》在当前源没有播放列表`
-                  : "当前源没有返回影片详情"}
-            </p>
-            <p className="detail-empty__desc">
-              {known
-                ? "这类源只提供榜单/推荐（海报、评分、片名），点任何影片都不会有剧集，换片也一样。"
-                : "可能是影片 id 失效或站点临时波动，也可能是这个源只做发现/推荐。"}
-              {fallback === "searching"
-                ? `正在按片名从其它源查找${title ? `《${title}》` : ""}的可播放版本，找到后会自动切换…`
-                : fallback === "none"
-                  ? "已按片名在其它源查找，暂时没有找到可播放的版本。"
-                  : ""}
-            </p>
-            <div className="detail-empty__actions">
-              <button type="button" className="btn btn--ghost btn--sm" onClick={retry}>
-                重试
-              </button>
-              <button type="button" className="btn btn--primary btn--sm" onClick={openSources}>
-                换源
-              </button>
+          <div
+            className={emptyCard ? "detail-empty detail-empty--card" : "detail-empty"}
+            role="status"
+          >
+            {emptyCard && emptyCardImage.src ? (
+              <div className="detail-empty__poster">
+                <img
+                  src={emptyCardImage.src}
+                  alt={emptyCard.vod_name || ""}
+                  onError={emptyCardImage.onError}
+                />
+              </div>
+            ) : null}
+            <div className="detail-empty__body">
+              <p className="detail-empty__title">
+                {cardTitle
+                  ? `《${cardTitle}》`
+                  : known
+                    ? `「${siteName || siteKey}」不提供播放列表`
+                    : "当前源没有返回影片详情"}
+              </p>
+              {emptyMeta ? <p className="detail-empty__meta">{emptyMeta}</p> : null}
+              <p className="detail-empty__desc">
+                {emptyCard
+                  ? `「${siteName || siteKey}」是榜单/推荐型源：能给出片名、海报和评分，但没有影片详情与播放地址。想看这部片，换一个有片源的站点即可。`
+                  : known
+                    ? "这类源只提供榜单/推荐（海报、评分、片名），点任何影片都不会有剧集，换片也一样。"
+                    : "可能是影片 id 失效或站点临时波动，也可能是这个源只做发现/推荐。"}
+              </p>
+              {fallback === "searching" || fallback === "none" ? (
+                <p className="detail-empty__hint">
+                  {fallback === "searching"
+                    ? `正在按片名从其它源查找${cardTitle ? `《${cardTitle}》` : ""}的可播放版本，找到后会自动切换…`
+                    : "已按片名在其它源查找，暂时没有找到可播放的版本。"}
+                </p>
+              ) : null}
+              <div className="detail-empty__actions">
+                {cardTitle ? (
+                  <button
+                    type="button"
+                    className="btn btn--primary btn--sm"
+                    onClick={() => navigate({ name: "search", keyword: cardTitle })}
+                  >
+                    全站搜索此片
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className={`btn btn--sm ${cardTitle ? "btn--ghost" : "btn--primary"}`}
+                  onClick={openSources}
+                >
+                  换源
+                </button>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={retry}>
+                  重试
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -536,6 +536,67 @@ textarea {
   display: flex;
   gap: 8px;
   margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+/**
+ * 带卡片的空态（发现型源：豆瓣[py] 等只给海报墙，detailContent 恒空）。
+ * 有海报时排成「海报 + 文案」两列，窄窗口自动回落成竖排——这类源在手机上
+ * 也常见，不要让 120px 的海报把文字挤成一列三四个字。
+ */
+.detail-empty--card {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  max-width: 720px;
+}
+
+.detail-empty__poster {
+  width: 104px;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+}
+
+.detail-empty__poster img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detail-empty__body {
+  min-width: 0;
+}
+
+/* 评分/年份比标题低一级：用户第一眼要确认「点的是这部片」。 */
+.detail-empty__meta {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+}
+
+/* 自动跨源兜底的进度：单独一行，别和静态说明粘成一句话。 */
+.detail-empty__hint {
+  margin: 8px 0 0;
+  color: var(--accent-ink);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+@media (max-width: 520px) {
+  .detail-empty--card {
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .detail-empty__poster {
+    width: 76px;
+  }
 }
 
 /* 设置页节目单地址输入框与按钮行。 */

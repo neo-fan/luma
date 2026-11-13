@@ -7,6 +7,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { CACHE_TTL, pageCache } from "./pageCache";
+import { rememberCards } from "./cardIndex";
 import { mergeHomeFallback } from "./home";
 import { pickRecoveryCandidate } from "./detailRecovery";
 import { noDetailSources } from "./noDetailSource";
@@ -237,7 +238,11 @@ export const api = {
         }
       },
       force,
-    );
+    ).then((result) => {
+      // 纯发现型源（豆瓣[py] 等）没有 detailContent，详情页靠这份索引回填卡片。
+      rememberCards(siteKey, result?.list);
+      return result;
+    });
   },
 
   category(siteKey: string, tid: string, page: number, force = false): Promise<ResultPage> {
@@ -258,7 +263,10 @@ export const api = {
       (reason, attempt) => {
         log.warn("category page retry", { siteKey, tid, page, reason, attempt });
       },
-    );
+    ).then((result) => {
+      rememberCards(siteKey, result?.list);
+      return result;
+    });
   },
 
   search(siteKey: string, keyword: string, page: number, force = false): Promise<ResultPage> {
@@ -268,7 +276,10 @@ export const api = {
       CACHE_TTL.search,
       () => spider<ResultPage>(siteKey, "searchContent", [keyword, false, page]),
       force,
-    );
+    ).then((result) => {
+      rememberCards(siteKey, result?.list);
+      return result;
+    });
   },
 
   /**

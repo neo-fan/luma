@@ -72,6 +72,11 @@ export async function findPlayableSource(
         option.matchScore >= MIN_MATCH_SCORE &&
         !blocked.has(option.siteKey),
     )
+    // 自动切页没人复核，片名对错全押在这一个排序上：FongMi 的 autoFallback
+    // 干脆只认 `name.equals(keyword)`（手动搜索才放宽到 contains）。我们保留
+    // 包含匹配作为召回兜底，但**精确同名的候选必须排在前面**——否则搜「庆余年」
+    // 会被「庆余年2」抢走，用户点进去发现是另一部。
+    .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, MAX_PROBES);
 
   let cursor = 0;

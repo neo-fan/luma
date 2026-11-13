@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
@@ -44,6 +44,8 @@ interface AggregateResult {
 interface SearchPageProps {
   sites: Site[];
   navigate: Navigate;
+  /** 带着片名跳进来（空详情页的「全站搜索此片」）：落地即搜一次。 */
+  initialKeyword?: string;
 }
 
 interface SearchHit {
@@ -64,7 +66,7 @@ interface FailureRow {
 }
 
 /** 搜索页：单站点直连，全部站点走后端一次并发聚合。 */
-export default function SearchPage({ sites, navigate }: SearchPageProps) {
+export default function SearchPage({ sites, navigate, initialKeyword }: SearchPageProps) {
   // P2: jar sites are dispatchable now. Keep them selectable so a failing
   // source shows its reason instead of silently disappearing from the list.
   const selectableSites = sites.filter((item) => item.enabled);
@@ -285,6 +287,27 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
 
   const onRecentClear = () => setRecent(clearSearchHistory());
   const onRecentRemove = (word: string) => setRecent(removeSearchHistory(word));
+
+  /**
+   * 带着片名跳进来（空详情页的「全站搜索此片」）时落地即搜一次。
+   * - 用 ref 记住已自动搜过的词：dev 的 StrictMode 会把 effect 跑两遍，
+   *   聚合搜索白烧一轮 20 秒；重复渲染同理。
+   * - 与当前 keyword 相同时不重搜：用户可能只是从结果页点回搜索页。
+   */
+  const bootKeywordRef = useRef("");
+  useEffect(() => {
+    const word = (initialKeyword || "").trim();
+    if (!word || bootKeywordRef.current === word) {
+      return;
+    }
+    bootKeywordRef.current = word;
+    setKeyword(word);
+    if (word !== keyword.trim()) {
+      void runSearch(word);
+    }
+    // keyword / runSearch 故意不列依赖：这里只关心「跳进来时带的是哪个词」。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialKeyword]);
 
   /**
    * 单站重试：聚合时超时的慢源往往单独再跑一次就能出结果。成功则把结果

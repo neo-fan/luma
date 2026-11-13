@@ -23,6 +23,7 @@ import { api, errorMessage } from "./lib/invoke";
 import { pageCache } from "./lib/pageCache";
 import { clearSourceCache, setSourceCacheScope } from "./lib/sourceCache";
 import { noDetailSources } from "./lib/noDetailSource";
+import { forgetCards } from "./lib/cardIndex";
 import { clearPageStates } from "./lib/usePageState";
 import { clearCoverAttempts } from "./lib/coverBackfill";
 import { log } from "./lib/logger";
@@ -39,7 +40,7 @@ const PlayerPage = lazy(() => import("./pages/PlayerPage"));
 /** 单窗口内的视图联合类型；不使用 react-router。 */
 export type View =
   | { name: "home" }
-  | { name: "search" }
+  | { name: "search"; /** 从空详情页「全站搜索此片」跳进来时带上片名，落地即搜 */ keyword?: string }
   | { name: "detail"; siteKey: string; vodId: string; /** 搜索/列表已知片名，用于提前预取换源候选 */ title?: string }
   | {
       name: "player";
@@ -159,6 +160,8 @@ function resetSessionCaches(
   clearSourceCache();
   clearPageStates();
   clearCoverAttempts();
+  // 卡片索引按 siteKey 存，换配置后旧的 siteKey 再也不会被访问，留着只是漏内存。
+  forgetCards();
   scrollPositions.current.clear();
 }
 
@@ -439,7 +442,7 @@ export default function App() {
           />
         );
       case "search":
-        return <SearchPage sites={sites} navigate={navigate} />;
+        return <SearchPage sites={sites} navigate={navigate} initialKeyword={view.keyword} />;
       case "detail":
         return (
           <DetailPage

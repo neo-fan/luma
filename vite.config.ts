@@ -43,5 +43,9 @@ export default defineConfig({
   // 导致第二个测试文件收集失败。纯函数用例 < 1s，串行收集即可。
   test: {
     fileParallelism: false,
+    // `.workbuddy/` 是本地临时区（一次性探针脚本、参考实现克隆）。里面常出现
+    // 别人的 `*.test.ts` 与自己的 tsconfig `extends`，vitest 默认会一路扫进去，
+    // 表现为「我们的用例全绿，但 Test Files 有一堆 failed」。
+    exclude: ["**/node_modules/**", "**/dist/**", "**/target/**", ".workbuddy/**"],
   },
 });
