@@ -93,8 +93,6 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
   const [forceReload, setForceReload] = useState(false);
   // 用户主动展开的分组（按组名），默认只渲染前 CHANNEL_LIMIT 个避免 DOM 爆炸。
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  // 当前打开线路选择器的频道（组名::频道名）；null 表示全部收起。
-  const [linePicker, setLinePicker] = useState<string | null>(null);
   // 当前选中的分组（吸顶标签栏单组视图）；null 表示尚未落到某组（首次/切源时重置）。
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   // 切源防抖：下拉即时显示 draftIndex，300ms 后才真正切换 activeIndex 并重拉。
@@ -227,10 +225,9 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
         return;
       }
       setActiveIndex(next);
-      // 切源时收起之前的展开、关闭线路选择器、清空筛选、回到首分组，
+      // 切源时收起之前的展开、清空筛选、回到首分组，
       // 避免带着旧源的筛选词落到新源却显示「没有匹配的频道」，误以为没切过去。
       setExpanded(new Set());
-      setLinePicker(null);
       setKeyword("");
       setActiveGroup(null);
     }, SWITCH_DEBOUNCE_MS);
@@ -241,7 +238,6 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
     const count = channel.lines.length;
     const idx = ((lineIndex % count) + count) % count;
     setLiveLine(sourceKey, channel.name, idx);
-    setLinePicker(null);
     navigate({
       name: "player",
       siteKey: "live",
@@ -256,16 +252,6 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       liveSource: sourceKey,
     });
   };
-
-  // 线路选择器打开时，点击外部关闭。
-  useEffect(() => {
-    if (!linePicker) {
-      return;
-    }
-    const close = () => setLinePicker(null);
-    document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
-  }, [linePicker]);
 
   // 渲染单个分组的标题 + 频道 chip 行；搜索态跨组与单组视图共用，避免重复。
   const renderGroup = (group: LiveGroup, isOpen: boolean) => {
@@ -295,25 +281,18 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
           {shown.map((channel) => {
             const key = `${group.name}::${channel.name}`;
             const multi = channel.lines.length > 1;
+            // 点开直接播：默认第一条线路，或该频道上次用过的线路（越界钳制）。
+            // 手动切线路放在播放页的 .live-switch，列表侧不再弹选择器。
             const remembered = multi
               ? Math.min(getLiveLine(sourceKey, channel.name), channel.lines.length - 1)
               : 0;
-            const pickerOpen = linePicker === key;
             return (
               <span className="live-chip" key={key}>
                 <button
                   type="button"
-                  className={pickerOpen ? "chip is-open" : "chip"}
+                  className="chip"
                   title={channel.lines[remembered]}
-                  onClick={(event) => {
-                    if (!multi) {
-                      play(channel, remembered);
-                      return;
-                    }
-                    // 多线路：阻止冒泡以免触发全局关闭监听，然后切换弹层。
-                    event.stopPropagation();
-                    setLinePicker(pickerOpen ? null : key);
-                  }}
+                  onClick={() => play(channel, remembered)}
                 >
                   {channel.name}
                   {multi ? (
@@ -322,26 +301,6 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
                     </span>
                   ) : null}
                 </button>
-                {pickerOpen ? (
-                  <span className="line-pop" role="menu">
-                    {channel.lines.map((stream, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        role="menuitem"
-                        className={i === remembered ? "is-on" : ""}
-                        title={stream}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          play(channel, i);
-                        }}
-                      >
-                        线路 {i + 1}
-                        {i === remembered ? " ✓" : ""}
-                      </button>
-                    ))}
-                  </span>
-                ) : null}
               </span>
             );
           })}
