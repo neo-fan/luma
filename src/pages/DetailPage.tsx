@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Navigate } from "../App";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import Empty from "../components/Empty";
@@ -65,6 +65,42 @@ export default function DetailPage({
   const [episodeQuery, setEpisodeQuery] = usePageState(`${detailKey}:query`, "");
   const [reverse, setReverse] = usePageState(`${detailKey}:reverse`, false);
   const [expanded, setExpanded] = usePageState(`${detailKey}:expanded`, false);
+
+  /**
+   * 「展开简介」按钮是否出现，按 clamp 后的真实溢出高度决定，而不是字符数硬阈值：
+   * 简介可能 >120 字却没被裁切（点了无变化），也可能 <120 字就被 84px 裁掉
+   * （按钮不出现却看不到全文）。这里把元素临时切回 clamp 量 scrollHeight，
+   * 超出 clientHeight 才认为「真的被截断」，按钮才出现。
+   */
+  const contentRef = useRef<HTMLParagraphElement | null>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  const measureDescription = useCallback(() => {
+    const el = contentRef.current;
+    if (!el) {
+      setOverflowing(false);
+      return;
+    }
+    // 临时回到 clamp 状态测量真实溢出，测完恢复当下展开/收起态，不闪烁。
+    const wasExpanded = el.classList.contains("is-expanded");
+    el.classList.remove("is-expanded");
+    el.classList.add("is-clamped");
+    const isOver = el.scrollHeight > el.clientHeight + 1;
+    el.classList.remove("is-clamped");
+    if (wasExpanded) {
+      el.classList.add("is-expanded");
+    }
+    setOverflowing(isOver);
+  }, []);
+
+  useLayoutEffect(() => {
+    measureDescription();
+  }, [vod?.vod_content, expanded, siteKey, vodId, measureDescription]);
+
+  useEffect(() => {
+    window.addEventListener("resize", measureDescription);
+    return () => window.removeEventListener("resize", measureDescription);
+  }, [measureDescription]);
 
   // 瞬时状态不缓存：刷新序号每次挂载归零，保证回退一定走缓存。
   const [loading, setLoading] = useState(false);
@@ -471,11 +507,14 @@ export default function DetailPage({
           {vod.vod_actor ? (
             <p className="detail-line">主演：{plainText(vod.vod_actor)}</p>
           ) : null}
-          <p className={expanded ? "detail-content" : "detail-content is-clamped"}>
+          <p
+            ref={contentRef}
+            className={expanded ? "detail-content is-expanded" : "detail-content is-clamped"}
+          >
             {description}
           </p>
           <div className="detail-actions detail-actions--inline">
-            {description.length > 120 ? (
+            {overflowing || expanded ? (
               <IconButton
                 name="chevron"
                 label={expanded ? "收起简介" : "展开简介"}
