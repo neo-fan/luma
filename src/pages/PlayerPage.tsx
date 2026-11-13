@@ -20,6 +20,7 @@ import type { HistoryItem, PlayResolved, ResultPage, Site, VodInfo } from "../ty
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
+import type { LiveLineControl } from "../hooks/usePlayerEngine";
 
 interface PlayerPageProps {
   siteKey: string;
@@ -83,6 +84,12 @@ export default function PlayerPage({
   const mpvTried = useRef(false);
   /** 同一轮播放只允许一次「找下一条线路」，防止多个失败信号并发触发。 */
   const lineSwitchStarted = useRef(false);
+  /**
+   * 直播线路切换的「最新值」通道：控制栏按钮由播放内核一次性建好，
+   * 回调与线路数组通过 ref 传递，避免它们进 effect 依赖把播放器整个重建。
+   * 实际赋值在 pickLiveLine 定义之后（render 期间完成，effect 执行时已是新值）。
+   */
+  const liveLineRef = useRef<LiveLineControl | null>(null);
 
   const [showSources, setShowSources] = useState(false);
   /** 收藏状态：与详情页共用同一份 SQLite 数据，这里只做镜像。 */
@@ -531,6 +538,7 @@ export default function PlayerPage({
     failoverStarted,
     lineSwitchStarted,
     switchOrFailoverRef,
+    liveLineRef,
     resolved,
     resolving,
     siteKey,
@@ -795,6 +803,12 @@ export default function PlayerPage({
     [liveLinesArr, liveIdx, liveSource, vodId, vodName, episodeName, siteKey, liveUa, navigate],
   );
 
+  // 线路按钮只服务直播多线路；单线路不给控制栏添一个永远只有一项的菜单。
+  liveLineRef.current =
+    siteKey === "live" && liveLinesArr.length > 1
+      ? { lines: liveLinesArr, index: liveIdx, onPick: pickLiveLine }
+      : null;
+
   return (
     <section className="page page--player">
       <PlayerHeader
@@ -842,26 +856,8 @@ export default function PlayerPage({
         onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
       />
 
-      {/* 直播多线路：手动切换 + 显示当前线路；自动切换在播放失败时由内核触发。 */}
-      {siteKey === "live" && liveLinesArr.length > 1 ? (
-        <div className="live-switch">
-          <span className="page-meta">线路</span>
-          <div className="chip-row chip-row--static">
-            {liveLinesArr.map((stream, i) => (
-              <button
-                key={i}
-                type="button"
-                className={i === liveIdx ? "chip is-active" : "chip"}
-                title={stream}
-                onClick={() => pickLiveLine(i)}
-              >
-                线路 {i + 1}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
+      {/* 直播线路切换在播放器控制栏里（PlayerStage → ArtPlayer controls），
+          不再在下方单独占一行 chip；节目单紧跟在信息卡下面。 */}
       {/* 直播态节目单：按频道名匹配当前频道的当日节目并高亮正在播放项。 */}
       {siteKey === "live" ? (
         <LiveEpgPanel

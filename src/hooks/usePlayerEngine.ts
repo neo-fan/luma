@@ -20,6 +20,7 @@ import type {
   SetStateAction,
 } from "react";
 import Artplayer from "artplayer";
+import type { Option } from "artplayer";
 import artplayerPluginHlsControl from "artplayer-plugin-hls-control";
 import Hls from "hls.js";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
@@ -54,6 +55,18 @@ interface MpegtsLike {
   Events: { ERROR: string };
 }
 
+/**
+ * 直播多线路切换：交给 ArtPlayer 控制栏渲染成「线路 1/3」按钮 + 下拉列表，
+ * 交互与清晰度按钮一致（同一套 selector 组件），全屏时同样可用。
+ */
+export interface LiveLineControl {
+  /** 该频道全部可播放地址；只有多于 1 条时调用方才传，单线路不必占位置。 */
+  lines: string[];
+  /** 当前线路序号（已钳制），用于按钮文案与下拉默认勾选。 */
+  index: number;
+  onPick: (index: number) => void;
+}
+
 export interface UsePlayerEngineArgs {
   /** ArtPlayer 挂载点；实例会在这个容器里生成真正的 <video>。 */
   containerRef: RefObject<HTMLDivElement>;
@@ -68,6 +81,11 @@ export interface UsePlayerEngineArgs {
   lineSwitchStarted: MutableRefObject<boolean>;
   /** 线路切换失败后的兜底（整站找同名影片）；用 ref 转发避免本 effect 因 lines 重挂。 */
   switchOrFailoverRef: MutableRefObject<() => Promise<void>>;
+  /**
+   * 直播多线路切换控件。用 ref 转发（而非直接传数组/回调）：
+   * 这两个值随每次切线路而变，进依赖数组会让播放内核整个重建。
+   */
+  liveLineRef?: MutableRefObject<LiveLineControl | null>;
   resolved: PlayResolved | null;
   /** 新一轮地址解析中：此时旧 `resolved` 属于上一个源，不能再建播放实例。 */
   resolving: boolean;
@@ -86,6 +104,7 @@ export function usePlayerEngine({
   failoverStarted,
   lineSwitchStarted,
   switchOrFailoverRef,
+  liveLineRef,
   resolved,
   resolving,
   siteKey,
@@ -121,6 +140,48 @@ export function usePlayerEngine({
      * 用 `disposed` 保证幂等（ArtPlayer 的 destroy 事件仍会兜底触发一次）。
      */
     let teardownDecoders: (() => void) | null = null;
+    /**
+     * 直播线路按钮：挂到控制栏右侧（设置 / 画中画 / 全屏之前）。
+     *
+     * 用 ArtPlayer 内置的 selector 组件（清晰度按钮用的同一套），而不是自绘弹层，
+     * 这样按钮的间距、hover、下拉列表样式都跟播放器自带控件一致，全屏时同样可用；
+     * 下方也就不必再单独占一行 chip 了。
+     */
+    const live = liveLineRef?.current;
+    const controls: NonNullable<Option["controls"]> =
+      live && live.lines.length > 1
+        ? [
+            {
+              name: "live-line",
+              position: "right",
+              index: 10,
+              html: `线路 ${live.index + 1}/${live.lines.length}`,
+              // 不设 tooltip：ArtPlayer 的 hint 浮层正好落在 selector 下拉的位置上，
+              // 会把菜单盖住（清晰度按钮同样不设）。文案本身已经说明用途。
+              selector: live.lines.map((_url, i) => ({
+                html: `线路 ${i + 1}`,
+                value: i,
+                default: i === live.index,
+              })),
+              onSelect(selector) {
+                // 点击后再读 ref：切线路途中 ref 可能已被新一轮渲染更新。
+                const now = liveLineRef?.current;
+                const idx = Number(selector.value);
+                const label = `线路 ${idx + 1}/${now?.lines.length ?? "?"}`;
+                if (!now || !Number.isInteger(idx) || idx < 0) {
+                  return label;
+                }
+                // 选中当前线路不重载页面；真正切换由调用方 navigate 完成。
+                if (idx !== now.index) {
+                  now.onPick(idx);
+                }
+                // ArtPlayer 会把返回值写进按钮（`art-selector-value` 的 innerHTML），
+                // 返回 undefined 会直接把按钮文案变成 "undefined"，所以必须回字符串。
+                return label;
+              },
+            },
+          ]
+        : [];
     const art = new Artplayer({
       container,
       url: resolved.proxyUrl,
@@ -141,6 +202,7 @@ export function usePlayerEngine({
       miniProgressBar: true,
       mutex: true,
       moreVideoAttr: { playsInline: true },
+      controls,
       plugins:
         resolved.kind === "hls"
           ? [

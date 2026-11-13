@@ -450,20 +450,11 @@ textarea {
   font-size: 13px;
 }
 
-/* 直播多线路切换条：标题 + 线路 chip 组。 */
-.live-switch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 14px 0 4px;
-}
-
-.live-switch .chip-row--static {
-  flex-wrap: wrap;
-}
-
-.live-switch .page-meta {
-  flex: none;
+/* 直播线路切换已并入 ArtPlayer 控制栏（selector 按钮），下方不再占一行。 */
+.player-art .art-control-selector .art-selector-value {
+  /* 控制栏其余按钮是图标/极短文本，「线路 1/3」收小一号更齐。 */
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 /* 直播态节目单面板：频道名标题 + 可滚动节目列表，当前节目高亮。 */
