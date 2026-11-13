@@ -66,12 +66,53 @@ use store::LibraryStore;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
+/// dev（debug）默认打开 WebView2 远程调试口 9222，返回是否由本函数设置。
+///
+/// `tools/*.mjs` 里的探针全部靠 CDP 直连界面，以前每次启动都要手工注入
+/// `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`，忘了就只能摸黑排查。
+///
+/// 三条约束：
+/// 1. **必须在任何 WebView2 环境创建之前调用**——wry 只在
+///    `CreateCoreWebView2Environment` 时读这个变量，窗口起来后再设无效；
+/// 2. 只在 debug 生效，release 包不能带调试口（那等于把整个 `Runtime.evaluate`
+///    暴露给本机任意进程）；
+/// 3. 已经手工设置过就完全尊重用户值：想换端口、或想关掉
+///    （`=--remote-debugging-port=0`）都不用改代码。
+#[cfg(all(debug_assertions, target_os = "windows"))]
+fn enable_devtools_port() -> bool {
+    const KEY: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+    if std::env::var_os(KEY).is_some() {
+        return false;
+    }
+    std::env::set_var(KEY, "--remote-debugging-port=9222");
+    true
+}
+
+#[cfg(not(all(debug_assertions, target_os = "windows")))]
+fn enable_devtools_port() -> bool {
+    false
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 最先做：晚于 WebView2 环境创建就失效（见函数注释）。
+    let devtools_default = enable_devtools_port();
     // Logging first: DB migration, sidecar resolution and proxy startup all
     // emit tracing events, and a trial user needs them on disk even if the
     // window never renders.
     logging::init();
+    if devtools_default {
+        // 上一次 dev 没退干净时端口会被旧 WebView2 占着，新实例的 DevTools
+        // 就绑不上（表现为「探针连到的其实是旧窗口」或窗口起不来）。
+        // 这里只做一次 loopback 探测，把根因直接写进日志。
+        if std::net::TcpStream::connect(("127.0.0.1", 9222)).is_ok() {
+            tracing::warn!(
+                "port 9222 is already taken; CDP may attach to a stale window — kill leftover luma.exe first"
+            );
+        } else {
+            tracing::info!("webview2 devtools listening on 127.0.0.1:9222 (debug build default)");
+        }
+    }
     // One SQLite connection shared by both stores: config snapshots, active
     // marker, favourites and history all live in `<data dir>/luma.db`.
     let database = Arc::new(db::Db::open().expect("open sqlite database"));
