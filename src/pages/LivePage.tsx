@@ -227,9 +227,11 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
         return;
       }
       setActiveIndex(next);
-      // 切源时收起之前的展开、关闭线路选择器、回到首分组。
+      // 切源时收起之前的展开、关闭线路选择器、清空筛选、回到首分组，
+      // 避免带着旧源的筛选词落到新源却显示「没有匹配的频道」，误以为没切过去。
       setExpanded(new Set());
       setLinePicker(null);
+      setKeyword("");
       setActiveGroup(null);
     }, SWITCH_DEBOUNCE_MS);
   };

@@ -9,7 +9,7 @@
  * 配置切换时由 App 调 clearPageStates() 整体清空。播放页不使用——它持有
  * ArtPlayer / hls.js 实例，缓存状态反而不利于释放解码资源。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
 const MAX_STATES = 80;
@@ -38,10 +38,22 @@ function write<T>(key: string, value: T): void {
   }
 }
 
-/** 用法与 useState 完全一致，只是值会跨「卸载→重新挂载」保留。 */
+/**
+ * 用法与 useState 完全一致，只是值会跨「卸载→重新挂载」保留。
+ * key 变化时把状态切到新 key 对应的存储值（或 initial），避免沿用旧 key 的
+ * 残留值——这正是动态 key（如 `home:${siteKey}:data`、`live:${sourceKey}:groups`）
+ * 能按 key 各自缓存的前提。旧 key 的值仍留在 LRU 里，切回去会读回。
+ */
 export function usePageState<T>(key: string, initial: T): [T, Dispatch<SetStateAction<T>>] {
   const [value, setValue] = useState<T>(() => read(key, initial));
+  const currentKeyRef = useRef(key);
   useEffect(() => {
+    if (currentKeyRef.current !== key) {
+      // key 变了：把状态重置到新 key 的存储值，且本次不要拿旧值去写新 key。
+      currentKeyRef.current = key;
+      setValue(read(key, initial));
+      return;
+    }
     write(key, value);
   }, [key, value]);
   return [value, setValue];
