@@ -348,7 +348,9 @@
 
 ## 11. 实施顺序（按「先止血、再治病」）
 
-> **状态（2026-11-14）**：S1 ✅（commit b3a7ca6，P0-1 根因修正见 §2）；S2 ✅（骨架网格 + 定长扫光进度条 + 纯前端取消[迟到结果整批丢弃，后端无中断通道]）；S3 ✅（首页原生 select → 泛化 SiteSelect[allowAll/disabledKeys]，3 个探针同步改 `.site-select[data-value]` 契约；直播分组由横向滚动改折行铺开——侧栏式导航成本高、折行已消除溢出；热区 32px）；S4 ✅（token 三层落地：字号 8 阶 93 处 / 字重 3 档 24 处 / 圆角 4 档 23 处收敛为 `var(--fs-*/--fw-*/--r-*)`，`--r-xl`(20px) 移除并入 16px，`Inter` 未加载声明移除改 `--font-sans`；zero 字面量残留；截图回归 15 页全过，309 测试全绿）。S5 未开始。
+> **状态（2026-11-14）**：S1 ✅（commit b3a7ca6，P0-1 根因修正见 §2）；S2 ✅（骨架网格 + 定长扫光进度条 + 纯前端取消[迟到结果整批丢弃，后端无中断通道]）；S3 ✅（首页原生 select → 泛化 SiteSelect[allowAll/disabledKeys]，3 个探针同步改 `.site-select[data-value]` 契约；直播分组由横向滚动改折行铺开——侧栏式导航成本高、折行已消除溢出；热区 32px）；S4 ✅（token 三层落地：字号 8 阶 93 处 / 字重 3 档 24 处 / 圆角 4 档 23 处收敛为 `var(--fs-*/--fw-*/--r-*)`，`--r-xl`(20px) 移除并入 16px，`Inter` 未加载声明移除改 `--font-sans`；零字面量残留，截图回归 15 页全过）；S5 ✅（`cmdk` 命令面板[Ctrl+K：页面直达 / 全站搜索 / 101 站点切换] + `sonner` Toast[右上 4s 可关闭可堆叠，配色对齐 token] + `@radix-ui/react-dialog` 给 SourcePicker / ConfirmDialog 补焦点陷阱[`.source-picker` DOM 契约不变] + 设置页 180px 吸顶目录[IntersectionObserver 高亮跟随]；verify_s5 全 PASS，播放 1080P 出画）。**S1~S5 全部完成。**
+
+> **S5 备注**：sonner v2 挂载容器是 `section[aria-label^="Notifications"]`，带 `data-sonner-toaster` 的 `<ol>` 仅在有 toast 时渲染——探针断言别查后者。
 
 | 阶段 | 内容 | 触及文件 | 风险 |
 |---|---|---|---|

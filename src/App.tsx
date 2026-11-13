@@ -11,6 +11,8 @@ import {
 } from "react";
 import Spinner from "./components/Spinner";
 import NavIcon from "./components/NavIcon";
+import CommandPalette from "./components/CommandPalette";
+import { Toaster, toast } from "sonner";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
 import HistoryPage from "./pages/HistoryPage";
@@ -172,8 +174,8 @@ export default function App() {
   const [cache, setCache] = useState<SiteCache | null>(() => readSiteCache());
   const [preferredSite, setPreferredSite] = useState(readHomeSite);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
-  /** 全局一次性提示（目前只有后台订阅更新会用到）。 */
-  const [toast, setToast] = useState("");
+  /** 全局命令面板（Ctrl+K）。 */
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // 收缩偏好跨重启保留；StrictMode 双调用只是写同一个值。
   useEffect(() => {
@@ -274,6 +276,10 @@ export default function App() {
       if (document.querySelector(".source-picker")) {
         return;
       }
+      // 命令面板开着时 Esc 只关面板（Radix 处理），别顺手退页面。
+      if (document.querySelector("[cmdk-root]")) {
+        return;
+      }
       if (stackDepth > 1) {
         event.preventDefault();
         back();
@@ -340,7 +346,7 @@ export default function App() {
           return;
         }
         handleImported(outcome.snapshot);
-        setToast(`「${outcome.name}」订阅已自动更新：${outcome.enabled} 个可用站点`);
+        toast.success(`「${outcome.name}」订阅已自动更新：${outcome.enabled} 个可用站点`);
         log.info("config auto refreshed", {
           id: outcome.configId,
           sites: outcome.sites,
@@ -363,15 +369,6 @@ export default function App() {
       unlisten?.();
     };
   }, [handleImported]);
-
-  // 订阅更新提示 4 秒自动消失；期间再次触发会重置计时。
-  useEffect(() => {
-    if (!toast) {
-      return;
-    }
-    const timer = window.setTimeout(() => setToast(""), 4000);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   // 后端 active 配置与 localStorage 缓存可能不一致（重启后后端换了配置、
   // 外部删了配置文件等）。启动时以 Rust 的 ConfigStore 为准刷新一次，
@@ -565,11 +562,32 @@ export default function App() {
           {content}
         </Suspense>
       </main>
-      {toast ? (
-        <div className="app-toast" role="status" aria-live="polite">
-          {toast}
-        </div>
-      ) : null}
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        navigate={resetTo}
+        sites={sites}
+        homeSite={preferredSite}
+        onPickHomeSite={(siteKey) => {
+          setPreferredSite(siteKey);
+          resetTo({ name: "home" });
+        }}
+      />
+      <Toaster
+        theme="dark"
+        position="top-right"
+        duration={4000}
+        closeButton
+        toastOptions={{
+          style: {
+            background: "var(--panel-raised)",
+            color: "var(--text)",
+            border: "1px solid var(--border-strong)",
+            fontFamily: "var(--font-sans)",
+            fontSize: "var(--fs-sm)",
+          },
+        }}
+      />
     </div>
   );
 }

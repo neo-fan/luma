@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -36,48 +37,50 @@ export default function ConfirmDialog({
     if (!open) {
       return;
     }
+    // Esc 关闭交给 Radix Dialog（onOpenChange -> onCancel），这里只管 Enter 确认。
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCancel();
-      } else if (event.key === "Enter") {
+      if (event.key === "Enter") {
         event.preventDefault();
         onConfirm();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel, onConfirm]);
-
-  if (!open) {
-    return null;
-  }
+  }, [open, onConfirm]);
 
   return (
-    <div
-      className="overlay"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onCancel();
-        }
-      }}
-    >
-      <div className="confirm" role="alertdialog" aria-modal="true" aria-label={title}>
-        <h2 className="confirm__title">{title}</h2>
-        <p className="confirm__message">{message}</p>
-        <div className="confirm__actions">
-          <button type="button" className="btn btn--ghost" onClick={onCancel}>
-            {cancelText}
-          </button>
-          <button
-            type="button"
-            className={danger ? "btn btn--danger" : "btn btn--primary"}
-            onClick={onConfirm}
+    // 焦点陷阱与 Esc 由 Radix 统一管理；Content 即全屏遮罩（复用 .overlay），
+    // 点空白取消保留原 onMouseDown 逻辑。
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
+      <Dialog.Portal>
+        <Dialog.Content asChild className="overlay" aria-label={title}>
+          <div
+            className="overlay"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                onCancel();
+              }
+            }}
           >
-            {confirmText}
-          </button>
-        </div>
-      </div>
-    </div>
+            <div className="confirm" role="alertdialog" aria-modal="true" aria-label={title}>
+              <h2 className="confirm__title">{title}</h2>
+              <p className="confirm__message">{message}</p>
+              <div className="confirm__actions">
+                <button type="button" className="btn btn--ghost" onClick={onCancel}>
+                  {cancelText}
+                </button>
+                <button
+                  type="button"
+                  className={danger ? "btn btn--danger" : "btn btn--primary"}
+                  onClick={onConfirm}
+                >
+                  {confirmText}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

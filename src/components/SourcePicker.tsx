@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import Empty from "./Empty";
 import ErrorBar from "./ErrorBar";
 import IconButton from "./IconButton";
@@ -107,16 +108,10 @@ export default function SourcePicker({
     const unsubscribe = subscribeSourceCache(() =>
       sync(getSourceView(keywordRef.current, init.sites, init.currentSiteKey), true),
     );
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
+    // Esc 由 Radix Dialog 统一处理（焦点陷阱 + 关闭），不再手挂 window keydown。
     return () => {
       aliveRef.current = false;
       unsubscribe();
-      window.removeEventListener("keydown", onKeyDown);
     };
     // 只在挂载时建立订阅与首次判定；手动检索走 onSubmit。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,15 +210,25 @@ export default function SourcePicker({
     : `${Math.floor(view.ageMs / 60_000)} 分钟前`;
 
   return (
-    <div
-      className="overlay"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <div className="source-picker" role="dialog" aria-modal="true" aria-label="手动换源">
+    // Radix Dialog：焦点陷阱 / Esc / aria 由它统一管理。Content 直接铺满
+    // 全屏遮罩（复用 .overlay），面板仍是普通子节点——探针依赖
+    // `document.querySelector('.source-picker')` 及其子结构，DOM 契约不变。
+    <Dialog.Root open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Content
+          asChild
+          className="overlay"
+          aria-label="手动换源"
+        >
+          <div
+            className="overlay"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                onClose();
+              }
+            }}
+          >
+            <div className="source-picker" role="dialog" aria-modal="true" aria-label="手动换源">
         <header className="source-picker__head">
           <div>
             <h2 className="source-picker__title">手动换源</h2>
@@ -320,7 +325,10 @@ export default function SourcePicker({
         <footer className="source-picker__foot">
           候选来自搜索结果与后台预取，切换后直接读取已缓存的播放列表；不同源的线路、集数和清晰度可能有差异。
         </footer>
-      </div>
-    </div>
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

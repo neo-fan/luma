@@ -2441,6 +2441,111 @@ textarea {
   overflow: hidden;
 }
 
+/* ---------- 命令面板（cmdk，Ctrl+K） ---------- */
+/* cmdk 的 Dialog 内部就是 Radix Dialog：[cmdk-overlay] / [cmdk-dialog] 是它的
+   两个壳，样式对齐 .overlay 与 .source-picker 的视觉语言。 */
+
+[cmdk-overlay] {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(4, 6, 11, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+[cmdk-dialog] {
+  position: fixed;
+  inset: 0;
+  z-index: 1201;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 96px 24px 24px;
+}
+
+[cmdk-root] {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(62vh, 560px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-soft);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+[cmdk-input] {
+  height: 46px;
+  padding: 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+}
+
+[cmdk-input]:focus {
+  outline: none;
+}
+
+[cmdk-input]::placeholder {
+  color: var(--muted);
+}
+
+[cmdk-list] {
+  overflow-y: auto;
+  padding: 8px;
+  overscroll-behavior: contain;
+}
+
+[cmdk-group-heading] {
+  padding: 10px 10px 6px;
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.04em;
+}
+
+[cmdk-item] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+[cmdk-item][data-selected="true"] {
+  background: var(--icon-on);
+  color: var(--text);
+}
+
+[cmdk-item]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.cmdk-current {
+  margin-left: auto;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+}
+
+[cmdk-empty] {
+  padding: 20px 10px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
 .source-picker__head {
   display: flex;
   align-items: flex-start;
@@ -2796,9 +2901,65 @@ textarea {
   border-bottom: 1px solid var(--border);
 }
 
-.settings-block:last-of-type {
+/* section 外面套了 .settings-anchor（承载目录锚点），last-of-type 语义迁移到这里 */
+.settings-anchor:last-of-type .settings-block {
   border-bottom: 0;
   padding-bottom: 0;
+}
+
+/* 左侧吸顶目录（SettingNav）：设置页 7 个 block 纵向超两屏，目录直达 */
+.settings-layout {
+  display: flex;
+  gap: 28px;
+  align-items: flex-start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 0;
+  flex-shrink: 0;
+  width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav__item {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav__item:hover {
+  background: var(--icon-hover);
+  color: var(--text);
+}
+
+.settings-nav__item.is-active {
+  background: var(--icon-on);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.settings-nav__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-anchor {
+  scroll-margin-top: 8px;
 }
 
 /* 订阅自动刷新：一行放「标题 + 状态 / 间隔 / 立即检查」，窄屏时允许换行 */
@@ -2895,33 +3056,8 @@ textarea {
   opacity: 0.85;
 }
 
-/* 后台订阅更新的轻提示：右上角浮层，不占布局、不打断当前页面 */
-.app-toast {
-  position: fixed;
-  top: 18px;
-  right: 22px;
-  z-index: 60;
-  max-width: 380px;
-  padding: 10px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-md);
-  background: var(--panel-hover);
-  color: var(--text);
-  font-size: var(--fs-sm);
-  box-shadow: var(--shadow-md);
-  animation: app-toast-in var(--dur) var(--ease);
-}
-
-@keyframes app-toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
+/* 轻提示改由 sonner 提供（Toaster 挂在 App 根部）：右上浮层、4s 自动消失、
+   可关闭、可堆叠，并自带 aria-live 播报。配色通过 toastOptions 对齐 token。 */
 
 /* 导入区的「配置名称」：左侧固定标签，右侧输入 + 提示，窄屏自动换行 */
 .config-name {
