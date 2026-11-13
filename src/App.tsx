@@ -59,6 +59,8 @@ export type View =
       liveLine?: number;
       /** 直播线路偏好记忆的源标识（与 LivePage 一致）。 */
       liveSource?: string;
+      /** 自动换线记账本的 key（首轮=原片名，跨站跳转透传），缺省用 vodName。 */
+      failoverKey?: string;
     }
   | { name: "live" }
   | { name: "favorites" }
@@ -476,6 +478,7 @@ export default function App() {
             liveLines={view.liveLines}
             liveLine={view.liveLine}
             liveSource={view.liveSource}
+            failoverKey={view.failoverKey}
             allowFailover={canFailover(site)}
             sites={sites}
             siteName={site?.name}

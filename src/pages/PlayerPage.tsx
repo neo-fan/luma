@@ -15,6 +15,17 @@ import { resolveEpisodeTarget } from "../lib/episodeResolve";
 import { probePlayable } from "../lib/playProbe";
 import { firstPlayable } from "../lib/probeRace";
 import { lineRank } from "../lib/lineHealth";
+import {
+  consumeAutoNav,
+  ledgerBudget,
+  ledgerCountSwitch,
+  ledgerHasUrl,
+  ledgerMarkSite,
+  ledgerMarkUrl,
+  ledgerReset,
+  ledgerSiteSeen,
+  markAutoNav,
+} from "../lib/failoverLedger";
 import { resolutionBadge, resolutionDetail, resolutionFromVideo } from "../lib/resolution";
 import type { VideoMeta } from "../lib/resolution";
 
@@ -47,6 +58,8 @@ interface PlayerPageProps {
   liveSource?: string;
   /** 站点 `changeable: 0` 时禁止跨站自动换源；缺省允许。手动换源不受限。 */
   allowFailover?: boolean;
+  /** 自动换线记账 key：自动跳转时透传；缺省用 vodName（跨站片名可能微变）。 */
+  failoverKey?: string;
   /** 手动换源需要站点清单做名称映射与可用性过滤。 */
   sites: Site[];
   siteName?: string;
@@ -67,6 +80,7 @@ export default function PlayerPage({
   liveLine,
   liveSource,
   allowFailover = true,
+  failoverKey,
   sites,
   siteName,
   navigate,
@@ -83,10 +97,14 @@ export default function PlayerPage({
   const [switchTip, setSwitchTip] = useState("");
   /** 本次挂载是否已从 sessionStorage 恢复过一次性提示。 */
   const tipRestored = useRef(false);
-  const triedSites = useRef<string[]>([]);
+  /**
+   * 自动换线记账 key：首轮是片名；自动跳转透传同一 key（跨站片名微变也不失联）。
+   * 「试过的地址 / 站点 / 跳转次数」记在模块级 failoverLedger——之前放组件 ref，
+   * 而 PlayerPage 每次自动跳转都换 key 重建，ref 清零后 A↔B 站来回横跳无限循环。
+   */
+  const ledgerKey = failoverKey || vodName.trim();
   const failoverStarted = useRef(false);
   /** 已经自动处理过的地址，避免切线路 / 换源之间来回跳转。 */
-  const handledUrls = useRef<Set<string>>(new Set());
   /** T-30：解码失败只自动转 mpv 一次，避免用户手动关掉后被反复拉起。 */
   const mpvTried = useRef(false);
   /** 同一轮播放只允许一次「找下一条线路」，防止多个失败信号并发触发。 */
@@ -271,8 +289,18 @@ export default function PlayerPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vodName, siteKey, sites.length]);
 
+  const ledgerInited = useRef(false);
   useEffect(() => {
-    triedSites.current = [siteKey];
+    // StrictMode 会把挂载 effect 连跑两次：只有第一次允许消费 autoNav 标记，
+    // 否则第二次会误判成「手动点播」把账清掉。
+    if (!ledgerInited.current) {
+      ledgerInited.current = true;
+      if (!consumeAutoNav()) {
+        // 用户手动点播：新的一轮，清掉该片名的旧账。
+        ledgerReset(ledgerKey);
+      }
+      ledgerMarkSite(ledgerKey, siteKey);
+    }
     failoverStarted.current = false;
     lineSwitchStarted.current = false;
     // 换源/换集跳转会重建本页，提示通过 sessionStorage 带过来一次。
@@ -363,10 +391,10 @@ export default function PlayerPage({
             .slice(0, 1)
             .map((vod) => ({ siteKey: item.siteKey, vod })),
         )
-        .filter((item) => !triedSites.current.includes(item.siteKey));
+        .filter((item) => !ledgerSiteSeen(ledgerKey, item.siteKey));
 
       for (const candidate of candidates.slice(0, 8)) {
-        triedSites.current.push(candidate.siteKey);
+        ledgerMarkSite(ledgerKey, candidate.siteKey);
         try {
           const detail = await api.detail(candidate.siteKey, String(candidate.vod.vod_id));
           const vod = detail[0];
@@ -388,7 +416,7 @@ export default function PlayerPage({
               return lineRank(candidate.siteKey, a.line) - lineRank(candidate.siteKey, b.line);
             });
           const candidatesOfSite = ordered
-            .filter(({ episode }) => Boolean(episode.url) && !handledUrls.current.has(episode.url))
+            .filter(({ episode }) => Boolean(episode.url) && !ledgerHasUrl(ledgerKey, episode.url))
             .slice(0, 8)
             .map(({ line, episode }) => ({ line, name: episode.name, url: episode.url }));
           // 并发探活：第一个能播的立刻返回。串行时「每条失败线路 2–5 秒」会
@@ -409,7 +437,8 @@ export default function PlayerPage({
           });
           window.sessionStorage.setItem("luma:autoSwitch", tip);
           setSwitchTip(tip);
-          handledUrls.current.add(picked.url);
+          ledgerMarkUrl(ledgerKey, picked.url);
+          ledgerCountSwitch(ledgerKey);
           videoRef.current = null;
           navigate(
             {
@@ -422,6 +451,8 @@ export default function PlayerPage({
               // 跨站换源同样要带上线路名，否则新站点这次的地址解析又退化成
               // 「把私有 token 当 URL」。
               playFrom: picked.line,
+              // 记账 key 透传：试过的地址/站点/次数跨站继续生效，防 A↔B 横跳。
+              failoverKey: ledgerKey,
             },
             true,
           );
@@ -440,7 +471,7 @@ export default function PlayerPage({
       setSwitchTip("");
       setVideoError(`换源失败：${errorMessage(err)}`);
     }
-  }, [episodeName, navigate, vodName, siteKey, allowFailover]);
+  }, [episodeName, navigate, vodName, siteKey, allowFailover, ledgerKey]);
 
   /**
    * 真实配置里同一部剧常有多条线路：第一条是「分享页」，第二条才是直链
@@ -452,15 +483,18 @@ export default function PlayerPage({
       return false;
     }
     lineSwitchStarted.current = true;
-    handledUrls.current.add(playUrl);
+    ledgerMarkUrl(ledgerKey, playUrl);
 
     // 直播线路切换：同一频道在源里有多个可播放地址时，失败自动顺延到下一线路。
     if (siteKey === "live") {
       if (liveLinesArr.length > 1) {
         const next = (liveIdx + 1) % liveLinesArr.length;
-        if (handledUrls.current.has(liveLinesArr[next])) {
+        if (ledgerHasUrl(ledgerKey, liveLinesArr[next])) {
           return false;
         }
+        ledgerMarkUrl(ledgerKey, liveLinesArr[next]);
+        ledgerCountSwitch(ledgerKey);
+        markAutoNav();
         setLiveLine(liveSource ?? "", vodId, next);
         setSwitchTip(`已自动切换到线路 ${next + 1}/${liveLinesArr.length}`);
         videoRef.current = null;
@@ -508,7 +542,7 @@ export default function PlayerPage({
 
     // 先试同名剧集（同一集的不同线路），再退而求其次试其它集。
     const ordered = [...episodes]
-      .filter(({ episode }) => Boolean(episode.url) && !handledUrls.current.has(episode.url))
+      .filter(({ episode }) => Boolean(episode.url) && !ledgerHasUrl(ledgerKey, episode.url))
       .sort((a, b) => {
         const sameEpisode =
           Number(b.episode.name === episodeName) - Number(a.episode.name === episodeName);
@@ -531,7 +565,9 @@ export default function PlayerPage({
     if (!picked) {
       return false;
     }
-    handledUrls.current.add(picked.url);
+    ledgerMarkUrl(ledgerKey, picked.url);
+    ledgerCountSwitch(ledgerKey);
+    markAutoNav();
     setSwitchTip(`已自动切换到可播放线路「${picked.name}」`);
     videoRef.current = null;
     navigate(
@@ -544,19 +580,28 @@ export default function PlayerPage({
         playUrl: picked.url,
         // 切换后必须保留线路名，否则下一次解析又拿不到 playerContent。
         playFrom: picked.line,
+        // 同站换线也透传 key：跳转目标页据此知道不是手动点播，不清账。
+        failoverKey: ledgerKey,
       },
       true,
     );
     return true;
-  }, [episodeName, lines, navigate, playUrl, siteKey, vodId, vodName, liveLinesArr, liveIdx, liveSource, liveUa]);
+  }, [episodeName, lines, navigate, playUrl, siteKey, vodId, vodName, liveLinesArr, liveIdx, liveSource, liveUa, ledgerKey]);
 
   /** 线路切换失败后的兜底：整站找同名影片。 */
   const switchOrFailover = useCallback(async () => {
+    // 跳转次数预算用完就停：之前没有上限，跨站记账又失效，会出现
+    // 「一直在切换」的无限横跳；现在最多 4 次，之后把控制权交还用户。
+    if (ledgerBudget(ledgerKey) <= 0) {
+      setSwitchTip("");
+      setVideoError("已自动尝试多条线路和多个源仍无法播放，请手动切换线路或换一集。");
+      return;
+    }
     const switched = await tryNextLine();
     if (!switched) {
       await tryFailover();
     }
-  }, [tryNextLine, tryFailover]);
+  }, [tryNextLine, tryFailover, ledgerKey]);
 
   // tryNextLine 依赖异步加载的剧集列表；用 ref 转发，避免播放内核 effect
   // 因 lines 到达而被重新挂载（那会从头开始缓冲）。
@@ -567,11 +612,11 @@ export default function PlayerPage({
     if (resolving || resolveError || !resolved || resolved.kind !== "page") {
       return;
     }
-    if (handledUrls.current.has(playUrl)) {
+    if (ledgerHasUrl(ledgerKey, playUrl)) {
       return;
     }
     void switchOrFailoverRef.current();
-  }, [resolved, resolving, resolveError, playUrl]);
+  }, [resolved, resolving, resolveError, playUrl, ledgerKey]);
 
   /**
    * 解析失败也要自动换线路。
@@ -580,18 +625,18 @@ export default function PlayerPage({
    * 这种网盘 token 线路会直接在画面上留一块「无法解析播放地址」——用户要么
    * 自己回去点别的线路，要么放弃。面板里明明有 PAN1 能播，就该自动切过去。
    *
-   * `handledUrls` 记住当前地址，避免「换线路 → 又回到同一条」的循环；
-   * 全部线路都失败时仍会走跨站换源，最后停在错误提示上（此时提示才有意义）。
+   * 试过的地址记在 failoverLedger（模块级，跨重挂载存活），避免「换线路 →
+   * 又回到同一条」的循环；跳转次数有上限，预算用完就停下报错交还用户。
    */
   useEffect(() => {
-    if (resolving || !resolveError || handledUrls.current.has(playUrl)) {
+    if (resolving || !resolveError || ledgerHasUrl(ledgerKey, playUrl)) {
       return;
     }
-    handledUrls.current.add(playUrl);
+    ledgerMarkUrl(ledgerKey, playUrl);
     setRecovering(true);
     setSwitchTip("当前线路无法解析，正在尝试其它线路…");
     void switchOrFailoverRef.current().finally(() => setRecovering(false));
-  }, [resolving, resolveError, playUrl]);
+  }, [resolving, resolveError, playUrl, ledgerKey]);
 
   /**
    * 播放内核：ArtPlayer + hls.js / mpegts.js + 偏好记忆 + stalled watchdog +
