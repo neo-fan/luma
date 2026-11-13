@@ -70,8 +70,12 @@ export function usePlayResolution({
         // TVBox 链路：详情里的 playUrl 常常只是线路 id 或自定义 scheme
         // （weiguan://、PAN1-…、6105_0_1），必须让 spider 的 playerContent
         // 解析出真实直链再交给本地代理。编排细节收在 lib/episodeResolve，
-        // 与播放页的换线路 / 换源探测共用同一份规则。
-        const target = await resolveEpisodeTarget(siteKey, playFrom, playUrl);
+        // 与播放页的换线路 / 换源探测共用同一份规则。用户手选的线路给
+        // 15s 超时：慢源（多多影院实测 4~5s，忙时更久）不该在首次解析
+        // 就被判死跳走；探测/换线链路保持 8s 不变。
+        const target = await resolveEpisodeTarget(siteKey, playFrom, playUrl, {
+          playerContentTimeoutMs: 15_000,
+        });
         if (target.unresolvable) {
           // 源给的 token 连它自己的 playerContent 都不认（网盘 / 专用插件线路）。
           // 说清原因，别把 INVALID_ARGUMENT 的原文抛给用户。

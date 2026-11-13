@@ -110,4 +110,24 @@ describe("resolveEpisodeTarget", () => {
     expect(target.unresolvable).toBeFalsy();
     expect(target.url).toBe("https://cdn.example/a.m3u8");
   });
+
+  it("passes the default 8s timeout, and the caller-provided one for slow sources", async () => {
+    spiderInvoke.mockResolvedValue({ url: "https://cdn.example/a.m3u8", parse: 0 });
+    // 探测/换线链路：缺省 8s。
+    await resolveEpisodeTarget("s1", "线路1", "tok1");
+    expect(spiderInvoke).toHaveBeenLastCalledWith({
+      siteKey: "s1",
+      method: "playerContent",
+      args: ["线路1", "tok1", []],
+      timeoutMs: 8_000,
+    });
+    // 用户手选线路首播：慢源（多多影院 ZJ4K 实测 4~5s、忙时越过 8s）放宽到 15s。
+    await resolveEpisodeTarget("s1", "线路1", "tok2", { playerContentTimeoutMs: 15_000 });
+    expect(spiderInvoke).toHaveBeenLastCalledWith({
+      siteKey: "s1",
+      method: "playerContent",
+      args: ["线路1", "tok2", []],
+      timeoutMs: 15_000,
+    });
+  });
 });

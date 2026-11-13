@@ -45,6 +45,16 @@ interface PlayerContentResult {
 const LOCAL_PROXY = /^https?:\/\/127\.0\.0\.1:\d+\/(proxy|proxy2)\b/i;
 const HTTP_URL = /^https?:\/\//i;
 
+export interface EpisodeResolveOptions {
+  /**
+   * `playerContent` 的超时。探测/换线链路用缺省 8s（失败就换下一条，快是
+   * 第一位的）；用户手选线路的首次解析应传 15s——慢源（如多多影院的上游
+   * API）典型耗时 4~5s，忙时会越过 8s，被判超时后回退拿原始 token 只会
+   * 得到 `play url is invalid` 然后白白跳走（实测日志）。
+   */
+  playerContentTimeoutMs?: number;
+}
+
 /**
  * 解析一条剧集地址。
  *
@@ -56,12 +66,14 @@ export async function resolveEpisodeTarget(
   siteKey: string,
   playFrom: string | undefined,
   playUrl: string,
+  options: EpisodeResolveOptions = {},
 ): Promise<EpisodeTarget> {
+  const playerContentTimeoutMs = options.playerContentTimeoutMs ?? 8_000;
   if (!playFrom) {
     return { url: playUrl };
   }
   // 最近判过「解不开」的线路直接跳过 playerContent：源侧那种「token 原样回吐」
-  // 的毛病不会自己好，等一次 8 秒超时只会让用户以为卡住了。
+  // 的毛病不会自己好，等一次超时只会让用户以为卡住了。
   if (isLineBad(siteKey, playFrom)) {
     return { url: playUrl, unresolvable: !HTTP_URL.test(playUrl) };
   }
@@ -71,10 +83,11 @@ export async function resolveEpisodeTarget(
       siteKey,
       method: "playerContent",
       args: [playFrom, playUrl, []],
-      // 8 秒而不是 15：成功的解码实测都在 5 秒内（PAN1 约 1.9 s、zijian 成功时
+      // 探测链路 8s：成功的解码实测都在 5 秒内（PAN1 约 1.9 s、zijian 成功时
       // 约 4.2 s），而网盘 token 线路在源侧忙时会一直挂到超时——多等的那 7 秒
-      // 只会推迟「换下一条线路」，用户看到的就是「点了没反应」。
-      timeoutMs: 8_000,
+      // 只会推迟「换下一条线路」，用户看到的就是「点了没反应」。用户手选线路
+      // 的首播由调用方放宽（见 EpisodeResolveOptions）。
+      timeoutMs: playerContentTimeoutMs,
     })) as PlayerContentResult | null;
   } catch {
     // CMS / 未实现 playerContent 的源：沿用原始地址。

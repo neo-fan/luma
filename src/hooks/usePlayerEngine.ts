@@ -546,17 +546,38 @@ export function usePlayerEngine({
     video.addEventListener("error", onError);
 
     // 死 CDN 会让 hls.js 无限重试却不触发 fatal，画面永远停在 00:00。
-    // 12 秒仍没拿到首帧就视作线路不可用，主动切线路 / 换源。
-    const stallTimer = window.setTimeout(() => {
-      if (!BUILTIN_KINDS.includes(resolved.kind)) {
+    // 但「慢」不等于「死」：单分片 9MB+ 的 AES-128 源冷启拉首个分片实测
+    // 11.8s（多多影院 ZJ4K），固定 12s 一刀切会把能播的线判死跳走——用户
+    // 看到「后台在下载、有声音没画面」却被换线。改成**静默窗口** watchdog：
+    // <video> 的 progress / loadeddata 事件（缓冲有新数据就触发）重置计时，
+    // 12s 内既没有新数据、readyState 又没到位才判死。真死 CDN 没有任何
+    // 事件，仍会在 12s 被抓到；慢源只要在持续下载就一直活着。
+    const STALL_QUIET_MS = 12_000;
+    let stallTimer: number | undefined;
+    const armStallTimer = () => {
+      window.clearTimeout(stallTimer);
+      stallTimer = window.setTimeout(() => {
+        if (!BUILTIN_KINDS.includes(resolved.kind)) {
+          return;
+        }
+        if (video.readyState >= 2 || failoverStarted.current || lineSwitchStarted.current) {
+          return;
+        }
+        setVideoError("当前线路长时间无法加载，正在尝试其它线路…");
+        void switchOrFailoverRef.current();
+      }, STALL_QUIET_MS);
+    };
+    const onMediaAlive = () => {
+      if (video.readyState >= 2) {
+        // 已经能进入播放状态：watchdog 彻底退场。
+        window.clearTimeout(stallTimer);
         return;
       }
-      if (video.readyState >= 2 || failoverStarted.current || lineSwitchStarted.current) {
-        return;
-      }
-      setVideoError("当前线路长时间无法加载，正在尝试其它线路…");
-      void switchOrFailoverRef.current();
-    }, 12_000);
+      armStallTimer();
+    };
+    armStallTimer();
+    video.addEventListener("progress", onMediaAlive);
+    video.addEventListener("loadeddata", onMediaAlive);
 
     return () => {
       window.clearTimeout(stallTimer);
@@ -565,6 +586,8 @@ export function usePlayerEngine({
         window.clearTimeout(volumeTrailing);
       }
       video.removeEventListener("error", onError);
+      video.removeEventListener("progress", onMediaAlive);
+      video.removeEventListener("loadeddata", onMediaAlive);
       video.removeEventListener("volumechange", persistVolume);
       video.removeEventListener("ratechange", persistRate);
       video.removeEventListener("loadedmetadata", reportMeta);
