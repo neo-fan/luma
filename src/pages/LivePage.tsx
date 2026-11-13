@@ -221,6 +221,25 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       <header className="page-head">
         <div className="page-head__main">
           <h1 className="page-title">直播</h1>
+          <select
+            className="select"
+            value={String(activeIndex)}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              setActiveIndex(next);
+              // 切源时收起之前的展开，避免回到长列表顶部还带着旧展开态。
+              setExpanded(new Set());
+              setLinePicker(null);
+            }}
+            aria-label="选择直播源"
+          >
+            {lives.map((item, index) => (
+              <option key={`${item.name}-${index}`} value={index} disabled={!listable[index]}>
+                {item.name || `源 ${index + 1}`}
+                {listable[index] ? "" : "（无列表）"}
+              </option>
+            ))}
+          </select>
           <span className="page-meta">{total > 0 ? `${total} 个频道` : "—"}</span>
         </div>
         <IconButton
@@ -240,26 +259,6 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
           placeholder="按频道名筛选"
           onChange={(event) => setKeyword(event.target.value)}
         />
-      </div>
-
-      <div className="chip-row">
-        {lives.map((item, index) => (
-          <button
-            key={`${item.name}-${index}`}
-            type="button"
-            className={index === activeIndex ? "chip is-active" : "chip"}
-            disabled={!listable[index]}
-            title={listable[index] ? undefined : "该源没有列表地址（分组容器且无可用频道）"}
-            onClick={() => {
-              setActiveIndex(index);
-              // 切源时收起之前的展开，避免回到长列表顶部还带着旧展开态。
-              setExpanded(new Set());
-              setLinePicker(null);
-            }}
-          >
-            {item.name || `源 ${index + 1}`}
-          </button>
-        ))}
       </div>
 
       {error ? <ErrorBar message={error} onRetry={() => setForceReload(true)} /> : null}
