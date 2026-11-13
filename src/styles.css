@@ -1669,6 +1669,33 @@ textarea {
   text-decoration: underline;
 }
 
+/* 直播分组吸顶标签栏：单组视图下在分组间快速切换，避免全部分组堆成一长页。 */
+.group-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding: 12px 0;
+  margin-bottom: 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: thin;
+}
+
+.group-tabs .chip {
+  flex: none;
+}
+
+/* 分组标签上的频道数小字。 */
+.chip__count {
+  margin-left: 6px;
+  font-size: 11px;
+  opacity: 0.6;
+}
+
 .episode-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));

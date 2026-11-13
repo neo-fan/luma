@@ -95,9 +95,18 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   // 当前打开线路选择器的频道（组名::频道名）；null 表示全部收起。
   const [linePicker, setLinePicker] = useState<string | null>(null);
+  // 当前选中的分组（吸顶标签栏单组视图）；null 表示尚未落到某组（首次/切源时重置）。
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
   // 切源防抖：下拉即时显示 draftIndex，300ms 后才真正切换 activeIndex 并重拉。
   const [draftIndex, setDraftIndex] = useState(activeIndex);
   const switchTimerRef = useRef<number | null>(null);
+
+  // 当前分组失效（首次加载、切源后、重新导入）时，默认落到第一个分组。
+  useEffect(() => {
+    if (!activeGroup || !groups.some((group) => group.name === activeGroup)) {
+      setActiveGroup(groups[0]?.name ?? null);
+    }
+  }, [groups, activeGroup]);
 
   // activeIndex 被外部钳制（重新导入源变少）时，下拉显示同步收敛，避免错位。
   useEffect(() => {
@@ -218,9 +227,10 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
         return;
       }
       setActiveIndex(next);
-      // 切源时收起之前的展开，避免回到长列表顶部还带着旧展开态。
+      // 切源时收起之前的展开、关闭线路选择器、回到首分组。
       setExpanded(new Set());
       setLinePicker(null);
+      setActiveGroup(null);
     }, SWITCH_DEBOUNCE_MS);
   };
 
@@ -254,6 +264,89 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
     document.addEventListener("click", close);
     return () => document.removeEventListener("click", close);
   }, [linePicker]);
+
+  // 渲染单个分组的标题 + 频道 chip 行；搜索态跨组与单组视图共用，避免重复。
+  const renderGroup = (group: LiveGroup, isOpen: boolean) => {
+    const limit = isOpen ? EXPANDED_LIMIT : CHANNEL_LIMIT;
+    const shown = group.channels.slice(0, limit);
+    const overflow = group.channels.length > limit;
+    return (
+      <div className="section" key={group.name}>
+        <h2 className="section-title">
+          {group.name}
+          {!pattern && overflow ? (
+            <button
+              type="button"
+              className="section-title__more"
+              onClick={() => toggleGroup(group.name)}
+            >
+              {isOpen ? "收起" : `展开全部 ${group.channels.length} 个`}
+            </button>
+          ) : null}
+          {isOpen && overflow && group.channels.length > EXPANDED_LIMIT ? (
+            <span className="page-meta" style={{ marginLeft: 8, fontWeight: 400 }}>
+              仅显示前 {EXPANDED_LIMIT} 个
+            </span>
+          ) : null}
+        </h2>
+        <div className="chip-row">
+          {shown.map((channel) => {
+            const key = `${group.name}::${channel.name}`;
+            const multi = channel.lines.length > 1;
+            const remembered = multi
+              ? Math.min(getLiveLine(sourceKey, channel.name), channel.lines.length - 1)
+              : 0;
+            const pickerOpen = linePicker === key;
+            return (
+              <span className="live-chip" key={key}>
+                <button
+                  type="button"
+                  className={pickerOpen ? "chip is-open" : "chip"}
+                  title={channel.lines[remembered]}
+                  onClick={(event) => {
+                    if (!multi) {
+                      play(channel, remembered);
+                      return;
+                    }
+                    // 多线路：阻止冒泡以免触发全局关闭监听，然后切换弹层。
+                    event.stopPropagation();
+                    setLinePicker(pickerOpen ? null : key);
+                  }}
+                >
+                  {channel.name}
+                  {multi ? (
+                    <span className="chip__badge" aria-hidden="true">
+                      {channel.lines.length}
+                    </span>
+                  ) : null}
+                </button>
+                {pickerOpen ? (
+                  <span className="line-pop" role="menu">
+                    {channel.lines.map((stream, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        role="menuitem"
+                        className={i === remembered ? "is-on" : ""}
+                        title={stream}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          play(channel, i);
+                        }}
+                      >
+                        线路 {i + 1}
+                        {i === remembered ? " ✓" : ""}
+                      </button>
+                    ))}
+                  </span>
+                ) : null}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <section className="page">
@@ -300,88 +393,34 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
         <Empty title="没有匹配的频道" description="换一个直播源或清空筛选关键字。" />
       ) : null}
 
-      {visible.map((group) => {
-        const isOpen = expanded.has(group.name) || Boolean(pattern);
-        const limit = isOpen ? EXPANDED_LIMIT : CHANNEL_LIMIT;
-        const shown = group.channels.slice(0, limit);
-        const overflow = group.channels.length > limit;
-        return (
-          <div className="section" key={group.name}>
-            <h2 className="section-title">
+      {/* 分组吸顶标签栏：单组视图下在分组间快速切换，避免全部分组堆成一长页。 */}
+      {!pattern && groups.length > 0 ? (
+        <div className="group-tabs" role="tablist" aria-label="直播分组">
+          {groups.map((group) => (
+            <button
+              key={group.name}
+              type="button"
+              role="tab"
+              aria-selected={group.name === activeGroup}
+              className={group.name === activeGroup ? "chip is-active" : "chip"}
+              onClick={() => setActiveGroup(group.name)}
+            >
               {group.name}
-              {!pattern && overflow ? (
-                <button
-                  type="button"
-                  className="section-title__more"
-                  onClick={() => toggleGroup(group.name)}
-                >
-                  {isOpen ? "收起" : `展开全部 ${group.channels.length} 个`}
-                </button>
-              ) : null}
-              {isOpen && overflow && group.channels.length > EXPANDED_LIMIT ? (
-                <span className="page-meta" style={{ marginLeft: 8, fontWeight: 400 }}>
-                  仅显示前 {EXPANDED_LIMIT} 个
-                </span>
-              ) : null}
-            </h2>
-            <div className="chip-row">
-              {shown.map((channel) => {
-                const key = `${group.name}::${channel.name}`;
-                const multi = channel.lines.length > 1;
-                const remembered = multi
-                  ? Math.min(getLiveLine(sourceKey, channel.name), channel.lines.length - 1)
-                  : 0;
-                const pickerOpen = linePicker === key;
-                return (
-                  <span className="live-chip" key={key}>
-                    <button
-                      type="button"
-                      className={pickerOpen ? "chip is-open" : "chip"}
-                      title={channel.lines[remembered]}
-                      onClick={(event) => {
-                        if (!multi) {
-                          play(channel, remembered);
-                          return;
-                        }
-                        // 多线路：阻止冒泡以免触发全局关闭监听，然后切换弹层。
-                        event.stopPropagation();
-                        setLinePicker(pickerOpen ? null : key);
-                      }}
-                    >
-                      {channel.name}
-                      {multi ? (
-                        <span className="chip__badge" aria-hidden="true">
-                          {channel.lines.length}
-                        </span>
-                      ) : null}
-                    </button>
-                    {pickerOpen ? (
-                      <span className="line-pop" role="menu">
-                        {channel.lines.map((stream, i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            role="menuitem"
-                            className={i === remembered ? "is-on" : ""}
-                            title={stream}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              play(channel, i);
-                            }}
-                          >
-                            线路 {i + 1}
-                            {i === remembered ? " ✓" : ""}
-                          </button>
-                        ))}
-                      </span>
-                    ) : null}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
+              <span className="chip__count">{group.channels.length}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {/* 搜索态：跨所有分组展示匹配结果；否则只渲染当前选中的单组。 */}
+      {pattern
+        ? visible.map((group) => renderGroup(group, true))
+        : activeGroup && groups.some((group) => group.name === activeGroup)
+          ? renderGroup(
+              groups.find((group) => group.name === activeGroup)!,
+              expanded.has(activeGroup),
+            )
+          : null}
     </section>
   );
 }
