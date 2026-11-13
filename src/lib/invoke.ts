@@ -295,7 +295,8 @@ export const api = {
 
   /** 拉取节目单并按频道名匹配，返回当前频道的当日节目列表。 */
   liveEpg(epgUrl: string, channel: string, date?: string): Promise<EpgResult> {
-    return call("live_epg", { epg_url: epgUrl, channel, date });
+    // Tauri v2 默认把 Rust 参数 snake_case(epg_url) 映射成 JS 的 camelCase(epgUrl)。
+    return call("live_epg", { epgUrl, channel, date });
   },
 
   proxyStatus(): Promise<ProxyStatus> {
