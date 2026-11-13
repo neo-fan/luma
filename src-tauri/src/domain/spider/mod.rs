@@ -88,6 +88,11 @@ pub struct SpiderRequest {
     pub args: Vec<Value>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    /// 聚合搜索逐站流式回传：每有一个站点完成就 emit `search-chunk`
+    /// 事件（payload = 单行 result JSON），前端陆续上屏不必等全站返回。
+    /// 仅 `siteKey = "all"` 且 method = searchContent 时生效。
+    #[serde(default)]
+    pub stream: Option<bool>,
 }
 
 /// Spec 7.3 trait; implementations must be stateless and cheap to clone.
@@ -277,12 +282,22 @@ async fn invoke_one(
 #[tauri::command]
 pub async fn spider_invoke(
     state: tauri::State<'_, ConfigStore>,
+    app: tauri::AppHandle,
     request: SpiderRequest,
 ) -> Result<Value, AppError> {
     let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
 
     if request.site_key == "all" {
-        return aggregate(&state, request.method, &request.args, timeout).await;
+        let streaming = request.stream.unwrap_or(false)
+            && request.method == SpiderMethod::SearchContent;
+        return aggregate(
+            &state,
+            request.method,
+            &request.args,
+            timeout,
+            streaming.then(|| &app),
+        )
+        .await;
     }
 
     let site = state.find_site(&request.site_key)?;
@@ -318,11 +333,16 @@ fn is_searchable(site: &Value) -> bool {
 }
 
 /// Fan-out over every enabled CMS site (spec 4.3 首页聚合).
+///
+/// `streaming = Some(app)` 时（仅搜索流式），每完成一个站点就向前端 emit
+/// `search-chunk`（payload = 该站的 result 行 JSON），调用方拿到的最终聚合
+/// 与非流式完全一致——事件只是增量预览，真相源仍是 IPC 返回值。
 async fn aggregate(
     state: &ConfigStore,
     method: SpiderMethod,
     args: &[Value],
     timeout: Duration,
+    streaming: Option<&tauri::AppHandle>,
 ) -> Result<Value, AppError> {
     let sites: Vec<Value> = state
         .all_sites()
@@ -407,15 +427,23 @@ async fn aggregate(
             Ok(Some(joined)) => match joined {
                 Ok((site_key, Ok(data))) => {
                     ok += 1;
-                    results.push(json!({ "siteKey": site_key, "ok": true, "data": data }));
+                    let row = json!({ "siteKey": site_key, "ok": true, "data": data });
+                    if let Some(app) = streaming {
+                        let _ = tauri::Emitter::emit(app, "search-chunk", &row);
+                    }
+                    results.push(row);
                 }
                 Ok((site_key, Err(err))) => {
                     failed += 1;
-                    results.push(json!({
+                    let row = json!({
                         "siteKey": site_key,
                         "ok": false,
                         "error": { "code": err.code, "message": err.message },
-                    }));
+                    });
+                    if let Some(app) = streaming {
+                        let _ = tauri::Emitter::emit(app, "search-chunk", &row);
+                    }
+                    results.push(row);
                 }
                 Err(err) => {
                     failed += 1;

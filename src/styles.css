@@ -1127,10 +1127,11 @@ textarea {
 
 .app-select__menu {
   z-index: 60;
-  /* 宽度随最长项伸缩；位置（贴边翻转/防裁切）与可用高度全部由
-     Radix popper 管理（collisionPadding=8），不再手写量测 clamp */
+  /* 宽度：先跟触发器对齐（Radix 注入 --radix-select-trigger-width），
+     内容更长时再放宽，360px 封顶；位置（贴边翻转/防裁切）与可用高度
+     全部由 Radix popper 管理，不再手写量测 clamp */
   width: max-content;
-  min-width: 200px;
+  min-width: var(--radix-select-trigger-width, 0px);
   max-width: min(360px, calc(100vw - 16px));
   max-height: min(var(--radix-select-content-available-height, 360px), 360px);
   padding: 6px;
@@ -1155,6 +1156,9 @@ textarea {
   font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
+  /* 高亮态只靠背景（.is-active / [data-highlighted]），绝不出现
+     浏览器默认的 focus 描边。 */
+  outline: none;
   transition:
     background var(--dur) var(--ease),
     color var(--dur) var(--ease);
