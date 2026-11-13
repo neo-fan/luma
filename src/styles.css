@@ -1683,6 +1683,22 @@ textarea {
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* 横向分组栏的滚动条：WebView2(Chromium) 默认渲染成带箭头的粗灰条，压成细窄圆角。 */
+.group-tabs::-webkit-scrollbar {
+  height: 6px;
+}
+.group-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+.group-tabs::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+.group-tabs::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
 }
 
 .group-tabs .chip {
