@@ -2139,8 +2139,6 @@ textarea {
   position: relative;
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -2152,12 +2150,17 @@ textarea {
   pointer-events: auto;
   transition:
     transform var(--dur) var(--ease),
-    background var(--dur) var(--ease);
+    background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 .fav-play:hover {
-  transform: scale(1.06);
+  transform: scale(1.12);
   background: rgba(10, 12, 18, 0.68);
+  /* 悬停时一圈 accent 光晕 + 投影，反馈更醒目 */
+  box-shadow:
+    0 0 0 4px rgba(110, 139, 255, 0.2),
+    0 10px 24px rgba(0, 0, 0, 0.45);
 }
 
 .fav-play:focus-visible {
@@ -2193,11 +2196,16 @@ textarea {
   position: relative;
   z-index: 1;
   display: flex;
+  transition: transform var(--dur) var(--ease);
+}
+
+.fav-play:hover .fav-play__icon {
+  transform: scale(1.1);
 }
 
 .fav-play__icon svg {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   /* Lucide 的 play 字形重心偏左，右移 1px 视觉更居中 */
   transform: translateX(1px);
 }

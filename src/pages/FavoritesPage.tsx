@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Navigate } from "../App";
 import AsyncBoundary from "../components/AsyncBoundary";
 import Icon from "../components/Icon";
+import PlayButton from "../components/PlayButton";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
@@ -130,6 +131,17 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
         <div className="vod-grid">
           {items.map((item) => (
             <div className="fav-item" key={`${item.siteKey}-${item.vodId}`}>
+              <PlayButton
+                label="播放"
+                onPlay={() =>
+                  navigate({
+                    name: "detail",
+                    siteKey: item.siteKey,
+                    vodId: item.vodId,
+                    title: item.name,
+                  })
+                }
+              />
               <VodCard
                 title={item.name}
                 pic={item.pic}
