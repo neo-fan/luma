@@ -54,7 +54,7 @@ export default function SiteSelect({ sites, value, onChange }: SiteSelectProps) 
     <div className="site-select" ref={ref}>
       <button
         type="button"
-        className={open ? "icon-btn icon-btn--md is-on" : "icon-btn icon-btn--md"}
+        className={open ? "site-select__trigger is-on" : "site-select__trigger"}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={triggerLabel}
@@ -62,12 +62,8 @@ export default function SiteSelect({ sites, value, onChange }: SiteSelectProps) 
         onClick={() => setOpen((value) => !value)}
       >
         <Icon name="globe" />
-        {/* 选中具体站点后在地球图标右上角回显首字徽标；全部站点只显示地球。 */}
-        {!isAll && current?.name ? (
-          <span className="site-select__badge" aria-hidden="true">
-            {current.name.charAt(0)}
-          </span>
-        ) : null}
+        <span className="site-select__label">{triggerLabel}</span>
+        <Icon name="chevron" />
       </button>
       {open ? (
         <div className="site-select__menu" role="listbox" aria-label="选择搜索范围">
