@@ -176,6 +176,7 @@ textarea {
   align-items: center;
   gap: 11px;
   padding: 0 8px;
+  transition: padding var(--sidebar-dur) var(--sidebar-ease);
 }
 
 .brand__mark {
@@ -234,7 +235,10 @@ textarea {
   color: var(--muted);
   text-align: left;
   cursor: pointer;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    padding var(--sidebar-dur) var(--sidebar-ease);
 }
 
 /* 图标固定 20px 轨道，收缩时文字隐藏后仍保持垂直居中 */
@@ -291,18 +295,19 @@ textarea {
     max-width var(--sidebar-dur) var(--sidebar-ease);
 }
 
-/* 收起态（68px 图标轨道）：显式把图标在 44px 高亮块内水平居中。
-   配合上方 label 的 max-width 平滑坍缩，切换时图标随文字收拢自然滑到正中，
-   不会瞬跳；同时去掉 gap，避免 10px 留白把图标顶偏右。 */
+/* 收起态（68px 图标轨道）：图标在 44px 高亮块内水平居中。
+   关键：用「可平滑动画的 padding」居中，图标始终 flex-start 不动，绝不切
+   justify-content（那是瞬变属性，内容宽度越过容器阈值时会突跳抖动）。
+   gap 归零避免 10px 留白把图标顶偏右；padding 14→12 与侧栏同拍收拢。 */
 .sidebar.is-collapsed .nav__item {
-  justify-content: center;
   gap: 0;
+  padding-left: 12px;
+  padding-right: 12px;
 }
 
-/* 品牌 logo 同步居中，避免收起后偏左。 */
+/* 品牌 logo 同样用 padding 居中（flex-start 不动），与导航项一致，不抖。 */
 .sidebar.is-collapsed .brand {
-  justify-content: center;
-  padding: 0;
+  padding: 0 3px;
 }
 
 .nav__item:hover {
