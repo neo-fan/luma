@@ -1106,7 +1106,8 @@ textarea {
   border-color: var(--border-strong);
 }
 
-.site-select__trigger.is-on {
+.site-select__trigger.is-on,
+.site-select__trigger[data-state="open"] {
   border-color: var(--accent, #3b82f6);
   background: color-mix(in srgb, var(--accent, #3b82f6) 12%, var(--bg-soft));
 }
@@ -1125,17 +1126,13 @@ textarea {
 }
 
 .site-select__menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
   z-index: 60;
-  /* 宽度随最长站名伸缩（首页触发器贴窗口左缘，固定宽 + 右对齐会伸出屏外）；
-     视口内的最终位置由组件打开时量测 clamp 兜底 */
+  /* 宽度随最长站名伸缩；位置（贴边翻转/防裁切）与可用高度全部由
+     Radix popper 管理（collisionPadding=8），不再手写量测 clamp */
   width: max-content;
   min-width: 240px;
   max-width: min(360px, calc(100vw - 16px));
-  max-height: 360px;
-  overflow-y: auto;
+  max-height: min(var(--radix-select-content-available-height, 360px), 360px);
   padding: 6px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
@@ -1163,9 +1160,16 @@ textarea {
     color var(--dur) var(--ease);
 }
 
-.site-select__item:hover:not(:disabled) {
+.site-select__item:hover:not(:disabled),
+.site-select__item[data-highlighted]:not([data-disabled]) {
   background: var(--panel-hover);
   color: var(--text);
+}
+
+.site-select__item.is-disabled,
+.site-select__item[data-disabled] {
+  color: var(--muted);
+  cursor: not-allowed;
 }
 
 .site-select__item.is-active {
