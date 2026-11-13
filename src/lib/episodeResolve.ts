@@ -12,6 +12,7 @@
  * invalid 日志，且真正可播的线路被跳过）。
  */
 import { api } from "./invoke";
+import { isLineBad, markLineBad, markLineGood } from "./lineHealth";
 import { normalizeHeaders } from "./playHeaders";
 
 export interface EpisodeTarget {
@@ -59,13 +60,21 @@ export async function resolveEpisodeTarget(
   if (!playFrom) {
     return { url: playUrl };
   }
+  // 最近判过「解不开」的线路直接跳过 playerContent：源侧那种「token 原样回吐」
+  // 的毛病不会自己好，等一次 8 秒超时只会让用户以为卡住了。
+  if (isLineBad(siteKey, playFrom)) {
+    return { url: playUrl, unresolvable: !HTTP_URL.test(playUrl) };
+  }
   let played: PlayerContentResult | null = null;
   try {
     played = (await api.spiderInvoke({
       siteKey,
       method: "playerContent",
       args: [playFrom, playUrl, []],
-      timeoutMs: 15_000,
+      // 8 秒而不是 15：成功的解码实测都在 5 秒内（PAN1 约 1.9 s、zijian 成功时
+      // 约 4.2 s），而网盘 token 线路在源侧忙时会一直挂到超时——多等的那 7 秒
+      // 只会推迟「换下一条线路」，用户看到的就是「点了没反应」。
+      timeoutMs: 8_000,
     })) as PlayerContentResult | null;
   } catch {
     // CMS / 未实现 playerContent 的源：沿用原始地址。
@@ -89,6 +98,8 @@ export async function resolveEpisodeTarget(
     // resolve_play 只会得到 INVALID_ARGUMENT，对用户毫无信息量。
     if (!HTTP_URL.test(playUrl)) {
       target.unresolvable = true;
+      // 源自己都不认这个 token，记下来，下次（含自动接下一集）直接换线。
+      markLineBad(siteKey, playFrom);
     }
     return target;
   }
@@ -96,6 +107,8 @@ export async function resolveEpisodeTarget(
     target.url = candidate;
     return target;
   }
+  // 解码成功：这条线路是「好线路」，换线时优先用它。
+  markLineGood(siteKey, playFrom);
   if (parseFlag === 0 && jxFlag === 0) {
     target.url = candidate;
     return target;

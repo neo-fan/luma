@@ -13,6 +13,8 @@ import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
 import { probePlayable } from "../lib/playProbe";
+import { firstPlayable } from "../lib/probeRace";
+import { lineRank } from "../lib/lineHealth";
 import { resolutionBadge, resolutionDetail, resolutionFromVideo } from "../lib/resolution";
 import type { VideoMeta } from "../lib/resolution";
 
@@ -21,7 +23,7 @@ import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
 import { setLiveLine } from "../lib/liveMemory";
-import type { HistoryItem, PlayResolved, ResultPage, Site, VodInfo } from "../types/tvbox";
+import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
@@ -291,6 +293,44 @@ export default function PlayerPage({
    * 自动换源：当前源取不到流时，用片名在全部站点里搜同名条目，逐个探测，
    * 只有真正返回 200 的流才切过去（避免把一个死源换成另一个死源）。
    */
+  /**
+   * 探一条候选线路能不能播：playerContent → resolve_play → 真拉一次媒体。
+   *
+   * 失败一律当作 `false`（抛异常也吃掉）：探活只是「猜哪条线能播」，
+   * 不该把异常抛给切线路流程。
+   */
+  const probeCandidate = useCallback(
+    async (
+      key: string,
+      candidate: { line: string; url: string },
+      signal: AbortSignal,
+    ): Promise<boolean> => {
+      try {
+        const target = await resolveEpisodeTarget(key, candidate.line, candidate.url);
+        if (target.unresolvable || signal.aborted) {
+          // 网盘 token 类线路：源自己都不认，别浪费一次 resolve_play。
+          return false;
+        }
+        const probe = await api.resolvePlay({
+          siteKey: key,
+          url: target.url,
+          ua: target.ua,
+          referer: target.referer,
+          cookie: target.cookie,
+        });
+        if (probe.kind === "page" || signal.aborted) {
+          return false;
+        }
+        // 别把死 CDN / 假地址当成「可播放线路」：网盘解析接口会以 200 + JSON
+        // 返回「解析失败了」，只看状态码会误判成可播线路。
+        return await probePlayable(probe.proxyUrl, probe.kind);
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+
   const tryFailover = useCallback(async () => {
     if (failoverStarted.current) {
       return;
@@ -338,41 +378,26 @@ export default function PlayerPage({
           // 线路名与剧集成对保留：跨站同样要先过 playerContent。
           const ordered = nextLines
             .flatMap((line) => line.episodes.map((episode) => ({ line: line.name, episode })))
-            .sort(
-              (a, b) =>
-                Number(b.episode.name === episodeName) - Number(a.episode.name === episodeName),
-            );
-          let picked: { line: string; name: string; url: string } | null = null;
-          for (const { line, episode } of ordered.slice(0, 8)) {
-            if (!episode.url || handledUrls.current.has(episode.url)) {
-              continue;
-            }
-            let probe: PlayResolved;
-            try {
-              const target = await resolveEpisodeTarget(candidate.siteKey, line, episode.url);
-              if (target.unresolvable) {
-                // 网盘 token 类线路：源自己都不认，别浪费一次 resolve_play。
-                continue;
+            .sort((a, b) => {
+              // 同名剧集优先；同集之间按线路健康度排（最近解开的排前面）。
+              const sameEpisode =
+                Number(b.episode.name === episodeName) - Number(a.episode.name === episodeName);
+              if (sameEpisode !== 0) {
+                return sameEpisode;
               }
-              probe = await api.resolvePlay({
-                siteKey: candidate.siteKey,
-                url: target.url,
-                ua: target.ua,
-                referer: target.referer,
-                cookie: target.cookie,
-              });
-            } catch {
-              continue;
-            }
-            if (probe.kind === "page") {
-              continue;
-            }
-            if (!(await probePlayable(probe.proxyUrl, probe.kind))) {
-              continue;
-            }
-            picked = { line, name: episode.name, url: episode.url };
-            break;
-          }
+              return lineRank(candidate.siteKey, a.line) - lineRank(candidate.siteKey, b.line);
+            });
+          const candidatesOfSite = ordered
+            .filter(({ episode }) => Boolean(episode.url) && !handledUrls.current.has(episode.url))
+            .slice(0, 8)
+            .map(({ line, episode }) => ({ line, name: episode.name, url: episode.url }));
+          // 并发探活：第一个能播的立刻返回。串行时「每条失败线路 2–5 秒」会
+          // 让用户对着转圈等十几秒，实际只有一条是通的。
+          const picked = await firstPlayable(
+            candidatesOfSite,
+            (item, signal) => probeCandidate(candidate.siteKey, item, signal),
+            { concurrency: 4 },
+          );
           if (!picked) {
             continue;
           }
@@ -482,57 +507,47 @@ export default function PlayerPage({
     }
 
     // 先试同名剧集（同一集的不同线路），再退而求其次试其它集。
-    const ordered = [...episodes].sort(
-      (a, b) =>
-        Number(b.episode.name === episodeName) - Number(a.episode.name === episodeName),
+    const ordered = [...episodes]
+      .filter(({ episode }) => Boolean(episode.url) && !handledUrls.current.has(episode.url))
+      .sort((a, b) => {
+        const sameEpisode =
+          Number(b.episode.name === episodeName) - Number(a.episode.name === episodeName);
+        if (sameEpisode !== 0) {
+          return sameEpisode;
+        }
+        // 同集的不同线路：把最近解码成功的排前面，判过死 token 的排最后。
+        return lineRank(siteKey, a.line) - lineRank(siteKey, b.line);
+      })
+      .slice(0, 12)
+      .map(({ line, episode }) => ({ line, name: episode.name, url: episode.url }));
+
+    // 并发探活（首个成功即中止其余）：串行时「布布追剧 → 走马上任」第 3 集要
+    // 16 秒才出画，用户以为坏了；现在是最快那条线路的耗时。
+    const picked = await firstPlayable(
+      ordered,
+      (item, signal) => probeCandidate(siteKey, item, signal),
+      { concurrency: 4 },
     );
-    for (const { line, episode } of ordered.slice(0, 12)) {
-      if (!episode.url || handledUrls.current.has(episode.url)) {
-        continue;
-      }
-      try {
-        const target = await resolveEpisodeTarget(siteKey, line, episode.url);
-        if (target.unresolvable) {
-          continue;
-        }
-        const probe = await api.resolvePlay({
-          siteKey,
-          url: target.url,
-          ua: target.ua,
-          referer: target.referer,
-          cookie: target.cookie,
-        });
-        if (probe.kind === "page") {
-          continue;
-        }
-        // 别把死 CDN / 假地址当成「可播放线路」：先探一次，失败就继续找下一条。
-        // 网盘解析接口会以 200 + JSON 返回「解析失败了」，只看状态码会误判
-        // 成可播线路，切过去后 hls.js 报 manifestParsingError。
-        if (!(await probePlayable(probe.proxyUrl, probe.kind))) {
-          continue;
-        }
-        handledUrls.current.add(episode.url);
-        setSwitchTip(`已自动切换到可播放线路「${episode.name}」`);
-        videoRef.current = null;
-        navigate(
-          {
-            name: "player",
-            siteKey,
-            vodId,
-            vodName,
-            episodeName: episode.name,
-            playUrl: episode.url,
-            // 切换后必须保留线路名，否则下一次解析又拿不到 playerContent。
-            playFrom: line,
-          },
-          true,
-        );
-        return true;
-      } catch {
-        continue;
-      }
+    if (!picked) {
+      return false;
     }
-    return false;
+    handledUrls.current.add(picked.url);
+    setSwitchTip(`已自动切换到可播放线路「${picked.name}」`);
+    videoRef.current = null;
+    navigate(
+      {
+        name: "player",
+        siteKey,
+        vodId,
+        vodName,
+        episodeName: picked.name,
+        playUrl: picked.url,
+        // 切换后必须保留线路名，否则下一次解析又拿不到 playerContent。
+        playFrom: picked.line,
+      },
+      true,
+    );
+    return true;
   }, [episodeName, lines, navigate, playUrl, siteKey, vodId, vodName, liveLinesArr, liveIdx, liveSource, liveUa]);
 
   /** 线路切换失败后的兜底：整站找同名影片。 */
