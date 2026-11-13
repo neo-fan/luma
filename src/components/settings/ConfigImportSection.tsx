@@ -98,7 +98,7 @@ export default function ConfigImportSection({
           />
           <button
             type="button"
-            className="btn btn--ghost"
+            className="btn"
             disabled={importing}
             onClick={() => void importConfig("url", url.trim())}
           >
@@ -134,7 +134,7 @@ export default function ConfigImportSection({
         />
         <button
           type="button"
-          className="btn btn--ghost"
+          className="btn"
           disabled={importing}
           onClick={() => void importConfig("text", text.trim())}
         >

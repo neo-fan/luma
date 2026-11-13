@@ -192,16 +192,16 @@ export default function ConfigListSection({
   };
 
   /**
-   * 手动检查一份订阅。`meta` 缺省时检查 active 配置（顶部按钮）。
+   * 手动检查一份订阅（配置行上的「检查更新」图标）。
    * 内容变了才换站点缓存——没变化时动缓存会白清页面缓存与滚动位置。
    */
-  const refreshConfig = async (meta?: ConfigMeta) => {
-    const key = meta?.id ?? "active";
+  const refreshConfig = async (meta: ConfigMeta) => {
+    const key = meta.id;
     setRefreshingId(key);
     onError("");
     onNotice("");
     try {
-      const outcome = await api.configRefresh(meta?.id);
+      const outcome = await api.configRefresh(meta.id);
       if (outcome.changed && outcome.snapshot) {
         onImported(outcome.snapshot);
         onNotice(`「${outcome.name}」已更新：${outcome.enabled} 个可用站点`);
@@ -261,14 +261,8 @@ export default function ConfigListSection({
             { value: "24", label: "每 24 小时" },
           ]}
         />
-        <button
-          type="button"
-          className="btn btn--sm"
-          disabled={refreshingId !== "" || !settings?.configId}
-          onClick={() => void refreshConfig()}
-        >
-          {refreshingId === "active" ? "检查中…" : "立即检查"}
-        </button>
+        {/* 手动检查走每行订阅的「检查更新」图标——这里再放一个「立即检查」
+            与它完全重复（active 配置就是其中一行）。 */}
       </div>
 
       {listError ? <ErrorBar message={`配置列表读取失败：${listError}`} /> : null}

@@ -413,13 +413,20 @@ async fn aggregate(
     let mut results = Vec::new();
     let mut ok = 0usize;
     let mut failed = 0usize;
-    // Honour the caller's wall clock instead of a hardcoded constant. Clamp so
-    // neither a tiny nor an absurd timeout can wreck the UI, and abort the
-    // slow tail when the budget expires.
+    // 非流式（首页聚合）：按调用方墙钟截断慢尾巴，clamp 防极值。
+    // 流式搜索（用户要求）：不限墙钟——结果在陆续上屏，等所有站点跑完
+    // 再收尾；每站仍受自身 per-site timeout 约束，不会有无限挂起的源。
+    // 上限 600s 只是防御性兜底（per-site timeout × 波次远小于它）。
+    let streaming_unbounded = streaming.is_some();
     let budget = timeout.clamp(Duration::from_millis(8_000), Duration::from_millis(30_000));
     loop {
-        let remaining = budget.saturating_sub(started.elapsed());
-        if remaining.is_zero() {
+        let remaining = if streaming_unbounded {
+            // 流式：无墙钟截断，等到 JoinSet 排空（Ok(None) 分支）。
+            Duration::from_secs(600)
+        } else {
+            budget.saturating_sub(started.elapsed())
+        };
+        if !streaming_unbounded && remaining.is_zero() {
             set.abort_all();
             break;
         }

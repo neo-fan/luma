@@ -23,8 +23,8 @@ import { log } from "../lib/logger";
 import type { ResultPage, Site, VodInfo } from "../types/tvbox";
 
 const ALL_SITES = "__all__";
-/** 全站聚合的墙钟：与后端每源超时一致，超时后返回已完成的源。 */
-const ALL_TIMEOUT_MS = 20_000;
+// 流式全站搜索不限总墙钟（用户要求）：每站受后端默认 15s 单站超时约束，
+// 结果陆续上屏、全部站点跑完才收尾；用户随时可取消。
 
 interface AggregateRow {
   siteKey: string;
@@ -188,21 +188,100 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
           setError("请先导入一份配置");
           return;
         }
-        setProgress(`正在并发检索 ${selectableSites.length} 个站点（最长 ${ALL_TIMEOUT_MS / 1000} 秒）…`);
-        // 一次 IPC 让 Rust 并发扇出；串行逐站调用在 100+ 站点的配置下要等几分钟。
-        const agg = (await api.spiderInvoke({
-          siteKey: "all",
-          method: "searchContent",
-          args: [word, false, 1],
-          timeoutMs: ALL_TIMEOUT_MS,
-        })) as AggregateResult;
-        if (cancelledRef.current) {
-          // 用户已取消：迟到的聚合结果整批丢弃（详见 cancelledRef 注释）。
-          log.info("search result discarded after cancel", { keyword: word.slice(0, 60), scope: "all" });
-          return;
-        }
+        setProgress(`正在并发检索 ${selectableSites.length} 个站点，结果陆续返回中…`);
         const names = new Map(selectableSites.map((item) => [item.key, item.name]));
         const seen = new Set<string>();
+        /** 流式增量（到达序）：每个 chunk 到达就并进 hits 上屏，不等全站。 */
+        const streamed: SearchHit[] = [];
+        const streamedFailures: Array<{ code?: string; message?: string }> = [];
+        const streamedRows: FailureRow[] = [];
+        let streamOk = 0;
+        let streamFailed = 0;
+        /** 把一批成功/失败结果并入界面（去重 + 相关度重排 + 失败明细）。 */
+        const absorbChunk = (row: AggregateRow) => {
+          if (row.ok) {
+            streamOk += 1;
+            let added = false;
+            for (const vod of row.data?.list ?? []) {
+              const id = vod.vod_id ? `${row.siteKey}:${vod.vod_id}` : "";
+              if (id && seen.has(id)) continue;
+              if (id) seen.add(id);
+              streamed.push({
+                siteKey: row.siteKey,
+                siteName: names.get(row.siteKey) ?? row.siteKey,
+                vod,
+                matchScore: titleMatchScore(vod.vod_name, word),
+              });
+              added = true;
+            }
+            if (added) {
+              // 每批都按片名相关度稳定重排：先到的精确命中保持置顶，
+              // 后到的按分数插队（陆续出来、始终有序）。
+              const ranked = rankByTitle(streamed, word, (hit) => hit.vod.vod_name);
+              setHits(ranked);
+              setMatchCount(ranked.filter((hit) => hit.matchScore >= 2).length);
+              setSearched(true);
+            }
+          } else {
+            streamFailed += 1;
+            const raw = row.error?.message || row.error?.code || "未知错误";
+            streamedFailures.push({ code: row.error?.code, message: raw });
+            const reason = classifyFailure(row.error?.code, raw);
+            streamedRows.push({
+              siteKey: row.siteKey,
+              siteName: names.get(row.siteKey) ?? row.siteKey,
+              message: reason.label,
+              detail: reason.hint,
+              raw,
+            });
+            setFailureRows(
+              streamedRows.sort((a, b) => a.siteName.localeCompare(b.siteName, "zh-Hans-CN")),
+            );
+            setFailures(streamedRows.length);
+            setFailureReasons(
+              groupFailures(streamedFailures)
+                .slice(0, 3)
+                .map((group) => `${group.label}（${group.count} 个站点）`),
+            );
+          }
+          setProgress(
+            `已响应 ${streamOk + streamFailed}/${selectableSites.length} 个站点，已出 ${streamed.length} 条结果`,
+          );
+        };
+        // 流式订阅要在发请求前挂上：后端每完成一个站点就推一行。
+        const unlisten = await api.onSearchChunk((row) => {
+          // 取消后迟到的 chunk 一律丢弃（与聚合结果同一口径）。
+          if (!cancelledRef.current) {
+            absorbChunk(row);
+          }
+        });
+        try {
+          // 一次 IPC 让 Rust 并发扇出；串行逐站调用在 100+ 站点的配置下要等几分钟。
+          // 不传 timeoutMs：流式模式不限总墙钟，每站用后端默认 15s 单站超时。
+          const agg = (await api.spiderInvoke({
+            siteKey: "all",
+            method: "searchContent",
+            args: [word, false, 1],
+            stream: true,
+          })) as AggregateResult;
+          if (cancelledRef.current) {
+            // 用户已取消：迟到的聚合结果整批丢弃（详见 cancelledRef 注释）。
+            log.info("search result discarded after cancel", { keyword: word.slice(0, 60), scope: "all" });
+            return;
+          }
+          await finalizeAggregate(agg, names);
+        } finally {
+          unlisten();
+        }
+
+        async function finalizeAggregate(
+          agg: AggregateResult,
+          names: Map<string, string>,
+        ) {
+        // 对账用独立的去重集（流式期的 seen 已含全部增量，复用会把
+        // 整份结果误判成重复）；条目写进**外层 merged**——runSearch 末尾
+        // 的 setHits(ranked) 读的是它。
+        const finalSeen = new Set<string>();
         for (const row of agg.results ?? []) {
           if (!row.ok) {
             continue;
@@ -212,11 +291,11 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
             // repeat an id. De-duplicate before rendering so no duplicate
             // cards show up; entries without an id are left untouched.
             const id = vod.vod_id ? `${row.siteKey}:${vod.vod_id}` : "";
-            if (id && seen.has(id)) {
+            if (id && finalSeen.has(id)) {
               continue;
             }
             if (id) {
-              seen.add(id);
+              finalSeen.add(id);
             }
             merged.push({
               siteKey: row.siteKey,
@@ -292,6 +371,7 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
           skipped: agg.skipped ?? 0,
           tookMs: agg.tookMs,
         };
+        }
       }
 
       // 源站回退推荐列表 / 单字模糊匹配会把精确命中冲到几十条之后。
@@ -524,8 +604,9 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
               取消
             </button>
           </div>
-          {/* 骨架网格预示结果形态；不用 .vod-card 类名，探针计数不受干扰。 */}
-          <SearchSkeleton count={12} />
+          {/* 骨架网格只垫空窗期：流式结果陆续上屏后让位给真实卡片。
+              不用 .vod-card 类名，探针计数不受干扰。 */}
+          {hits.length === 0 ? <SearchSkeleton count={12} /> : null}
         </>
       ) : null}
 
