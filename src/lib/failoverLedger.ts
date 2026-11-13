@@ -9,13 +9,21 @@
  *
  * （探活只验 manifest，manifest 正常但流播不动的地址每次探都会「通过」，同一
  * 条地址能被反复选中。）这里把账记到模块级，按 `failoverKey` 分桶、带 TTL；
- * 自动跳转时透传 key，用户手动点播（非自动跳转）时清空重记。另设跳转次数
- * 上限：预算用完就停下来报错，把控制权交还用户。
+ * 自动跳转时透传 key，用户手动点播（非自动跳转）时清空重记。
+ *
+ * 两个预算语义（避免固定值「拍脑袋」）：
+ * - **跳转次数按「连续失败」计**：媒体真正可解码（loadedmetadata）时
+ *   `ledgerSuccess` 把计数清零——单条失败链内最多 MAX_SWITCHES 次自动跳转，
+ *   但一次成功播放即恢复满额预算，长会话不会被历史失败永久卡死；
+ *   死循环防护不依赖这个计数，靠的是 urls/sites 记账（试过的不再试）。
+ * - **TTL 按活动滑动**：每次记账动作刷新时间戳，TTL 度量「最后一次记账以来
+ *   的静默时长」，而不是从建桶起算的固定窗口——多坏线源慢慢换线不会被
+ *   中途过期打回重来。
  */
 
-/** 记账有效期：超过后整桶作废，用户再点一次就是全新的一轮。 */
+/** 记账有效期：桶内最后一次记账后的静默时长，超过整桶作废。 */
 const TTL_MS = 5 * 60_000;
-/** 一轮内最多自动跳转次数；超过就停下报错，让人接管。 */
+/** 一条连续失败链内最多自动跳转次数；超过就停下报错，让人接管。 */
 const MAX_SWITCHES = 4;
 /** 单桶地址上限，防极端站点刷爆内存。 */
 const MAX_URLS = 64;
@@ -31,6 +39,10 @@ const ledger = new Map<string, Entry>();
 
 /** 自动换线即将 navigate 时置位；由新播放页挂载时消费。 */
 let autoNavPending = false;
+
+function touch(entry: Entry): void {
+  entry.ts = Date.now();
+}
 
 function bucket(key: string): Entry {
   const cur = ledger.get(key);
@@ -48,6 +60,7 @@ export function ledgerHasUrl(key: string, url: string): boolean {
 
 export function ledgerMarkUrl(key: string, url: string): void {
   const b = bucket(key);
+  touch(b);
   if (b.urls.size < MAX_URLS) {
     b.urls.add(url);
   }
@@ -59,6 +72,7 @@ export function ledgerSiteSeen(key: string, siteKey: string): boolean {
 
 export function ledgerMarkSite(key: string, siteKey: string): void {
   const b = bucket(key);
+  touch(b);
   if (!b.sites.includes(siteKey)) {
     b.sites.push(siteKey);
   }
@@ -70,7 +84,19 @@ export function ledgerBudget(key: string): number {
 }
 
 export function ledgerCountSwitch(key: string): void {
-  bucket(key).switches += 1;
+  const b = bucket(key);
+  touch(b);
+  b.switches += 1;
+}
+
+/**
+ * 媒体真正开始解码（loadedmetadata）时调用：本线路确认可播，连续失败链
+ * 中断，跳转预算恢复满额。urls/sites 记账保留——同一地址换个入口还是坏的。
+ */
+export function ledgerSuccess(key: string): void {
+  const b = bucket(key);
+  touch(b);
+  b.switches = 0;
 }
 
 /** 自动换线导航前调用：新播放页凭此知道「不是用户手动点播」。 */

@@ -23,6 +23,7 @@ use rquickjs::{
     module::Declared,
     CatchResultExt, Context, Ctx, Error as JsError, Function, Module, Runtime, Value,
 };
+use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use std::{
@@ -144,6 +145,53 @@ fn http_agent() -> &'static ureq::Agent {
     AGENT.get_or_init(|| ureq::AgentBuilder::new().try_proxy_from_env(false).build())
 }
 
+/// Same as `http_agent()` but tolerates broken server certificate chains.
+///
+/// TVBox 生态里「服务端漏发中间证书」的源很常见（浏览器靠 AIA 抓取能救回来，
+/// rustls 不会，直接 `invalid peer certificate: UnknownIssuer`）。严格模式
+/// 先试一次，命中 TLS 证书错误再用这个 agent 重试一次——证书错误是确定性的，
+/// 重试无副作用；正常源的信任路径完全不变。宽容路径走 native-tls/SChannel，
+/// 与 rustls 严格路径互不影响。
+fn tolerant_connector() -> Option<Arc<native_tls::TlsConnector>> {
+    native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .ok()
+        .map(Arc::new)
+}
+
+fn http_agent_cert_tolerant() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        let builder = ureq::AgentBuilder::new().try_proxy_from_env(false);
+        match tolerant_connector() {
+            Some(connector) => builder.tls_connector(connector).build(),
+            None => builder.build(),
+        }
+    })
+}
+
+/// 模块加载用的宽容 agent：与 `http_agent_cert_tolerant` 的差别是跟随环境
+/// 代理（模块加载走的是默认全局代理行为，见 `load_source`）。
+fn module_agent_cert_tolerant() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        let builder = ureq::AgentBuilder::new();
+        match tolerant_connector() {
+            Some(connector) => builder.tls_connector(connector).build(),
+            None => builder.build(),
+        }
+    })
+}
+
+/// ureq 的 rustls 后端把 TLS 握手失败统一包成 `ConnectionFailed`
+/// ("tls connection init failed: ...")，错误类别里没有 TLS；只能按消息识别。
+/// 识别条件收窄到证书语义，避免把普通断连误判成证书问题。
+fn is_tls_cert_failure(err: &ureq::Error) -> bool {
+    let text = err.to_string().to_ascii_lowercase();
+    text.contains("invalid peer certificate") || text.contains("unknown issuer")
+}
+
 /// `req(url, options)` -> `{ code, content, headers }`, matching FongMi's
 /// `QuickJS.Text(json, "content", body)`. Options: method, headers, body,
 /// timeout (ms), postType/json-ish body objects are stringified.
@@ -168,8 +216,8 @@ fn http_request(url: &str, options: &str) -> String {
         JsonValue::String(text) => text.clone(),
         other => other.to_string(),
     });
-    let build = || {
-        let mut request = http_agent()
+    let build = |agent: &'static ureq::Agent| {
+        let mut request = agent
             .request(&method, url)
             .timeout(Duration::from_millis(timeout));
         if let Some(headers) = extra_headers {
@@ -181,16 +229,22 @@ fn http_request(url: &str, options: &str) -> String {
         }
         request
     };
-    let send = || match &body {
-        Some(text) if !text.is_empty() => build().send_string(text),
-        _ => build().call(),
+    let send = |agent: &'static ureq::Agent| match &body {
+        Some(text) if !text.is_empty() => build(agent).send_string(text),
+        _ => build(agent).call(),
     };
-    let response = match send() {
+    let response = match send(http_agent()) {
+        // 服务端证书链不完整（TVBox 生态常见，浏览器能救、rustls 不能）：
+        // 先严格试一次，命中 TLS 证书错误换宽容 agent 重试一次。证书错误是
+        // 确定性的，重试无副作用；正常源的信任路径完全不变。
+        Err(err) if is_tls_cert_failure(&err) => {
+            send(http_agent_cert_tolerant())
+        }
         // Some source APIs close an idle keep-alive connection mid-response
         // ("Unexpected EOF"); one immediate retry on GET is cheap and fixes it.
         Err(ureq::Error::Transport(_)) if method == "GET" => {
             std::thread::sleep(Duration::from_millis(120));
-            send()
+            send(http_agent())
         }
         other => other,
     };
@@ -695,10 +749,22 @@ fn load_source(assets_dir: &PathBuf, name: &str) -> Result<String, JsError> {
             JsError::new_loading_message(file.to_string(), format!("{}: {err}", path.display()))
         })
     } else if let Some(url) = name.strip_prefix("net:") {
-        ureq::get(url)
-            .timeout(Duration::from_secs(10))
-            .call()
-            .map_err(|err| JsError::new_loading_message(url.to_string(), err.to_string()))?
+        // 与 `req` 相同的证书宽容回落：引擎/依赖/规则文件可能落在漏发中间
+        // 证书的站点上，严格失败后用宽容 agent 再试一次。模块加载走默认全局
+        // 代理行为，所以宽容 agent 也不关代理（与 `req` 的直连口径不同）。
+        let fetch = |agent: &ureq::Agent| -> Result<ureq::Response, ureq::Error> {
+            agent.get(url).timeout(Duration::from_secs(10)).call()
+        };
+        let default_agent = ureq::agent();
+        let response = match fetch(&default_agent) {
+            Ok(resp) => resp,
+            Err(err) if is_tls_cert_failure(&err) => fetch(module_agent_cert_tolerant())
+                .map_err(|err| JsError::new_loading_message(url.to_string(), err.to_string()))?,
+            Err(err) => {
+                return Err(JsError::new_loading_message(url.to_string(), err.to_string()))
+            }
+        };
+        response
             .into_string()
             .map_err(|err| JsError::new_loading_message(url.to_string(), err.to_string()))
     } else {

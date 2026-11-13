@@ -24,6 +24,7 @@ import {
   ledgerMarkUrl,
   ledgerReset,
   ledgerSiteSeen,
+  ledgerSuccess,
   markAutoNav,
 } from "../lib/failoverLedger";
 import { resolutionBadge, resolutionDetail, resolutionFromVideo } from "../lib/resolution";
@@ -735,6 +736,9 @@ export default function PlayerPage({
       void write(false);
     };
     const onMeta = () => {
+      // loadedmetadata = 媒体真正可解码，本线路确认可播：连续失败链中断，
+      // 自动换线跳转预算恢复满额（failoverLedger 的「连续失败」语义）。
+      ledgerSuccess(ledgerKey);
       setDurationMs(Number.isFinite(video.duration) ? video.duration * 1000 : 0);
       if (Number.isFinite(video.duration)) {
         lastMediaRef.current.durationMs = Math.round(video.duration * 1000);
@@ -753,7 +757,7 @@ export default function PlayerPage({
       video.removeEventListener("loadedmetadata", onMeta);
       void write(true, lastMediaRef.current);
     };
-  }, [resolved, siteKey, vodId, vodName, playUrl, setTimeMs, setDurationMs]);
+  }, [resolved, siteKey, vodId, vodName, playUrl, ledgerKey, setTimeMs, setDurationMs]);
 
   /**
    * 看完一集自动接下一集：连看时不必每集回来点按钮。

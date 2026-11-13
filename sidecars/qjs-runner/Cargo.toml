@@ -14,7 +14,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # default features are required: gzip + charset. Listing `features` alone would
 # disable them, and compressed source APIs would decode to garbage.
-ureq = { version = "2", default-features = true, features = ["json", "tls", "gzip", "charset"] }
+ureq = { version = "2", default-features = true, features = ["json", "tls", "native-tls", "gzip", "charset"] }
+native-tls = "0.2"
 # Module specifier resolution (relative imports, percent-encoding, CJK paths).
 url = "2"
 percent-encoding = "2"
