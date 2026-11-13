@@ -1094,6 +1094,8 @@ textarea {
   font-size: var(--fs-sm);
   line-height: 1;
   cursor: pointer;
+  /* 打开态的边框+浅底已足够表达状态，不要浏览器 focus 发光圈。 */
+  outline: none;
   transition: border-color var(--dur, 0.18s) var(--ease, ease),
     background var(--dur, 0.18s) var(--ease, ease);
 }

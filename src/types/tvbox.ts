@@ -123,6 +123,12 @@ export interface SpiderRequest {
   args: unknown[];
   /** 默认 15000，墙钟 */
   timeoutMs?: number;
+  /**
+   * 聚合搜索逐站流式回传（仅 siteKey='all' 且 method='searchContent'）：
+   * 每有一个站点完成就 emit `search-chunk`（payload = 单行 result JSON），
+   * 前端陆续上屏；最终 IPC 返回值仍是完整聚合（真相源）。
+   */
+  stream?: boolean;
 }
 
 /** HTTP 拉取请求（7.1） */

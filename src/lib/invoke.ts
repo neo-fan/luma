@@ -223,6 +223,15 @@ export const api = {
   },
 
   /**
+   * 流式全站搜索的逐站推送（`SpiderRequest.stream = true` 时后端 emit）。
+   * payload 与聚合结果的单行完全同构——事件只是增量预览，最终 IPC
+   * 返回值仍是完整聚合（真相源），前端用它做对账。
+   */
+  onSearchChunk(handler: (row: AggregateRow) => void): Promise<UnlistenFn> {
+    return listen<AggregateRow>("search-chunk", (event) => handler(event.payload));
+  },
+
+  /**
    * 首页：先取 `homeContent`（分类 + 有些源自带 list）。若 list 为空，再问
    * 一次标准方法 `homeVideoContent` 补推荐流——豆瓣等严格按协议分家的源
    * 只在这里放卡片。兜底失败一律吞掉、保留 base，绝不让首页因缺该方法而报错
