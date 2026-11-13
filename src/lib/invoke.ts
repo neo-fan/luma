@@ -26,6 +26,7 @@ import type {
   PlayRequest,
   PlayResolved,
   LiveListResult,
+  EpgResult,
   ProxyStatus,
   ResultPage,
   SiteHealthResult,
@@ -290,6 +291,11 @@ export const api = {
       () => call("live_parse", { url, ua }),
       force,
     );
+  },
+
+  /** 拉取节目单并按频道名匹配，返回当前频道的当日节目列表。 */
+  liveEpg(epgUrl: string, channel: string, date?: string): Promise<EpgResult> {
+    return call("live_epg", { epg_url: epgUrl, channel, date });
   },
 
   proxyStatus(): Promise<ProxyStatus> {

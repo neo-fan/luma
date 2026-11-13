@@ -287,6 +287,23 @@ export interface LiveListResult {
   count?: number;
 }
 
+/** 单个节目（XMLTV programme 归一化）。 */
+export interface EpgProgram {
+  /** ISO 8601 时间（已按 xmltv 时区换算）。 */
+  start: string;
+  /** ISO 8601 时间；缺省为空串。 */
+  stop?: string;
+  title: string;
+  desc?: string;
+}
+
+/** 某频道的节目单（按频道名匹配后的结果）。 */
+export interface EpgResult {
+  channel: string;
+  date?: string;
+  programs: EpgProgram[];
+}
+
 /** 试运行诊断（`diagnostics` command）：版本 / 目录 / 当前配置规模 / 日志。 */
 export interface DiagnosticsConfig {
   id: string;

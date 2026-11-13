@@ -3,6 +3,7 @@ import ErrorBar from "../components/ErrorBar";
 import ConfigImportSection from "../components/settings/ConfigImportSection";
 import ConfigListSection from "../components/settings/ConfigListSection";
 import DiagnosticSection from "../components/settings/DiagnosticSection";
+import EpgsSection from "../components/settings/EpgsSection";
 import HealthCheckSection from "../components/settings/HealthCheckSection";
 import HistorySection from "../components/settings/HistorySection";
 import ProxySection from "../components/settings/ProxySection";
@@ -57,6 +58,7 @@ export default function SettingsPage({
         reload={reload}
         onReload={bumpReload}
       />
+      <EpgsSection />
       <ProxySection reload={reload} />
       <HealthCheckSection
         sites={sites}

@@ -101,6 +101,16 @@ def dispatch(method: str, params: dict) -> dict:
             raise ValueError("raw must be a string")
         return parse_m3u(raw, str(params.get("url") or ""))
 
+    if method == "live.parseEpg":
+        from live import parse_epg
+
+        raw = params.get("raw")
+        if not isinstance(raw, str):
+            raise ValueError("raw must be a string")
+        channel = str(params.get("channel") or "")
+        date = params.get("date")
+        return parse_epg(raw, channel, str(date) if date else None)
+
     if method == "parse.resolve":
         from parse import resolve
 

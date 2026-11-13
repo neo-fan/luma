@@ -6,7 +6,9 @@ Groups come from `group-title`; channels without a group fall into 未分组.
 
 from __future__ import annotations
 
+import io
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 ATTR = re.compile(r'([\w-]+)="([^"]*)"')
@@ -104,3 +106,113 @@ def parse_m3u(raw: str, url: str = "") -> dict[str, Any]:
         "source": url,
         "count": sum(len(channels) for channels in groups.values()),
     }
+
+
+def _epg_localize(value: str) -> str:
+    """把 XMLTV 时间 `20261113060000 +0800` 转成 ISO 8601（`2026-11-13T06:00:00+08:00`）。
+    解析失败则原样返回，交给前端兜底。"""
+    if not value:
+        return ""
+    match = re.match(
+        r"(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\s*([+-]\d{4}))?",
+        value.strip(),
+    )
+    if not match:
+        return value
+    year, month, day, hour, minute, second, tz = match.groups()
+    offset = None
+    if tz:
+        sign = 1 if tz[0] == "+" else -1
+        offset = timezone(sign * timedelta(hours=int(tz[1:3]), minutes=int(tz[3:5])))
+    try:
+        dt = datetime(
+            int(year), int(month), int(day), int(hour), int(minute), int(second), tzinfo=offset
+        )
+        return dt.isoformat()
+    except ValueError:
+        return value
+
+
+def parse_epg(raw: str, channel: str, date: str | None = None) -> dict[str, Any]:
+    """Parse an XMLTV payload and return programmes for one channel.
+
+    `raw` can be tens of MB; stream with `iterparse` so the whole document is
+    never built in memory. Two passes: first map channel id -> display names,
+    then keep only programmes whose channel matches the requested name (by id
+    or any display-name alias, with a substring fallback for common variants
+    like `CCTV-1` vs `CCTV-1 综合`).
+    """
+    import xml.etree.ElementTree as ET
+
+    target = (channel or "").strip()
+    if not target:
+        return {"channel": channel, "date": date, "programs": []}
+
+    # Pass 1: channel id -> display names.
+    id_to_names: dict[str, set[str]] = {}
+    names_to_id: dict[str, str] = {}
+    try:
+        for _event, elem in ET.iterparse(io.BytesIO(raw.encode("utf-8")), events=("end",)):
+            # 只在 channel 结束节点收集并清理：display-name 是 channel 的子，
+            # 若在子节点 end 时提前 clear，父 channel 聚合时子节点已被清空 → 匹配全空。
+            if elem.tag == "channel":
+                cid = elem.get("id", "")
+                names: set[str] = set()
+                for child in elem:
+                    if child.tag in ("display-name", "name"):
+                        text = (child.text or "").strip()
+                        if text:
+                            names.add(text)
+                id_to_names[cid] = names
+                for name in names:
+                    names_to_id.setdefault(name, cid)
+                elem.clear()
+            elif elem.tag == "tv":
+                # 根节点收尾，释放整棵已解析子树，避免内存峰值。
+                elem.clear()
+    except ET.ParseError:
+        return {"channel": channel, "date": date, "programs": []}
+
+    # Resolve which channel ids match the requested name.
+    matched: set[str] = set()
+    if target in names_to_id:
+        matched.add(names_to_id[target])
+    if target in id_to_names:
+        matched.add(target)
+    for cid, names in id_to_names.items():
+        if any(target in name or name in target for name in names):
+            matched.add(cid)
+    if not matched:
+        return {"channel": channel, "date": date, "programs": []}
+
+    # Pass 2: keep matching programmes only.
+    programs: list[dict[str, Any]] = []
+    # programme 的子标签（title/desc 等）不能在自身 end 时 clear，否则 programme 聚合时
+    # 子节点已被清空、取不到标题；其余顶层元素（tv/channel/display-name）直接释放。
+    programme_subtags = {"title", "desc", "sub-title", "credits", "category", "icon", "episode-num", "rating"}
+    for _event, elem in ET.iterparse(io.BytesIO(raw.encode("utf-8")), events=("end",)):
+        if elem.tag == "programme":
+            if elem.get("channel") in matched:
+                start = elem.get("start", "")
+                stop = elem.get("stop")
+                title = ""
+                desc = ""
+                for child in elem:
+                    if child.tag == "title" and not title:
+                        title = (child.text or "").strip()
+                    elif child.tag == "desc" and not desc:
+                        desc = (child.text or "").strip()
+                programs.append(
+                    {
+                        "start": _epg_localize(start),
+                        "stop": _epg_localize(stop) if stop else "",
+                        "title": title,
+                        "desc": desc,
+                    }
+                )
+            elem.clear()
+        elif elem.tag not in programme_subtags:
+            elem.clear()
+
+    programs.sort(key=lambda item: item["start"])
+    return {"channel": channel, "date": date, "programs": programs}

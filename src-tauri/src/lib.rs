@@ -137,6 +137,7 @@ pub fn run() {
             spider::spider_invoke,
             spider::site_health,
             live::live_parse,
+            live::live_epg,
             proxy::proxy_status,
             play::resolve_play,
             parse::parse_resolve,

@@ -466,8 +466,80 @@ textarea {
   flex: none;
 }
 
+/* 直播态节目单面板：频道名标题 + 可滚动节目列表，当前节目高亮。 */
+.live-epg {
+  margin: 14px 0 4px;
+}
+
+.epg-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.epg-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  align-items: baseline;
+}
+
+.epg-item.is-now {
+  background: var(--accent-soft, rgba(59, 130, 246, 0.12));
+}
+
+.epg-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+}
+
+.epg-title {
+  color: var(--text);
+}
+
+.epg-desc {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.epg-item.is-now .epg-title {
+  color: var(--accent, #3b82f6);
+  font-weight: 600;
+}
+
 .tip--ok {
   color: var(--ok);
+}
+
+/* 设置页节目单地址输入框与按钮行。 */
+.epg-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.text-input {
+  flex: 1 1 320px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border, #2a2a30);
+  border-radius: var(--r-sm);
+  background: var(--bg-soft, #1c1c22);
+  color: var(--text, #e8e8ea);
+  font-size: 13px;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--accent, #3b82f6);
 }
 
 .result-meta {

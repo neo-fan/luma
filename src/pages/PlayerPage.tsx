@@ -6,6 +6,7 @@ import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
 import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
+import LiveEpgPanel from "../components/LiveEpgPanel";
 import { formatDuration, parsePlayLines, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
@@ -859,6 +860,14 @@ export default function PlayerPage({
             ))}
           </div>
         </div>
+      ) : null}
+
+      {/* 直播态节目单：按频道名匹配当前频道的当日节目并高亮正在播放项。 */}
+      {siteKey === "live" ? (
+        <LiveEpgPanel
+          channelName={vodName}
+          reloadKey={`${vodName}|${liveIdx}|${playUrl}`}
+        />
       ) : null}
 
       {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
