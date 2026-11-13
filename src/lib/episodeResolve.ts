@@ -22,6 +22,13 @@ export interface EpisodeTarget {
   cookie?: string;
   /** 解析池命中的解析器名，调用方自行决定是否提示（探测链路不该弹提示）。 */
   parser?: string;
+  /**
+   * 这条线路内置播放器**确定播不了**：`vod_play_url` 是私有 token，而源自己的
+   * `playerContent` 也把它原样吐回来（网盘 / 专用插件类线路，如 `CO4K_…`、
+   * `qsvip-…`、`jjkk-…`）。调用方应直接换线路，而不是把 token 丢给
+   * `resolve_play` 换一句 `play url is invalid`。
+   */
+  unresolvable?: boolean;
 }
 
 interface PlayerContentResult {
@@ -77,7 +84,12 @@ export async function resolveEpisodeTarget(
   };
 
   if (!HTTP_URL.test(candidate)) {
-    // playerContent 没给出可用地址（空串 / 仍是私有 scheme）：保持原地址。
+    // playerContent 没给出可用地址（空串 / 仍是私有 scheme）：保持原地址，
+    // 但记下「这条线路内置链路救不了」——原地址本身也不是 URL 时，交给
+    // resolve_play 只会得到 INVALID_ARGUMENT，对用户毫无信息量。
+    if (!HTTP_URL.test(playUrl)) {
+      target.unresolvable = true;
+    }
     return target;
   }
   if (LOCAL_PROXY.test(candidate)) {

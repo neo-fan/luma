@@ -46,10 +46,22 @@ export function toAppError(err: unknown): AppError {
   if (typeof err === "object" && err !== null && "code" in err && "message" in err) {
     return err as AppError;
   }
+  // 前端自己 `throw new Error("…")` 的地方（播放编排、换源）也走这里。
+  // Error 实例没有 `code` 字段，旧逻辑会把它降级成 "unknown IPC error"，
+  // 用户看不到真正原因（实测网盘线路那句提示就是这么丢的）。
+  if (err instanceof Error) {
+    return { code: "INTERNAL", message: err.message };
+  }
   if (typeof err === "string") {
     return { code: "INTERNAL", message: err };
   }
-  return { code: "INTERNAL", message: "unknown IPC error", cause: String(err) };
+  // 兜底：至少把对象上的 message 取出来，别让界面只剩一句 unknown。
+  const message = (err as { message?: unknown } | null)?.message;
+  return {
+    code: "INTERNAL",
+    message: typeof message === "string" && message.trim() ? message : "unknown IPC error",
+    cause: String(err),
+  };
 }
 
 /** 页面只需展示 message；集中在此，避免各处重复 `toAppError(err).message`。 */

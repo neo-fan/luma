@@ -94,4 +94,20 @@ describe("resolveEpisodeTarget", () => {
     expect(target.ua).toBe("UA/2");
     expect(target.cookie).toBe("c=1");
   });
+
+  it("marks netdisk tokens the spider echoes back as unresolvable", async () => {
+    // 布布追剧 CO4K / qsvip / jjkk 线路：playerContent 把 token 原样吐回来，
+    // 交给 resolve_play 只会得到 "play url is invalid"。
+    spiderInvoke.mockResolvedValue({ url: "CO4K_abc%2FX", parse: 0, header: {} });
+    const target = await resolveEpisodeTarget("py_bubuzhuiju", "CO4K", "CO4K_abc%2FX");
+    expect(target.unresolvable).toBe(true);
+    expect(target.url).toBe("CO4K_abc%2FX");
+  });
+
+  it("does not mark a real http url as unresolvable", async () => {
+    spiderInvoke.mockResolvedValue({ url: "", parse: 0 });
+    const target = await resolveEpisodeTarget("s1", "线路1", "https://cdn.example/a.m3u8");
+    expect(target.unresolvable).toBeFalsy();
+    expect(target.url).toBe("https://cdn.example/a.m3u8");
+  });
 });

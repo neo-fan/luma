@@ -104,6 +104,14 @@ export default function PlayerPage({
   const [playerRoot, setPlayerRoot] = useState<HTMLDivElement | null>(null);
   const [videoMeta, setVideoMeta] = useState<VideoMeta>({ width: 0, height: 0 });
 
+  /**
+   * 自动换线路过程中为 true：这段时间画面上的红色错误条先不渲。
+   *
+   * 换线路是「有希望自愈」的过程，用户看到「播放失败」再看着它自己消失，
+   * 比直接等他三秒更让人怀疑。切换以 navigate 结束（新页面 recovering 归零），
+   * 若线路全灭则复位，让错误重新出现。
+   */
+  const [recovering, setRecovering] = useState(false);
   const [showSources, setShowSources] = useState(false);
   /** 收藏状态：与详情页共用同一份 SQLite 数据，这里只做镜像。 */
   const [favorite, setFavorite] = useState(false);
@@ -342,6 +350,10 @@ export default function PlayerPage({
             let probe: PlayResolved;
             try {
               const target = await resolveEpisodeTarget(candidate.siteKey, line, episode.url);
+              if (target.unresolvable) {
+                // 网盘 token 类线路：源自己都不认，别浪费一次 resolve_play。
+                continue;
+              }
               probe = await api.resolvePlay({
                 siteKey: candidate.siteKey,
                 url: target.url,
@@ -480,6 +492,9 @@ export default function PlayerPage({
       }
       try {
         const target = await resolveEpisodeTarget(siteKey, line, episode.url);
+        if (target.unresolvable) {
+          continue;
+        }
         const probe = await api.resolvePlay({
           siteKey,
           url: target.url,
@@ -542,6 +557,26 @@ export default function PlayerPage({
     }
     void switchOrFailoverRef.current();
   }, [resolved, resolving, resolveError, playUrl]);
+
+  /**
+   * 解析失败也要自动换线路。
+   *
+   * 之前只有「解析成分享页（kind=page）」才触发换源，像 `CO4K_…` / `qsvip-…`
+   * 这种网盘 token 线路会直接在画面上留一块「无法解析播放地址」——用户要么
+   * 自己回去点别的线路，要么放弃。面板里明明有 PAN1 能播，就该自动切过去。
+   *
+   * `handledUrls` 记住当前地址，避免「换线路 → 又回到同一条」的循环；
+   * 全部线路都失败时仍会走跨站换源，最后停在错误提示上（此时提示才有意义）。
+   */
+  useEffect(() => {
+    if (resolving || !resolveError || handledUrls.current.has(playUrl)) {
+      return;
+    }
+    handledUrls.current.add(playUrl);
+    setRecovering(true);
+    setSwitchTip("当前线路无法解析，正在尝试其它线路…");
+    void switchOrFailoverRef.current().finally(() => setRecovering(false));
+  }, [resolving, resolveError, playUrl]);
 
   /**
    * 播放内核：ArtPlayer + hls.js / mpegts.js + 偏好记忆 + stalled watchdog +
@@ -858,8 +893,10 @@ export default function PlayerPage({
       />
 
       {switchTip ? <p className="tip">{switchTip}</p> : null}
-      {videoError ? <ErrorBar message={videoError} /> : null}
-      {resolveError ? <ErrorBar message={`播放地址解析失败：${resolveError}`} /> : null}
+      {videoError && !recovering ? <ErrorBar message={videoError} /> : null}
+      {resolveError && !recovering ? (
+        <ErrorBar message={`播放地址解析失败：${resolveError}`} />
+      ) : null}
 
       <PlayerStage
         resolving={resolving}

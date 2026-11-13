@@ -72,6 +72,11 @@ export function usePlayResolution({
         // 解析出真实直链再交给本地代理。编排细节收在 lib/episodeResolve，
         // 与播放页的换线路 / 换源探测共用同一份规则。
         const target = await resolveEpisodeTarget(siteKey, playFrom, playUrl);
+        if (target.unresolvable) {
+          // 源给的 token 连它自己的 playerContent 都不认（网盘 / 专用插件线路）。
+          // 说清原因，别把 INVALID_ARGUMENT 的原文抛给用户。
+          throw new Error("该线路需要源侧插件解析（网盘 token），内置播放器无法直接播放");
+        }
         // 直播没有 playerContent 可问，UA 只能来自 lives[].ua。
         if (target.parser) {
           setSwitchTip(`解析来自「${target.parser}」`);
