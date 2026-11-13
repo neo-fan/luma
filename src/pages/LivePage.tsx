@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useDeferredValue } from "react";
+import { useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
@@ -59,6 +59,8 @@ function isListable(source: LiveSource): boolean {
 /** 折叠态单组分批上限；展开后再放宽到 EXPANDED_LIMIT，避免一次性塞进几千节点。 */
 const CHANNEL_LIMIT = 300;
 const EXPANDED_LIMIT = 1000;
+/** 直播源切换防抖：与首页站点切换一致的 300ms，连切只命中最后一项。 */
+const SWITCH_DEBOUNCE_MS = 300;
 
 /** 直播：配置里的 lives[] 列表 → 分组频道 → 播放。 */
 export default function LivePage({ lives, navigate }: LivePageProps) {
@@ -93,6 +95,24 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   // 当前打开线路选择器的频道（组名::频道名）；null 表示全部收起。
   const [linePicker, setLinePicker] = useState<string | null>(null);
+  // 切源防抖：下拉即时显示 draftIndex，300ms 后才真正切换 activeIndex 并重拉。
+  const [draftIndex, setDraftIndex] = useState(activeIndex);
+  const switchTimerRef = useRef<number | null>(null);
+
+  // activeIndex 被外部钳制（重新导入源变少）时，下拉显示同步收敛，避免错位。
+  useEffect(() => {
+    setDraftIndex(activeIndex);
+  }, [activeIndex]);
+
+  // 卸载时清掉挂起的切换定时器，避免对已卸载组件 setState。
+  useEffect(
+    () => () => {
+      if (switchTimerRef.current !== null) {
+        window.clearTimeout(switchTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!active) {
@@ -185,6 +205,25 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       return next;
     });
 
+  // 源切换：立即更新下拉显示，300ms 后才真正切换并重拉列表。
+  // 快速 A→B→C 只请求 C；选回当前源直接取消，不重拉（复用 pageState 缓存）。
+  const switchSource = (next: number) => {
+    setDraftIndex(next);
+    if (switchTimerRef.current !== null) {
+      window.clearTimeout(switchTimerRef.current);
+    }
+    switchTimerRef.current = window.setTimeout(() => {
+      switchTimerRef.current = null;
+      if (next === activeIndex) {
+        return;
+      }
+      setActiveIndex(next);
+      // 切源时收起之前的展开，避免回到长列表顶部还带着旧展开态。
+      setExpanded(new Set());
+      setLinePicker(null);
+    }, SWITCH_DEBOUNCE_MS);
+  };
+
   // 播放某频道指定线路：钳制越界序号、记住选择、把整组线路带给播放页。
   const play = (channel: LiveChannel, lineIndex: number) => {
     const count = channel.lines.length;
@@ -223,14 +262,8 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
           <h1 className="page-title">直播</h1>
           <select
             className="select"
-            value={String(activeIndex)}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              setActiveIndex(next);
-              // 切源时收起之前的展开，避免回到长列表顶部还带着旧展开态。
-              setExpanded(new Set());
-              setLinePicker(null);
-            }}
+            value={String(draftIndex)}
+            onChange={(event) => switchSource(Number(event.target.value))}
             aria-label="选择直播源"
           >
             {lives.map((item, index) => (
