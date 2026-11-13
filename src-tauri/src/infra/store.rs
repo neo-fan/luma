@@ -106,6 +106,13 @@ pub fn data_dir() -> PathBuf {
     }
     if let Ok(appdata) = std::env::var("APPDATA") {
         if !appdata.trim().is_empty() {
+            // debug 构建（dev / 直跑 debug exe）与正式版数据完全隔离：配置、
+            // 收藏、历史、日志都落到 `Luma-debug`，测试再怎么折腾也不会碰
+            // 用户真实数据。release（含便携版）不受影响。显式 override
+            // （LUMA_DATA_DIR）与便携模式优先级更高，测试依赖这一点。
+            if cfg!(debug_assertions) {
+                return PathBuf::from(appdata).join("Luma-debug");
+            }
             return PathBuf::from(appdata).join("Luma");
         }
     }

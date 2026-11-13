@@ -97,6 +97,11 @@ fn enable_devtools_port() -> bool {
 pub fn run() {
     // 最先做：晚于 WebView2 环境创建就失效（见函数注释）。
     let devtools_default = enable_devtools_port();
+    // 把解析后的数据目录发布给子进程：py 适配器的 spider.log 只认
+    // LUMA_DATA_DIR / APPDATA 环境变量（见 adapterlog.py），不注入的话
+    // debug 隔离（Luma-debug）下的 sidecar 日志仍会落回 %APPDATA%/Luma。
+    // 必须先于 logging::init()（后者解析同一目录）与任何 sidecar spawn。
+    std::env::set_var("LUMA_DATA_DIR", crate::store::data_dir());
     // Logging first: DB migration, sidecar resolution and proxy startup all
     // emit tracing events, and a trial user needs them on disk even if the
     // window never renders.

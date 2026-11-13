@@ -137,12 +137,17 @@ def copy_qjs_runner() -> None:
 def prepare_app_dir() -> None:
     if APP_DIR.exists():
         # 目录可能已被外部清空（robocopy /MIR 清场）：空目录直接 rmdir，
-        # 避免批量删除保护把打包挂起；非空时才走递归删除。
+        # 避免批量删除保护把打包挂起；非空时才走递归删除。rmdir 被拒
+        # （有进程占着目录句柄，如编辑器/资源管理器）时空目录直接复用，
+        # mkdir(exist_ok) 是幂等的，不打包挂起。
         if next(APP_DIR.rglob("*"), None) is None:
-            APP_DIR.rmdir()
+            try:
+                APP_DIR.rmdir()
+            except OSError:
+                log(f"dir locked but empty, reusing: {APP_DIR}")
         else:
             shutil.rmtree(APP_DIR)
-    APP_DIR.mkdir(parents=True)
+    APP_DIR.mkdir(parents=True, exist_ok=True)
 
     log("== copying executable ==")
     shutil.copy2(RELEASE_EXE, APP_DIR / f"{APP_NAME}.exe")
