@@ -2539,10 +2539,7 @@ textarea {
   color: var(--text);
 }
 
-[cmdk-item]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
+/* [cmdk-item] 高亮走 [data-selected=true] 背景，不再做 focus 描边。 */
 
 .cmdk-current {
   margin-left: auto;
@@ -2860,10 +2857,7 @@ textarea {
     0 10px 24px rgba(0, 0, 0, 0.45);
 }
 
-.fav-play:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
+/* .fav-play 聚焦态不再描边（全局 focus-visible 已取消）。 */
 
 .fav-play__ring {
   position: absolute;
@@ -2962,10 +2956,7 @@ textarea {
   font-weight: var(--fw-medium);
 }
 
-.settings-nav__item:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
+/* .settings-nav__item 聚焦态不再描边（全局 focus-visible 已取消）。 */
 
 .settings-main {
   flex: 1;
@@ -3273,9 +3264,11 @@ textarea {
 
 /* ---------- 焦点可访问性 ---------- */
 
+/* 焦点态不做 outline/发光（用户明确要求，仅输入框例外）：
+   控件的聚焦状态靠边框/背景变化表达（.app-select__trigger[data-state=open]、
+   .input:focus 等）。.input/.textarea 保留柔光环。 */
 :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
 }
 
 button:focus:not(:focus-visible) {

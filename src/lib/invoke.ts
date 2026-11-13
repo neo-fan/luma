@@ -13,6 +13,8 @@ import { pickRecoveryCandidate } from "./detailRecovery";
 import { noDetailSources } from "./noDetailSource";
 import { loadCategoryPage } from "./categoryLoad";
 import { log } from "./logger";
+// type-only：sources.ts 运行时反向依赖本模块，这里只借类型不引运行时代码。
+import type { AggregateRow } from "./sources";
 import type {
   AppError,
   ConfigMeta,
