@@ -71,6 +71,7 @@ describe("icon-first controls", () => {
     expect(read("src/pages/HistoryPage.tsx")).toContain('name="trash"');
     expect(read("src/pages/HistoryPage.tsx")).toContain('tone="danger"');
     expect(read("src/components/ErrorBar.tsx")).toContain('name="refresh"');
-    expect(read("src/pages/SettingsPage.tsx")).toContain('name="pencil"');
+    // 配置重命名图标随「配置列表」section 一起迁到了 ConfigListSection。
+    expect(read("src/components/settings/ConfigListSection.tsx")).toContain('name="pencil"');
   });
 });

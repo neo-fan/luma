@@ -149,6 +149,30 @@ try {
   assert(after.pager !== null, "category pager rendered", JSON.stringify(after));
   assert(after.cards > 0, "grid refreshed with category content", JSON.stringify(after));
 
+  // 分页必须真的能翻出下一页内容（曾因空结果被缓存 5 分钟 + CMS 父级分类
+  // 永远返回空，导致「所有类目的分页查询都失败」）。
+  const next = await cdp.eval(`(() => {
+    const b = document.querySelector('.pager .icon-btn[aria-label="下一页"]');
+    if (!b) return 'MISSING';
+    if (b.disabled) return 'DISABLED';
+    b.click();
+    return 'CLICKED';
+  })()`);
+  assert(next === "CLICKED", "next-page button is enabled on a non-empty page", String(next));
+  const paged = await cdp.eval(
+    WAIT(`const label = document.querySelector('.pager__label')?.textContent?.trim() || '';
+      return label !== ${JSON.stringify(after.pager)}
+        && (document.querySelectorAll('.vod-card').length > 0 || !!document.querySelector('.empty'))
+        && !document.querySelector('.spinner') ? label : null;`, 30000),
+  );
+  console.log(`[info] page 2: ${paged}`);
+  const page2 = JSON.parse(await cdp.eval(SNAP));
+  assert(
+    !!paged && page2.title === "首页" && page2.cards > 0,
+    "page 2 loads real content inline",
+    JSON.stringify({ paged, ...page2 }),
+  );
+
   // 回到推荐：分页条消失、网格恢复首页推荐内容。
   await cdp.eval(`(() => { const c=[...document.querySelectorAll('.chip-row .chip')].find(x=>x.textContent.trim()==='推荐'); c&&c.click(); return true; })()`);
   await sleep(700);

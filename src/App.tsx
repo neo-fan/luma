@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
 } from "react";
 import Spinner from "./components/Spinner";
 import NavIcon from "./components/NavIcon";
@@ -139,6 +140,21 @@ function readSiteCache(): SiteCache | null {
   }
 }
 
+/**
+ * 导入新配置或删除配置后，把三类页面缓存（page / source / 封面回填尝试）与
+ * 滚动位置一次性清掉：旧站点的详情/分类/筛选状态都不能再复用。两个 handler 都
+ * 要这套清场，抽出来避免漂移。
+ */
+function resetSessionCaches(
+  scrollPositions: MutableRefObject<Map<string, number>>,
+): void {
+  pageCache.clear();
+  clearSourceCache();
+  clearPageStates();
+  clearCoverAttempts();
+  scrollPositions.current.clear();
+}
+
 export default function App() {
   const [stack, setStack] = useState<View[]>([{ name: "home" }]);
   const [cache, setCache] = useState<SiteCache | null>(() => readSiteCache());
@@ -262,12 +278,8 @@ export default function App() {
     // 换了配置（或重新导入同一份）后，旧站点的详情/分类与页面筛选状态
     // 都不能再复用；scope 变化会清一次，同 id 重导入也强制清一次。
     pageCache.setScope(snapshot.id);
-    pageCache.clear();
     setSourceCacheScope(snapshot.id);
-    clearSourceCache();
-    clearPageStates();
-    clearCoverAttempts();
-    scrollPositions.current.clear();
+    resetSessionCaches(scrollPositions);
     const next: SiteCache = {
       configId: snapshot.id,
       sites: snapshot.sites,
@@ -282,11 +294,7 @@ export default function App() {
   }, []);
 
   const handleConfigRemoved = useCallback((id: string) => {
-    pageCache.clear();
-    clearSourceCache();
-    clearPageStates();
-    clearCoverAttempts();
-    scrollPositions.current.clear();
+    resetSessionCaches(scrollPositions);
     setCache((current) => {
       if (!current || current.configId !== id) {
         return current;

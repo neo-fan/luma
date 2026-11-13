@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Navigate } from "../App";
+import AsyncBoundary from "../components/AsyncBoundary";
 import Empty from "../components/Empty";
-import ErrorBar from "../components/ErrorBar";
 import IconButton from "../components/IconButton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
@@ -494,20 +494,6 @@ export default function HomePage({
         />
       </header>
 
-      {shownError ? (
-        <ErrorBar
-          message={`${isCategory ? "分类" : "首页"}加载失败：${shownError}`}
-          onRetry={refreshVisible}
-        />
-      ) : null}
-
-      {!siteKey ? (
-        <Empty
-          title="没有可用的 CMS 站点"
-          description="当前配置里没有启用中的 CMS 站点，请检查配置或到设置重新导入。"
-        />
-      ) : null}
-
       {/* 分类 chip 是「切换下方网格」，不再是路由跳转：点同一个可取消回到推荐。 */}
       {siteKey ? (
         <div className="chip-row">
@@ -538,22 +524,15 @@ export default function HomePage({
         </div>
       ) : null}
 
-      {busy && shownList.length === 0 ? (
-        <Spinner center label={isCategory ? "正在加载分类内容…" : "正在加载首页内容…"} />
-      ) : null}
-
-      {!busy && siteKey && !shownError && shownList.length === 0 ? (
-        <Empty
-          title={isCategory ? "该分类暂无内容" : "该站点暂无推荐内容"}
-          description={
-            isCategory
-              ? "换个分类或站点试试。"
-              : "可以换一个站点，或直接使用搜索。"
-          }
-        />
-      ) : null}
-
-      {shownList.length > 0 ? (
+      <AsyncBoundary
+        loading={busy}
+        error={shownError ? `${isCategory ? "分类" : "首页"}加载失败：${shownError}` : ""}
+        isEmpty={shownList.length === 0}
+        loadingLabel={isCategory ? "正在加载分类内容…" : "正在加载首页内容…"}
+        emptyTitle={isCategory ? "该分类暂无内容" : "该站点暂无推荐内容"}
+        emptyDescription={isCategory ? "换个分类或站点试试。" : "可以换一个站点，或直接使用搜索。"}
+        onRetry={refreshVisible}
+      >
         <div className="vod-grid">
           {shownList.map((vod, index) => (
             <VodCard
@@ -572,7 +551,7 @@ export default function HomePage({
             />
           ))}
         </div>
-      ) : null}
+      </AsyncBoundary>
 
       {isCategory ? (
         <div className="infinite-foot">

@@ -35,7 +35,7 @@ export interface Site {
   searchable: boolean;
   quickSearch: boolean;
   filterable: boolean;
-  categories: { type_id: string; type_name: string }[];
+  categories: CategoryClass[];
   timeoutMs: number;
   /** 崩溃/超时次数超阈值后置 false；导入时的支持范围屏蔽同样置 false。 */
   enabled: boolean;
@@ -78,7 +78,7 @@ export interface ResultPage {
   page: number;
   limit: number;
   total: number;
-  classes?: { type_id: string; type_name: string }[];
+  classes?: CategoryClass[];
 }
 
 /** 对外暴露的 7 个 spider 方法（6.2；与 8.4 的 12 个 jar 反射方法不是同一集合） */
@@ -230,8 +230,16 @@ export interface HistoryItem extends VodRef {
 }
 
 /** 单个站点的首页结果（8.2） */
+/** CMS `ac=list` 的 class[] 会同时给父子两级；py/js 源通常没有 type_pid。 */
+export interface CategoryClass {
+  type_id: string;
+  type_name: string;
+  /** 父级分类 id，0 / 缺失表示顶层。运行时可能是数字。 */
+  type_pid?: string | number;
+}
+
 export interface HomeResult {
-  classes: { type_id: string; type_name: string }[];
+  classes: CategoryClass[];
   list: VodInfo[];
   filters: ResultPage["filters"];
 }

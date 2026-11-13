@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
 import type { Navigate } from "../App";
+import AsyncBoundary from "../components/AsyncBoundary";
 import ConfirmDialog from "../components/ConfirmDialog";
-import Empty from "../components/Empty";
-import ErrorBar from "../components/ErrorBar";
 import Icon from "../components/Icon";
 import IconButton from "../components/IconButton";
-import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
@@ -178,27 +176,24 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
         ) : null}
       </header>
 
-      {error ? <ErrorBar message={error} onRetry={() => setReload((value) => value + 1)} /> : null}
-
-      {loading && items.length === 0 ? <Spinner center label="正在加载观看历史…" /> : null}
-
-      {!loading && !error && items.length === 0 ? (
-        <Empty
-          title="还没有观看记录"
-          description="播放任意影片后，这里会记录进度，方便下次接着看。"
-          action={
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => navigate({ name: "home" })}
-            >
-              去逛逛
-            </button>
-          }
-        />
-      ) : null}
-
-      {items.length > 0 ? (
+      <AsyncBoundary
+        loading={loading}
+        error={error}
+        isEmpty={items.length === 0}
+        loadingLabel="正在加载观看历史…"
+        emptyTitle="还没有观看记录"
+        emptyDescription="播放任意影片后，这里会记录进度，方便下次接着看。"
+        onRetry={() => setReload((value) => value + 1)}
+        emptyAction={
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => navigate({ name: "home" })}
+          >
+            去逛逛
+          </button>
+        }
+      >
         <div className="vod-grid">
           {items.map((item) => {
             const key = `${item.siteKey}-${item.vodId}`;
@@ -254,7 +249,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
             );
           })}
         </div>
-      ) : null}
+      </AsyncBoundary>
 
       <ConfirmDialog
         open={confirmClear}

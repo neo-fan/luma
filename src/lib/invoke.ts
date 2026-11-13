@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CACHE_TTL, pageCache } from "./pageCache";
 import { mergeHomeFallback } from "./home";
 import { pickRecoveryCandidate } from "./detailRecovery";
+import { loadCategoryPage } from "./categoryLoad";
 import { log } from "./logger";
 import type {
   AppError,
@@ -205,11 +206,23 @@ export const api = {
   },
 
   category(siteKey: string, tid: string, page: number, force = false): Promise<ResultPage> {
-    return pageCache.load(
-      cacheKeys.category(siteKey, tid, page),
-      CACHE_TTL.category,
-      () => spider<ResultPage>(siteKey, "categoryContent", [tid, page]),
+    const key = cacheKeys.category(siteKey, tid, page);
+    const load = (withForce: boolean) =>
+      pageCache.load<ResultPage>(
+        key,
+        CACHE_TTL.category,
+        () => spider<ResultPage>(siteKey, "categoryContent", [String(tid), page]),
+        withForce,
+      );
+    return loadCategoryPage(
+      load,
+      () => {
+        pageCache.invalidate(key);
+      },
       force,
+      (reason, attempt) => {
+        log.warn("category page retry", { siteKey, tid, page, reason, attempt });
+      },
     );
   },
 

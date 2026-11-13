@@ -23,14 +23,15 @@ describe("home category switching is inline", () => {
     expect(home).not.toContain("navigate({\n                    name: \"category\"");
   });
 
-  it("exposes an active chip, a recommend chip and a pager", () => {
+  it("exposes an active chip, a recommend chip and infinite-scroll loading", () => {
     const home = read("src/pages/HomePage.tsx");
     expect(home).toContain('"chip is-active"');
     expect(home).toContain('aria-pressed={activeTid === item.type_id}');
     expect(home).toContain("推荐");
-    expect(home).toContain("pager__label");
-    expect(home).toContain('label="上一页"');
-    expect(home).toContain('label="下一页"');
+    // 分页已改为向下滚动无限加载：底部哨兵 + loadMore 自动拉下一页，
+    // 不再有上一页 / 下一页按钮（见更早的无限滚动重构）。
+    expect(home).toContain("infinite-sentinel");
+    expect(home).toContain("loadMore");
   });
 
   it("removes the now-unreachable category route", () => {
@@ -44,7 +45,8 @@ describe("home category switching is inline", () => {
   it("keeps the selection scoped to a site and forces refresh once", () => {
     const home = read("src/pages/HomePage.tsx");
     expect(home).toContain("selection.siteKey === siteKey");
-    expect(home).toContain("catForceRef.current = false");
+    // 强制刷新走 catReload（而非已删除的 catForceRef）：只刷新当前可见分类网格的第 1 页。
+    expect(home).toContain("setCatReload((value) => value + 1)");
     expect(home).toContain("refreshVisible");
   });
 });

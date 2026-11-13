@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Navigate } from "../App";
-import Empty from "../components/Empty";
-import ErrorBar from "../components/ErrorBar";
+import AsyncBoundary from "../components/AsyncBoundary";
 import Icon from "../components/Icon";
-import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
@@ -111,27 +109,24 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
         <span className="page-meta">共 {items.length} 条</span>
       </header>
 
-      {error ? <ErrorBar message={error} onRetry={() => setReload((value) => value + 1)} /> : null}
-
-      {loading && items.length === 0 ? <Spinner center label="正在加载收藏…" /> : null}
-
-      {!loading && !error && items.length === 0 ? (
-        <Empty
-          title="还没有收藏任何影片"
-          description="在影片详情页点右上角的星标即可加入收藏。"
-          action={
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => navigate({ name: "home" })}
-            >
-              去逛逛
-            </button>
-          }
-        />
-      ) : null}
-
-      {items.length > 0 ? (
+      <AsyncBoundary
+        loading={loading}
+        error={error}
+        isEmpty={items.length === 0}
+        loadingLabel="正在加载收藏…"
+        emptyTitle="还没有收藏任何影片"
+        emptyDescription="在影片详情页点右上角的星标即可加入收藏。"
+        onRetry={() => setReload((value) => value + 1)}
+        emptyAction={
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => navigate({ name: "home" })}
+          >
+            去逛逛
+          </button>
+        }
+      >
         <div className="vod-grid">
           {items.map((item) => (
             <div className="fav-item" key={`${item.siteKey}-${item.vodId}`}>
@@ -162,7 +157,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
             </div>
           ))}
         </div>
-      ) : null}
+      </AsyncBoundary>
     </section>
   );
 }
