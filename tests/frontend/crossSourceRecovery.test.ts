@@ -17,6 +17,8 @@ import type { SourceOption } from "../../src/lib/sources";
 import type { Site } from "../../src/types/tvbox";
 
 const sites = [] as Site[];
+const site = (key: string, changeable?: boolean) =>
+  ({ key, changeable, enabled: true, runtime: "cms" }) as unknown as Site;
 const option = (siteKey: string, vodId: string, matchScore = 3): SourceOption => ({
   siteKey,
   siteName: siteKey,
@@ -65,6 +67,29 @@ describe("findPlayableSource", () => {
     const result = await findPlayableSource("后会友期", sites, "py_douban");
     expect(result.found?.siteKey).toBe("good");
     expect(vi.mocked(api.detail).mock.calls.map((call) => call[0])).toEqual(["good"]);
+  });
+
+  it("skips sites that declare changeable=0 but keeps undeclared ones", async () => {
+    mockView([option("locked", "1"), option("plain", "2")]);
+    vi.mocked(api.detail).mockResolvedValue(playable as never);
+
+    // `changeable: 0` 是源作者声明「别拿我换源」，TVBox 的候选筛选同样排除它。
+    const result = await findPlayableSource(
+      "后会友期",
+      [site("locked", false), site("plain", true)],
+      "py_douban",
+    );
+    expect(result.found?.siteKey).toBe("plain");
+    expect(vi.mocked(api.detail).mock.calls.map((call) => call[0])).toEqual(["plain"]);
+  });
+
+  it("treats a site missing from the snapshot as changeable", async () => {
+    // 旧快照没有 changeable 键、调用方也可能只传空数组：都不能因此丢候选。
+    mockView([option("ghost", "1")]);
+    vi.mocked(api.detail).mockResolvedValue(playable as never);
+
+    const result = await findPlayableSource("后会友期", [], "py_douban");
+    expect(result.found?.siteKey).toBe("ghost");
   });
 
   it("never calls ensureSources on an empty title or a dead page", async () => {

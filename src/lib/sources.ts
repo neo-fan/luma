@@ -146,7 +146,12 @@ export async function fetchSourceRows(
 ): Promise<{ rows: AggregateRow[]; stats: SourceSearchStats }> {
   const word = keyword.trim();
   const eligible = sites.filter(
-    (site) => site.enabled && site.runtime !== "jvm",
+    (site) =>
+      site.enabled &&
+      site.runtime !== "jvm" &&
+      // 显式 `searchable: 0` 的源不参与聚合搜索（后端同一口径，这里只为
+      // 提前短路与统计对齐）。缺省不算：配置常不写这个字段。
+      site.searchableDeclared !== false,
   );
   if (!word || eligible.length === 0) {
     return { rows: [], stats: { ...EMPTY_SOURCE_STATS } };

@@ -58,12 +58,19 @@ export async function findPlayableSource(
   if (!isAlive()) {
     return { found: null, probed: 0 };
   }
+  // `changeable: 0` 是源作者声明「不要拿我去换源」（网盘/特殊源，换过去也放不了）。
+  // TVBox 的候选筛选就是 `searchable && changeable`；快照里没有该键、或站点根本
+  // 不在 sites 列表里时都按可选算，旧快照与只传空数组的调用方都不受影响。
+  const blocked = new Set(
+    sites.filter((site) => site.changeable === false).map((site) => site.key),
+  );
   const candidates = view.options
     .filter(
       (option) =>
         option.siteKey !== excludeSiteKey &&
         option.vodId.trim() !== "" &&
-        option.matchScore >= MIN_MATCH_SCORE,
+        option.matchScore >= MIN_MATCH_SCORE &&
+        !blocked.has(option.siteKey),
     )
     .slice(0, MAX_PROBES);
 

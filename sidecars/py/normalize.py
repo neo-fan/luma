@@ -179,7 +179,12 @@ def normalize_site(
         "runtime": runtime,
         "api": str(site.get("api") or ""),
         "headers": _headers(site.get("headers") or site.get("header")),
-        "searchable": _bool(site.get("searchable", 0)),
+        # 缺省语义在各分支相反：Box/TVBoxOS 的 `int searchable` 默认 0（不可搜），
+        # FongMi 的 `Integer searchable` 缺省按 1（可搜）算。社区配置大量站点
+        # 干脆不写这个字段，按 0 处理会把半个配置的可用源误判成不可搜（实测
+        # 101 站里 52 站未声明，其中 19 站是能搜的 py/js 源）。这里取可搜为
+        # 缺省，真实「显式关闭」由下面的 searchableDeclared 保住。
+        "searchable": _bool(site.get("searchable", 1)),
         "quickSearch": _bool(site.get("quickSearch", 0)),
         "filterable": _bool(site.get("filterable", 0)),
         "categories": _categories(site.get("categories")),
@@ -196,6 +201,11 @@ def normalize_site(
     for passed in ("jar", "ext", "type", "ua", "filter", "playerType", "style", "indexs"):
         if site.get(passed) not in (None, "", []):
             out[passed] = site[passed]
+    # 只有配置**显式写了** `searchable` 才输出这一项：聚合搜索扇出据此跳过
+    # `searchable: 0` 的源（TVBox 的语义是「别对我发起搜索」，豆瓣这类发现/
+    # 推荐源会这么标）。缺省不输出 → 扇出保持宽容，避免误杀未声明字段的源。
+    if site.get("searchable") is not None:
+        out["searchableDeclared"] = _bool(site.get("searchable"))
     if site.get("changeable") is not None:
         out["changeable"] = _bool(site.get("changeable"))
     order = site.get("order_num")

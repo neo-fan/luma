@@ -32,7 +32,14 @@ export interface Site {
   /** 原样透传，常为加密 jar 参数；丢失会导致大批 jar 源失效（8.5） */
   ext?: string;
   headers: Record<string, string>;
+  /** 归一化后的可搜标记：配置没写时按可搜算（见 `searchableDeclared`）。 */
   searchable: boolean;
+  /**
+   * 配置里**显式**写了 `searchable` 才出现，值即声明本身。
+   * TVBox 各分支对缺省语义相反（Box 默认 0 不可搜 / FongMi 默认 1 可搜），
+   * 所以「跳过不可搜源」只能看这个字段，`false` 才是作者明确说别搜。
+   */
+  searchableDeclared?: boolean;
   quickSearch: boolean;
   filterable: boolean;
   categories: CategoryClass[];

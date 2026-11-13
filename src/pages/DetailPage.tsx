@@ -501,7 +501,7 @@ export default function DetailPage({
       {recoveryNotice ? <p className="tip tip--ok">{recoveryNotice}</p> : null}
       {favTip ? <p className="tip">{favTip}</p> : null}
       {site?.changeable === false ? (
-        <p className="tip">该源声明 changeable=0，已关闭自动换源；手动换源仍可使用。</p>
+        <p className="tip">该源声明 changeable=0（不建议作为换源目标）；按片名跨源查找仍会进行，手动换源也可用。</p>
       ) : null}
 
       <div className="detail-hero">

@@ -303,6 +303,20 @@ pub async fn spider_invoke(
     invoke_one(&site, request.method, &request.args, timeout).await
 }
 
+/// 配置里的 `searchable: 0` 是「别对我发起搜索」的显式声明（豆瓣这类发现/
+/// 推荐源这么标），聚合搜索据此跳过它。
+///
+/// 只认**显式**声明：各分支对缺省值的语义相反 —— Box/TVBoxOS 的 `int
+/// searchable` 默认 0（不可搜），FongMi 的 `Integer searchable` 缺省按 1
+/// 算（可搜）。社区配置里大量站点不写这个字段，按缺省 = 0 过滤会误杀一大片
+/// 能搜的源（实测 101 站中 52 站未声明，其中 19 站是可搜的 py/js 源）。
+/// 所以 normalize 只在配置写了字段时才输出 `searchableDeclared`，缺键一律当可搜。
+fn is_searchable(site: &Value) -> bool {
+    site.get("searchableDeclared")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
 /// Fan-out over every enabled CMS site (spec 4.3 首页聚合).
 async fn aggregate(
     state: &ConfigStore,
@@ -314,6 +328,9 @@ async fn aggregate(
         .all_sites()
         .into_iter()
         .filter(|site| site.get("enabled").and_then(Value::as_bool).unwrap_or(true))
+        // 只有搜索才尊重 `searchable: 0`。首页/分类的聚合种子与「能不能搜」
+        // 无关，拿这个字段过滤会连发现型源的首页都拿不到（豆瓣就只有首页）。
+        .filter(|site| method != SpiderMethod::SearchContent || is_searchable(site))
         // Runtimes that are not implemented yet are skipped instead of failing
         // the whole home page.
         .filter(|site| runtime_for(route(site)).is_some())
@@ -741,6 +758,21 @@ mod tests {
         // With no conflicting signal the hint is still honoured.
         let hinted = json!({ "runtime": "python", "api": "http://127.0.0.1/api.php/provide/vod" });
         assert_eq!(route(&hinted), RuntimeKind::Python);
+    }
+
+    #[test]
+    fn only_explicit_searchable_zero_is_skipped() {
+        // 显式 `searchable: 0`（normalize 会写成 searchableDeclared: false）跳过。
+        assert!(!is_searchable(
+            &json!({ "key": "py_douban", "searchableDeclared": false })
+        ));
+        assert!(is_searchable(
+            &json!({ "key": "cms", "searchableDeclared": true })
+        ));
+        // 没声明 ≠ 不可搜：旧快照与不写该字段的配置必须继续参与搜索，
+        // 否则会把大量能搜的源一并排除（各分支缺省语义相反，见函数注释）。
+        assert!(is_searchable(&json!({ "key": "legacy", "searchable": false })));
+        assert!(is_searchable(&json!({ "key": "bare" })));
     }
 
     #[test]
