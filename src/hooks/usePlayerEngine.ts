@@ -26,6 +26,7 @@ import Hls from "hls.js";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
+import { describeHlsError } from "../lib/playErrors";
 import { readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import type { PlayResolved } from "../types/tvbox";
 
@@ -297,8 +298,16 @@ export function usePlayerEngine({
             if (disposed || !data.fatal) {
               return;
             }
-            const reason = data.details ? String(data.details) : "未知错误";
-            setVideoError(`HLS 播放失败：${reason}`);
+            // `manifestParsingError` 这类枚举名对用户没有意义：它八成意味着
+            // 「源返回的不是 m3u8」（网盘解析接口 200 + JSON），文案要指向换源。
+            const reason = describeHlsError(data.details);
+            log.warn("hls fatal", {
+              siteKey,
+              vodId,
+              details: String(data.details ?? ""),
+              type: String(data.type ?? ""),
+            });
+            setVideoError(`HLS 播放失败：${reason}，正在换源`);
             void switchOrFailoverRef.current();
           });
         },

@@ -10,6 +10,8 @@ import LiveEpgPanel from "../components/LiveEpgPanel";
 import { formatDuration, parsePlayLines, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
+import { resolveEpisodeTarget } from "../lib/episodeResolve";
+import { probePlayable } from "../lib/playProbe";
 
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
@@ -314,41 +316,39 @@ export default function PlayerPage({
           }
           const nextLines = parsePlayLines(vod.vod_play_from, vod.vod_play_url);
           // 第一个候选常是分享页；把同片前几条线路都探一遍再决定。
-          const ordered = [...nextLines.flatMap((line) => line.episodes)].sort(
-            (a, b) => Number(b.name === episodeName) - Number(a.name === episodeName),
-          );
-          let picked: { name: string; url: string } | null = null;
-          for (const item of ordered.slice(0, 8)) {
-            if (!item.url || handledUrls.current.has(item.url)) {
+          // 线路名与剧集成对保留：跨站同样要先过 playerContent。
+          const ordered = nextLines
+            .flatMap((line) => line.episodes.map((episode) => ({ line: line.name, episode })))
+            .sort(
+              (a, b) =>
+                Number(b.episode.name === episodeName) - Number(a.episode.name === episodeName),
+            );
+          let picked: { line: string; name: string; url: string } | null = null;
+          for (const { line, episode } of ordered.slice(0, 8)) {
+            if (!episode.url || handledUrls.current.has(episode.url)) {
               continue;
             }
             let probe: PlayResolved;
             try {
-              probe = await api.resolvePlay({ siteKey: candidate.siteKey, url: item.url });
+              const target = await resolveEpisodeTarget(candidate.siteKey, line, episode.url);
+              probe = await api.resolvePlay({
+                siteKey: candidate.siteKey,
+                url: target.url,
+                ua: target.ua,
+                referer: target.referer,
+                cookie: target.cookie,
+              });
             } catch {
               continue;
             }
             if (probe.kind === "page") {
               continue;
             }
-            const controller = new AbortController();
-            const timer = window.setTimeout(() => controller.abort(), 5000);
-            let reachable = false;
-            try {
-              const response = await fetch(probe.proxyUrl, {
-                headers: probe.kind === "hls" ? undefined : { Range: "bytes=0-0" },
-                signal: controller.signal,
-              });
-              reachable = response.ok || response.status === 405 || response.status === 416;
-            } catch {
-              reachable = false;
-            } finally {
-              window.clearTimeout(timer);
+            if (!(await probePlayable(probe.proxyUrl, probe.kind))) {
+              continue;
             }
-            if (reachable) {
-              picked = item;
-              break;
-            }
+            picked = { line, name: episode.name, url: episode.url };
+            break;
           }
           if (!picked) {
             continue;
@@ -371,6 +371,9 @@ export default function PlayerPage({
               vodName: vod.vod_name || candidate.vod.vod_name,
               episodeName: picked.name,
               playUrl: picked.url,
+              // 跨站换源同样要带上线路名，否则新站点这次的地址解析又退化成
+              // 「把私有 token 当 URL」。
+              playFrom: picked.line,
             },
             true,
           );
@@ -433,14 +436,21 @@ export default function PlayerPage({
       return false;
     }
 
-    let episodes = lines.flatMap((line) => line.episodes);
+    // 线路名必须跟着每条剧集一起走：`PAN1-…` / `zijianm3u8-…` 这类地址只有
+    // 交给对应线路的 playerContent 才能变成直链，脱掉线路名就等于把私有 token
+    // 当 URL 解析（实测一次换线路能刷出 11 条 "play url is invalid"，且真正
+    // 可播的线路被整条跳过）。
+    type Candidate = { line: string; episode: { name: string; url: string } };
+    let episodes: Candidate[] = lines.flatMap((line) =>
+      line.episodes.map((episode) => ({ line: line.name, episode })),
+    );
     if (episodes.length === 0) {
       try {
         const detail = await api.detail(siteKey, vodId);
         const vod = detail[0];
         if (vod) {
           episodes = parsePlayLines(vod.vod_play_from, vod.vod_play_url).flatMap(
-            (line) => line.episodes,
+            (line) => line.episodes.map((episode) => ({ line: line.name, episode })),
           );
         }
       } catch {
@@ -450,34 +460,29 @@ export default function PlayerPage({
 
     // 先试同名剧集（同一集的不同线路），再退而求其次试其它集。
     const ordered = [...episodes].sort(
-      (a, b) => Number(b.name === episodeName) - Number(a.name === episodeName),
+      (a, b) =>
+        Number(b.episode.name === episodeName) - Number(a.episode.name === episodeName),
     );
-    for (const episode of ordered.slice(0, 12)) {
+    for (const { line, episode } of ordered.slice(0, 12)) {
       if (!episode.url || handledUrls.current.has(episode.url)) {
         continue;
       }
       try {
-        const probe = await api.resolvePlay({ siteKey, url: episode.url });
+        const target = await resolveEpisodeTarget(siteKey, line, episode.url);
+        const probe = await api.resolvePlay({
+          siteKey,
+          url: target.url,
+          ua: target.ua,
+          referer: target.referer,
+          cookie: target.cookie,
+        });
         if (probe.kind === "page") {
           continue;
         }
-        // 别把死 CDN 当成「可播放线路」：先探一次，失败就继续找下一条。
-        // m3u8 manifest 很小可直接 GET；mp4/flv 用 Range 避免整片下载。
-        const controller = new AbortController();
-        const timer = window.setTimeout(() => controller.abort(), 5000);
-        let reachable = false;
-        try {
-          const response = await fetch(probe.proxyUrl, {
-            headers: probe.kind === "hls" ? undefined : { Range: "bytes=0-0" },
-            signal: controller.signal,
-          });
-          reachable = response.ok || response.status === 405 || response.status === 416;
-        } catch {
-          reachable = false;
-        } finally {
-          window.clearTimeout(timer);
-        }
-        if (!reachable) {
+        // 别把死 CDN / 假地址当成「可播放线路」：先探一次，失败就继续找下一条。
+        // 网盘解析接口会以 200 + JSON 返回「解析失败了」，只看状态码会误判
+        // 成可播线路，切过去后 hls.js 报 manifestParsingError。
+        if (!(await probePlayable(probe.proxyUrl, probe.kind))) {
           continue;
         }
         handledUrls.current.add(episode.url);
@@ -491,6 +496,8 @@ export default function PlayerPage({
             vodName,
             episodeName: episode.name,
             playUrl: episode.url,
+            // 切换后必须保留线路名，否则下一次解析又拿不到 playerContent。
+            playFrom: line,
           },
           true,
         );

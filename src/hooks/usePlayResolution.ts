@@ -9,9 +9,9 @@
  */
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { resolveEpisodeTarget } from "../lib/episodeResolve";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
-import { normalizeHeaders } from "../lib/playHeaders";
 import type { PlayResolved } from "../types/tvbox";
 
 export interface UsePlayResolutionArgs {
@@ -69,79 +69,20 @@ export function usePlayResolution({
       try {
         // TVBox 链路：详情里的 playUrl 常常只是线路 id 或自定义 scheme
         // （weiguan://、PAN1-…、6105_0_1），必须让 spider 的 playerContent
-        // 解析出真实直链再交给本地代理。CMS 未实现该方法时直接回退。
-        let targetUrl = playUrl;
+        // 解析出真实直链再交给本地代理。编排细节收在 lib/episodeResolve，
+        // 与播放页的换线路 / 换源探测共用同一份规则。
+        const target = await resolveEpisodeTarget(siteKey, playFrom, playUrl);
         // 直播没有 playerContent 可问，UA 只能来自 lives[].ua。
-        let ua: string | undefined = liveUa;
-        let referer: string | undefined;
-        let cookie: string | undefined;
-        if (playFrom) {
-          try {
-            const played = (await api.spiderInvoke({
-              siteKey,
-              method: "playerContent",
-              args: [playFrom, playUrl, []],
-              timeoutMs: 15_000,
-            })) as {
-              playUrl?: string;
-              url?: string;
-              parse?: number;
-              jx?: number;
-              /** 多数源给对象，部分源（pianku 系）给 JSON 字符串。 */
-              header?: Record<string, string> | string;
-            } | null;
-            const candidate = String(played?.playUrl || played?.url || "");
-            const parseFlag = Number(played?.parse ?? 0);
-            const jxFlag = Number(played?.jx ?? 0);
-            const header = normalizeHeaders(played?.header);
-            ua = header["User-Agent"] || header["user-agent"];
-            referer = header["Referer"] || header["referer"];
-            cookie = header["Cookie"] || header["cookie"];
-
-            if (/^https?:\/\//i.test(candidate)) {
-              // `127.0.0.1:9978/proxy?do=py…` 由宿主实现（spider.proxy 转发），
-              // `resolve_play` 会识别本机代理地址并原样透传。
-              const isLocalProxy =
-                /^https?:\/\/127\.0\.0\.1:\d+\/(proxy|proxy2)\b/i.test(candidate);
-              if (isLocalProxy) {
-                targetUrl = candidate;
-              } else if (parseFlag !== 0 || jxFlag !== 0) {
-                // TVBox 语义：parse=1 / jx=1 表示该地址还要过 parses[] 解析池
-                // （type 0 嗅探 / type 1 JSON 接口 / type 4 并行竞速）。
-                try {
-                  const hit = await api.parseResolve({
-                    siteKey,
-                    url: candidate,
-                    flag: playFrom,
-                    headers: header,
-                  });
-                  if (hit?.url) {
-                    targetUrl = hit.url;
-                    for (const [name, value] of hit.headers ?? []) {
-                      const lower = name.toLowerCase();
-                      if (lower === "user-agent") {
-                        ua = value;
-                      } else if (lower === "referer") {
-                        referer = value;
-                      } else if (lower === "cookie") {
-                        cookie = value;
-                      }
-                    }
-                    setSwitchTip(`解析来自「${hit.parser}」`);
-                  }
-                } catch {
-                  // 解析池全失败：保留原地址，由 resolve_play 的嗅探兜底。
-                  targetUrl = candidate;
-                }
-              } else {
-                targetUrl = candidate;
-              }
-            }
-          } catch {
-            // CMS / 未实现 playerContent 的源：沿用原始地址。
-          }
+        if (target.parser) {
+          setSwitchTip(`解析来自「${target.parser}」`);
         }
-        const result = await api.resolvePlay({ siteKey, url: targetUrl, ua, referer, cookie });
+        const result = await api.resolvePlay({
+          siteKey,
+          url: target.url,
+          ua: target.ua ?? liveUa,
+          referer: target.referer,
+          cookie: target.cookie,
+        });
         if (alive) {
           setResolved(result);
         }

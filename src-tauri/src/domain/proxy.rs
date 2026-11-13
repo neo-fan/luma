@@ -305,6 +305,20 @@ async fn handle_proxy(
             Err(err) => return deny(StatusCode::BAD_GATEWAY, &format!("playlist read failed: {err}")),
         };
         let text = String::from_utf8_lossy(&body);
+        // A 200 with a non-playlist body is the normal shape of a dead source:
+        // netdisk resolvers answer `{"code":201,"msg":"解析失败了","url":""}` and
+        // some CDNs replace the manifest with an HTML error page. Passing that
+        // through makes hls.js raise `manifestParsingError`, which reads like a
+        // player bug. Fail as a gateway error instead and log a preview so the
+        // real cause is visible in logs/.
+        if !looks_like_playlist(&text) {
+            let preview = preview_text(&text, 160);
+            tracing::warn!(url = %target, preview = %preview, "upstream answered with a non-playlist body");
+            return deny(
+                StatusCode::BAD_GATEWAY,
+                &format!("upstream returned a non-playlist body: {preview}"),
+            );
+        }
         let rewritten = rewrite_playlist(&text, &target, state.port(), &fwd);
         return Response::builder()
             .status(StatusCode::OK)
@@ -617,6 +631,31 @@ fn absolutize(base: &Url, uri: &str) -> String {
         .unwrap_or_else(|_| trimmed.to_string())
 }
 
+/// Does this body actually look like an HLS playlist?
+///
+/// The `is_playlist` gate only looks at the URL and `content-type`, and a dead
+/// source keeps answering `200` — netdisk resolvers return JSON, CDNs return an
+/// HTML error page. Only a body whose first meaningful line is `#EXTM3U` can be
+/// handed to hls.js; tolerating a BOM / leading blank lines because some
+/// encoders prepend them.
+fn looks_like_playlist(text: &str) -> bool {
+    text.trim_start_matches('\u{feff}')
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .is_some_and(|line| line.starts_with("#EXTM3U"))
+}
+
+/// First `limit` bytes on one line, for log lines and error bodies.
+fn preview_text(text: &str, limit: usize) -> String {
+    let flat: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(limit)
+        .collect();
+    flat.trim().to_string()
+}
+
 /// Wrap every media line of an HLS playlist into the local proxy. Without this
 /// the webview would request segments (and `#EXT-X-KEY` URIs) directly from the
 /// CDN, losing the anti-leech headers and hitting CORS.
@@ -912,5 +951,29 @@ mod tests {
         let payload = "eyJYLVN0dWIiOiIxIn0=";
         let decoded = base64_decode(payload).expect("decode");
         assert_eq!(String::from_utf8(decoded).unwrap(), r#"{"X-Stub":"1"}"#);
+    }
+
+    #[test]
+    fn looks_like_playlist_accepts_bom_and_blank_leading_lines() {
+        assert!(looks_like_playlist("#EXTM3U\n#EXTINF:4,\nseg.ts\n"));
+        assert!(looks_like_playlist("\u{feff}#EXTM3U\nseg.ts\n"));
+        assert!(looks_like_playlist("\n\n  #EXTM3U\r\nseg.ts\r\n"));
+    }
+
+    #[test]
+    fn looks_like_playlist_rejects_dead_source_payloads() {
+        // Netdisk resolver answering 200 while its token no longer works.
+        assert!(!looks_like_playlist(r#"{"code":201,"msg":"解析失败了","url":""}"#));
+        assert!(!looks_like_playlist("<html><body>404</body></html>"));
+        assert!(!looks_like_playlist(""));
+        assert!(!looks_like_playlist("#EXTINF:4,\nseg.ts\n"));
+    }
+
+    #[test]
+    fn preview_text_flattens_control_chars_and_truncates() {
+        let text = "{\"code\":201,\n\"msg\":\"解析失败了\"}";
+        let preview = preview_text(text, 12);
+        assert!(!preview.contains('\n'), "{preview}");
+        assert!(preview.chars().count() <= 12, "{preview}");
     }
 }
