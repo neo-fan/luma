@@ -901,6 +901,7 @@ export default function PlayerPage({
       <PlayerStage
         resolving={resolving}
         playable={playable}
+        recovering={recovering}
         resolveError={resolveError}
         containerRef={containerRef}
         nav={

@@ -13,6 +13,14 @@ interface StageNav {
 interface PlayerStageProps {
   resolving: boolean;
   playable: boolean;
+  /**
+   * 自动换线路进行中。
+   *
+   * 这时「解析失败」已经是过去式：与其把「无法解析播放地址 / 请换一条线路」
+   * 摆在正中间让人以为播不了，不如继续显示「正在解析播放地址…」——真正
+   * 失败（所有线路都试过）时 `recovering` 会复位，兜底说明再出现。
+   */
+  recovering?: boolean;
   resolveError: string;
   /** ArtPlayer 挂载点：必须绑到 .player-art 这个空 div 本身，不能换成组件根。 */
   containerRef: RefObject<HTMLDivElement>;
@@ -39,6 +47,7 @@ interface PlayerStageProps {
 export default function PlayerStage({
   resolving,
   playable,
+  recovering = false,
   resolveError,
   containerRef,
   nav,
@@ -72,13 +81,13 @@ export default function PlayerStage({
         </>
       ) : null}
 
-      {resolving ? (
+      {resolving || recovering ? (
         <div className="player-overlay">
-          <Spinner label="正在解析播放地址…" />
+          <Spinner label={resolving ? "正在解析播放地址…" : "当前线路不可用，正在尝试其它线路…"} />
         </div>
       ) : null}
 
-      {!resolving && !playable ? (
+      {!resolving && !recovering && !playable ? (
         <div className="player-overlay player-fallback">
           <p className="player-fallback__title">
             {resolveError ? "无法解析播放地址" : EXTERNAL_PLAY_FALLBACK.title}
