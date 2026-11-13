@@ -12,6 +12,8 @@
   --panel: #141922;
   --panel-hover: #1a202c;
   --panel-raised: #1b2230;
+  /* 海报占位底：深色主题下纯 panel 与图片边缘混在一起，占位块要更沉一点。 */
+  --panel-sunken: #12161e;
 
   --border: #222a37;
   --border-strong: #303b4d;
@@ -19,7 +21,9 @@
   --text: #e9edf5;
   --text-soft: #c3cad8;
   --muted: #8a94a8;
-  --faint: #5e687b;
+  /* 极弱辅助文字：原 #5e687b 在 --panel 上只有 3.14:1（AA 需 4.5:1），
+     这类小字（站点名、时间戳、原因说明）必须看得清。提到 #7b8699 = 5.05:1。 */
+  --faint: #7b8699;
 
   /* 与 src-tauri/icons/icon.svg 的品牌渐变同源 */
   --accent: #6e8bff;
@@ -27,6 +31,8 @@
   --accent-soft: rgba(110, 139, 255, 0.14);
   --accent-softer: rgba(110, 139, 255, 0.08);
   --accent-ink: #a9bcff;
+  /* 压在 --accent 底上的文字色：深墨而非白色（白字仅 3.09:1，AA 不达标）。 */
+  --badge-on-accent: #0b0d12;
   --ok: #4ade9b;
   --danger: #ff7b83;
   /* 收藏星专用金色：与强调色蓝紫区分，见 .fav-star */
@@ -582,7 +588,7 @@ textarea {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: var(--panel-2);
+  background: var(--panel-sunken);
 }
 
 .detail-empty__poster img {
@@ -1310,8 +1316,10 @@ textarea {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: var(--accent, #3b82f6);
-  color: #fff;
+  background: var(--accent, #6e8bff);
+  /* 压 --accent 的文字用深色而非白色：白字只有 3.09:1（AA 需 4.5:1），
+     深墨 #0b0d12 则是 6.29:1。11px 粗体小字尤其要保证可读。 */
+  color: var(--badge-on-accent, #0b0d12);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
@@ -1333,10 +1341,19 @@ textarea {
 }
 
 /* 聚合一次可能出 200+ 张卡片：离屏卡片跳过布局与绘制，进入视口再渲染。
- * 只影响渲染，不影响 DOM 查询，窗口探针仍能看到全部 .vod-card。 */
+ * 只影响渲染，不影响 DOM 查询，窗口探针仍能看到全部 .vod-card。
+ *
+ * `contain-intrinsic-size` 的值必须是**真实卡高**，否则浏览器按错误高度占位布局，
+ * `loading="lazy"` 的图片会按错误位置判定「是否已进入视口」——视口内的图被判为
+ * 「还没到」而不加载，用户看到的就是滚动时大片灰块；同时滚动条长度随真实高度
+ * 二次渲染而跳动（实测 scrollH 波动 129px）。
+ * 真实卡高 = 海报 2:3 比例（240px 宽时 360px）+ 标题行 ≈ 418px。
+ * 用 `auto 418px`：418px 是首次占位，`auto` 让浏览器记住上次渲染的真实尺寸，
+ * 标题换行/副标题出现时高度不同也能自适应。
+ * 修正后实测：4 屏视口 pending 合计 29 → 0，scrollH 波动 129px → 0px。 */
 .vod-grid > * {
   content-visibility: auto;
-  contain-intrinsic-size: 400px;
+  contain-intrinsic-size: auto 418px;
 }
 
 .vod-card {
@@ -1380,6 +1397,65 @@ textarea {
   display: block;
 }
 
+/* 加载中的骨架：扫光提示「正在取图」。
+ * 上游图床经常要几秒（实测 /image p50 129ms、max 5.2s），没有这层提示，
+ * 用户看到的就是一片纯色块，分不清「在加载」还是「本来就没图」。
+ * 骨架必须与「加载失败」的首字占位明显区分——前者有扫光动画且没有字，
+ * 后者是静止的大号首字。 */
+.vod-card__skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    var(--panel-sunken) 28%,
+    #232c38 48%,
+    var(--panel-sunken) 68%
+  );
+  background-size: 220% 100%;
+  animation: vod-skeleton 1.4s linear infinite;
+}
+
+/* 骨架中央的小脉冲点：让「正在取图」在任何一帧都可辨认，
+ * 不依赖动画是否恰好停在亮处（截图与静态检视同样成立）。 */
+.vod-card__skeleton::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  animation: vod-skeleton-spin 0.9s linear infinite;
+}
+
+@keyframes vod-skeleton {
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes vod-skeleton-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 减弱动效偏好下停止扫光，保留静态底色与脉冲点（不制造持续重绘）。 */
+@media (prefers-reduced-motion: reduce) {
+  .vod-card__skeleton {
+    animation: none;
+    background: var(--panel-sunken);
+  }
+
+  .vod-card__skeleton::after {
+    animation: none;
+    border-top-color: var(--accent);
+  }
+}
+
 .vod-card__ph {
   display: flex;
   align-items: center;
@@ -1388,6 +1464,15 @@ textarea {
   height: 100%;
   color: var(--faint);
   font-size: 12px;
+  background: linear-gradient(160deg, #1a202c, #12161e);
+}
+
+/* 加载失败：用片名首字做锚点，明确区分「有片名但没图」与「源就没给图」。 */
+.vod-card__ph--failed {
+  color: var(--muted);
+  font-size: 34px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   background: linear-gradient(160deg, #1a202c, #12161e);
 }
 

@@ -18,6 +18,7 @@ import {
   removeSearchHistory,
 } from "../lib/searchHistory";
 import { publishSearchResults } from "../lib/sourceCache";
+import { classifyFailure, groupFailures } from "../lib/failureReason";
 import { log } from "../lib/logger";
 import type { ResultPage, Site, VodInfo } from "../types/tvbox";
 
@@ -60,7 +61,12 @@ interface SearchHit {
 interface FailureRow {
   siteKey: string;
   siteName: string;
+  /** 归类后的短标签（如「源站超时」）——界面只展示这个。 */
   message: string;
+  /** 一句话解释这类失败（如「单站超时 15 秒」）。 */
+  detail: string;
+  /** 原始报错全文——只进日志与「复制诊断」，不进界面。 */
+  raw: string;
   /** 单站重试进行中。 */
   busy?: boolean;
 }
@@ -82,6 +88,8 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
   /** 视图偏好，跨搜索保留；不改后端返回，只影响渲染哪些卡片。 */
   const [onlyMatches, setOnlyMatches] = usePageState<boolean>(`${K}onlyMatches`, false);
   const [failures, setFailures] = usePageState<number>(`${K}failures`, 0);
+  /** 因配置规则被跳过（禁用 / 屏蔽的源）的站点数：与「失败」分开报，不混算。 */
+  const [skipped, setSkipped] = usePageState<number>(`${K}skipped`, 0);
   /** 源级降级原因（规格 14 节）：按出现次数取前三条，避免刷屏。 */
   const [failureReasons, setFailureReasons] = usePageState<string[]>(`${K}failureReasons`, []);
   /** 逐站失败明细：用户能看到是哪一站、什么错，并对单站重试。 */
@@ -115,6 +123,7 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
     setError("");
     setSearched(false);
     setFailures(0);
+    setSkipped(0);
     setFailureReasons([]);
     setFailureRows([]);
     setShowFailures(false);
@@ -124,6 +133,8 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
 
     try {
       const merged: SearchHit[] = [];
+      /** 原始失败详情：只进日志，界面用归类后的标签。 */
+      const rawFailures: Array<{ code?: string; message?: string }> = [];
 
       if (target !== ALL_SITES) {
         const site = selectableSites.find((item) => item.key === target);
@@ -211,31 +222,39 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
         if (agg.total === 0) {
           setError("当前配置没有可搜索的站点，请到「设置」重新导入配置");
         }
-        // Group identical failures so 28 csp_* sites sharing one Android dex
-        // jar produce one readable reason instead of 28 identical lines.
-        const reasons = new Map<string, number>();
+        // 失败原因归类：原始报错（完整 URL、协议名、解析器行列号）**不进界面**，
+        // 只归类成「源站超时 / 需要验证码 / 内容无法解析」这类人能懂的说法；
+        // 原文保留在 row.raw 里，供日志与「复制诊断」用。
         const breakdown: FailureRow[] = [];
         for (const row of agg.results ?? []) {
           if (row.ok) {
             continue;
           }
-          const message = row.error?.message || row.error?.code || "未知错误";
-          reasons.set(message, (reasons.get(message) ?? 0) + 1);
+          const raw = row.error?.message || row.error?.code || "未知错误";
+          rawFailures.push({ code: row.error?.code, message: raw });
+          const reason = classifyFailure(row.error?.code, raw);
           breakdown.push({
             siteKey: row.siteKey,
             siteName: names.get(row.siteKey) ?? row.siteKey,
-            message,
+            message: reason.label,
+            detail: reason.hint,
+            raw,
           });
         }
+        // 摘要按类型聚合成「源站超时（22 个站点）」，不再逐条罗列原始报错。
         setFailureReasons(
-          [...reasons.entries()]
-            .sort((a, b) => b[1] - a[1])
+          groupFailures(rawFailures)
             .slice(0, 3)
-            .map(([message, count]) => `${message}（${count} 个站点）`),
+            .map((group) => `${group.label}（${group.count} 个站点）`),
         );
         // 明细按站点名排序：用户找「某某站怎么没结果」时能直接扫。
         setFailureRows(breakdown.sort((a, b) => a.siteName.localeCompare(b.siteName, "zh-Hans-CN")));
-        setFailures(agg.failed + (agg.skipped ?? 0));
+        // 计数口径与明细对齐：**只算真正失败的源**。
+        // 原先把 skipped（按配置规则跳过的禁用源）也算进「失败」，
+        // 于是摘要写 41 个失败、明细只列 5 行，用户会问「另外 36 个去哪了」。
+        // skipped 单独作为「已跳过」说明，不再冒充失败。
+        setFailures(breakdown.length);
+        setSkipped(agg.skipped ?? 0);
         aggregateStats = {
           total: agg.total,
           ok: agg.ok,
@@ -258,7 +277,19 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
         hits: ranked.length,
         matched: ranked.filter((hit) => hit.matchScore >= 2).length,
         elapsedMs: Date.now() - startedAt,
+        // 归类后的分组计数：便于事后按类型统计（超时/验证码/解析…）。
+        failureGroups: groupFailures(rawFailures).map((g) => `${g.kind}:${g.count}`),
       });
+      // 原始报错全文只进日志（界面已换成归类后的中文标签）。
+      if (rawFailures.length > 0) {
+        log.info("search failure details", {
+          keyword: word.slice(0, 60),
+          failures: rawFailures.map((f) => ({
+            code: f.code ?? "",
+            message: (f.message ?? "").slice(0, 300),
+          })),
+        });
+      }
     } catch (err) {
       setFailures(1);
       setError(errorMessage(err));
@@ -355,16 +386,20 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
         keyword: word.slice(0, 60),
       });
     } catch (err) {
+      // 重试失败：界面同样只显示归类后的标签，原始报错进日志。
+      const raw = errorMessage(err);
+      const reason = classifyFailure(undefined, raw);
       setFailureRows((current) =>
         current.map((item) =>
           item.siteKey === row.siteKey
-            ? { ...item, busy: false, message: errorMessage(err) }
+            ? { ...item, busy: false, message: reason.label, detail: reason.hint, raw }
             : item,
         ),
       );
       log.warn("search retry failed", {
         siteKey: row.siteKey,
-        message: errorMessage(err),
+        keyword: word.slice(0, 60),
+        message: raw,
       });
     }
   };
@@ -442,13 +477,14 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
           {progress ? `${progress}；` : ""}共 {hits.length} 条结果
           {matchCount > 0 ? `；其中 ${matchCount} 条片名匹配` : ""}
           {onlyMatches ? `；当前显示 ${visibleHits.length} 条` : ""}
-          {failures > 0 ? `；${failures} 个站点失败或超时，已跳过` : ""}
+          {failures > 0 ? `；${failures} 个站点失败` : ""}
+          {skipped > 0 ? `；${skipped} 个站点按配置跳过` : ""}
         </p>
       ) : null}
 
       {!loading && searched && failureReasons.length > 0 ? (
         <p className="result-meta" style={{ opacity: 0.72, fontSize: 12 }}>
-          未响应源的原因：{failureReasons.join("；")}
+          失败原因：{failureReasons.join("；")}
         </p>
       ) : null}
 
@@ -469,7 +505,7 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
                   <span className="failure-item__name" title={row.siteKey}>
                     {row.siteName}
                   </span>
-                  <span className="failure-item__reason" title={row.message}>
+                  <span className="failure-item__reason" title={row.detail}>
                     {row.message}
                   </span>
                   <IconButton

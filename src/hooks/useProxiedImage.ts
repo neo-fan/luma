@@ -34,7 +34,17 @@ export interface ProxiedImage {
   /** Ready-to-use `src`; null while the proxy base is being resolved. */
   src: string | null;
   broken: boolean;
+  /**
+   * `src` 已就位但图片还没解码完成。
+   *
+   * 两者必须分开：**「还在加载」与「加载失败」在界面上要能区分**。
+   * 上游图床经常很慢（实测 p50 129ms、max 5.2s），或者干脆不可达——
+   * 这两种情况如果都画成同一个灰块，用户无法判断是该等还是该换源。
+   */
+  loading: boolean;
   onError: () => void;
+  /** 图片解码完成（成功或失败都算「结束」）。 */
+  onLoad: () => void;
 }
 
 /**
@@ -48,6 +58,7 @@ export function useProxiedImage(pic: string | undefined): ProxiedImage {
     needsProxy(pic) ? null : (pic?.trim() || null),
   );
   const [broken, setBroken] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -67,6 +78,19 @@ export function useProxiedImage(pic: string | undefined): ProxiedImage {
     };
   }, [pic]);
 
-  const onError = useCallback(() => setBroken(true), []);
-  return { src, broken, onError };
+  // 新 src 到位即进入「加载中」，直到 onLoad/onError 收尾。
+  useEffect(() => {
+    if (!src) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+  }, [src]);
+
+  const onError = useCallback(() => {
+    setBroken(true);
+    setLoading(false);
+  }, []);
+  const onLoad = useCallback(() => setLoading(false), []);
+  return { src, broken, loading, onError, onLoad };
 }
