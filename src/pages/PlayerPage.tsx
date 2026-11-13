@@ -14,6 +14,7 @@ import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
+import { setLiveLine } from "../lib/liveMemory";
 import type { HistoryItem, PlayResolved, ResultPage, Site, VodInfo } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
@@ -29,6 +30,12 @@ interface PlayerPageProps {
   playFrom?: string;
   /** 直播源声明的 UA，直接用于播放请求（没有 playerContent 可问）。 */
   liveUa?: string;
+  /** 直播频道在源里的全部可播放地址（线路）；多于 1 条时支持手动/自动切换。 */
+  liveLines?: string[];
+  /** 当前直播线路序号（LivePage 带过来的记住值或默认 0）。 */
+  liveLine?: number;
+  /** 直播线路记忆的源标识（与 LivePage 一致）。 */
+  liveSource?: string;
   /** 站点 `changeable: 0` 时禁止跨站自动换源；缺省允许。手动换源不受限。 */
   allowFailover?: boolean;
   /** 手动换源需要站点清单做名称映射与可用性过滤。 */
@@ -47,6 +54,9 @@ export default function PlayerPage({
   playUrl,
   playFrom,
   liveUa,
+  liveLines,
+  liveLine,
+  liveSource,
   allowFailover = true,
   sites,
   siteName,
@@ -77,6 +87,17 @@ export default function PlayerPage({
   /** 收藏状态：与详情页共用同一份 SQLite 数据，这里只做镜像。 */
   const [favorite, setFavorite] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
+
+  // 直播多线路：从 props 派生「线路地址数组」与「当前线路序号（钳制越界）」。
+  const liveLinesArr = useMemo(() => liveLines ?? [], [liveLines]);
+  const liveIdx = useMemo(() => {
+    const total = liveLinesArr.length;
+    if (total === 0) {
+      return 0;
+    }
+    const i = liveLine ?? 0;
+    return ((i % total) + total) % total;
+  }, [liveLinesArr, liveLine]);
 
   // 地址解析编排：playUrl → PlayResolved（effect 体与依赖数组原样保留在 hook 内）。
   const {
@@ -374,8 +395,33 @@ export default function PlayerPage({
     lineSwitchStarted.current = true;
     handledUrls.current.add(playUrl);
 
-    // 直播没有剧集概念，detailContent("live", ...) 只会多一次必败 IPC。
+    // 直播线路切换：同一频道在源里有多个可播放地址时，失败自动顺延到下一线路。
     if (siteKey === "live") {
+      if (liveLinesArr.length > 1) {
+        const next = (liveIdx + 1) % liveLinesArr.length;
+        if (handledUrls.current.has(liveLinesArr[next])) {
+          return false;
+        }
+        setLiveLine(liveSource ?? "", vodId, next);
+        setSwitchTip(`已自动切换到线路 ${next + 1}/${liveLinesArr.length}`);
+        videoRef.current = null;
+        navigate(
+          {
+            name: "player",
+            siteKey,
+            vodId,
+            vodName,
+            episodeName,
+            playUrl: liveLinesArr[next],
+            liveLines: liveLinesArr,
+            liveLine: next,
+            liveSource,
+            ua: liveUa,
+          },
+          true,
+        );
+        return true;
+      }
       return false;
     }
 
@@ -446,7 +492,7 @@ export default function PlayerPage({
       }
     }
     return false;
-  }, [episodeName, lines, navigate, playUrl, siteKey, vodId, vodName]);
+  }, [episodeName, lines, navigate, playUrl, siteKey, vodId, vodName, liveLinesArr, liveIdx, liveSource, liveUa]);
 
   /** 线路切换失败后的兜底：整站找同名影片。 */
   const switchOrFailover = useCallback(async () => {
@@ -716,6 +762,38 @@ export default function PlayerPage({
     [timeMs, durationMs],
   );
 
+  // 直播手动切换线路：记住选择并替换栈顶，整页干净重载到新线路。
+  const pickLiveLine = useCallback(
+    (index: number) => {
+      const total = liveLinesArr.length;
+      if (total <= 1) {
+        return;
+      }
+      const idx = ((index % total) + total) % total;
+      if (idx === liveIdx) {
+        return;
+      }
+      setLiveLine(liveSource ?? "", vodId, idx);
+      videoRef.current = null;
+      navigate(
+        {
+          name: "player",
+          siteKey,
+          vodId,
+          vodName,
+          episodeName,
+          playUrl: liveLinesArr[idx],
+          liveLines: liveLinesArr,
+          liveLine: idx,
+          liveSource,
+          ua: liveUa,
+        },
+        true,
+      );
+    },
+    [liveLinesArr, liveIdx, liveSource, vodId, vodName, episodeName, siteKey, liveUa, navigate],
+  );
+
   return (
     <section className="page page--player">
       <PlayerHeader
@@ -762,6 +840,26 @@ export default function PlayerPage({
         onSwitchSource={siteKey === "live" ? undefined : () => setShowSources(true)}
         onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
       />
+
+      {/* 直播多线路：手动切换 + 显示当前线路；自动切换在播放失败时由内核触发。 */}
+      {siteKey === "live" && liveLinesArr.length > 1 ? (
+        <div className="live-switch">
+          <span className="page-meta">线路</span>
+          <div className="chip-row chip-row--static">
+            {liveLinesArr.map((stream, i) => (
+              <button
+                key={i}
+                type="button"
+                className={i === liveIdx ? "chip is-active" : "chip"}
+                title={stream}
+                onClick={() => pickLiveLine(i)}
+              >
+                线路 {i + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
       {siteKey !== "live" && lines.length > 0 ? (

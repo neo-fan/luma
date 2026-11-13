@@ -266,9 +266,14 @@ export interface LiveSource {
 
 export interface LiveChannel {
   name: string;
+  /** 默认线路（lines[0]）。 */
   url: string;
+  /** 同频道在源里的全部可播放地址（m3u 同名条目 / `$` 分隔 / 容器 urls 合并），按序即线路序号。 */
+  lines: string[];
   logo?: string;
   epg?: string;
+  /** 后端原始字段（聚合前拆分的逐条地址），归一化时转为 lines。 */
+  urls?: string[];
 }
 
 export interface LiveGroup {

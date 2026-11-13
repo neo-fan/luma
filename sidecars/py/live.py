@@ -44,9 +44,17 @@ def _parse_extinf(line: str) -> dict[str, str]:
 
 
 def parse_m3u(raw: str, url: str = "") -> dict[str, Any]:
-    """Return `{groups:[{name, channels:[{name,url,logo,epg}]}]}`."""
-    groups: dict[str, list[dict[str, str]]] = {}
+    """Return `{groups:[{name, channels:[{name,url,urls,logo,epg}]}]}`.
+
+    Channels sharing the same name inside one group are merged into a single
+    entry whose `urls` collects every playable line (deduped, original order
+    kept). This mirrors TVBox's 线路 behaviour: a station repeated by several
+    providers becomes one chip with N switchable lines instead of N rows.
+    """
+    # group -> channel name -> merged channel
+    groups: dict[str, dict[str, dict[str, Any]]] = {}
     pending: dict[str, str] | None = None
+    current_group = DEFAULT_GROUP
 
     for line in (raw or "").splitlines():
         text = line.strip()
@@ -54,6 +62,7 @@ def parse_m3u(raw: str, url: str = "") -> dict[str, Any]:
             continue
         if text.startswith("#EXTINF"):
             pending = _parse_extinf(text)
+            current_group = pending.get("group") or DEFAULT_GROUP
             continue
         if text.startswith("#"):
             continue
@@ -62,26 +71,36 @@ def parse_m3u(raw: str, url: str = "") -> dict[str, Any]:
             pending = {"name": text, "logo": "", "epg": "", "group": DEFAULT_GROUP}
             if text.startswith("http"):
                 pending["name"] = ""
+            current_group = DEFAULT_GROUP
         streams = split_streams(text)
         if not streams:
             # Not a URL (or only a label after `$`); nothing to play.
             pending = None
             continue
-        channel = {
-            "name": pending["name"] or streams[0].rsplit("/", 1)[-1],
-            "url": streams[0],
-            # Alternate lines stay available for a retry on the same channel.
-            "urls": streams,
-            "logo": pending["logo"],
-            "epg": pending["epg"],
-        }
-        groups.setdefault(pending["group"] or DEFAULT_GROUP, []).append(channel)
+        name = pending["name"] or streams[0].rsplit("/", 1)[-1]
+        bucket = groups.setdefault(current_group, {})
+        existing = bucket.get(name)
+        if existing is None:
+            bucket[name] = {
+                "name": name,
+                "url": streams[0],
+                "urls": list(streams),
+                "logo": pending["logo"],
+                "epg": pending["epg"],
+            }
+        else:
+            # 同名频道聚合：合并线路，去重且保留首次出现顺序。
+            for stream in streams:
+                if stream not in existing["urls"]:
+                    existing["urls"].append(stream)
         pending = None
 
+    out_groups = [
+        {"name": gname, "channels": list(channels.values())}
+        for gname, channels in groups.items()
+    ]
     return {
-        "groups": [
-            {"name": name, "channels": channels} for name, channels in groups.items()
-        ],
+        "groups": out_groups,
         "source": url,
-        "count": sum(len(items) for items in groups.values()),
+        "count": sum(len(channels) for channels in groups.values()),
     }

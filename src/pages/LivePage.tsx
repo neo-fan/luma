@@ -6,7 +6,8 @@ import IconButton from "../components/IconButton";
 import Spinner from "../components/Spinner";
 import { api, errorMessage } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
-import type { LiveGroup, LiveSource } from "../types/tvbox";
+import { getLiveLine, setLiveLine } from "../lib/liveMemory";
+import type { LiveChannel, LiveGroup, LiveSource } from "../types/tvbox";
 
 interface LivePageProps {
   lives: LiveSource[];
@@ -15,16 +16,36 @@ interface LivePageProps {
 
 /** 分组容器型源（只有 `channels`，没有 `url`）直接展开，无需请求网络。 */
 function expandChannels(source: LiveSource): LiveGroup[] {
-  const channels = (source.channels ?? []).flatMap((channel) =>
-    (channel.urls ?? [])
-      // `proxy://do=live...` 这类内部伪协议本机播放器无法处理，直接略过。
-      .filter((url) => /^https?:\/\//i.test(url))
-      .map((url) => ({ name: channel.name || url, url })),
-  );
+  const channels = (source.channels ?? [])
+    .map((channel) => {
+      // 容器源的 urls 本身就是多线路；同一频道不再拍平成多个 chip。
+      const lines = Array.from(
+        new Set((channel.urls ?? []).filter((url) => /^https?:\/\//i.test(url))),
+      );
+      if (lines.length === 0) {
+        return null;
+      }
+      return { name: channel.name || lines[0], url: lines[0], lines };
+    })
+    .filter((channel): channel is LiveChannel => channel !== null);
   if (channels.length === 0) {
     return [];
   }
   return [{ name: source.group || source.name || "未分组", channels }];
+}
+
+/** 确保每条频道都带 `lines`：后端发 `urls`，前端按线路处理前归一化一次。 */
+function normalizeGroups(groups: LiveGroup[]): LiveGroup[] {
+  return groups.map((group) => ({
+    ...group,
+    channels: group.channels.map((channel) => {
+      const lines = channel.lines?.length
+        ? channel.lines
+        : Array.from(new Set((channel.urls ?? []).filter(Boolean)));
+      const resolved = lines.length > 0 ? lines : [channel.url];
+      return { ...channel, lines: resolved, url: resolved[0] };
+    }),
+  }));
 }
 
 /** 有列表地址，或能从分组容器里展开出至少一个可播放频道。 */
@@ -57,9 +78,11 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
 
   const active = lives[activeIndex];
   const sourceUrl = active?.url ?? "";
+  // 源标识：既用于列表缓存键，也用于线路偏好记忆键，保持一致。
+  const sourceKey = sourceUrl || `container:${activeIndex}`;
   // m3u 列表按源地址保留，播完一个频道返回时不再重新下载解析几千行。
   const [groups, setGroups] = usePageState<LiveGroup[]>(
-    `live:${sourceUrl || `container:${activeIndex}`}:groups`,
+    `live:${sourceKey}:groups`,
     [],
   );
   const [loading, setLoading] = useState(false);
@@ -68,6 +91,8 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
   const [forceReload, setForceReload] = useState(false);
   // 用户主动展开的分组（按组名），默认只渲染前 CHANNEL_LIMIT 个避免 DOM 爆炸。
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // 当前打开线路选择器的频道（组名::频道名）；null 表示全部收起。
+  const [linePicker, setLinePicker] = useState<string | null>(null);
 
   useEffect(() => {
     if (!active) {
@@ -81,7 +106,7 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
     if (!sourceUrl) {
       // 分组容器：本地展开即可，别拿 undefined 去请求接口。
       const local = expandChannels(active);
-      setGroups(local);
+      setGroups(normalizeGroups(local));
       setLoading(false);
       setError(local.length === 0 ? "该直播源是分组容器，没有可直接播放的地址。" : "");
       setForceReload(false);
@@ -94,7 +119,7 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       try {
         const result = await api.liveParse(sourceUrl, active.ua, forceReload);
         if (alive) {
-          setGroups(result.groups ?? []);
+          setGroups(normalizeGroups(result.groups ?? []));
         }
       } catch (err) {
         if (alive) {
@@ -160,6 +185,37 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       return next;
     });
 
+  // 播放某频道指定线路：钳制越界序号、记住选择、把整组线路带给播放页。
+  const play = (channel: LiveChannel, lineIndex: number) => {
+    const count = channel.lines.length;
+    const idx = ((lineIndex % count) + count) % count;
+    setLiveLine(sourceKey, channel.name, idx);
+    setLinePicker(null);
+    navigate({
+      name: "player",
+      siteKey: "live",
+      vodId: channel.name,
+      vodName: channel.name,
+      episodeName: channel.name,
+      playUrl: channel.lines[idx],
+      // lives[].ua 只用于拉列表；播放 CDN 往往也要同一个 UA。
+      ua: active?.ua,
+      liveLines: channel.lines,
+      liveLine: idx,
+      liveSource: sourceKey,
+    });
+  };
+
+  // 线路选择器打开时，点击外部关闭。
+  useEffect(() => {
+    if (!linePicker) {
+      return;
+    }
+    const close = () => setLinePicker(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [linePicker]);
+
   return (
     <section className="page">
       <header className="page-head">
@@ -198,6 +254,7 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
               setActiveIndex(index);
               // 切源时收起之前的展开，避免回到长列表顶部还带着旧展开态。
               setExpanded(new Set());
+              setLinePicker(null);
             }}
           >
             {item.name || `源 ${index + 1}`}
@@ -236,28 +293,59 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
               ) : null}
             </h2>
             <div className="chip-row">
-              {shown.map((channel) => (
-                <button
-                  key={`${group.name}-${channel.name}-${channel.url}`}
-                  type="button"
-                  className="chip"
-                  title={channel.url}
-                  onClick={() =>
-                    navigate({
-                      name: "player",
-                      siteKey: "live",
-                      vodId: channel.url,
-                      vodName: channel.name,
-                      episodeName: channel.name,
-                      playUrl: channel.url,
-                      // lives[].ua 只用于拉列表；播放 CDN 往往也要同一个 UA。
-                      ua: active?.ua,
-                    })
-                  }
-                >
-                  {channel.name}
-                </button>
-              ))}
+              {shown.map((channel) => {
+                const key = `${group.name}::${channel.name}`;
+                const multi = channel.lines.length > 1;
+                const remembered = multi
+                  ? Math.min(getLiveLine(sourceKey, channel.name), channel.lines.length - 1)
+                  : 0;
+                const pickerOpen = linePicker === key;
+                return (
+                  <span className="live-chip" key={key}>
+                    <button
+                      type="button"
+                      className={pickerOpen ? "chip is-open" : "chip"}
+                      title={channel.lines[remembered]}
+                      onClick={(event) => {
+                        if (!multi) {
+                          play(channel, remembered);
+                          return;
+                        }
+                        // 多线路：阻止冒泡以免触发全局关闭监听，然后切换弹层。
+                        event.stopPropagation();
+                        setLinePicker(pickerOpen ? null : key);
+                      }}
+                    >
+                      {channel.name}
+                      {multi ? (
+                        <span className="chip__badge" aria-hidden="true">
+                          {channel.lines.length}
+                        </span>
+                      ) : null}
+                    </button>
+                    {pickerOpen ? (
+                      <span className="line-pop" role="menu">
+                        {channel.lines.map((stream, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            role="menuitem"
+                            className={i === remembered ? "is-on" : ""}
+                            title={stream}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              play(channel, i);
+                            }}
+                          >
+                            线路 {i + 1}
+                            {i === remembered ? " ✓" : ""}
+                          </button>
+                        ))}
+                      </span>
+                    ) : null}
+                  </span>
+                );
+              })}
             </div>
           </div>
         );

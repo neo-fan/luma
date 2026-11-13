@@ -450,6 +450,22 @@ textarea {
   font-size: 13px;
 }
 
+/* 直播多线路切换条：标题 + 线路 chip 组。 */
+.live-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+
+.live-switch .chip-row--static {
+  flex-wrap: wrap;
+}
+
+.live-switch .page-meta {
+  flex: none;
+}
+
 .tip--ok {
   color: var(--ok);
 }
@@ -1098,6 +1114,72 @@ textarea {
   margin-left: 5px;
   color: var(--ok);
   font-size: 11px;
+}
+
+/* 直播频道 chip：相对定位，承载多线路徽标与线路选择器弹层。 */
+.live-chip {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 多线路频道上的线路数小徽标（如「3」表示 3 条线路）。 */
+.chip__badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* 点击多线路频道弹出的线路选择器：浮在 chip 上方。 */
+.line-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  min-width: 116px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel-raised, #1f2430);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.line-pop button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: var(--r-xs, 6px);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.line-pop button:hover {
+  background: var(--panel, #2a3140);
+}
+
+.line-pop button.is-on {
+  color: var(--accent, #3b82f6);
+  font-weight: 600;
 }
 
 .chip--static,

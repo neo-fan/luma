@@ -51,6 +51,12 @@ export type View =
       playFrom?: string;
       /** 直播源声明的 UA；`lives[].ua` 只在拉列表时用过，播放也要带。 */
       ua?: string;
+      /** 直播频道在源里的全部可播放地址（线路）；多于 1 条时支持手动/自动切换。 */
+      liveLines?: string[];
+      /** 当前选中的直播线路序号（已记住的上次选择或默认 0）。 */
+      liveLine?: number;
+      /** 直播线路偏好记忆的源标识（与 LivePage 一致）。 */
+      liveSource?: string;
     }
   | { name: "live" }
   | { name: "favorites" }
@@ -409,6 +415,9 @@ export default function App() {
             playUrl={view.playUrl}
             playFrom={view.playFrom}
             liveUa={view.ua}
+            liveLines={view.liveLines}
+            liveLine={view.liveLine}
+            liveSource={view.liveSource}
             allowFailover={canFailover(site)}
             sites={sites}
             siteName={site?.name}
