@@ -860,6 +860,26 @@ textarea {
   position: relative;
 }
 
+/* 选中具体站点后在地球图标右上角回显站点首字；全部站点不显示。 */
+.site-select__badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--bg-soft);
+  border-radius: 999px;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .site-select__menu {
   position: absolute;
   top: calc(100% + 8px);
