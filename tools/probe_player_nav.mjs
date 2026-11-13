@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * 播放页新版布局回归（2026-11-12 重构）：
- *   播放器（内含上一集/下一集 + 线路徽标） → 影片信息卡 → 选集
+ * 播放页布局回归（2026-11-14 更新）：
+ *   播放器（控制栏内含下一集 / 刷新） → 影片信息卡 → 常驻选集
  *
  * 断言的是「结构 + 真实跳转」：
- *   1. 上/下一集按钮必须挂在 `.player-stage` 里面，且 `.player-about` /
- *      `.player-episodes` 依次排在播放器下方（用几何位置判断，不只看存在）；
- *   2. 点「下一集」真的换集：标题副标题与线路徽标都要变成第 2 集；
+ *   1. 下一集 / 刷新是 ArtPlayer 原生控制栏控件，下一集紧挨暂停右侧；
+ *      上一集浮层与器内徽标已彻底移除，`.player-about` / `.player-episodes`
+ *      依次排在播放器下方（用几何位置判断，不只看存在）；
+ *   2. 点控制栏「下一集」真的换集：标题副标题与选集高亮跟着变；
  *   3. 选集常驻，不需要任何按钮展开。
  *
  * 依赖：dev 窗口（CDP 9222）。  node tools/probe_player_nav.mjs
@@ -154,22 +155,31 @@ try {
     "player page mounted",
   );
 
-  // 剧集列表是异步拉的：等徽标出现，说明 lines/currentLine 就绪。
-  const badge = await cdp.eval(
-    WAIT("return document.querySelector('.player-stage__badge')?.textContent?.trim() || null;", 25000),
+  // 剧集列表是异步拉的：等选集面板出现，说明 lines/currentLine 就绪。
+  const episodesReady = await cdp.eval(
+    WAIT("return document.querySelectorAll('.player-episodes .episode').length > 0 ? 'OK' : null;", 25000),
   );
-  assert(!!badge && /第 1 \/ \d+ 集/.test(badge), "player stage badge shows line + episode", String(badge));
+  assert(episodesReady === 'OK', 'episode list ready', String(episodesReady));
 
   const layout = await cdp.eval(`(() => {
     const stage = document.querySelector('.player-stage');
     const about = document.querySelector('.player-about');
     const episodes = document.querySelector('.player-episodes');
     if (!stage || !about || !episodes) return JSON.stringify({ stage: !!stage, about: !!about, episodes: !!episodes });
-    const prev = stage.querySelector('.player-nav--prev');
-    const next = stage.querySelector('.player-nav--next');
+    const next = stage.querySelector('.art-control-next-episode[aria-label="下一集"]');
+    const reload = stage.querySelector('.art-control-reload[aria-label="刷新播放"]');
+    const play = stage.querySelector('.art-control-playAndPause');
     const rect = (el) => el.getBoundingClientRect();
+    // 下一集必须紧挨播放/暂停右侧，刷新紧随其后；上一集浮层已彻底删除。
+    const nextRightOfPlay = !!next && !!play && rect(next).left >= rect(play).right - 2;
+    const reloadRightOfNext = !!reload && !!next && rect(reload).left >= rect(next).right - 2;
     return JSON.stringify({
-      navInStage: !!prev && !!next,
+      nextInControls: !!next,
+      reloadInControls: !!reload,
+      noPrevButton: !stage.querySelector('.player-nav--prev'),
+      noOldNav: stage.querySelectorAll('.player-nav').length === 0,
+      nextRightOfPlay,
+      reloadRightOfNext,
       aboutBelowStage: Math.round(rect(about).top) >= Math.round(rect(stage).bottom) - 2,
       episodesBelowAbout: Math.round(rect(episodes).top) >= Math.round(rect(about).bottom) - 2,
       episodeCount: episodes.querySelectorAll('.episode').length,
@@ -178,7 +188,11 @@ try {
     });
   })()`);
   const info = JSON.parse(layout || "{}");
-  assert(info.navInStage === true, "上一集/下一集在播放器内部", layout);
+  assert(info.nextInControls === true, "下一集在控制栏里", layout);
+  assert(info.reloadInControls === true, "刷新在控制栏里", layout);
+  assert(info.noPrevButton === true && info.noOldNav === true, "旧的上一集浮层已删除", layout);
+  assert(info.nextRightOfPlay === true, "下一集紧挨暂停右侧", layout);
+  assert(info.reloadRightOfNext === true, "刷新紧随下一集", layout);
   assert(info.aboutBelowStage === true, "影片信息卡在播放器下方", layout);
   assert(info.episodesBelowAbout === true, "选集在信息卡下方", layout);
   assert((info.episodeCount ?? 0) > 0, "选集常驻，无需展开", layout);
@@ -187,8 +201,8 @@ try {
 
   // 点播放器里的「下一集」：标题副标题 + 徽标都要变成第 2 集。
   const advanced = await cdp.eval(`(() => {
-    const btn = document.querySelector('.player-stage .player-nav--next');
-    if (!btn || btn.disabled) return 'MISSING';
+    const btn = document.querySelector('.art-control-next-episode[aria-label="下一集"]');
+    if (!btn || btn.getAttribute('aria-disabled') === 'true') return 'MISSING';
     btn.click();
     return 'CLICKED';
   })()`);
@@ -213,10 +227,10 @@ try {
       ),
     );
     assert(!!aboutNow, "about card follows the new episode", String(aboutNow));
-    const badgeAfter = await cdp.eval(
-      WAIT("return document.querySelector('.player-stage__badge')?.textContent?.trim() || null;", 25000),
+    const activeAfter = await cdp.eval(
+      WAIT("return document.querySelector('.player-episodes .episode.is-active')?.textContent?.trim() || null;", 25000),
     );
-    assert(/第 2 \//.test(String(badgeAfter)), "badge follows the new episode", String(badgeAfter));
+    assert(!!activeAfter, "episode panel highlights the new episode", String(activeAfter));
   }
 
   assert(cdp.errors.length === 0, "no uncaught exceptions", cdp.errors.join(" | ").slice(0, 400));

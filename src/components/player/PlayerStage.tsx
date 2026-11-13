@@ -1,98 +1,71 @@
 import type { RefObject } from "react";
-import IconButton from "../IconButton";
 import Spinner from "../Spinner";
 import { EXTERNAL_PLAY_FALLBACK } from "../../lib/features";
 
-interface StageNav {
-  canPrev: boolean;
-  canNext: boolean;
-  onPrev: () => void;
-  onNext: () => void;
-}
-
 interface PlayerStageProps {
   resolving: boolean;
-  playable: boolean;
-  /**
-   * 自动换线路进行中。
-   *
-   * 这时「解析失败」已经是过去式：与其把「无法解析播放地址 / 请换一条线路」
-   * 摆在正中间让人以为播不了，不如继续显示「正在解析播放地址…」——真正
-   * 失败（所有线路都试过）时 `recovering` 会复位，兜底说明再出现。
-   */
+  /** 解析进度阶段，用于更精确的文案，避免「解析中」被误判成卡死。 */
+  stage?: "parsing" | "connecting" | null;
+  /** 点「刷新」重新获取地址中：播放器实例与控件保持不动，只显示中间提示。 */
+  reloading?: boolean;
+  /** 自动换线路进行中（有希望自愈，不铺满错误面板）。 */
   recovering?: boolean;
+  playable: boolean;
   resolveError: string;
   /** ArtPlayer 挂载点：必须绑到 .player-art 这个空 div 本身，不能换成组件根。 */
   containerRef: RefObject<HTMLDivElement>;
-  /** 直播或没有剧集列表时传 null，不渲染上/下一集与徽标。 */
-  nav?: StageNav | null;
 }
 
 /**
- * 播放舞台：解析中 Spinner / 可播放时交给 ArtPlayer 的空容器 / 否则兜底说明。
+ * 播放舞台：ArtPlayer 组件常驻，视频加载 / 异常状态只在画面中间以小卡片提示。
  *
- * ⚠️ `.player-art` 必须**始终存在于 DOM**，且保持为空 div（ArtPlayer 会往它
- * 内部注入模板与 <video>）。早期实现按 `resolving` 条件卸载这个容器，换源时
- * React 会在播放内核 effect 之前把容器摘掉：旧 ArtPlayer 挂在已 detach 的
- * 节点上继续出声（只有声音没画面），destroy 时又因容器不在文档树上而漏掉
- * `hls.destroy()`，残留解码流与新实例叠成「两个声音」。现在只切 visibility +
- * 用绝对定位覆盖层显示 Spinner / 兜底，DOM 生命周期完全交给内核 effect 的
- * `art.destroy()` 管理。
+ * ⚠️ `.player-art` 必须**始终存在且可见**（不能按 resolving 隐藏）：早期实现
+ * 条件卸载容器会让正在播的实例失去挂载点（只有声音没画面），destroy 链漏掉
+ * hls.js / mpegts.js。现在更进一步——加载中、解析失败都不盖黑色全屏遮罩，
+ * 播放器控制栏（暂停/下一集/刷新/全屏）始终可见可点；「视频有问题」不该
+ * 让用户连控件都点不到。
  *
- * 上/下一集按钮是 `.player-stage` 的子节点（`z-index` 高于 ArtPlayer、
- * 低于解析遮罩），不进入 `.player-art`：那层归 ArtPlayer 自己管，塞进去会被
- * 它的模板替换掉，也会让「点画面暂停」误触。线路/集数徽标已移除（信息在
- * 下方信息卡与选集面板里），画面上只留分辨率角标。
+ * 状态卡片用 `pointer-events: none` + 透明底，只在中间占一小块，鼠标事件
+ * 直接穿透到下面的播放器控件。
  */
 export default function PlayerStage({
   resolving,
-  playable,
+  stage = null,
+  reloading = false,
   recovering = false,
+  playable,
   resolveError,
   containerRef,
-  nav,
 }: PlayerStageProps) {
-  const hidden = resolving || !playable;
+  // 有可播地址时即便在重新解析，也照常显示画面与控件，不给容器加 hidden。
+  const status = resolving
+    ? // 解析分两个阶段给不同文案：问源拿直链 vs 交给反代建连，避免「一直转」被误判卡死。
+      stage === "connecting"
+      ? { busy: true, title: "正在连接播放地址…", desc: "" }
+      : { busy: true, title: "正在解析播放源…", desc: "" }
+    : reloading
+      ? { busy: true, title: "正在重新获取播放地址…", desc: "" }
+      : recovering
+        ? { busy: true, title: "当前线路不可用，正在尝试其它线路…", desc: "" }
+        : !playable
+          ? {
+              busy: false,
+              title: resolveError ? "无法解析播放地址" : EXTERNAL_PLAY_FALLBACK.title,
+              desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
+            }
+          : null;
+
   return (
     <div className="player-stage">
-      <div
-        ref={containerRef}
-        className={`player-art${hidden ? " player-art--hidden" : ""}`}
-      />
+      <div ref={containerRef} className="player-art" />
 
-      {nav && playable ? (
-        <>
-          <IconButton
-            name="back"
-            label="上一集"
-            tip="none"
-            className="player-nav player-nav--prev"
-            onClick={nav.onPrev}
-            disabled={!nav.canPrev}
-          />
-          <IconButton
-            name="next"
-            label="下一集"
-            tip="none"
-            className="player-nav player-nav--next"
-            onClick={nav.onNext}
-            disabled={!nav.canNext}
-          />
-        </>
-      ) : null}
-
-      {resolving || recovering ? (
-        <div className="player-overlay">
-          <Spinner label={resolving ? "正在解析播放地址…" : "当前线路不可用，正在尝试其它线路…"} />
-        </div>
-      ) : null}
-
-      {!resolving && !recovering && !playable ? (
-        <div className="player-overlay player-fallback">
-          <p className="player-fallback__title">
-            {resolveError ? "无法解析播放地址" : EXTERNAL_PLAY_FALLBACK.title}
-          </p>
-          <p className="player-fallback__desc">{EXTERNAL_PLAY_FALLBACK.desc}</p>
+      {status ? (
+        <div className="player-overlay" aria-live="polite">
+          <div className="player-status">
+            {status.busy ? <Spinner label="" /> : null}
+            <p className="player-status__title">{status.title}</p>
+            {status.desc ? <p className="player-status__desc">{status.desc}</p> : null}
+          </div>
         </div>
       ) : null}
     </div>

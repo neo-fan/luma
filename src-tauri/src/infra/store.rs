@@ -251,6 +251,14 @@ impl LibraryStore {
             .unwrap_or_else(|p| p.into_inner())
             .clone();
         items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        // 写入侧已按剧名合并，但老库里可能还留着换源前的重复行；读取时按
+        // 「剧名完全匹配」再兜一层，保证一部剧在历史页 / 续播里只出现一次。
+        // 已按 updated_at 降序，保留第一条即最新的一条。
+        let mut seen = std::collections::HashSet::new();
+        items.retain(|item| {
+            let name = item.vod.name.trim();
+            name.is_empty() || seen.insert(name.to_string())
+        });
         items
     }
 

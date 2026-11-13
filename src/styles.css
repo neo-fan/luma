@@ -128,25 +128,19 @@ textarea {
   color: #fff;
 }
 
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+/* 桌面端不留可见滚动条：滚轮 / 触控板 / 拖动仍能滚动（overflow 不变），
+   只是不画那 10px 的轨道条。以前自定义 thumb 在深色界面上像一道割裂的
+   竖线，抢内容注意力；Windows WebView2 走 -webkit，scrollbar-width 覆盖
+   标准/Firefox 系。内容区靠自身留白与卡片边界表达层级，不再依赖滚动条。 */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #262f3e;
-  border: 2px solid transparent;
-  background-clip: content-box;
-  border-radius: var(--r-pill);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #38445a;
-  background-clip: content-box;
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* ---------- 布局 ---------- */
@@ -415,8 +409,23 @@ textarea {
   padding: 30px 36px 64px;
 }
 
+/* 播放器按 64vh 限高后宽度收成 16:9，下方信息卡 / 选集 / 节目单再铺满
+   `.page` 全宽就会左右不对齐（用户反馈「详情页布局有点丑」）。统一用同一个
+   变量收口，让整页内容跟播放器左右边界对齐。 */
 .page--player {
+  --player-width: min(100%, calc(64vh * 16 / 9));
   padding-bottom: 36px;
+}
+
+.page--player > .page-head,
+.page--player > .tip,
+.page--player > .error-bar,
+.page--player > .player-stage,
+.page--player > .player-about,
+.page--player > .player-episodes,
+.page--player > .live-epg {
+  width: var(--player-width);
+  margin-inline: auto;
 }
 
 /* ---------- 页头 ---------- */
@@ -2030,6 +2039,10 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 舞台与画面同宽，避免出现「黑框比视频还宽、左右各一大条空黑」的观感。
+     64vh 高度上限对应 64vh×16/9 的宽度上限，比例始终 16:9。 */
+  width: min(100%, calc(64vh * 16 / 9));
+  margin-inline: auto;
   min-height: 380px;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
@@ -2048,10 +2061,13 @@ textarea {
 .player-art {
   position: relative;
   /* 自建层叠上下文：ArtPlayer 内部控件带较高 z-index，不隔离的话它们会盖住
-     我们贴在播放器上的上/下一集与线路徽标（实测徽标被视频层截断）。 */
+     外层浮层（分辨率角标改为 portal 进播放器根节点，不再依赖这里的层级）。 */
   z-index: 0;
   isolation: isolate;
-  width: 100%;
+  /* 宽度必须跟着视口高度限幅一起收，否则 100% 宽 + max-height 会把 16:9
+     压成实测 2.42:1，画面左右各留一大条黑边（用户反馈「尺寸不对」）。
+     高度上限 64vh 对应宽度上限 64vh×16/9，二者同时生效才能保持比例。 */
+  width: min(100%, calc(64vh * 16 / 9));
   max-height: 64vh;
   aspect-ratio: 16 / 9;
   background: #000;
@@ -2062,59 +2078,34 @@ textarea {
   visibility: hidden;
 }
 
-/* 播放器内的上/下一集：贴在左右边缘、垂直居中的圆形图标键，默认半透明，
-   鼠标进画面才实心。没有文字，靠两侧位置表达方向；disabled 直接透明隐藏，
-   所以第 1 集不会留下一枚「不能点」的空壳。
-   放在 .player-art 之外（它内部归 ArtPlayer 管理），层级高于视频、低于遮罩。 */
-.player-nav {
-  position: absolute;
-  top: 50%;
-  z-index: 3;
-  transform: translateY(-50%);
-  width: 40px;
-  height: 40px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: var(--r-pill);
-  background: rgba(10, 12, 18, 0.52);
-  backdrop-filter: blur(10px);
-  color: rgba(255, 255, 255, 0.86);
-  opacity: 0.5;
-  transition:
-    opacity var(--dur) var(--ease),
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
+/* 「下一集」「刷新」都是 ArtPlayer 原生控制栏控件（index 15 / 16，紧挨
+   播放/暂停右侧），不再是贴在画面边缘的自绘浮层。图标外面套的是 ArtPlayer
+   自带的 .art-icon 容器（36px + scale），里面 22px 的 svg 与内置按钮一致；
+   早期把 .art-icon 直接挂在 svg 上会被放大成 40×40，明显大一圈。 */
+.player-art .art-control-next-episode .art-icon,
+.player-art .art-control-reload .art-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.player-nav svg {
-  width: 20px;
-  height: 20px;
+/* ArtPlayer 自带 `svg { fill: var(--art-font-color) }`，会覆盖 SVG 上的
+   `fill="none"` 表现属性（属性优先级低于 CSS），把 Lucide 描边图标填成实心。
+   这里在 path 上显式还原为「只描边不填充」，与内置图标的实心风格区分开。 */
+.player-art .art-control-next-episode svg path,
+.player-art .art-control-reload svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.player-nav:active:not(:disabled) {
-  transform: translateY(-50%) scale(0.94);
-}
-
-.player-nav--prev {
-  left: 16px;
-}
-
-.player-nav--next {
-  right: 16px;
-}
-
-.player-stage:hover .player-nav {
-  opacity: 1;
-}
-
-.player-nav:hover:not(:disabled) {
-  background: rgba(20, 25, 36, 0.86);
-  border-color: rgba(255, 255, 255, 0.24);
-  color: #fff;
-}
-
-.player-nav:disabled {
-  opacity: 0;
+/* 最后一集禁用：保留占位，避免控制栏按钮左右跳动。 */
+.player-art .art-control-next-episode.is-disabled {
+  opacity: 0.32;
   cursor: default;
+  pointer-events: none;
 }
 
 /* 画面左上角的分辨率角标。它由 portal 渲染进 ArtPlayer 的 `.art-video-player`
@@ -2153,6 +2144,9 @@ textarea {
 }
 
 /* 解析中 / 不可播放时的提示层：绝对定位盖在常驻容器之上，不改动它的 DOM。 */
+/* 加载 / 异常提示只在画面中间占一小块，不铺黑底、不遮挡控制栏。
+   pointer-events:none 让鼠标事件穿透到下面的 ArtPlayer 控件（暂停/刷新/全屏
+   在视频异常时仍然可点），只有卡片本身也不拦截点击。 */
 .player-overlay {
   position: absolute;
   inset: 0;
@@ -2160,26 +2154,42 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #000;
+  pointer-events: none;
+  background: transparent;
 }
 
-.player-fallback {
+.player-status {
+  display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 56px 24px;
+  align-items: center;
+  gap: 8px;
+  max-width: min(78%, 460px);
+  padding: 16px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--r-lg);
+  background: rgba(10, 12, 18, 0.72);
+  backdrop-filter: blur(10px);
   text-align: center;
+  /* 控制栏在画面底部，卡片居中不会压住它 */
+  transform: translateY(-18px);
 }
 
-.player-fallback__title {
-  margin: 0 0 6px;
-  font-size: var(--fs-h3);
+.player-status .spinner {
+  padding: 0;
+}
+
+.player-status__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
 }
 
-.player-fallback__desc {
+.player-status__desc {
   margin: 0;
   color: var(--muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
 }
 
 /* 播放器下方的影片信息卡：左海报 + 右信息，换源/外部播放收在标题行右侧。 */
@@ -2346,13 +2356,6 @@ textarea {
 
 .detail-episode-tools .input {
   max-width: 260px;
-}
-
-.player-head__meta {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex: 0 0 auto;
 }
 
 .player-episodes {

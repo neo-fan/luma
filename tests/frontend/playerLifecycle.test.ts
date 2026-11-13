@@ -16,14 +16,15 @@ const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("player lifecycle contract", () => {
-  it("keeps the ArtPlayer container mounted while resolving", () => {
+  it("keeps the ArtPlayer container mounted and visible while resolving", () => {
     const stage = read("src/components/player/PlayerStage.tsx");
-    // The container must be rendered unconditionally. A conditional
-    // `!resolving && playable ? <div ref=...>` detaches a playing <video>
-    // from the DOM (audio keeps going, picture disappears).
+    // 容器必须无条件渲染且不再按 resolving 隐藏：条件卸载会让正在播的
+    // <video> 脱离 DOM（只有声音没画面），visibility:hidden 又会连带把
+    // 控制栏一起藏掉（视频异常时用户连暂停/刷新都点不到）。
     expect(stage).toMatch(/<div\s+ref=\{containerRef\}/);
     expect(stage).not.toMatch(/!resolving && playable \?/);
-    expect(stage).toContain("player-art--hidden");
+    expect(stage).not.toContain("player-art--hidden");
+    expect(stage).toContain("player-status");
   });
 
   it("blocks engine creation during resolving and for non-builtin kinds", () => {
@@ -37,14 +38,36 @@ describe("player lifecycle contract", () => {
 
   it("hard-stops media and decoders before destroying ArtPlayer", () => {
     const engine = read("src/hooks/usePlayerEngine.ts");
+    // 硬停收在幂等的 hardStop() 里：cleanup 与全局唯一实例登记表共用，
+    // 这样 HMR / 换集漏掉 cleanup 时，新实例创建前也能收回游离的 <video>。
     const cleanup = engine.slice(engine.lastIndexOf("return () => {"));
-    expect(cleanup).toContain("video.pause()");
-    expect(cleanup).toContain('video.removeAttribute("src")');
-    expect(cleanup).toContain("teardownDecoders?.()");
-    expect(cleanup).toContain("art.destroy()");
+    expect(cleanup).toContain("hardStop()");
+    expect(cleanup).toContain("unregister()");
+    expect(engine).toContain("stopActivePlayer(container)");
+    expect(engine).toContain("registerPlayer(hardStop)");
+    const hardStop = engine.slice(engine.indexOf("const hardStop = () => {"));
+    expect(hardStop.slice(0, 700)).toContain("video.pause()");
+    expect(hardStop.slice(0, 700)).toContain('video.removeAttribute("src")');
+    expect(hardStop.slice(0, 700)).toContain("teardownDecoders?.()");
+    expect(hardStop.slice(0, 700)).toContain("art.destroy()");
     // Direct teardown (not only ArtPlayer's destroy event) is what prevents a
     // detached hls.js/mpegts.js stream from doubling the audio.
     expect(engine).toContain("instance.on(\"destroy\", () => teardownDecoders?.())");
+  });
+
+  it("status overlay never blocks the controls", () => {
+    const css = read("src/styles.css");
+    const overlay = css.slice(css.indexOf(".player-overlay {"));
+    expect(overlay.slice(0, 400)).toContain("pointer-events: none");
+    expect(overlay.slice(0, 400)).toContain("background: transparent");
+  });
+
+  it("keeps a cross-HMR global registry so two players can never play at once", () => {
+    const registry = read("src/lib/playerRegistry.ts");
+    expect(registry).toContain("globalThis");
+    expect(registry).toContain("previous.stop()");
+    expect(registry).toContain("video.pause()");
+    expect(registry).toContain("document.querySelectorAll(\"video\")");
   });
 
   it("remounts the player page on source / episode / line changes", () => {

@@ -283,8 +283,15 @@ export default function DetailPage({
       try {
         const history = await api.historyList();
         if (alive) {
+          // 历史按剧名去重：换源后 siteKey / vodId 会变，只有剧名完全匹配
+          // 才能把上一次（可能来自别的源）的进度接上。
+          const byTitle = (title ?? "").trim();
           setResume(
-            history.find((item) => item.siteKey === siteKey && item.vodId === vodId) ?? null,
+            (byTitle ? history.find((item) => item.name?.trim() === byTitle) : null) ??
+              history.find(
+                (item) => item.siteKey === siteKey && item.vodId === vodId,
+              ) ??
+              null,
           );
         }
       } catch {

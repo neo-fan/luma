@@ -12,7 +12,7 @@
  * 逻辑时须同步更新探针的 fetch 目标，且不要在注释里复刻同样的字面串，
  * 否则会让自检形同虚设。
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type {
   Dispatch,
   MutableRefObject,
@@ -23,7 +23,9 @@ import Artplayer from "artplayer";
 import type { Option } from "artplayer";
 import artplayerPluginHlsControl from "artplayer-plugin-hls-control";
 import Hls from "hls.js";
+import { PLAYER_NEXT_ICON, PLAYER_RELOAD_ICON } from "../components/icons";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
+import { registerPlayer, stopActivePlayer } from "../lib/playerRegistry";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
 import { describeHlsError } from "../lib/playErrors";
@@ -33,6 +35,21 @@ import type { PlayResolved } from "../types/tvbox";
 
 /** 内置播放器能直接解码的 kind；page/share 之类要交给解析池或外部播放。 */
 export const BUILTIN_KINDS = ["hls", "flv", "file"];
+
+/**
+ * 「下一集」控制栏按钮的禁用态。
+ *
+ * 控件由 ArtPlayer 在实例创建时一次性生成，之后剧集列表异步到达、切到最后一集
+ * 都不会重建实例，所以禁用状态不能写死在 `controls[].disable` 里，只能改 DOM。
+ * click 里仍会再读一次 ref，双保险（DOM 状态与真实 canNext 万一有一帧不同步）。
+ */
+function syncNextButton(el: HTMLElement | null, enabled: boolean): void {
+  if (!el) {
+    return;
+  }
+  el.classList.toggle("is-disabled", !enabled);
+  el.setAttribute("aria-disabled", String(!enabled));
+}
 
 /**
  * mpegts.js 的最小类型面。
@@ -69,6 +86,18 @@ export interface LiveLineControl {
   onPick: (index: number) => void;
 }
 
+/**
+ * 点播「下一集」控制栏按钮。
+ *
+ * 用 ref 转发而不是直接传回调：剧集列表是异步到达的，`canNext` / `onNext`
+ * 每次渲染都可能变，若进播放内核 effect 的依赖就会把正在播的实例整个重建。
+ * 与直播线路按钮同一套路——实例创建时只读一次 ref，点击时再取最新值。
+ */
+export interface EpisodeNavControl {
+  canNext: boolean;
+  onNext: () => void;
+}
+
 export interface UsePlayerEngineArgs {
   /** ArtPlayer 挂载点；实例会在这个容器里生成真正的 <video>。 */
   containerRef: RefObject<HTMLDivElement>;
@@ -88,6 +117,20 @@ export interface UsePlayerEngineArgs {
    * 这两个值随每次切线路而变，进依赖数组会让播放内核整个重建。
    */
   liveLineRef?: MutableRefObject<LiveLineControl | null>;
+  /**
+   * 点播下一集按钮。直播 / 没有剧集列表时传 null，控制栏不渲染该按钮。
+   * 必须是 ref：`canNext` 随异步详情变化，不能进内核 effect 的依赖。
+   */
+  episodeNavRef?: MutableRefObject<EpisodeNavControl | null>;
+  /** 是否还有下一集；只驱动控制栏按钮的禁用态，不进播放内核的依赖数组。 */
+  canNext?: boolean;
+  /** 控制栏「刷新」：重新解析地址并重建实例。ref 转发，避免内核重建。 */
+  reloadRef?: MutableRefObject<(() => void) | null>;
+  /**
+   * 再次打开同一影片时的续播起点（毫秒）。只在新建实例的 loadedmetadata
+   * 消费一次；刷新重建时不重复跳（由调用方在刷新时清零）。
+   */
+  resumeMsRef?: MutableRefObject<number>;
   resolved: PlayResolved | null;
   /** 新一轮地址解析中：此时旧 `resolved` 属于上一个源，不能再建播放实例。 */
   resolving: boolean;
@@ -116,6 +159,10 @@ export function usePlayerEngine({
   lineSwitchStarted,
   switchOrFailoverRef,
   liveLineRef,
+  episodeNavRef,
+  canNext,
+  reloadRef,
+  resumeMsRef,
   resolved,
   resolving,
   siteKey,
@@ -125,6 +172,19 @@ export function usePlayerEngine({
   onPlayerRoot,
   setVideoError,
 }: UsePlayerEngineArgs): void {
+  /** 控制栏「下一集」按钮的 DOM：mounted 时拿到，供禁用态同步用。 */
+  const nextButtonRef = useRef<HTMLElement | null>(null);
+
+  /**
+   * 剧集列表是异步到的：播放器实例创建时 lines 可能还是空的，到达 / 切到最后一集
+   * 时都不能重建 ArtPlayer（会造成双流双声），所以把「禁用态」单独同步到 DOM。
+   * 这个 effect 故意放在内核 effect 之前且不带 cleanup——内核的依赖数组与
+   * cleanup 顺序是回归探针的固定契约，不能被状态同步污染。
+   */
+  useEffect(() => {
+    syncNextButton(nextButtonRef.current, Boolean(canNext));
+  }, [canNext, resolved]);
+
   useEffect(() => {
     const container = containerRef.current;
     // 换源时 props 先变、`usePlayResolution` 的 setResolving(true) 要到 effect
@@ -142,6 +202,10 @@ export function usePlayerEngine({
 
     mpvTried.current = false;
     lastMediaRef.current = { positionMs: 0 };
+    // 全局唯一实例：创建前先硬停上一个（含 HMR 后丢失 cleanup 的游离实例）。
+    // 实测这一步是「两个声音」的根治点：React 自己卸载时也会漏掉已 detach
+    // 却仍在播的 <video>，只有模块外的登记表能跨挂载 / 跨 HMR 收回它们。
+    stopActivePlayer(container);
     // 音量 / 倍速跨集沿用：连看 36 集不该每集重新调一次。
     const prefs = readPlayerPrefs();
     /**
@@ -161,40 +225,87 @@ export function usePlayerEngine({
      * 下方也就不必再单独占一行 chip 了。
      */
     const live = liveLineRef?.current;
-    const controls: NonNullable<Option["controls"]> =
-      live && live.lines.length > 1
-        ? [
-            {
-              name: "live-line",
-              position: "right",
-              index: 10,
-              html: `线路 ${live.index + 1}/${live.lines.length}`,
-              // 不设 tooltip：ArtPlayer 的 hint 浮层正好落在 selector 下拉的位置上，
-              // 会把菜单盖住（清晰度按钮同样不设）。文案本身已经说明用途。
-              selector: live.lines.map((_url, i) => ({
-                html: `线路 ${i + 1}`,
-                value: i,
-                default: i === live.index,
-              })),
-              onSelect(selector) {
-                // 点击后再读 ref：切线路途中 ref 可能已被新一轮渲染更新。
-                const now = liveLineRef?.current;
-                const idx = Number(selector.value);
-                const label = `线路 ${idx + 1}/${now?.lines.length ?? "?"}`;
-                if (!now || !Number.isInteger(idx) || idx < 0) {
-                  return label;
-                }
-                // 选中当前线路不重载页面；真正切换由调用方 navigate 完成。
-                if (idx !== now.index) {
-                  now.onPick(idx);
-                }
-                // ArtPlayer 会把返回值写进按钮（`art-selector-value` 的 innerHTML），
-                // 返回 undefined 会直接把按钮文案变成 "undefined"，所以必须回字符串。
-                return label;
-              },
-            },
-          ]
-        : [];
+    const controls: NonNullable<Option["controls"]> = [];
+    if (live && live.lines.length > 1) {
+      controls.push({
+        name: "live-line",
+        position: "right",
+        index: 10,
+        html: `线路 ${live.index + 1}/${live.lines.length}`,
+        // 不设 tooltip：ArtPlayer 的 hint 浮层正好落在 selector 下拉的位置上，
+        // 会把菜单盖住（清晰度按钮同样不设）。文案本身已经说明用途。
+        selector: live.lines.map((_url, i) => ({
+          html: `线路 ${i + 1}`,
+          value: i,
+          default: i === live.index,
+        })),
+        onSelect(selector) {
+          // 点击后再读 ref：切线路途中 ref 可能已被新一轮渲染更新。
+          const now = liveLineRef?.current;
+          const idx = Number(selector.value);
+          const label = `线路 ${idx + 1}/${now?.lines.length ?? "?"}`;
+          if (!now || !Number.isInteger(idx) || idx < 0) {
+            return label;
+          }
+          // 选中当前线路不重载页面；真正切换由调用方 navigate 完成。
+          if (idx !== now.index) {
+            now.onPick(idx);
+          }
+          // ArtPlayer 会把返回值写进按钮（`art-selector-value` 的 innerHTML），
+          // 返回 undefined 会直接把按钮文案变成 "undefined"，所以必须回字符串。
+          return label;
+        },
+      });
+    }
+
+    /**
+     * 点播「下一集」：走 ArtPlayer 原生 controls，不用贴在画面上的自绘浮层。
+     *
+     * `index: 15` 是刻意的：内置 playAndPause=10、volume=20，自定义控件按
+     * `data-index` 排序插入，15 恰好让它紧挨在播放/暂停按钮右侧。回调一律
+     * 从 ref 取最新值，避免剧集列表异步到达后把播放实例整个重建。
+     */
+    if (episodeNavRef?.current) {
+      controls.push({
+        name: "next-episode",
+        position: "left",
+        index: 15,
+        html: PLAYER_NEXT_ICON,
+        tooltip: "下一集",
+        click: () => {
+          const nav = episodeNavRef.current;
+          if (nav?.canNext) {
+            nav.onNext();
+          }
+        },
+        mounted: (el) => {
+          nextButtonRef.current = el;
+          // tooltip 在桌面端会顺手写上 aria-label，移动端不会；显式补一次，
+          // 让读屏与窗口探针在两种环境下都有稳定定位点。
+          el.setAttribute("aria-label", "下一集");
+          syncNextButton(el, episodeNavRef.current?.canNext ?? false);
+        },
+      });
+    }
+
+    /**
+     * 「刷新」：重新走 playerContent → resolve_play 并重建播放实例。
+     * 卡死 / 网络异常导致缓冲停滞时，用户不必返回详情页再点一次。
+     * index 16 紧跟「下一集」；直播没有剧集按钮，它就成了暂停右边第一枚。
+     */
+    if (reloadRef) {
+      controls.push({
+        name: "reload",
+        position: "left",
+        index: 16,
+        html: PLAYER_RELOAD_ICON,
+        tooltip: "刷新（重新获取播放地址）",
+        click: () => reloadRef.current?.(),
+        mounted: (el) => {
+          el.setAttribute("aria-label", "刷新播放");
+        },
+      });
+    }
     /**
      * HLS 清单 `#EXT-X-STREAM-INF:RESOLUTION` 声明的短边高度。
      *
@@ -409,6 +520,56 @@ export function usePlayerEngine({
 
     const video = art.video;
     videoRef.current = video;
+
+    /**
+     * 幂等硬停：既由本 effect 的 cleanup 调用，也登记到全局唯一实例登记表，
+     * 供下一个实例创建前 / HMR 丢失 cleanup 时收回。顺序必须是先停 <video>
+     * 再销毁解码器、最后 art.destroy()，否则 MSE 源会脱离 DOM 继续出声。
+     */
+    let stopped = false;
+    const hardStop = () => {
+      if (stopped) {
+        return;
+      }
+      stopped = true;
+      try {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      } catch {
+        // 已 detach 的 <video> 可能抛 InvalidStateError，忽略即可。
+      }
+      teardownDecoders?.();
+      art.destroy();
+    };
+    const unregister = registerPlayer(hardStop);
+
+    /**
+     * 续播：再次打开同一影片时从历史记录里的 positionMs 直接跳过去。
+     *
+     * 只在 `loadedmetadata` 消费一次；太靠近片头（< 3s）或接近片尾（剩余
+     * < 5s）不跳，避免「刚看完又打开」时卡在结尾反复触发 ended 自动下一集。
+     * 直播没有进度可续，跳过。
+     */
+    const resumeMs = resumeMsRef?.current ?? 0;
+    if (resumeMsRef) {
+      resumeMsRef.current = 0;
+    }
+    const applyResume = () => {
+      if (siteKey === "live" || resumeMs <= 3000 || !Number.isFinite(video.duration)) {
+        return;
+      }
+      if (resumeMs >= (video.duration - 5) * 1000) {
+        return;
+      }
+      try {
+        video.currentTime = resumeMs / 1000;
+      } catch {
+        // 某些 HLS 在首分片到达前 seek 会抛 InvalidStateError，忽略即可。
+      }
+    };
+    video.addEventListener("loadedmetadata", applyResume, { once: true });
+
     // 全屏元素是 `.art-video-player` 本身（ArtPlayer 的 `$player`），所以角标
     // 这类要跟着画面走的浮层由调用方 portal 进这个节点，而不是排在 stage 里。
     onPlayerRoot?.(art.template.$player);
@@ -592,6 +753,7 @@ export function usePlayerEngine({
       video.removeEventListener("ratechange", persistRate);
       video.removeEventListener("loadedmetadata", reportMeta);
       video.removeEventListener("resize", reportMeta);
+      video.removeEventListener("loadedmetadata", applyResume);
       // 先通知上层把 portal 里的角标摘掉，再销毁 ArtPlayer：反过来的话 React
       // 会往一个已经被 remove() 的节点里做移除。
       onPlayerRoot?.(null);
@@ -607,15 +769,8 @@ export function usePlayerEngine({
       // React 摘掉或 destroy 链中断，旧解码器会继续灌数据 → 「两个声音」。
       // 顺序：先停 <video>（pause + 清 src + load 冲掉缓冲），再销毁解码器，
       // 最后销毁 ArtPlayer（它的 destroy 事件会幂等兜底再调一次 teardown）。
-      try {
-        video.pause();
-        video.removeAttribute("src");
-        video.load();
-      } catch {
-        // 已 detach 的 <video> 可能抛 InvalidStateError，忽略即可。
-      }
-      teardownDecoders?.();
-      art.destroy();
+      hardStop();
+      unregister();
     };
     // `resolving` 必须进依赖：新一轮解析开始时要立刻卸载旧内核，不能等
     // `setResolved(null)` 落地（两者都是 effect 阶段的 setState，晚一帧）。

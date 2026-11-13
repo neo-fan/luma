@@ -50,13 +50,27 @@ describe("icon-first controls", () => {
     expect(page).toContain("pressed={reverse}");
   });
 
-  it("player stage navigation is icon-only", () => {
+  it("next episode lives in the ArtPlayer control bar, prev episode is gone", () => {
+    const engine = read("src/hooks/usePlayerEngine.ts");
+    // 原生 controls，而不是贴在画面上的自绘浮层；index 15 = 暂停(10) 与音量(20) 之间。
+    expect(engine).toContain('name: "next-episode"');
+    expect(engine).toContain('position: "left"');
+    expect(engine).toContain("index: 15");
+    expect(engine).toContain('tooltip: "下一集"');
+    expect(engine).toContain('el.setAttribute("aria-label", "下一集")');
+    // 图标走统一 Lucide 几何参数，不在调用处手画 path。
+    expect(engine).toContain("PLAYER_NEXT_ICON");
+    expect(engine).toContain("PLAYER_RELOAD_ICON");
+    expect(engine).toContain('name: "reload"');
+    // 上一集按钮整体删除：源码里不应再有它的语义或浮层类名。
+    expect(engine).not.toContain("上一集");
     const stage = read("src/components/player/PlayerStage.tsx");
-    expect(stage).toContain('name="back"');
-    expect(stage).toContain('name="next"');
-    expect(stage).toContain('label="上一集"');
-    expect(stage).toContain('label="下一集"');
+    expect(stage).not.toContain("player-nav");
     expect(stage).not.toContain("‹ 上一集");
+    expect(read("src/styles.css")).not.toContain(".player-nav {");
+    // 顶部时间进度不再重复显示（播放器控制栏自带）。
+    expect(read("src/components/player/PlayerHeader.tsx")).not.toContain("progressLabel");
+    expect(read("src/pages/PlayerPage.tsx")).not.toContain("progressLabel");
   });
 
   it("episode panel order toggle and now-playing dot use state, not text", () => {

@@ -192,8 +192,8 @@ for (let attempt = 0; attempt < 6 && !mounted; attempt += 1) {
   attempts = attempt + 1;
   if (attempt > 0) {
     const next = await cdp.eval(`(() => {
-      const b = document.querySelector('.player-nav--next[aria-label="下一集"]');
-      if (!b || b.disabled) return 'MISSING';
+      const b = document.querySelector('.art-control-next-episode[aria-label="下一集"]');
+      if (!b || b.getAttribute('aria-disabled') === 'true') return 'MISSING';
       b.click();
       return 'CLICKED';
     })()`);
@@ -226,8 +226,8 @@ for (let attempt = 0; attempt < 6 && mounted && !playing; attempt += 1) {
   lineAttempts = attempt + 1;
   if (attempt > 0) {
     const next = await cdp.eval(`(() => {
-      const b = document.querySelector('.player-nav--next[aria-label="下一集"]');
-      if (!b || b.disabled) return 'MISSING';
+      const b = document.querySelector('.art-control-next-episode[aria-label="下一集"]');
+      if (!b || b.getAttribute('aria-disabled') === 'true') return 'MISSING';
       b.click();
       return 'CLICKED';
     })()`);

@@ -91,6 +91,13 @@ export async function resolveEpisodeTarget(
     })) as PlayerContentResult | null;
   } catch {
     // CMS / 未实现 playerContent 的源：沿用原始地址。
+    // 但若原始地址本身不是 URL（私有 token / 自定义 scheme），源侧已经用超时
+    // 或异常表明它解不开——直接判不可播并标记线路，让上层 fail-fast 抛出明确
+    // 错误，而不是把死 token 丢给 resolvePlay 再去嗅探一个永远 404 的地址。
+    if (!HTTP_URL.test(playUrl)) {
+      markLineBad(siteKey, playFrom);
+      return { url: playUrl, unresolvable: true };
+    }
     return { url: playUrl };
   }
 

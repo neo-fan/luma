@@ -4,7 +4,6 @@ import IconButton from "../IconButton";
 interface PlayerHeaderProps {
   vodName: string;
   episodeName: string;
-  progressLabel: string;
   onBack: () => void;
   /**
    * 收藏状态。`null` 表示当前条目不可收藏（直播频道没有 vod 条目），
@@ -16,15 +15,14 @@ interface PlayerHeaderProps {
 }
 
 /**
- * 播放页顶部：返回详情、片名（含收藏星）、播放进度。
- * 片源与线路信息挪到播放器下方的信息卡里，这里只留最常用的两件事。
- * 收藏是单图标按钮，紧贴片名右侧——放右侧工具栏会离标题太远。
+ * 播放页顶部：返回详情、片名（含收藏星）。
+ * 播放进度由 ArtPlayer 控制栏自己显示，顶部不再重复放一份时间文本；
+ * 片源与线路信息在下方信息卡里。收藏是单图标按钮，紧贴片名右侧。
  * 纯展示，DOM 契约（`.page-head` / `.page-title__sub`）不可改。
  */
 export default function PlayerHeader({
   vodName,
   episodeName,
-  progressLabel,
   onBack,
   favorite,
   favBusy = false,
@@ -41,9 +39,6 @@ export default function PlayerHeader({
           )}
           <span className="page-title__sub">{episodeName}</span>
         </h1>
-      </div>
-      <div className="player-head__meta">
-        <span className="page-meta">{progressLabel}</span>
       </div>
     </header>
   );

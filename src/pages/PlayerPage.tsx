@@ -8,7 +8,7 @@ import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
 import PlayerResolution from "../components/player/PlayerResolution";
 import LiveEpgPanel from "../components/LiveEpgPanel";
-import { formatDuration, parsePlayLines, toVodRef } from "../lib/format";
+import { parsePlayLines, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
@@ -39,7 +39,7 @@ import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
-import type { LiveLineControl } from "../hooks/usePlayerEngine";
+import type { EpisodeNavControl, LiveLineControl } from "../hooks/usePlayerEngine";
 
 interface PlayerPageProps {
   siteKey: string;
@@ -116,6 +116,12 @@ export default function PlayerPage({
    * 实际赋值在 pickLiveLine 定义之后（render 期间完成，effect 执行时已是新值）。
    */
   const liveLineRef = useRef<LiveLineControl | null>(null);
+  /**
+   * 点播「下一集」控制栏按钮。用 ref 转发：剧集列表异步到达，若把它直接做进
+   * 播放内核的 effect 依赖，就会为了一个按钮把正在播的实例整个重建（双声）。
+   * 赋值放在 goEpisode 定义之后、render 期间完成，effect 执行时已是最新值。
+   */
+  const episodeNavRef = useRef<EpisodeNavControl | null>(null);
 
   /**
    * 分辨率角标：数据只能从播放内核里的 `<video>` 读到（解码后的真实尺寸），
@@ -150,15 +156,7 @@ export default function PlayerPage({
   }, [liveLinesArr, liveLine]);
 
   // 地址解析编排：playUrl → PlayResolved（effect 体与依赖数组原样保留在 hook 内）。
-  const {
-    resolved,
-    resolving,
-    resolveError,
-    timeMs,
-    durationMs,
-    setTimeMs,
-    setDurationMs,
-  } = usePlayResolution({
+  const { resolved, resolving, stage, reloading, resolveError, reload } = usePlayResolution({
     siteKey,
     playUrl,
     playFrom,
@@ -168,6 +166,67 @@ export default function PlayerPage({
     setVideoError,
   });
 
+  /**
+   * 续播起点：再次打开同一影片时从历史 positionMs 跳过去；刷新重建时由
+   * reloadRef 写入当前进度。消费一次即清零（见 usePlayerEngine.applyResume）。
+   */
+  const resumeMsRef = useRef(0);
+  /**
+   * 立即写一次历史的通道。切集 / 换源会用 navigate 重建本页，若只靠 5 秒
+   * 节流，切换瞬间的进度可能丢；history effect 把 write 挂到这里，
+   * goToEpisode / pickSource / 自动换线跳转前先 flush 一次。
+   */
+  const flushHistoryRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (siteKey === "live") {
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const history = await api.historyList();
+        // 历史按「剧名完全匹配」去重，一部剧只留一条（换源后 siteKey/vodId
+        // 会变）。因此续播先按剧名定位，再确认记录的仍是同一集：同集才跳进度，
+        // 换集时不该把上一集的进度套到新集上。
+        const title = vodName.trim();
+        const hit = title
+          ? history.find((item) => item.name?.trim() === title)
+          : undefined;
+        const sameEpisode =
+          hit?.playUrl === playUrl ||
+          Boolean(hit?.episodeName && hit.episodeName === episodeName);
+        if (!alive || !hit?.positionMs || hit.positionMs <= 3000 || !sameEpisode) {
+          return;
+        }
+        // 刷新路径已写入更准确的当前进度，别被异步到达的历史覆盖。
+        if (resumeMsRef.current !== 0) {
+          return;
+        }
+        const video = videoRef.current;
+        if (video && video.readyState >= 1 && video.currentTime < 1) {
+          // 历史比 loadedmetadata 晚到：内核已消费过 ref，这里直接补跳。
+          video.currentTime = hit.positionMs / 1000;
+        } else {
+          resumeMsRef.current = hit.positionMs;
+        }
+      } catch {
+        // 历史读不到就从头播，不打断播放。
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [siteKey, vodId, playUrl, vodName, episodeName]);
+
+  /** 控制栏「刷新」回调：ref 转发，避免它进播放内核的依赖导致实例重建。 */
+  const reloadRef = useRef<(() => void) | null>(null);
+  reloadRef.current = () => {
+    // 重新解析会重建实例；把当前进度留给新实例，刷新后不回到片头。
+    resumeMsRef.current = Math.round((videoRef.current?.currentTime ?? 0) * 1000);
+    setVideoError("");
+    reload();
+  };
+
   // 剧集列表编排：拉详情 + 按 playUrl 定位 line/episode（effect 体原样保留在 hook 内）。
   const {
     lines,
@@ -176,7 +235,6 @@ export default function PlayerPage({
     panelLine,
     setPanelLine,
     currentLine,
-    canPrev,
     canNext,
     vod,
   } = useEpisodeList(siteKey, vodId, playUrl);
@@ -653,6 +711,10 @@ export default function PlayerPage({
     lineSwitchStarted,
     switchOrFailoverRef,
     liveLineRef,
+    episodeNavRef,
+    canNext,
+    reloadRef,
+    resumeMsRef,
     resolved,
     resolving,
     siteKey,
@@ -717,6 +779,10 @@ export default function PlayerPage({
       }
     };
 
+    flushHistoryRef.current = () => {
+      void write(true);
+    };
+
     const onPlay = () => {
       void write(true);
     };
@@ -724,11 +790,8 @@ export default function PlayerPage({
       void write(true);
     };
     const onTimeUpdate = () => {
-      // `timeupdate` fires ~4x/s but the progress label only shows whole
-      // seconds. Skip the state write (and the whole player re-render) when
-      // the second has not changed. History uses video.currentTime directly.
-      const second = Math.floor(video.currentTime);
-      setTimeMs((prev) => (Math.floor(prev / 1000) === second ? prev : second * 1000));
+      // 顶部时间标签已移除（播放器控制栏自带进度），这里只维护卸载用的
+      // 进度快照并节流写历史，不再触发每秒一次的整页重渲染。
       lastMediaRef.current.positionMs = Math.round(video.currentTime * 1000);
       if (Number.isFinite(video.duration)) {
         lastMediaRef.current.durationMs = Math.round(video.duration * 1000);
@@ -739,7 +802,6 @@ export default function PlayerPage({
       // loadedmetadata = 媒体真正可解码，本线路确认可播：连续失败链中断，
       // 自动换线跳转预算恢复满额（failoverLedger 的「连续失败」语义）。
       ledgerSuccess(ledgerKey);
-      setDurationMs(Number.isFinite(video.duration) ? video.duration * 1000 : 0);
       if (Number.isFinite(video.duration)) {
         lastMediaRef.current.durationMs = Math.round(video.duration * 1000);
       }
@@ -757,7 +819,7 @@ export default function PlayerPage({
       video.removeEventListener("loadedmetadata", onMeta);
       void write(true, lastMediaRef.current);
     };
-  }, [resolved, siteKey, vodId, vodName, playUrl, ledgerKey, setTimeMs, setDurationMs]);
+  }, [resolved, siteKey, vodId, vodName, playUrl, ledgerKey]);
 
   /**
    * 看完一集自动接下一集：连看时不必每集回来点按钮。
@@ -819,6 +881,8 @@ export default function PlayerPage({
       return;
     }
     const episode = target.episodes[index];
+    // 切换前把当前进度落库，别等 5 秒节流（页面马上会被 key 重建）。
+    flushHistoryRef.current?.();
     videoRef.current = null;
     navigate(
       {
@@ -869,6 +933,8 @@ export default function PlayerPage({
       "luma:autoSwitch",
       `已手动切换到「${option.siteName}」`,
     );
+    // 换源前先落库：历史按剧名合并，这条进度就是新源的续播起点。
+    flushHistoryRef.current?.();
     videoRef.current = null;
     navigate(
       {
@@ -900,11 +966,6 @@ export default function PlayerPage({
 
   /** 当前集名：剧集列表到达后用列表里的名字，否则用路由参数。 */
   const nowEpisode = currentLine?.episodes[episodeIndex]?.name || episodeName;
-
-  const progressLabel = useMemo(
-    () => `${formatDuration(timeMs)} / ${durationMs > 0 ? formatDuration(durationMs) : "--:--"}`,
-    [timeMs, durationMs],
-  );
 
   // 直播手动切换线路：记住选择并替换栈顶，整页干净重载到新线路。
   const pickLiveLine = useCallback(
@@ -944,12 +1005,19 @@ export default function PlayerPage({
       ? { lines: liveLinesArr, index: liveIdx, onPick: pickLiveLine }
       : null;
 
+  // 点播才显示「下一集」：直播没有剧集，控制栏不留这个按钮。
+  // 详情未到时 lines 为空，按钮先以禁用态存在——控件由内核实例创建时一次性
+  // 生成，不能等剧集列表到了再「补一个」，否则永远不会出现。
+  episodeNavRef.current =
+    siteKey === "live"
+      ? null
+      : { canNext: canNext && Boolean(currentLine), onNext: () => goEpisode(1) };
+
   return (
     <section className="page page--player">
       <PlayerHeader
         vodName={vodName}
         episodeName={episodeName}
-        progressLabel={progressLabel}
         onBack={onBack}
         favorite={siteKey === "live" ? null : favorite}
         favBusy={favBusy}
@@ -964,20 +1032,12 @@ export default function PlayerPage({
 
       <PlayerStage
         resolving={resolving}
+        stage={stage}
+        reloading={reloading}
         playable={playable}
         recovering={recovering}
         resolveError={resolveError}
         containerRef={containerRef}
-        nav={
-          siteKey === "live" || !currentLine
-            ? null
-            : {
-                canPrev,
-                canNext,
-                onPrev: () => goEpisode(-1),
-                onNext: () => goEpisode(1),
-              }
-        }
       />
 
       {/* 分辨率角标：真正渲染在 ArtPlayer 的全屏节点里（portal），这里只提供数据。 */}

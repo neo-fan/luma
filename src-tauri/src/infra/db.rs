@@ -484,9 +484,54 @@ impl Db {
         })
     }
 
+    /// 写入一条播放历史。
+    ///
+    /// 历史以「剧名完全匹配」为单位去重：一部剧（哪怕是不同站点 / 不同 vod_id）
+    /// 只保留最新一条。换源后 site_key+vod_id 会变，若仍按复合主键去重，
+    /// 同一部剧会在历史页堆成多行、续播也只能认回原站点。
+    /// 表主键保持 `(site_key, vod_id)` 不动（改主键需要重建表，会破坏已有库），
+    /// 改为在同一事务里先删掉同名但不同 key 的旧行，再 UPSERT 当前行。
     pub fn upsert_history(&self, row: &HistoryRow) -> Result<(), AppError> {
         self.with("upsert history", |conn| {
             let tx = conn.transaction()?;
+            let name = row.name.trim();
+            let mut merged = row.clone();
+            merged.name = name.to_string();
+            if !name.is_empty() {
+                // 换源时旧行会被删掉，但它可能已经补过封面 / 备注 / 站点名 /
+                // 分辨率；这些空值不该被一次「详情还没回来」的写入抹掉。
+                // 先挑一条同名旧行把非空字段继承过来，再删除所有同名旧行。
+                let mut stmt = tx.prepare(
+                    "SELECT pic, remarks, site_name, resolution FROM history
+                     WHERE name = ?1 AND (site_key <> ?2 OR vod_id <> ?3)
+                     ORDER BY updated_at DESC LIMIT 1",
+                )?;
+                let inherited: Option<(String, String, String, String)> = stmt
+                    .query_row(params![name, row.site_key, row.vod_id], |r| {
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                    })
+                    .optional()?;
+                drop(stmt);
+                if let Some((pic, remarks, site_name, resolution)) = inherited {
+                    if merged.pic.is_empty() {
+                        merged.pic = pic;
+                    }
+                    if merged.remarks.is_empty() {
+                        merged.remarks = remarks;
+                    }
+                    if merged.site_name.is_empty() {
+                        merged.site_name = site_name;
+                    }
+                    if merged.resolution.is_empty() {
+                        merged.resolution = resolution;
+                    }
+                }
+                tx.execute(
+                    "DELETE FROM history
+                     WHERE name = ?1 AND (site_key <> ?2 OR vod_id <> ?3)",
+                    params![name, row.site_key, row.vod_id],
+                )?;
+            }
             tx.execute(
                 "INSERT INTO history
                      (site_key, vod_id, name, pic, remarks, site_name,
@@ -509,19 +554,19 @@ impl Db {
                      -- 分辨率只有真出画后才拿得到，空值（还没解码）不能抹掉已有值。
                      resolution = CASE WHEN excluded.resolution <> '' THEN excluded.resolution ELSE resolution END",
                 params![
-                    row.site_key,
-                    row.vod_id,
-                    row.name,
-                    row.pic,
-                    row.remarks,
-                    row.site_name,
-                    row.play_url,
-                    row.position_ms as i64,
-                    row.duration_ms as i64,
-                    row.updated_at as i64,
-                    row.episode_name,
-                    row.play_from,
-                    row.resolution,
+                    merged.site_key,
+                    merged.vod_id,
+                    merged.name,
+                    merged.pic,
+                    merged.remarks,
+                    merged.site_name,
+                    merged.play_url,
+                    merged.position_ms as i64,
+                    merged.duration_ms as i64,
+                    merged.updated_at as i64,
+                    merged.episode_name,
+                    merged.play_from,
+                    merged.resolution,
                 ],
             )?;
             // Keep the newest MAX_HISTORY rows instead of rebuilding a Vec.
@@ -701,7 +746,9 @@ mod tests {
             db.upsert_history(&HistoryRow {
                 site_key: "cms".into(),
                 vod_id: index.to_string(),
-                name: "Sample".into(),
+                // 每条是不同剧：历史按剧名去重，同名样本会被合并成一条，
+                // 那样就测不出 500 条上限了。
+                name: format!("Sample {index}"),
                 pic: String::new(),
                 remarks: String::new(),
                 site_name: "CMS".into(),
@@ -720,7 +767,7 @@ mod tests {
         db.upsert_history(&HistoryRow {
             site_key: "cms".into(),
             vod_id: "0".into(),
-            name: "Sample".into(),
+            name: "Sample 0".into(),
             pic: String::new(),
             remarks: String::new(),
             site_name: "CMS".into(),
@@ -745,6 +792,61 @@ mod tests {
         assert_eq!(top.play_from, "线路B");
         db.clear_history().unwrap();
         assert!(db.history().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 一部剧只留一条历史：换源（site_key / vod_id 都变）时按剧名完全匹配合并，
+    /// 且保留封面 / 进度等元数据，续播才能跨源接上。
+    #[test]
+    fn history_dedupes_by_exact_title_across_sources() {
+        let dir = temp_dir("history-title");
+        let db = Db::at(dir.clone()).expect("open db");
+        let row = |site: &str, id: &str, name: &str, pic: &str, episode: &str, pos: u64| {
+            HistoryRow {
+                site_key: site.into(),
+                vod_id: id.into(),
+                name: name.into(),
+                pic: pic.into(),
+                remarks: String::new(),
+                site_name: "CMS".into(),
+                play_url: format!("http://x/{id}"),
+                episode_name: episode.into(),
+                play_from: "线路A".into(),
+                resolution: String::new(),
+                position_ms: pos,
+                duration_ms: 60000,
+                updated_at: pos,
+            }
+        };
+
+        db.upsert_history(&row("cms_a", "11", "庆余年", "http://a/p.jpg", "第 1 集", 1000))
+            .unwrap();
+        // 同名、不同站点不同 id：换源后只应保留这一条。
+        db.upsert_history(&row("cms_b", "22", "庆余年", "", "第 2 集", 2000))
+            .unwrap();
+        // 剧名不完全相同的不能被合并。
+        db.upsert_history(&row("cms_a", "33", "庆余年 第二季", "", "第 1 集", 3000))
+            .unwrap();
+
+        let rows = db.history().unwrap();
+        assert_eq!(rows.len(), 2, "同名合并、不同名各留一条");
+        let hit = rows.iter().find(|r| r.name == "庆余年").unwrap();
+        assert_eq!(hit.site_key, "cms_b");
+        assert_eq!(hit.vod_id, "22");
+        assert_eq!(hit.episode_name, "第 2 集");
+        assert_eq!(hit.position_ms, 2000);
+        // 换源这条没有封面，旧封面要继承下来（空值不覆盖语义）。
+        assert_eq!(hit.pic, "http://a/p.jpg");
+
+        // 重开库仍只有这两条（去重落在 SQLite，不是内存里做的）。
+        assert_eq!(
+            Db::at(dir.clone())
+                .expect("reopen db")
+                .history()
+                .unwrap()
+                .len(),
+            2
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -799,7 +901,8 @@ mod tests {
         let history = |id: &str, pic: &str, updated_at: u64| HistoryRow {
             site_key: "cms".into(),
             vod_id: id.into(),
-            name: "Sample".into(),
+            // 两条必须是不同的剧，否则按剧名去重会只留一条。
+            name: format!("Sample {id}"),
             pic: pic.into(),
             remarks: String::new(),
             site_name: "CMS".into(),
