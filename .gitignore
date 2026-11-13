@@ -70,3 +70,7 @@ pnpm-debug.log*
 *.log
 .DS_Store
 Thumbs.db
+
+# UI/UX 走查产物：CDP 实拍截图 + 量测报告（.workbuddy/memory 仍需入库）
+.workbuddy/ui-audit/
+.workbuddy/ui-audit-verify/
