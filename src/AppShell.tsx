@@ -23,7 +23,7 @@ import { forgetCards } from "./lib/cardIndex";
 import { clearPageStates } from "./lib/usePageState";
 import { clearCoverAttempts } from "./lib/coverBackfill";
 import { log } from "./lib/logger";
-import { APP_VERSION } from "./lib/version";
+import { APP_VERSION, BUILD_HASH } from "./lib/version";
 import {
   navBack,
   registerNav,
@@ -354,7 +354,7 @@ export default function AppShell() {
           </button>
           <div className="sidebar__foot">
             <span>本地播放框架</span>
-            <span>Luma · v{APP_VERSION}</span>
+            <span>Luma · v{APP_VERSION} · #{BUILD_HASH}</span>
           </div>
         </div>
       </aside>

@@ -372,6 +372,10 @@ export interface DiagnosticsLogFile {
 
 export interface Diagnostics {
   version: string;
+  /** 后端构建号：最近提交 short hash（与前端同源，便于比对前后端是否同构建）。 */
+  buildHash: string;
+  /** 后端构建号：上述提交的提交时间。 */
+  buildTime: string;
   os: string;
   arch: string;
   dataDir: string;

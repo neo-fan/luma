@@ -1,15 +1,34 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { execSync } from "node:child_process";
 import packageJson from "./package.json";
 
 // 版本号唯一来源：package.json。Cargo.toml / tauri.conf.json 手工保持同步，
 // 前端通过 define 注入，避免侧栏 / 诊断页 / 日志里出现三个不同版本。
 const APP_VERSION = packageJson.version;
 
+// 构建号：取最近一次提交的 short hash 与提交时间，与后端 build.rs 用完全相同
+// 的方式注入，双击 exe 也能一眼比对前后端是否同源同构建（无 .git 时回退 unknown）。
+function gitBuildInfo(): { hash: string; time: string } {
+  try {
+    const out = execSync(
+      "git log -1 --format=%h|%cd --date=format:%Y-%m-%dT%H:%M:%S%z",
+      { encoding: "utf-8" },
+    ).trim();
+    const [hash, time] = out.split("|");
+    return { hash: hash || "unknown", time: time || "unknown" };
+  } catch {
+    return { hash: "unknown", time: "unknown" };
+  }
+}
+const BUILD = gitBuildInfo();
+
 // Tauri 需要固定端口；strictPort 避免端口漂移后 devUrl 对不上。
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(APP_VERSION),
+    __BUILD_HASH__: JSON.stringify(BUILD.hash),
+    __BUILD_TIME__: JSON.stringify(BUILD.time),
   },
   plugins: [react()],
   clearScreen: false,

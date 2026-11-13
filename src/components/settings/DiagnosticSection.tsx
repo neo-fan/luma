@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import ErrorBar from "../ErrorBar";
 import { api, errorMessage } from "../../lib/invoke";
 import { log } from "../../lib/logger";
-import { APP_VERSION } from "../../lib/version";
+import { APP_VERSION, BUILD_HASH, BUILD_TIME } from "../../lib/version";
 import type { Diagnostics } from "../../types/tvbox";
 import { copyText, formatBytes } from "./settingsShared";
 
@@ -88,6 +88,12 @@ export default function DiagnosticSection({ reload }: DiagnosticSectionProps) {
       <div className="settings-kv">
         <span>版本</span>
         <code>v{diag?.version ?? APP_VERSION}</code>
+        <span>前端构建</span>
+        <code title={BUILD_TIME}>v{APP_VERSION} · #{BUILD_HASH}</code>
+        <span>后端构建</span>
+        <code title={diag?.buildTime}>
+          {diag ? `v${diag.version} · #${diag.buildHash}` : "读取中…"}
+        </code>
         <span>运行平台</span>
         <code>{diag ? `${diag.os}/${diag.arch}` : "读取中…"}</code>
         <span>数据目录</span>

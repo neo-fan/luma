@@ -301,6 +301,10 @@ pub struct LogFileInfo {
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostics {
     pub version: &'static str,
+    /// 构建号：最近一次提交的 short hash（与前端同一来源，便于前后端比对）。
+    pub build_hash: &'static str,
+    /// 构建号：上述提交的提交时间（本地时区，ISO 风格）。
+    pub build_time: &'static str,
     pub os: &'static str,
     pub arch: &'static str,
     pub data_dir: String,
@@ -318,6 +322,8 @@ pub fn diagnostics(configs: tauri::State<'_, crate::config::ConfigStore>) -> Dia
     let (log_files, log_bytes) = log_files();
     Diagnostics {
         version: env!("CARGO_PKG_VERSION"),
+        build_hash: env!("BUILD_HASH"),
+        build_time: env!("BUILD_TIME"),
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
         db_path: data_dir.join(crate::db::DB_FILE).display().to_string(),
