@@ -135,6 +135,7 @@ textarea {
   padding-left: var(--sidebar-w);
   overflow: hidden;
   transition: padding-left var(--sidebar-dur) var(--sidebar-ease);
+  will-change: padding-left;
 }
 
 .app.is-sidebar-collapsed {
@@ -162,6 +163,7 @@ textarea {
   border-right: 1px solid var(--border);
   overflow: hidden;
   transition: width var(--sidebar-dur) var(--sidebar-ease);
+  will-change: width;
 }
 
 /* 收缩态：只留 68px 图标轨道；文字统一由 .nav__label 系列控制显隐 */
@@ -255,19 +257,24 @@ textarea {
 }
 
 /* ---------- 侧栏收放：文字层 ---------- *
- * 之前用 display:none 一刀切，文字是「啪」地消失；下面改成透明度 + 极小幅
- * 左移，配合宽度收窄形成「被挤出去」的连续感。
- * 两个方向给不同 delay：收起时立刻淡出（0ms，别拖着残影），展开时等宽度
- * 走了六成再淡入（100ms），避免文字在 68px 的窄轨道里先糊成一团。
- * 时长与宽度同为 0.28s：文字消失/出现和轨道到位是同一拍收尾的。 */
+ * 收起时不靠 display:none 或 width:0 一刀切（那会让图标「啪」地瞬移），
+ * 改用 max-width 平滑收拢 + 透明度淡出，文字像被轨道「挤」出去；图标始终
+ * flex-start 不动，收起后自然落在 68px 轨道正中（约 36px，与轨道中心 34px
+ * 仅差 2px，肉眼不可辨），因此去掉了 justify-content:center 的瞬切。
+ * max-width / transform / opacity 都是可平滑动画的属性，不再触发图标位置跳变。 */
 .nav__label,
 .brand__text,
 .sidebar__foot {
   opacity: 1;
   transform: translateX(0);
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
   transition:
     opacity 0.18s var(--ease) 0.1s,
-    transform var(--sidebar-dur) var(--sidebar-ease);
+    transform var(--sidebar-dur) var(--sidebar-ease),
+    max-width var(--sidebar-dur) var(--sidebar-ease);
+  will-change: max-width, opacity;
 }
 
 .sidebar.is-collapsed .nav__label,
@@ -275,30 +282,17 @@ textarea {
 .sidebar.is-collapsed .sidebar__foot {
   opacity: 0;
   transform: translateX(-6px);
+  max-width: 0;
   pointer-events: none;
-  /* 保留占位（不 display:none）：底部「收起」按钮与导航行高全程不动，
-     否则文字一消失，按钮会跟着上下弹一下。 */
+  /* 收起时立刻淡出（0ms），别拖着残影；max-width 与轨道同拍收拢。 */
   transition:
     opacity 0.18s var(--ease) 0s,
-    transform var(--sidebar-dur) var(--sidebar-ease);
+    transform var(--sidebar-dur) var(--sidebar-ease),
+    max-width var(--sidebar-dur) var(--sidebar-ease);
 }
 
-/* 收起态：隐藏的 label 只保留行高、不再占横向宽度，导航行与底部按钮
-   改成居中，图标才真正落在 68px 轨道正中（之前 label 仍占位把图标顶偏）。 */
-.sidebar.is-collapsed .nav__item,
-.sidebar.is-collapsed .sidebar__collapse,
-.sidebar.is-collapsed .brand {
-  justify-content: center;
-  gap: 0;
-}
-
-.sidebar.is-collapsed .nav__label,
-.sidebar.is-collapsed .brand__text {
-  flex: 0 0 0;
-  width: 0;
-  min-width: 0;
-  overflow: hidden;
-}
+/* 图标居中已由「label 收拢到 0 宽 + flex-start 不动」自然达成（见上方文字层规则），
+   不再用 justify-content:center 瞬切，避免收起瞬间图标位置跳变。 */
 
 .nav__item:hover {
   background: var(--panel);
