@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
+import { normalizeHeaders } from "../lib/playHeaders";
 import type { PlayResolved } from "../types/tvbox";
 
 export interface UsePlayResolutionArgs {
@@ -86,12 +87,13 @@ export function usePlayResolution({
               url?: string;
               parse?: number;
               jx?: number;
-              header?: Record<string, string>;
+              /** 多数源给对象，部分源（pianku 系）给 JSON 字符串。 */
+              header?: Record<string, string> | string;
             } | null;
             const candidate = String(played?.playUrl || played?.url || "");
             const parseFlag = Number(played?.parse ?? 0);
             const jxFlag = Number(played?.jx ?? 0);
-            const header = played?.header ?? {};
+            const header = normalizeHeaders(played?.header);
             ua = header["User-Agent"] || header["user-agent"];
             referer = header["Referer"] || header["referer"];
             cookie = header["Cookie"] || header["cookie"];
