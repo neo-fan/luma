@@ -5,6 +5,7 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Icon from "../components/Icon";
 import IconButton from "../components/IconButton";
+import SiteSelect from "../components/SiteSelect";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -363,20 +364,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
           placeholder="输入片名关键词"
           onChange={(event) => setKeyword(event.target.value)}
         />
-        <select
-          className="select"
-          value={target}
-          onChange={(event) => setTarget(event.target.value)}
-          aria-label="选择搜索站点"
-        >
-          <option value={ALL_SITES}>全部站点</option>
-          {selectableSites.map((site) => (
-            <option key={site.key} value={site.key}>
-              {site.name}
-              {site.runtime === "jvm" ? "（jar 源）" : ""}
-            </option>
-          ))}
-        </select>
+        <SiteSelect sites={selectableSites} value={target} onChange={setTarget} />
         <button type="submit" className="btn btn--primary" disabled={loading}>
           <Icon name="search" />
           {loading ? "搜索中…" : "搜索"}
@@ -424,7 +412,7 @@ export default function SearchPage({ sites, navigate }: SearchPageProps) {
 
       {error ? <ErrorBar message={error} /> : null}
 
-      {loading ? <Spinner label={progress || "正在检索…"} /> : null}
+      {loading ? <Spinner center label={progress || "正在检索…"} /> : null}
 
       {!loading && searched ? (
         <p className="result-meta">

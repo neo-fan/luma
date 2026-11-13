@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Navigate } from "../App";
+import ConfirmDialog from "../components/ConfirmDialog";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Icon from "../components/Icon";
@@ -25,6 +26,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
   const [reload, setReload] = useState(0);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -102,10 +104,15 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
     }
   };
 
-  const clearAll = async () => {
-    if (!window.confirm(`确定清空 ${items.length} 条观看历史吗？此操作不可恢复。`)) {
+  const clearAll = () => {
+    if (items.length === 0) {
       return;
     }
+    setConfirmClear(true);
+  };
+
+  const doClearAll = async () => {
+    setConfirmClear(false);
     setError("");
     try {
       await api.historyClear();
@@ -128,14 +135,14 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
             name="trash"
             label="清空历史"
             tone="danger"
-            onClick={() => void clearAll()}
+            onClick={clearAll}
           />
         ) : null}
       </header>
 
       {error ? <ErrorBar message={error} onRetry={() => setReload((value) => value + 1)} /> : null}
 
-      {loading && items.length === 0 ? <Spinner label="正在加载观看历史…" /> : null}
+      {loading && items.length === 0 ? <Spinner center label="正在加载观看历史…" /> : null}
 
       {!loading && !error && items.length === 0 ? (
         <Empty
@@ -193,6 +200,16 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
           })}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={confirmClear}
+        title="清空观看历史"
+        message={`确定清空 ${items.length} 条观看历史吗？此操作不可恢复。`}
+        confirmText="清空"
+        danger
+        onConfirm={() => void doClearAll()}
+        onCancel={() => setConfirmClear(false)}
+      />
     </section>
   );
 }

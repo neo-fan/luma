@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import ConfirmDialog from "../components/ConfirmDialog";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import IconButton from "../components/IconButton";
@@ -134,6 +135,10 @@ export default function SettingsPage({
   const [healthError, setHealthError] = useState("");
   /** 正在启停切换的 siteKey；空串表示空闲。 */
   const [healthToggling, setHealthToggling] = useState("");
+
+  /** 待删除的配置：非空时弹出确认框（替代原生 confirm）。 */
+  const [removingConfig, setRemovingConfig] = useState<ConfigMeta | null>(null);
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   /**
    * 前端额外记录「手动禁用」的站点：`site_health` 只返回 enabled 站，禁用后
    * 该站从 rows 消失，靠这个集合让它在清单里继续以「已禁用」出现、可重新启用。
@@ -266,8 +271,14 @@ export default function SettingsPage({
     }
   };
 
-  const removeConfig = async (meta: ConfigMeta) => {
-    if (!window.confirm(`确定删除配置「${meta.name}」吗？`)) {
+  const removeConfig = (meta: ConfigMeta) => {
+    setRemovingConfig(meta);
+  };
+
+  const doRemoveConfig = async () => {
+    const meta = removingConfig;
+    setRemovingConfig(null);
+    if (!meta) {
       return;
     }
     setError("");
@@ -345,10 +356,12 @@ export default function SettingsPage({
     }
   };
 
-  const clearHistory = async () => {
-    if (!window.confirm("确定清空全部观看历史吗？此操作不可恢复。")) {
-      return;
-    }
+  const clearHistory = () => {
+    setConfirmClearHistory(true);
+  };
+
+  const doClearHistory = async () => {
+    setConfirmClearHistory(false);
     setError("");
     setNotice("");
     try {
@@ -669,7 +682,7 @@ export default function SettingsPage({
                       label="删除"
                       size="sm"
                       tone="danger"
-                      onClick={() => void removeConfig(meta)}
+                      onClick={() => removeConfig(meta)}
                     />
                   </div>
                 )}
@@ -830,6 +843,26 @@ export default function SettingsPage({
       </div>
 
       <p className="disclaimer">本软件为播放框架，不提供任何片源。</p>
+
+      <ConfirmDialog
+        open={removingConfig !== null}
+        title="删除配置"
+        message={`确定删除配置「${removingConfig?.name ?? ""}」吗？删除后需重新导入才能使用。`}
+        confirmText="删除"
+        danger
+        onConfirm={() => void doRemoveConfig()}
+        onCancel={() => setRemovingConfig(null)}
+      />
+
+      <ConfirmDialog
+        open={confirmClearHistory}
+        title="清空观看历史"
+        message="确定清空全部观看历史吗？此操作不可恢复。"
+        confirmText="清空"
+        danger
+        onConfirm={() => void doClearHistory()}
+        onCancel={() => setConfirmClearHistory(false)}
+      />
     </section>
   );
 }

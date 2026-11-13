@@ -283,6 +283,23 @@ textarea {
     transform var(--sidebar-dur) var(--sidebar-ease);
 }
 
+/* 收起态：隐藏的 label 只保留行高、不再占横向宽度，导航行与底部按钮
+   改成居中，图标才真正落在 68px 轨道正中（之前 label 仍占位把图标顶偏）。 */
+.sidebar.is-collapsed .nav__item,
+.sidebar.is-collapsed .sidebar__collapse,
+.sidebar.is-collapsed .brand {
+  justify-content: center;
+  gap: 0;
+}
+
+.sidebar.is-collapsed .nav__label,
+.sidebar.is-collapsed .brand__text {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .nav__item:hover {
   background: var(--panel);
   color: var(--text);
@@ -844,6 +861,78 @@ textarea {
   margin-bottom: 20px;
 }
 
+/* 搜索页站点选择：globe 图标触发 + 下拉菜单，贴合图标语言，替代原生 select */
+.site-select {
+  position: relative;
+}
+
+.site-select__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: 240px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+  box-shadow: var(--shadow-md);
+  animation: overlay-in var(--dur) var(--ease);
+}
+
+.site-select__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.site-select__item:hover:not(:disabled) {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.site-select__item.is-active {
+  background: var(--icon-on);
+  color: var(--text);
+}
+
+.site-select__item svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--muted);
+}
+
+.site-select__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-select__tag {
+  margin-left: auto;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
 /* ---------- 最近搜索词 ---------- */
 
 .recent-searches {
@@ -1187,6 +1276,29 @@ textarea {
   }
 }
 
+/* 页面级加载：垂直水平居中、环形更大、文案更清晰。
+   只作用于 .spinner--center，不动播放器内 / 面板内的内联 spinner。 */
+.spinner--center {
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  min-height: 52vh;
+  padding: 0;
+}
+
+.spinner--center .spinner__ring {
+  width: 34px;
+  height: 34px;
+  border-width: 3px;
+}
+
+.spinner--center .spinner__label {
+  font-size: 14px;
+  color: var(--text-soft);
+  letter-spacing: 0.01em;
+}
+
 .error-bar {
   display: flex;
   align-items: center;
@@ -1213,6 +1325,38 @@ textarea {
   flex: none;
   gap: 4px;
   align-items: center;
+}
+
+/* ---------- 确认弹层（替代原生 confirm） ---------- */
+
+.confirm {
+  width: min(420px, 100%);
+  padding: 22px 24px 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-soft);
+  box-shadow: var(--shadow-lg);
+  animation: overlay-in var(--dur) var(--ease);
+}
+
+.confirm__title {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.confirm__message {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+.confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 /* ---------- 分页 ---------- */

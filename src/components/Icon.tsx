@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
+  Globe,
   Pencil,
   Play,
   RotateCw,
@@ -39,6 +40,7 @@ export type IconName =
   | "check"
   | "play"
   | "search"
+  | "globe"
   | "pencil";
 
 const ICONS: Record<IconName, LucideIcon> = {
@@ -57,6 +59,8 @@ const ICONS: Record<IconName, LucideIcon> = {
   check: Check,
   play: Play,
   search: Search,
+  /** 搜索页「全部站点」：globe 比文字更贴合图标语言，且避免原生 select 风格突兀。 */
+  globe: Globe,
   pencil: Pencil,
 };
 

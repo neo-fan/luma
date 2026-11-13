@@ -6,6 +6,7 @@ import IconButton from "../components/IconButton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { leafClasses } from "../lib/categories";
 import { usableHomeSites } from "../lib/format";
 import { usePageState } from "../lib/usePageState";
 import type { HomeResult, ResultPage, Site } from "../types/tvbox";
@@ -109,7 +110,9 @@ export default function HomePage({
   const fallbackTriedRef = useRef<Set<string>>(new Set());
 
   const site = sites.find((item) => item.key === siteKey);
-  const classes = home?.classes?.length ? home.classes : site?.categories ?? [];
+  // CMS 的父级分类（有子分类）在 `ac=videolist&t=<父级>` 上返回空列表，
+  // 只展示叶子分类，避免用户点进一个永远为空、分页也永远禁用的类目。
+  const classes = leafClasses(home?.classes?.length ? home.classes : site?.categories ?? []);
   const list = home?.list ?? [];
   /** 空结果不算有效缓存：只有真正拉到列表才阻止重复请求。 */
   const hasList = list.length > 0;
@@ -287,13 +290,17 @@ export default function HomePage({
   // 较大值，避免出现「2 / 1」这种自相矛盾的页码。
   const pageCount = Math.max(1, rawPageCount, currentPage);
   const pageLabel = endless ? `第 ${currentPage} 页` : `${currentPage} / ${pageCount}`;
+  // 当前页真的没内容时别再放行「下一页」，否则会一页页走进永久空列表。
+  const noMore = !catLoading && !!catData && catList.length === 0;
   const shownList = isCategory ? catList : list;
   const busy = isCategory ? catLoading : loading;
   const shownError = isCategory ? catError : error;
-  const selectCategory = (tid: string) =>
-    setSelection({ siteKey, tid: activeTid === tid ? "" : tid, page: 1 });
+  const selectCategory = (tid: string) => {
+    const next = String(tid);
+    setSelection({ siteKey, tid: String(activeTid) === next ? "" : next, page: 1 });
+  };
   const setPage = (page: number) =>
-    setSelection({ siteKey, tid: activeTid, page: Math.max(1, page) });
+    setSelection({ siteKey, tid: String(activeTid), page: Math.max(1, page) });
   /** 刷新的是「当前看得见的那张网格」：分类态刷分类，推荐态刷首页。 */
   const refreshVisible = () => {
     if (isCategory) {
@@ -410,6 +417,7 @@ export default function HomePage({
                 type="button"
                 className={activeTid === item.type_id ? "chip is-active" : "chip"}
                 aria-pressed={activeTid === item.type_id}
+                title={item.parentName ? `${item.parentName} / ${item.type_name}` : item.type_name}
                 onClick={() => selectCategory(item.type_id)}
               >
                 {item.type_name || item.type_id}
@@ -420,13 +428,17 @@ export default function HomePage({
       ) : null}
 
       {busy && shownList.length === 0 ? (
-        <Spinner label={isCategory ? "正在加载分类内容…" : "正在加载首页内容…"} />
+        <Spinner center label={isCategory ? "正在加载分类内容…" : "正在加载首页内容…"} />
       ) : null}
 
       {!busy && siteKey && !shownError && shownList.length === 0 ? (
         <Empty
           title={isCategory ? "该分类暂无内容" : "该站点暂无推荐内容"}
-          description={isCategory ? "换个分类或回到推荐试试。" : "可以换一个站点，或直接使用搜索。"}
+          description={
+            isCategory
+              ? `第 ${currentPage} 页没有内容，可点上一页返回或换个分类试试。`
+              : "可以换一个站点，或直接使用搜索。"
+          }
         />
       ) : null}
 
@@ -463,7 +475,7 @@ export default function HomePage({
           <IconButton
             name="next"
             label="下一页"
-            disabled={catLoading || (!endless && catPage >= pageCount)}
+            disabled={catLoading || noMore || (!endless && catPage >= pageCount)}
             onClick={() => setPage(catPage + 1)}
           />
         </div>

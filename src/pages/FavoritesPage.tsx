@@ -113,7 +113,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
 
       {error ? <ErrorBar message={error} onRetry={() => setReload((value) => value + 1)} /> : null}
 
-      {loading && items.length === 0 ? <Spinner label="正在加载收藏…" /> : null}
+      {loading && items.length === 0 ? <Spinner center label="正在加载收藏…" /> : null}
 
       {!loading && !error && items.length === 0 ? (
         <Empty
