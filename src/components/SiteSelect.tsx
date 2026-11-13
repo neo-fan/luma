@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Icon from "./Icon";
 import type { Site } from "../types/tvbox";
 
@@ -39,6 +39,33 @@ export default function SiteSelect({
 }: SiteSelectProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // 菜单打开后量测一次，clamp 到视口内：触发器贴窗口左缘时菜单不能伸出
+  // 屏幕外（行首文字被裁），贴右缘时同理。CSS 默认左对齐，这里做边界兜底。
+  useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+    const menu = menuRef.current;
+    const host = ref.current;
+    if (!menu || !host) {
+      return;
+    }
+    menu.style.left = "0px";
+    menu.style.right = "auto";
+    const rect = menu.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    let viewportLeft = hostRect.left;
+    const overRight = viewportLeft + rect.width - (window.innerWidth - 8);
+    if (overRight > 0) {
+      viewportLeft -= overRight;
+    }
+    if (viewportLeft < 8) {
+      viewportLeft = 8;
+    }
+    menu.style.left = `${viewportLeft - hostRect.left}px`;
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -87,7 +114,12 @@ export default function SiteSelect({
         <Icon name="chevron" />
       </button>
       {open ? (
-        <div className="site-select__menu" role="listbox" aria-label="选择站点">
+        <div
+          className="site-select__menu"
+          ref={menuRef}
+          role="listbox"
+          aria-label="选择站点"
+        >
           {allowAll ? (
             <button
               type="button"

@@ -1127,9 +1127,13 @@ textarea {
 .site-select__menu {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
   z-index: 60;
-  width: 240px;
+  /* 宽度随最长站名伸缩（首页触发器贴窗口左缘，固定宽 + 右对齐会伸出屏外）；
+     视口内的最终位置由组件打开时量测 clamp 兜底 */
+  width: max-content;
+  min-width: 240px;
+  max-width: min(360px, calc(100vw - 16px));
   max-height: 360px;
   overflow-y: auto;
   padding: 6px;
