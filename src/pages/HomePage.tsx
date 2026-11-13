@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Navigate } from "../App";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
@@ -9,7 +9,7 @@ import { api, errorMessage } from "../lib/invoke";
 import { leafClasses } from "../lib/categories";
 import { usableHomeSites } from "../lib/format";
 import { usePageState } from "../lib/usePageState";
-import type { HomeResult, ResultPage, Site } from "../types/tvbox";
+import type { HomeResult, ResultPage, Site, VodInfo } from "../types/tvbox";
 
 interface HomePageProps {
   sites: Site[];
@@ -62,11 +62,26 @@ export async function findHomeSiteWithList(
 const SWITCH_DEBOUNCE_MS = 300;
 
 /** 首页内联的分类选择：tid="" 表示回到推荐流。存站点 key 是为了切站后
- *  不把上一个站点的 type_id 带过去（TVBox 的 tid 只在产生它的站点有效）。 */
+ *  不把上一个站点的 type_id 带过去（TVBox 的 tid 只在产生它的站点有效）。
+ *  page 字段在无限滚动下复用为「已加载页数」，而非「当前页码」。 */
 interface CategorySelection {
   siteKey: string;
   tid: string;
   page: number;
+}
+
+/**
+ * 由单页结果推断是否还有下一页：
+ * - endless 源（pagecount≈9999）看本页是否还有条目，有就继续；
+ * - 普通源看当前页是否小于上报总页数（部分 py 源第 2 页会把 pagecount 报成 1，
+ *   取 max(1, pagecount, 本页号) 避免「2/1」这种自相矛盾）。
+ */
+function morePages(result: ResultPage, page: number): boolean {
+  const raw = result.pagecount ?? 1;
+  if (raw >= 999) {
+    return (result.list ?? []).length > 0;
+  }
+  return page < Math.max(1, raw, result.page ?? page);
 }
 
 /** 首页：站点切换 + 分类标签（页内切换）+ 推荐/分类网格。 */
@@ -92,13 +107,18 @@ export default function HomePage({
     page: 1,
   });
   const activeTid = selection.siteKey === siteKey ? selection.tid : "";
-  const catPage = selection.siteKey === siteKey ? selection.page : 1;
-  const [catData, setCatData] = useState<ResultPage | null>(null);
+  /**
+   * 分类无限滚动：累积已加载的多页，向下滚动到底自动拉下一页。
+   * selection.page 复用为「已加载页数」，跨「看详情 → 返回」保留；返回时按缓存
+   * 瞬间补齐已加载的页，滚动位置不丢。
+   */
+  const [catItems, setCatItems] = useState<VodInfo[]>([]);
+  const [catNext, setCatNext] = useState(1);
+  const [catHasMore, setCatHasMore] = useState(true);
   const [catLoading, setCatLoading] = useState(false);
+  const [catLoadingMore, setCatLoadingMore] = useState(false);
   const [catError, setCatError] = useState("");
   const [catReload, setCatReload] = useState(0);
-  /** 强制刷新只用一次：不像「reload>0 常驻」那样把后续翻页都变成绕过缓存。 */
-  const catForceRef = useRef(false);
   /** 下拉的即时值；真正的 siteKey 由防抖后的 onSiteChange 更新。 */
   const [draftSite, setDraftSite] = useState(siteKey);
   /** 下一次 siteKey 生效时是否跳过缓存（用户主动切换 = 自动刷新）。 */
@@ -240,71 +260,162 @@ export default function HomePage({
   }, [siteKey, reload]);
 
   /**
-   * 选中分类后只替换下方网格，页面本身不动（页头、站点下拉、分类 chip 常驻）。
-   * 数据走 api.category 的 pageCache：看完详情返回时是 0 IPC 直出。
+   * 分类无限滚动的「进入 / 切换」：站点或分类变化时，按已加载页数
+   * （selection.page，看详情返回时保留）从 pageCache 瞬间补齐多页并累积；
+   * 首次进入该分类只拉第 1 页。页面本身不动（页头、站点下拉、分类 chip 常驻）。
    */
   useEffect(() => {
     if (!activeTid || !siteKey) {
-      setCatData(null);
-      setCatError("");
+      setCatItems([]);
+      setCatNext(1);
+      setCatHasMore(true);
       setCatLoading(false);
       return;
     }
+    const pagesLoaded = selection.siteKey === siteKey ? Math.max(1, selection.page) : 1;
     let alive = true;
-    const run = async () => {
-      setCatLoading(true);
-      setCatError("");
-      // 换分类/翻页时先清掉旧列表，避免新 chip 已高亮、下面还挂着上一个分类的卡片。
-      setCatData(null);
-      const force = catForceRef.current;
-      catForceRef.current = false;
+    setCatItems([]);
+    setCatNext(1);
+    setCatHasMore(true);
+    setCatLoading(true);
+    setCatError("");
+    void (async () => {
+      const all: VodInfo[] = [];
+      let hasMore = true;
+      for (let page = 1; page <= pagesLoaded && alive; page += 1) {
+        try {
+          const result = await api.category(siteKey, activeTid, page, false);
+          all.push(...(result.list ?? []));
+          hasMore = morePages(result, page);
+          if (!hasMore) {
+            break;
+          }
+        } catch (err) {
+          if (alive) {
+            setCatError(errorMessage(err));
+            // 出错即停：避免哨兵反复重试同一条会失败的请求。
+            hasMore = false;
+          }
+          break;
+        }
+      }
+      if (alive) {
+        setCatItems(all);
+        setCatNext(pagesLoaded + 1);
+        setCatHasMore(hasMore);
+        setCatLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // selection 故意不进依赖：只在站点 / 分类变化时重跑；page 由 loadMore 更新，
+    // 不应触发整段重拉。eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteKey, activeTid]);
+
+  const isCategory = activeTid !== "";
+  const catList = catItems;
+  const shownList = isCategory ? catList : list;
+  const busy = isCategory ? catLoading || catLoadingMore : loading;
+  const shownError = isCategory ? catError : error;
+
+  /**
+   * 拉下一页并追加到累积列表；由底部哨兵（IntersectionObserver）在滚动到底前触发。
+   * 出错即把 hasMore 置否，避免哨兵反复重试同一条会失败的请求形成死循环。
+   */
+  const loadMore = useCallback(() => {
+    if (!activeTid || !siteKey || !catHasMore || catLoadingMore || catLoading) {
+      return;
+    }
+    const page = catNext;
+    setCatLoadingMore(true);
+    void (async () => {
       try {
-        const result = await api.category(siteKey, activeTid, catPage, force);
+        const result = await api.category(siteKey, activeTid, page, false);
+        const items = result.list ?? [];
+        setCatItems((prev) => [...prev, ...items]);
+        setCatNext((next) => next + 1);
+        setCatHasMore(morePages(result, page));
+        // 持久化已加载页数，返回详情后从缓存瞬间补回、滚动位置不丢。
+        setSelection((prev) =>
+          prev.siteKey === siteKey ? { ...prev, tid: activeTid, page: page + 1 } : prev,
+        );
+      } catch (err) {
+        setCatError(errorMessage(err));
+        setCatHasMore(false);
+      } finally {
+        setCatLoadingMore(false);
+      }
+    })();
+  }, [activeTid, siteKey, catHasMore, catLoadingMore, catLoading, catNext]);
+
+  /** 强制刷新分类：清空累积，绕过缓存重新拉第 1 页。 */
+  useEffect(() => {
+    if (catReload === 0 || !activeTid || !siteKey) {
+      return;
+    }
+    let alive = true;
+    setCatItems([]);
+    setCatNext(1);
+    setCatHasMore(true);
+    setCatLoading(true);
+    setCatError("");
+    void (async () => {
+      try {
+        const result = await api.category(siteKey, activeTid, 1, true);
         if (alive) {
-          setCatData(result);
+          setCatItems(result.list ?? []);
+          setCatNext(2);
+          setCatHasMore(morePages(result, 1));
+          setSelection((prev) =>
+            prev.siteKey === siteKey ? { ...prev, tid: activeTid, page: 1 } : prev,
+          );
         }
       } catch (err) {
         if (alive) {
-          setCatData(null);
           setCatError(errorMessage(err));
+          setCatHasMore(false);
         }
       } finally {
         if (alive) {
           setCatLoading(false);
         }
       }
-    };
-    void run();
+    })();
     return () => {
       alive = false;
     };
-  }, [siteKey, activeTid, catPage, catReload]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catReload]);
 
-  const isCategory = activeTid !== "";
-  const catList = catData?.list ?? [];
-  const currentPage = catData?.page ?? catPage;
-  const rawPageCount = catData?.pagecount ?? 1;
-  // py 源常用 9999 表示「还有下一页」，把它当真实总页数会显示成「1 / 9999」。
-  const endless = rawPageCount >= 999;
-  // 部分 py 源翻到第 2 页会把 pagecount 报成 1，取「当前页 + 源报的总数」的
-  // 较大值，避免出现「2 / 1」这种自相矛盾的页码。
-  const pageCount = Math.max(1, rawPageCount, currentPage);
-  const pageLabel = endless ? `第 ${currentPage} 页` : `${currentPage} / ${pageCount}`;
-  // 当前页真的没内容时别再放行「下一页」，否则会一页页走进永久空列表。
-  const noMore = !catLoading && !!catData && catList.length === 0;
-  const shownList = isCategory ? catList : list;
-  const busy = isCategory ? catLoading : loading;
-  const shownError = isCategory ? catError : error;
+  /** 底部哨兵：进入视口前 400px 即拉下一页；用 ref 持有最新 loadMore 避免反复重建观察器。 */
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !isCategory) {
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadMoreRef.current();
+        }
+      },
+      { rootMargin: "400px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [isCategory]);
+
   const selectCategory = (tid: string) => {
     const next = String(tid);
     setSelection({ siteKey, tid: String(activeTid) === next ? "" : next, page: 1 });
   };
-  const setPage = (page: number) =>
-    setSelection({ siteKey, tid: String(activeTid), page: Math.max(1, page) });
   /** 刷新的是「当前看得见的那张网格」：分类态刷分类，推荐态刷首页。 */
   const refreshVisible = () => {
     if (isCategory) {
-      catForceRef.current = true;
       setCatReload((value) => value + 1);
     } else {
       setReload((value) => value + 1);
@@ -436,7 +547,7 @@ export default function HomePage({
           title={isCategory ? "该分类暂无内容" : "该站点暂无推荐内容"}
           description={
             isCategory
-              ? `第 ${currentPage} 页没有内容，可点上一页返回或换个分类试试。`
+              ? "换个分类或站点试试。"
               : "可以换一个站点，或直接使用搜索。"
           }
         />
@@ -464,20 +575,13 @@ export default function HomePage({
       ) : null}
 
       {isCategory ? (
-        <div className="pager">
-          <IconButton
-            name="back"
-            label="上一页"
-            disabled={catLoading || catPage <= 1}
-            onClick={() => setPage(catPage - 1)}
-          />
-          <span className="pager__label">{pageLabel}</span>
-          <IconButton
-            name="next"
-            label="下一页"
-            disabled={catLoading || noMore || (!endless && catPage >= pageCount)}
-            onClick={() => setPage(catPage + 1)}
-          />
+        <div className="infinite-foot">
+          {catLoadingMore ? <Spinner label="正在加载更多…" /> : null}
+          {!catHasMore && catItems.length > 0 ? (
+            <p className="tip">已经到底啦，没有更多内容了</p>
+          ) : null}
+          {/* 滚动哨兵：进入视口前 400px 自动拉下一页；已无更多时不再触发 */}
+          <div ref={sentinelRef} className="infinite-sentinel" aria-hidden="true" />
         </div>
       ) : null}
     </section>
