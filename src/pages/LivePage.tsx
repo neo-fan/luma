@@ -287,7 +287,7 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
             </button>
           ) : null}
           {isOpen && overflow && group.channels.length > EXPANDED_LIMIT ? (
-            <span className="page-meta" style={{ marginLeft: 8, fontWeight: 400 }}>
+            <span className="page-meta" style={{ marginLeft: 8, fontWeight: "var(--fw-regular)" }}>
               仅显示前 {EXPANDED_LIMIT} 个
             </span>
           ) : null}

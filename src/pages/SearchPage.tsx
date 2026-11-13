@@ -540,7 +540,7 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
       ) : null}
 
       {!loading && searched && failureReasons.length > 0 ? (
-        <p className="result-meta" style={{ opacity: 0.72, fontSize: 12 }}>
+        <p className="result-meta" style={{ opacity: 0.72, fontSize: "var(--fs-xs)" }}>
           失败原因：{failureReasons.join("；")}
         </p>
       ) : null}
