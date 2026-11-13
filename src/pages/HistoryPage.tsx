@@ -18,6 +18,44 @@ interface HistoryPageProps {
   navigate: Navigate;
 }
 
+/**
+ * 历史卡片中央的圆形播放按钮：描边是一圈进度环——灰色底轨表示总时长，
+ * 高亮弧表示已看进度（positionMs / durationMs）。点击继续观看，跳到详情页续播。
+ * 包裹层与海报同尺寸（aspect-ratio:2/3）且 pointer-events:none，只让按钮本身
+ * 可点，不挡卡片其它区域（点海报别处仍走卡片自身的详情跳转）。
+ */
+function HistoryPlayButton({
+  percent,
+  label,
+  onPlay,
+}: {
+  percent: number;
+  label: string;
+  onPlay: () => void;
+}) {
+  const R = 21;
+  const circumference = 2 * Math.PI * R;
+  return (
+    <div className="fav-play-wrap">
+      <button type="button" className="fav-play" title={label} aria-label={label} onClick={onPlay}>
+        <svg className="fav-play__ring" viewBox="0 0 48 48" aria-hidden="true">
+          <circle className="fav-play__track" cx="24" cy="24" r={R} />
+          <circle
+            className="fav-play__progress"
+            cx="24"
+            cy="24"
+            r={R}
+            style={{ strokeDasharray: `${(circumference * percent) / 100} ${circumference}` }}
+          />
+        </svg>
+        <span className="fav-play__icon">
+          <Icon name="play" />
+        </span>
+      </button>
+    </div>
+  );
+}
+
 /** 历史页：最近观看的影片 + 进度，点开回到详情页继续播放。 */
 export default function HistoryPage({ navigate }: HistoryPageProps) {
   // 与收藏页同一套策略：先直出上次的列表，再静默刷新，有数据时不闪 Spinner。
@@ -168,8 +206,25 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
             // 用户能一眼看出上次是从哪条线看到第几集 —— 这些压在封面底部，
             // 标题行只留片名（见 historyCoverMeta 的注释）。
             const meta = historyCoverMeta(item);
+            // 已看进度（百分比）：拿不到时长时记为 0，按钮只显示灰底轨。
+            const watched =
+              item.durationMs && item.durationMs > 0
+                ? Math.min(100, Math.round(((item.positionMs ?? 0) / item.durationMs) * 100))
+                : 0;
             return (
               <div className="fav-item" key={key}>
+                <HistoryPlayButton
+                  percent={watched}
+                  label={watched > 0 ? `继续播放（已看 ${watched}%）` : "播放"}
+                  onPlay={() =>
+                    navigate({
+                      name: "detail",
+                      siteKey: item.siteKey,
+                      vodId: item.vodId,
+                      title: item.name,
+                    })
+                  }
+                />
                 <VodCard
                   title={item.name}
                   pic={item.pic}

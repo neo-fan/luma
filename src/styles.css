@@ -2105,6 +2105,89 @@ textarea {
   height: 13px;
 }
 
+/* 历史卡片中央的圆形播放按钮：描边即进度环（灰底轨 + 高亮进度弧）。 */
+.fav-play-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* 与 .vod-card__poster 完全一致，让按钮真正居中在海报正中而非整张卡片 */
+  aspect-ratio: 2 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 包裹层只负责定位，不拦截点击：点海报别处仍走卡片自身的详情跳转 */
+  pointer-events: none;
+  z-index: 2;
+}
+
+.fav-play {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(10, 12, 18, 0.5);
+  backdrop-filter: blur(3px);
+  color: #fff;
+  cursor: pointer;
+  /* 重新开启按钮自身的点击，不被包裹层的 none 影响 */
+  pointer-events: auto;
+  transition:
+    transform var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+
+.fav-play:hover {
+  transform: scale(1.06);
+  background: rgba(10, 12, 18, 0.68);
+}
+
+.fav-play:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.fav-play__ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.fav-play__track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 3;
+}
+
+.fav-play__progress {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  /* 从 12 点钟方向起笔，顺时针增长 */
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  transition: stroke-dasharray 0.3s var(--ease);
+}
+
+.fav-play__icon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+}
+
+.fav-play__icon svg {
+  width: 22px;
+  height: 22px;
+  /* Lucide 的 play 字形重心偏左，右移 1px 视觉更居中 */
+  transform: translateX(1px);
+}
+
 /* ---------- 设置 ---------- */
 
 .settings-block {
