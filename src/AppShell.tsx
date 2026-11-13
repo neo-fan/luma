@@ -1,0 +1,411 @@
+import {
+  Suspense,
+  useCallback,
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import Spinner from "./components/Spinner";
+import NavIcon from "./components/NavIcon";
+import CommandPalette from "./components/CommandPalette";
+import { Toaster, toast } from "sonner";
+import { usableHomeSites } from "./lib/format";
+import { api, errorMessage } from "./lib/invoke";
+import { pageCache } from "./lib/pageCache";
+import { clearSourceCache, setSourceCacheScope } from "./lib/sourceCache";
+import { noDetailSources } from "./lib/noDetailSource";
+import { forgetCards } from "./lib/cardIndex";
+import { clearPageStates } from "./lib/usePageState";
+import { clearCoverAttempts } from "./lib/coverBackfill";
+import { log } from "./lib/logger";
+import { APP_VERSION } from "./lib/version";
+import {
+  navBack,
+  registerNav,
+  viewToLocation,
+  type View,
+} from "./lib/nav";
+import { useAppStore, useSiteState } from "./stores/appStore";
+import type { ConfigSnapshot, LiveSource } from "./types/tvbox";
+
+const NAV_ITEMS: {
+  key: "home" | "live" | "search" | "favorites" | "history" | "settings";
+  label: string;
+}[] = [
+  { key: "home", label: "首页" },
+  { key: "live", label: "直播" },
+  { key: "search", label: "搜索" },
+  { key: "favorites", label: "收藏" },
+  { key: "history", label: "历史" },
+  { key: "settings", label: "设置" },
+];
+
+/**
+ * 配置导入/删除动作：布局持有（要清会话缓存），设置页路由包装组件
+ * 经此 context 取用。
+ */
+export interface ConfigActions {
+  onImported: (snapshot: ConfigSnapshot) => void;
+  onConfigRemoved: (id: string) => void;
+}
+
+export const ConfigActionsContext = createContext<ConfigActions | null>(null);
+
+/**
+ * 导入新配置或删除配置后，把三类页面缓存（page / source / 封面回填尝试）与
+ * 滚动位置一次性清掉：旧站点的详情/分类/筛选状态都不能再复用。两个 handler 都
+ * 要这套清场，抽出来避免漂移。
+ */
+function resetSessionCaches(
+  scrollPositions: MutableRefObject<Map<number, number>>,
+): void {
+  pageCache.clear();
+  clearSourceCache();
+  clearPageStates();
+  clearCoverAttempts();
+  // 卡片索引按 siteKey 存，换配置后旧的 siteKey 再也不会被访问，留着只是漏内存。
+  forgetCards();
+  scrollPositions.current.clear();
+}
+
+export default function AppShell() {
+  const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
+  const setPreferredSite = useAppStore((s) => s.setPreferredSite);
+  const setCache = useAppStore((s) => s.setCache);
+  const preferredSite = useAppStore((s) => s.preferredSite);
+  const { sites } = useSiteState();
+
+  /** 全局命令面板（Ctrl+K）。 */
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  const location = useLocation();
+  const rNav = useNavigate();
+  const contentRef = useRef<HTMLElement | null>(null);
+  /** 切页前保存、切页后恢复；key 是 react-router 分配的 history 序号。 */
+  const scrollPositions = useRef(new Map<number, number>());
+  const currentIdxRef = useRef(0);
+
+  const saveScroll = useCallback(() => {
+    const el = contentRef.current;
+    if (el) {
+      scrollPositions.current.set(currentIdxRef.current, el.scrollTop);
+    }
+  }, []);
+
+  // 恢复要等一帧：详情页缓存命中是同步直出，但布局撑开 scrollHeight 需要 rAF。
+  useLayoutEffect(() => {
+    const idx =
+      typeof window.history.state?.idx === "number" ? window.history.state.idx : 0;
+    currentIdxRef.current = idx;
+    const el = contentRef.current;
+    if (!el) {
+      return;
+    }
+    const saved = scrollPositions.current.get(idx) ?? 0;
+    el.scrollTop = saved;
+    const frame = window.requestAnimationFrame(() => {
+      el.scrollTop = saved;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.key]);
+
+  // 导航桥：所有页面 props / 自动换线 / 命令面板的跳转都汇到这里，
+  // 保证跳转前先保存当前页滚动位置。
+  useEffect(() => {
+    registerNav({
+      navigate: (view: View, replace = false) => {
+        saveScroll();
+        const loc = viewToLocation(view);
+        rNav(loc.pathname + loc.search, { replace, state: loc.state });
+      },
+      back: () => {
+        saveScroll();
+        rNav(-1);
+      },
+      resetTo: (view: View) => {
+        saveScroll();
+        const loc = viewToLocation(view);
+        rNav(loc.pathname + loc.search, { replace: true, state: loc.state });
+      },
+    });
+    return () => registerNav(null);
+  }, [rNav, saveScroll]);
+
+  /**
+   * 全局 Esc 返回上一级。
+   *
+   * 输入框里按 Esc 交给控件自己处理（重命名取消、搜索框清空等），换源/选集
+   * 弹层也有自己的 Esc 逻辑——这里跳过，避免一次 Esc 既关弹层又退页面。
+   * history.state.idx 是 react-router data router 维护的栈深度，0 = 根。
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) {
+        return;
+      }
+      // 全屏播放器里按 Esc，先让浏览器退出全屏，别顺手把播放页也退掉。
+      if (document.fullscreenElement) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName ?? "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+      }
+      if (document.querySelector(".source-picker")) {
+        return;
+      }
+      // 命令面板开着时 Esc 只关面板（Radix 处理），别顺手退页面。
+      if (document.querySelector("[cmdk-root]")) {
+        return;
+      }
+      if ((window.history.state?.idx ?? 0) > 0) {
+        event.preventDefault();
+        navBack();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const handleImported = useCallback(
+    (snapshot: ConfigSnapshot) => {
+      // 换了配置（或重新导入同一份）后，旧站点的详情/分类与页面筛选状态
+      // 都不能再复用；scope 变化会清一次，同 id 重导入也强制清一次。
+      pageCache.setScope(snapshot.id);
+      setSourceCacheScope(snapshot.id);
+      // siteKey 只在同一份配置内有意义，换配置后旧的「无详情源」记忆作废。
+      noDetailSources.setScope(snapshot.id);
+      resetSessionCaches(scrollPositions);
+      setCache({
+        configId: snapshot.id,
+        sites: snapshot.sites,
+        lives: (snapshot.lives ?? []) as LiveSource[],
+      });
+    },
+    [setCache],
+  );
+
+  const handleConfigRemoved = useCallback(
+    (id: string) => {
+      resetSessionCaches(scrollPositions);
+      const current = useAppStore.getState().cache;
+      if (current && current.configId === id) {
+        setCache(null);
+      }
+    },
+    [setCache],
+  );
+
+  /**
+   * 订阅定时刷新的推送。
+   *
+   * 后台更新不能静默改数据：Rust 侧换了 active 快照，这里的站点缓存必须
+   * 同步替换，否则界面上还是旧站点、fan-out 却已经跑新站点。只在内容真的
+   * 变化（`changed`）时替换——没变化就什么都不做，连提示都不弹。
+   */
+  useEffect(() => {
+    let alive = true;
+    let unlisten: (() => void) | null = null;
+    void api
+      .onConfigRefreshed((outcome) => {
+        if (!outcome.changed || !outcome.snapshot) {
+          return;
+        }
+        handleImported(outcome.snapshot);
+        toast.success(`「${outcome.name}」订阅已自动更新：${outcome.enabled} 个可用站点`);
+        log.info("config auto refreshed", {
+          id: outcome.configId,
+          sites: outcome.sites,
+          enabled: outcome.enabled,
+        });
+      })
+      .then((off) => {
+        if (alive) {
+          unlisten = off;
+        } else {
+          off();
+        }
+      })
+      .catch((err) => {
+        // 老后端 / 无事件权限时退化为「只在设置页手动检查」，不打断启动。
+        log.warn("config-refreshed listen failed", { message: errorMessage(err) });
+      });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [handleImported]);
+
+  // 后端 active 配置与 localStorage 缓存可能不一致（重启后后端换了配置、
+  // 外部删了配置文件等）。启动时以 Rust 的 ConfigStore 为准刷新一次，
+  // 否则会出现「界面列着 101 个站点、聚合搜索却跑 0 个站点」。
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const snapshot = await api.configActive();
+        if (!alive || !snapshot || snapshot.sites.length === 0) {
+          return;
+        }
+        // 后端 active 配置是唯一真源；换过配置就让旧 scope 的缓存整体失效。
+        pageCache.setScope(snapshot.id);
+        setSourceCacheScope(snapshot.id);
+        noDetailSources.setScope(snapshot.id);
+        // 后端是唯一真源：即使 configId 相同，运行策略升级（例如导入时屏蔽
+        // jar 源）也会改变 sites，必须无条件覆盖旧缓存，否则前端又会列出
+        // 已被禁止运行的站点。
+        setCache({
+          configId: snapshot.id,
+          sites: snapshot.sites,
+          lives: (snapshot.lives ?? []) as LiveSource[],
+        });
+        // 记住的首页站若不在当前 active 配置的可用站里（换配置/重导入/
+        // 站点被屏蔽），清掉它，让首页回退到默认站并重新自动顺延。
+        const usableKeys = new Set(usableHomeSites(snapshot.sites).map((s) => s.key));
+        const current = useAppStore.getState().preferredSite;
+        if (current && !usableKeys.has(current)) {
+          setPreferredSite("");
+        }
+        log.info("app ready", {
+          version: APP_VERSION,
+          configId: snapshot.id,
+          configName: snapshot.name,
+          sites: snapshot.sites.length,
+          enabled: snapshot.sites.filter((site) => site.enabled).length,
+          lives: snapshot.lives?.length ?? 0,
+        });
+      } catch (err) {
+        // 后端没有该命令时保留本地缓存，不打断启动。
+        log.warn("config_active failed", { message: errorMessage(err) });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [setCache, setPreferredSite]);
+
+  const sectionPath = `/${location.pathname.split("/")[1] ?? ""}`;
+  const section =
+    location.pathname.startsWith("/detail") || location.pathname.startsWith("/player")
+      ? "home"
+      : sectionPath === "/" || sectionPath === ""
+        ? "home"
+        : sectionPath.slice(1);
+
+  return (
+    <ConfigActionsContext.Provider
+      value={{ onImported: handleImported, onConfigRemoved: handleConfigRemoved }}
+    >
+      <div className={sidebarCollapsed ? "app is-sidebar-collapsed" : "app"}>
+      <aside className={sidebarCollapsed ? "sidebar is-collapsed" : "sidebar"}>
+        <div className="brand">
+          <span className="brand__mark">
+            <img src="/icon.svg" alt="" />
+          </span>
+          <span className="brand__text">
+            Luma
+            <small>TVBox 兼容</small>
+          </span>
+        </div>
+        <nav className="nav">
+          {NAV_ITEMS.map((item) => {
+            const loc = viewToLocation({ name: item.key });
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className={section === item.key ? "nav__item is-active" : "nav__item"}
+                onClick={() => {
+                  // 侧栏是「平级切换」：替换当前历史条目（与旧 resetTo 语义一致）。
+                  saveScroll();
+                  rNav(loc.pathname + loc.search, { replace: true });
+                }}
+                // 收缩后文字隐藏，靠 title / aria-label 保持可读与可访问。
+                title={item.label}
+                aria-label={item.label}
+              >
+                <span className="nav__icon">
+                  <NavIcon name={item.key} />
+                </span>
+                <span className="nav__label">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+        <div className="sidebar__bottom">
+          <button
+            type="button"
+            className="sidebar__collapse"
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+          >
+            <span className="nav__icon">
+              <NavIcon name="collapse" />
+            </span>
+            <span className="nav__label">{sidebarCollapsed ? "展开" : "收起"}</span>
+          </button>
+          <div className="sidebar__foot">
+            <span>本地播放框架</span>
+            <span>Luma · v{APP_VERSION}</span>
+          </div>
+        </div>
+      </aside>
+      <main className="content" ref={contentRef}>
+        <Suspense
+          fallback={
+            <section className="page">
+              <Spinner label="正在打开页面…" />
+            </section>
+          }
+        >
+          <Outlet />
+        </Suspense>
+      </main>
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        navigate={(view) => {
+          saveScroll();
+          const loc = viewToLocation(view);
+          rNav(loc.pathname + loc.search, { replace: true, state: loc.state });
+        }}
+        sites={sites}
+        homeSite={preferredSite}
+        onPickHomeSite={(siteKey) => {
+          setPreferredSite(siteKey);
+          saveScroll();
+          rNav("/", { replace: true });
+        }}
+      />
+      <Toaster
+        theme="dark"
+        position="top-right"
+        duration={4000}
+        closeButton
+        toastOptions={{
+          style: {
+            background: "var(--panel-raised)",
+            color: "var(--text)",
+            border: "1px solid var(--border-strong)",
+            fontFamily: "var(--font-sans)",
+            fontSize: "var(--fs-sm)",
+          },
+        }}
+      />
+      </div>
+    </ConfigActionsContext.Provider>
+  );
+}
+
+// 供本文件内 ConfigActions 消费方（设置页路由包装）以外的潜在使用方导入。
+export function useConfigActions(): ConfigActions | null {
+  return useContext(ConfigActionsContext);
+}

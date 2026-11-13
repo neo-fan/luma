@@ -48,9 +48,11 @@ describe("player lifecycle contract", () => {
   });
 
   it("remounts the player page on source / episode / line changes", () => {
-    const app = read("src/App.tsx");
-    expect(app).toMatch(
-      /<PlayerPage[\s\S]{0,400}?key=\{`\$\{view\.siteKey\}:\$\{view\.vodId\}:\$\{view\.playUrl\}`\}/,
+    // react-router 迁移后，PlayerPage 的挂载点在路由包装组件里；
+    // key 必须由 siteKey:vodId:playUrl 派生，切源/切集/切线路时整页干净卸载。
+    const routes = read("src/routes.tsx");
+    expect(routes).toMatch(
+      /<PlayerPage[\s\S]{0,600}?key=\{`\$\{siteKey\}:\$\{vodId\}:\$\{state\.playUrl\}`\}/,
     );
   });
 });

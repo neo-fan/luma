@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Navigate } from "../App";
+import type { Navigate } from "../lib/nav";
 import AsyncBoundary from "../components/AsyncBoundary";
 import ConfirmDialog from "../components/ConfirmDialog";
 import Icon from "../components/Icon";

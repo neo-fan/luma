@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Navigate } from "../App";
+import type { Navigate } from "../lib/nav";
 import AsyncBoundary from "../components/AsyncBoundary";
 import FavStar from "../components/FavStar";
 import PlayButton from "../components/PlayButton";

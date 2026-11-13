@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Navigate } from "../App";
+import type { Navigate } from "../lib/nav";
 import AsyncBoundary from "../components/AsyncBoundary";
 import Empty from "../components/Empty";
 import IconButton from "../components/IconButton";

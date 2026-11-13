@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
-import type { Navigate } from "../App";
+import type { Navigate } from "../lib/nav";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import IconButton from "../components/IconButton";

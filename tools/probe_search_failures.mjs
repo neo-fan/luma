@@ -293,6 +293,12 @@ try {
       return 'OK';
     })().catch((e) => 'ERR:' + JSON.stringify(e))`);
     console.log(`[info] cleanup: ${removed}`);
+    // 后端 active 已恢复，但前端内存里还是探针配置的站点缓存；必须 reload
+    // 让启动的 config_active 刷新跑一遍，否则后续验收（命令面板搜索等）
+    // 会在残留 stub 站点上跑出假失败。
+    if (removed === "OK" || removed === "NONE") {
+      await cdp.eval(`location.reload(); 'OK'`);
+    }
   } catch (err) {
     console.error(`[warn] cleanup failed: ${err && err.message ? err.message : err}`);
   }

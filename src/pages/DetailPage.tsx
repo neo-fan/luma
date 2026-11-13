@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Navigate } from "../App";
+import type { Navigate } from "../lib/nav";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";

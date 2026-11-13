@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Command } from "cmdk";
 import type { Site } from "../types/tvbox";
-import type { Navigate } from "../App";
+import type { Navigate } from "../lib/nav";
 
 interface CommandPaletteProps {
   open: boolean;

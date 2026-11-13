@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import type { Navigate } from "../App";
+import type { Navigate } from "../lib/nav";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Icon from "../components/Icon";

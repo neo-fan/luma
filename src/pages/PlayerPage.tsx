@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Navigate } from "../App";
+import type { Navigate } from "../lib/nav";
 import ErrorBar from "../components/ErrorBar";
 import SourcePicker from "../components/SourcePicker";
 import PlayerHeader from "../components/player/PlayerHeader";
