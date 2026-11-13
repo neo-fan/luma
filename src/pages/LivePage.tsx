@@ -3,6 +3,7 @@ import type { Navigate } from "../lib/nav";
 import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import IconButton from "../components/IconButton";
+import AppSelect from "../components/AppSelect";
 import Spinner from "../components/Spinner";
 import { api, errorMessage } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
@@ -330,19 +331,17 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       <header className="page-head">
         <div className="page-head__main">
           <h1 className="page-title">直播</h1>
-          <select
-            className="select"
+          <AppSelect
+            ariaLabel="选择直播源"
             value={String(draftIndex)}
-            onChange={(event) => switchSource(Number(event.target.value))}
-            aria-label="选择直播源"
-          >
-            {lives.map((item, index) => (
-              <option key={`${item.name}-${index}`} value={index} disabled={!listable[index]}>
-                {item.name || `源 ${index + 1}`}
-                {listable[index] ? "" : "（无列表）"}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => switchSource(Number(value))}
+            options={lives.map((item, index) => ({
+              value: String(index),
+              label: (item.name || `源 ${index + 1}`) + (listable[index] ? "" : "（无列表）"),
+              disabled: !listable[index],
+              disabledHint: listable[index] ? undefined : "无列表",
+            }))}
+          />
           <span className="page-meta">{total > 0 ? `${total} 个频道` : "—"}</span>
         </div>
         <IconButton

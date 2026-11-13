@@ -3,6 +3,7 @@ import ConfirmDialog from "../ConfirmDialog";
 import Empty from "../Empty";
 import ErrorBar from "../ErrorBar";
 import IconButton from "../IconButton";
+import AppSelect from "../AppSelect";
 import Spinner from "../Spinner";
 import { cleanConfigName, describeConfigSource, describeRefreshState, formatImportedAt, formatRelativeTime } from "../../lib/config";
 import { api, errorMessage } from "../../lib/invoke";
@@ -247,19 +248,19 @@ export default function ConfigListSection({
           <span className="refresh-bar__title">订阅自动刷新</span>
           <span className="refresh-bar__hint">{refreshHint}</span>
         </div>
-        <select
-          className="select refresh-bar__select"
-          aria-label="订阅自动刷新间隔"
-          value={settings?.intervalHours ?? 12}
+        <AppSelect
+          ariaLabel="订阅自动刷新间隔"
+          value={String(settings?.intervalHours ?? 12)}
           disabled={savingInterval || !settings}
-          onChange={(event) => void changeInterval(Number(event.target.value))}
-        >
-          <option value={0}>关闭</option>
-          <option value={1}>每 1 小时</option>
-          <option value={6}>每 6 小时</option>
-          <option value={12}>每 12 小时</option>
-          <option value={24}>每 24 小时</option>
-        </select>
+          onChange={(value) => void changeInterval(Number(value))}
+          options={[
+            { value: "0", label: "关闭" },
+            { value: "1", label: "每 1 小时" },
+            { value: "6", label: "每 6 小时" },
+            { value: "12", label: "每 12 小时" },
+            { value: "24", label: "每 24 小时" },
+          ]}
+        />
         <button
           type="button"
           className="btn btn--sm"

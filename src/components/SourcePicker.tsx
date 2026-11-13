@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import Empty from "./Empty";
 import ErrorBar from "./ErrorBar";
 import IconButton from "./IconButton";
+import AppSelect from "./AppSelect";
 import Spinner from "./Spinner";
 import { errorMessage } from "../lib/invoke";
 import {
@@ -249,16 +250,16 @@ export default function SourcePicker({
             aria-label="换源检索关键词"
             onChange={(event) => setKeyword(event.target.value)}
           />
-          <select
-            className="select"
-            value={timeoutMs}
-            aria-label="检索时长"
-            title="慢源较多时放宽墙钟，可列出更多候选；仅手动重新搜索时生效"
-            onChange={(event) => setTimeoutMs(Number(event.target.value))}
-          >
-            <option value={20_000}>20 秒</option>
-            <option value={35_000}>35 秒</option>
-          </select>
+          <AppSelect
+            ariaLabel="检索时长"
+            triggerTitle="慢源较多时放宽墙钟，可列出更多候选；仅手动重新搜索时生效"
+            value={String(timeoutMs)}
+            onChange={(value) => setTimeoutMs(Number(value))}
+            options={[
+              { value: "20000", label: "20 秒" },
+              { value: "35000", label: "35 秒" },
+            ]}
+          />
           <button type="submit" className="btn btn--primary" disabled={loading || backfilling}>
             重新搜索
           </button>

@@ -44,18 +44,18 @@ export default function SiteSelect({
   const triggerLabel = isAll ? "全部站点" : current?.name ?? "选择站点";
 
   return (
-    <div className="site-select" data-value={value}>
+    <div className="site-select app-select" data-value={value}>
       <Select.Root value={value} onValueChange={onChange}>
         <Select.Trigger asChild aria-label={triggerLabel} title={triggerLabel}>
-          <button type="button" className="site-select__trigger">
+          <button type="button" className="site-select__trigger app-select__trigger">
             <Icon name="globe" />
-            <span className="site-select__label">{triggerLabel}</span>
+            <span className="site-select__label app-select__label">{triggerLabel}</span>
             <Icon name="chevron" />
           </button>
         </Select.Trigger>
         <Select.Portal>
           <Select.Content
-            className="site-select__menu"
+            className="site-select__menu app-select__menu"
             role="listbox"
             aria-label="选择站点"
             position="popper"
@@ -67,12 +67,12 @@ export default function SiteSelect({
                 <Select.Item
                   value={ALL_SITES}
                   className={
-                    isAll ? "site-select__item is-active" : "site-select__item"
+                    isAll ? "site-select__item app-select__item is-active" : "site-select__item app-select__item"
                   }
                 >
                   <Icon name="globe" />
                   <Select.ItemText asChild>
-                    <span className="site-select__name">全部站点</span>
+                    <span className="site-select__name app-select__name">全部站点</span>
                   </Select.ItemText>
                 </Select.Item>
               ) : null}
@@ -88,19 +88,20 @@ export default function SiteSelect({
                     title={site.name}
                     className={
                       (site.key === value
-                        ? "site-select__item is-active"
-                        : "site-select__item") + (blocked ? " is-disabled" : "")
+                        ? "site-select__item app-select__item is-active"
+                        : "site-select__item app-select__item") +
+                      (blocked ? " is-disabled" : "")
                     }
                   >
                     <Select.ItemText asChild>
-                      <span className="site-select__name">{site.name}</span>
+                      <span className="site-select__name app-select__name">{site.name}</span>
                     </Select.ItemText>
                     {blocked ? (
-                      <small className="site-select__tag">
+                      <small className="site-select__tag app-select__tag">
                         {disabledHints?.get(site.key) ?? "不可选"}
                       </small>
                     ) : site.runtime === "jvm" ? (
-                      <small className="site-select__tag">jar 源</small>
+                      <small className="site-select__tag app-select__tag">jar 源</small>
                     ) : null}
                   </Select.Item>
                 );
