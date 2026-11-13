@@ -462,6 +462,30 @@ textarea {
   margin: 14px 0 4px;
 }
 
+/* 频道台标：来自 fanmingming/live 仓库的 PNG（多为透明底彩图）。
+   列表里 18px、标题旁 20px，尺寸由组件 width/height 属性给，这里只管观感。 */
+.channel-logo {
+  flex: none;
+  border-radius: 4px;
+  object-fit: contain;
+  /* 深色主题下透明底台标容易糊在背景里，垫一层极浅的白刚好把描边托出来。 */
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* 直播 chip：台标 + 频道名 + 线路数，垂直居中并留 6px 间距。
+   只作用于直播列表，避免影响分类 / 筛选那些纯文字 chip。 */
+.live-chip .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-epg__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .epg-list {
   list-style: none;
   margin: 8px 0 0;

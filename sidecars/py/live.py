@@ -133,6 +133,81 @@ def _epg_localize(value: str) -> str:
         return value
 
 
+# 画质后缀：`东方卫视4K` 要能匹配到 `东方卫视` 的节目单。
+_QUALITY_SUFFIX = re.compile(r"(?:2160p|1080p|720p|4k|8k|uhd|hd|超清|高清|标清|蓝光)$", re.I)
+_SEPARATORS = re.compile(r"[\s\-_.·]+")
+
+
+def _norm_channel(value: str) -> str:
+    """频道名归一：去画质后缀、去空格与分隔符、统一小写。
+
+    `CCTV-1 综合` → `cctv1综合`，`东方卫视4K` → `东方卫视`。
+    """
+    text = _QUALITY_SUFFIX.sub("", (value or "").strip())
+    return _SEPARATORS.sub("", text).lower()
+
+
+def _match_score(target: str, name: str) -> int:
+    """0 = 不匹配；分数越高越可信。
+
+    必须区分 `CCTV1` 与 `CCTV11`：真实的直播源里两者同时存在，用朴素的
+    `target in name` 会让 CCTV1 频道把 CCTV11/12… 的节目单一起收进来（实测
+    一次返回 240 条上限）。这里要求「短的一侧后面不能再跟数字」。
+    """
+    left = _norm_channel(target)
+    right = _norm_channel(name)
+    if not left or not right:
+        return 0
+    if left == right:
+        return 100
+    if right.startswith(left) or left.startswith(right):
+        longer, shorter = (right, left) if right.startswith(left) else (left, right)
+        rest = longer[len(shorter) :]
+        if rest and rest[0].isdigit():
+            return 0
+        # 前缀越长越可信：`cctv1` vs `cctv1综合` 要压过 `c` vs `cctv1综合`
+        # （后者是 channel id 只有一个字母时出现的假阳性）。
+        if len(shorter) < 2:
+            return 0
+        return 80 + round(10 * len(shorter) / len(longer))
+    if left in right or right in left:
+        return 40
+    return 0
+
+
+def _match_channels(
+    target: str,
+    id_to_names: dict[str, set[str]],
+    names_to_id: dict[str, str],
+) -> set[str]:
+    """按频道名找出要取节目单的 channel id 集合。
+
+    优先级：完全同名 > 归一化后相等 / 前缀（带数字边界）> 包含。
+    取到最高分就停，避免「CCTV1」把「CCTV11」也匹配进来。
+    """
+    exact: set[str] = set()
+    if target in names_to_id:
+        exact.add(names_to_id[target])
+    if target in id_to_names:
+        exact.add(target)
+    if exact:
+        return exact
+
+    best_score = 0
+    best: set[str] = set()
+    for cid, names in id_to_names.items():
+        score = max((_match_score(target, name) for name in names), default=0)
+        score = max(score, _match_score(target, cid))
+        if score == 0:
+            continue
+        if score > best_score:
+            best_score = score
+            best = {cid}
+        elif score == best_score:
+            best.add(cid)
+    return best
+
+
 def parse_epg(raw: str, channel: str, date: str | None = None) -> dict[str, Any]:
     """Parse an XMLTV payload and return programmes for one channel.
 
@@ -173,15 +248,7 @@ def parse_epg(raw: str, channel: str, date: str | None = None) -> dict[str, Any]
     except ET.ParseError:
         return {"channel": channel, "date": date, "programs": []}
 
-    # Resolve which channel ids match the requested name.
-    matched: set[str] = set()
-    if target in names_to_id:
-        matched.add(names_to_id[target])
-    if target in id_to_names:
-        matched.add(target)
-    for cid, names in id_to_names.items():
-        if any(target in name or name in target for name in names):
-            matched.add(cid)
+    matched = _match_channels(target, id_to_names, names_to_id)
     if not matched:
         return {"channel": channel, "date": date, "programs": []}
 
@@ -215,4 +282,57 @@ def parse_epg(raw: str, channel: str, date: str | None = None) -> dict[str, Any]
             elem.clear()
 
     programs.sort(key=lambda item: item["start"])
-    return {"channel": channel, "date": date, "programs": programs}
+    return {"channel": channel, "date": date, "programs": _within_window(programs, date)}
+
+
+# 单频道单日最多返回多少条：e.xml 一份覆盖 9 天，不裁剪的话 CCTV1 会吐 2213 条，
+# 前端一次渲染 2000+ 个 <li>，面板直接卡住。
+MAX_EPG_PROGRAMS = 240
+
+
+def _within_window(programs: list[dict[str, Any]], date: str | None) -> list[dict[str, Any]]:
+    """只保留 `date` 当天（本地时区）的节目；没有 date 时取前后 3/21 小时。
+
+    e.xml 是滚动 9 天的整表，而界面只展示「今天的节目单」——不过滤的话既费
+    IPC 又费 DOM。日期解析失败（如源给了别的时间格式）就原样返回，宁可多不可少。
+    """
+    now = datetime.now().astimezone()
+    window_start = now - timedelta(hours=3)
+    window_end = now + timedelta(hours=21)
+    key = (date or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", key):
+        try:
+            day = datetime.strptime(key, "%Y-%m-%d").replace(tzinfo=now.tzinfo)
+        except ValueError:
+            day = None
+        if day is not None:
+            window_start = day
+            window_end = day + timedelta(days=1)
+
+    out: list[dict[str, Any]] = []
+    for item in programs:
+        try:
+            start = datetime.fromisoformat(item["start"])
+        except (ValueError, TypeError):
+            out.append(item)
+            continue
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=now.tzinfo)
+        if start >= window_end:
+            continue
+        stop = None
+        if item.get("stop"):
+            try:
+                stop = datetime.fromisoformat(item["stop"])
+                if stop.tzinfo is None:
+                    stop = stop.replace(tzinfo=now.tzinfo)
+            except (ValueError, TypeError):
+                stop = None
+        # 跨天节目（昨天 23:30 开始的）也要留在今天的列表里。
+        if stop is not None:
+            if stop <= window_start:
+                continue
+        elif start < window_start:
+            continue
+        out.append(item)
+    return out[:MAX_EPG_PROGRAMS]

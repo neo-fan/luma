@@ -7,6 +7,8 @@ import Spinner from "../components/Spinner";
 import { api, errorMessage } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
 import { getLiveLine, setLiveLine } from "../lib/liveMemory";
+import ChannelLogo from "../components/ChannelLogo";
+import { getEpgUrl } from "../lib/epgSettings";
 import type { LiveChannel, LiveGroup, LiveSource } from "../types/tvbox";
 
 interface LivePageProps {
@@ -110,6 +112,19 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
   useEffect(() => {
     setDraftIndex(activeIndex);
   }, [activeIndex]);
+
+  /**
+   * 预热节目单（只下载不解析）。
+   *
+   * 默认节目单是 7.6 MB 的 XMLTV，冷缓存要十几秒；用户点开频道才发现
+   * 「加载节目单…」会以为是坏的。进直播页就先在后台把它拉下来（Rust 侧缓存
+   * 3 小时），点频道时只剩 ~0.5s 的解析。失败静默——节目单不是主链路。
+   */
+  useEffect(() => {
+    void api.liveEpgWarm(getEpgUrl()).catch(() => {
+      /* 预热失败不影响直播；真正打开节目单时还会再试一次 */
+    });
+  }, []);
 
   // 卸载时清掉挂起的切换定时器，避免对已卸载组件 setState。
   useEffect(
@@ -294,6 +309,7 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
                   title={channel.lines[remembered]}
                   onClick={() => play(channel, remembered)}
                 >
+                  <ChannelLogo name={channel.name} logo={channel.logo} />
                   {channel.name}
                   {multi ? (
                     <span className="chip__badge" aria-hidden="true">

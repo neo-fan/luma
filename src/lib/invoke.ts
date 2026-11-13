@@ -344,6 +344,14 @@ export const api = {
     return call("live_epg", { epgUrl, channel, date });
   },
 
+  /**
+   * 预热节目单原始表（只下载不解析）。直播页挂载时调一次：`e.xml` 有 7.6 MB，
+   * 冷缓存首次要十几秒，用户点频道时再拉就会对着「加载节目单…」干等。
+   */
+  liveEpgWarm(epgUrl: string): Promise<void> {
+    return call("live_epg_warm", { epgUrl });
+  },
+
   proxyStatus(): Promise<ProxyStatus> {
     return call("proxy_status");
   },
