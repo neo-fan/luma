@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createSourceCache } from "./sourceCache";
+import { SOURCE_CACHE_TTL } from "./sourceCache";
 import type { SourceCacheOptions } from "./sourceCache";
 import type { AggregateRow } from "./sources";
 import { EMPTY_SOURCE_STATS } from "./sources";
@@ -165,6 +166,34 @@ describe("sourceCache 后台补全", () => {
     expect(fetchRows.mock.calls[0][2]).toBe(35_000);
     await cache.refresh(TITLE, SITES, "s1");
     expect(fetchRows).toHaveBeenCalledTimes(2);
+  });
+
+  it("短预算（partial）检索拿到结果但不标完整，之后仍会补全", async () => {
+    const { cache, fetchRows } = setup();
+    const view = await cache.ensure(TITLE, SITES, "", { timeoutMs: 8_000, partial: true });
+    expect(fetchRows.mock.calls[0][2]).toBe(8_000);
+    expect(view.options.length).toBeGreaterThan(0); // 结果可用
+    expect(view.complete).toBe(false); // 慢站可能没回来，不能算完整
+
+    // 下一次正常 ensure 必须再发一次，把慢站补上。
+    await cache.ensure(TITLE, SITES);
+    expect(fetchRows).toHaveBeenCalledTimes(2);
+    expect(cache.view(TITLE, SITES).complete).toBe(true);
+  });
+
+  it("检索结果过期后不再假装完整，会重新检索一次", async () => {
+    let clock = 1_000;
+    const { cache, fetchRows } = setup({ now: () => clock });
+    await cache.ensure(TITLE, SITES);
+    expect(fetchRows).toHaveBeenCalledTimes(1);
+
+    // bundle 与「已完整检索」必须同步过期：否则这次会直接返回空视图，
+    // 跨源自愈拿到 0 个候选（日志里 probed:0 的成因）。
+    clock += SOURCE_CACHE_TTL + 1;
+    const view = await cache.ensure(TITLE, SITES);
+    expect(fetchRows).toHaveBeenCalledTimes(2);
+    expect(view.options.length).toBeGreaterThan(0);
+    expect(view.complete).toBe(true);
   });
 
   it("后台预取失败时保留已有搜索缓存，手动刷新则把错误抛给面板", async () => {

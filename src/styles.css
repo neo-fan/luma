@@ -508,6 +508,36 @@ textarea {
   color: var(--ok);
 }
 
+/* 空详情说明（发现/榜单型源）：中性提示，不是错误，所以不用红条。 */
+.detail-empty {
+  max-width: 640px;
+  margin: 4px 0 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.detail-empty__title {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.detail-empty__desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.detail-empty__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* 设置页节目单地址输入框与按钮行。 */
 .epg-row {
   display: flex;

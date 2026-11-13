@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CACHE_TTL, pageCache } from "./pageCache";
 import { mergeHomeFallback } from "./home";
 import { pickRecoveryCandidate } from "./detailRecovery";
+import { noDetailSources } from "./noDetailSource";
 import { loadCategoryPage } from "./categoryLoad";
 import { log } from "./logger";
 import type {
@@ -102,7 +103,14 @@ async function recoverDetail(
 ): Promise<VodInfo[]> {
   try {
     const page = await api.search(siteKey, title, 1);
-    const candidate = pickRecoveryCandidate(page?.list, title, vodId);
+    const found = page?.list ?? [];
+    // 详情空 + 同站按名也搜不到：这个源大概率只做发现/推荐（如「豆瓣[py]」的
+    // detailContent 直接返回空），记下来让详情页换成人话，而不是「加载失败」。
+    // 只影响文案，回查与跨源自愈照旧，所以单次即记也不会带来功能风险。
+    if (found.length === 0 && noDetailSources.note(siteKey, vodId)) {
+      log.info("source marked as no-detail", { siteKey, vodId, title });
+    }
+    const candidate = pickRecoveryCandidate(found, title, vodId);
     if (!candidate) {
       log.warn("detail recovery: no title match", { siteKey, vodId, title });
       return [];

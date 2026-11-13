@@ -20,6 +20,15 @@ import type { Site } from "../types/tvbox";
 const MAX_PROBES = 6;
 /** 与 sourceCache.view 一致的门槛：只认精确/包含片名，弱相关会把人送到别的片子。 */
 const MIN_MATCH_SCORE = 2;
+/**
+ * 自愈只等 8 秒，而不是面板那套 20 秒全站预算。
+ *
+ * 目标只是「找到一个能播的源」，不需要等齐所有慢站；实测真实配置里大部分
+ * 站点在几秒内就有回包，等满 20 秒只是被少数超时站拖住（日志里一次完整的
+ * 自愈要 21 秒，用户盯着错误页太久）。结果按 partial 入缓存，不标「已完整
+ * 检索」，后台 prefetch 仍会补一次全量，换源面板不受影响。
+ */
+const RECOVERY_BUDGET_MS = 8_000;
 
 export interface CrossSourceResult {
   found: SourceOption | null;
@@ -42,7 +51,10 @@ export async function findPlayableSource(
   }
 
   // 复用详情页 / 换源面板的后台预取：ensure 会共享同一个 in-flight Promise。
-  const view = await ensureSources(word, sites, excludeSiteKey);
+  const view = await ensureSources(word, sites, excludeSiteKey, {
+    timeoutMs: RECOVERY_BUDGET_MS,
+    partial: true,
+  });
   if (!isAlive()) {
     return { found: null, probed: 0 };
   }

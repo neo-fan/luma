@@ -165,7 +165,10 @@ describe("frontend: empty detail is visible and recoverable", () => {
   it("passes the known film title from the detail page", () => {
     const page = read("src/pages/DetailPage.tsx");
     expect(page).toMatch(/api\.detail\(siteKey, vodId, reload > 0, \(title \|\| ""\)\.trim\(\)\)/);
-    expect(page).toContain("未提供影片详情");
-    expect(page).toContain("只提供发现/推荐");
+    // 空列表不等于请求失败：文案要说清「这个源没有播放列表」，并区分是否为
+    // 已经证实过的榜单/推荐源（noDetailSources 记忆）。
+    expect(page).toContain("不提供播放列表");
+    expect(page).toContain("只提供榜单/推荐");
+    expect(page).toContain("noDetailSources.has(siteKey)");
   });
 });

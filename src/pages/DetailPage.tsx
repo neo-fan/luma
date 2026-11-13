@@ -13,6 +13,7 @@ import type { Episode, PlayLine } from "../lib/format";
 import { findPlayableSource } from "../lib/crossSourceRecovery";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { pageCache } from "../lib/pageCache";
+import { noDetailSources } from "../lib/noDetailSource";
 import { usePageState } from "../lib/usePageState";
 import { countEpisodes } from "../lib/sources";
 import { prefetchSources } from "../lib/sourceCache";
@@ -105,6 +106,12 @@ export default function DetailPage({
   // 瞬时状态不缓存：刷新序号每次挂载归零，保证回退一定走缓存。
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * 「当前源没给这部片详情」与「请求真的失败」要分开：
+   * 前者（列表为空）在 TVBox 生态里很常见——发现/榜单型源本来就只给海报，
+   * 不是客户端故障，不该画红色错误条；后者（抛异常）才按失败处理。
+   */
+  const [empty, setEmpty] = useState(false);
   const [reload, setReload] = useState(0);
   const [favorite, setFavorite] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
@@ -133,6 +140,7 @@ export default function DetailPage({
     const run = async () => {
       setLoading(true);
       setError("");
+      setEmpty(false);
       setFallback("idle");
       fallbackCancelRef.current = false;
       try {
@@ -144,13 +152,9 @@ export default function DetailPage({
         const first = list && list.length > 0 ? list[0] : null;
         if (!first) {
           setVod(null);
-          // 带上站点与 id：这类源常见于「发现/推荐」型配置，脚本的
-          // detailContent 直接返回 {"list": []}，光说「未获取到影片详情」
-          // 用户既不知道是哪个源，也不知道下一步该换源还是重试。
-          setError(
-            `当前源「${siteName || siteKey}」未提供影片详情` +
-              (vodId ? `（id ${vodId}）` : "（缺少影片 id）"),
-          );
+          // 不算异常：只是这个源没给播放列表（发现/榜单型源就是这样）。
+          // 文案与后续动作分开处理，红色错误条只留给真正的请求失败。
+          setEmpty(true);
           // 发现型源（豆瓣[py] 等）连 searchContent 都没有，同站按名回查必然
           // 失败。改用片名在其它站点里找一个真能播的详情，成功就直接切过去；
           // 用户一旦手动操作（重试 / 打开换源面板）就中止，避免迟到结果跳页。
@@ -206,6 +210,7 @@ export default function DetailPage({
         }
         setVod(first);
         setFallback("idle");
+        setEmpty(false);
         setLineIndex(0);
       } catch (err) {
         if (alive) {
@@ -387,35 +392,55 @@ export default function DetailPage({
   }
 
   if (error || !vod) {
+    const retry = () => {
+      fallbackCancelRef.current = true;
+      // 手动重试意味着用户不接受「这个源没详情」，把记忆清掉重新判定。
+      noDetailSources.forget(siteKey);
+      setReload((value) => value + 1);
+    };
+    const openSources = () => {
+      fallbackCancelRef.current = true;
+      setShowSources(true);
+    };
+    // 这个源已被证实「详情空 + 按名也搜不到」（含本次请求刚判定的）：直接
+    // 说明它是榜单/推荐源，不让用户以为是客户端坏了。
+    const known = !error && empty && noDetailSources.has(siteKey);
     return (
       <section className="page">
         <header className="page-head">
           <IconButton name="back" label="返回" onClick={onBack} />
-          <IconButton
-            name="swap"
-            label="换源"
-            onClick={() => {
-              fallbackCancelRef.current = true;
-              setShowSources(true);
-            }}
-          />
+          <IconButton name="swap" label="换源" onClick={openSources} />
         </header>
-        <ErrorBar
-          message={`详情加载失败：${error || "影片不存在"}`}
-          onRetry={() => {
-            fallbackCancelRef.current = true;
-            setReload((value) => value + 1);
-          }}
-        />
-        {fallback === "searching" ? (
-          <p className="tip">
-            正在按片名从其它源查找《{title}》的可播放版本，找到后会自动切换；也可以直接点右上角的换源图标手动选择。
-          </p>
+        {error ? (
+          <ErrorBar message={`详情加载失败：${error}`} onRetry={retry} />
         ) : (
-          <p className="tip">
-            {title ? `《${title}》` : "该影片"}在此源暂无可用详情：TVBox 中部分源只提供发现/推荐、没有播放列表，
-            也可能是影片 id 失效或网络波动。点右上角的换源图标按片名从其它站点查找，或点错误条上的重试图标重新拉取。
-          </p>
+          <div className="detail-empty" role="status">
+            <p className="detail-empty__title">
+              {known
+                ? `「${siteName || siteKey}」不提供播放列表`
+                : title
+                  ? `《${title}》在当前源没有播放列表`
+                  : "当前源没有返回影片详情"}
+            </p>
+            <p className="detail-empty__desc">
+              {known
+                ? "这类源只提供榜单/推荐（海报、评分、片名），点任何影片都不会有剧集，换片也一样。"
+                : "可能是影片 id 失效或站点临时波动，也可能是这个源只做发现/推荐。"}
+              {fallback === "searching"
+                ? `正在按片名从其它源查找${title ? `《${title}》` : ""}的可播放版本，找到后会自动切换…`
+                : fallback === "none"
+                  ? "已按片名在其它源查找，暂时没有找到可播放的版本。"
+                  : ""}
+            </p>
+            <div className="detail-empty__actions">
+              <button type="button" className="btn btn--ghost btn--sm" onClick={retry}>
+                重试
+              </button>
+              <button type="button" className="btn btn--primary btn--sm" onClick={openSources}>
+                换源
+              </button>
+            </div>
+          </div>
         )}
         {showSources ? (
           <SourcePicker

@@ -46,6 +46,11 @@ export interface SourceBundle {
   sites: SourceSite[];
   storedAt: number;
   origin: SourceOrigin;
+  /**
+   * 短预算检索（详情自愈用）打上的标记：结果可用，但慢站可能还没回来，
+   * 所以不算「已完整检索」——后续 prefetch 仍会补一次全预算，面板也能刷新。
+   */
+  partial?: boolean;
 }
 
 /** 面板直接消费的视图；全部由缓存同步派生，不携带 Promise。 */
@@ -81,13 +86,18 @@ export interface SourceCache {
     sites: readonly Site[],
     stats: SourceSearchStats,
     origin: SourceOrigin,
+    partial?: boolean,
   ): void;
   view(title: string, sites: readonly Site[], excludeSiteKey?: string): SourceView;
+  /**
+   * `partial` 用于「等不起全站检索」的场景（空详情的跨源自愈）：只等
+   * `timeoutMs`，拿到的结果照常入缓存，但不标记为完整，避免慢站被永久漏掉。
+   */
   ensure(
     title: string,
     sites: readonly Site[],
     excludeSiteKey?: string,
-    options?: { force?: boolean; timeoutMs?: number },
+    options?: { force?: boolean; timeoutMs?: number; partial?: boolean },
   ): Promise<SourceView>;
   refresh(
     word: string,
@@ -170,8 +180,14 @@ function sortOptions(options: SourceOption[]): SourceOption[] {
 class MemorySourceCache implements SourceCache {
   private readonly bundles = new Map<string, SourceBundle>();
   private readonly pending = new Map<string, Promise<void>>();
-  /** 已经按该片名做过完整检索；即使结果为空也不反复发 20s 请求。 */
-  private readonly completeKeys = new Set<string>();
+  /**
+   * 已按该片名做过完整检索（值 = 完成时刻）。
+   *
+   * 必须带时间戳：结果 bundle 有 TTL，这两个东西若不同步，就会出现「十分钟前
+   * 检索过 → bundle 已过期被清 → 这里仍短路」的假缓存命中，`ensure` 直接返回
+   * 空视图，跨源自愈一个候选都探不到（实测日志 probed:0 就是这么来的）。
+   */
+  private readonly completeKeys = new Map<string, number>();
   private readonly warmed = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private readonly fetchRows: NonNullable<SourceCacheOptions["fetchRows"]>;
@@ -204,6 +220,19 @@ class MemorySourceCache implements SourceCache {
     }
   }
 
+  /** 「已完整检索过」也要跟着 TTL 失效，与 bundle 一起过期。 */
+  private isComplete(key: string): boolean {
+    const at = this.completeKeys.get(key);
+    if (at === undefined) {
+      return false;
+    }
+    if (this.now() - at > this.ttlMs) {
+      this.completeKeys.delete(key);
+      return false;
+    }
+    return true;
+  }
+
   private fresh(): SourceBundle[] {
     const now = this.now();
     const alive: SourceBundle[] = [];
@@ -223,6 +252,7 @@ class MemorySourceCache implements SourceCache {
     sites: readonly Site[],
     stats: SourceSearchStats,
     origin: SourceOrigin,
+    partial = false,
   ): void {
     const word = keyword.trim();
     const key = normalizeTitle(word);
@@ -237,6 +267,7 @@ class MemorySourceCache implements SourceCache {
       sites: siteSnapshot(sites),
       storedAt: this.now(),
       origin,
+      partial,
     });
     while (this.bundles.size > MAX_BUNDLES) {
       const oldest = this.bundles.keys().next().value;
@@ -303,6 +334,7 @@ class MemorySourceCache implements SourceCache {
     }
     const exact = bundles.some(
       (bundle) =>
+        !bundle.partial &&
         normalizeTitle(bundle.keyword) === key &&
         (bundle.origin !== "search" || bundle.stats.total > 0),
     );
@@ -313,7 +345,7 @@ class MemorySourceCache implements SourceCache {
         matched: options.filter((item) => item.matchScore >= 2).length,
       },
       origin: origins.size === 0 ? "none" : origins.size === 1 ? [...origins][0] : "mixed",
-      complete: exact || this.completeKeys.has(key),
+      complete: exact || this.isComplete(key),
       pending: this.pending.has(key),
       cached: options.length > 0,
       ageMs: baseAt > 0 ? now - baseAt : undefined,
@@ -324,7 +356,7 @@ class MemorySourceCache implements SourceCache {
     title: string,
     sites: readonly Site[],
     excludeSiteKey = "",
-    options: { force?: boolean; timeoutMs?: number } = {},
+    options: { force?: boolean; timeoutMs?: number; partial?: boolean } = {},
   ): Promise<SourceView> {
     const word = title.trim();
     const key = normalizeTitle(word);
@@ -332,16 +364,26 @@ class MemorySourceCache implements SourceCache {
       return this.view(word, sites, excludeSiteKey);
     }
     const current = this.view(word, sites, excludeSiteKey);
-    if (!options.force && (this.completeKeys.has(key) || current.complete)) {
+    if (!options.force && (this.isComplete(key) || current.complete)) {
       return current;
     }
 
     const inflight = this.pending.get(key);
     if (inflight && !options.force) {
-      try {
-        await inflight;
-      } catch {
-        // 失败由调用方展示，这里仍返回当前缓存视图。
+      if (options.partial) {
+        // 已有一轮完整检索在跑（Prefetch 可能先于自愈发起）：只等自己的短预算，
+        // 超时就带着现有缓存返回，不让调用方陪着等满 20 秒。
+        const waitMs = (options.timeoutMs ?? PREFETCH_TIMEOUT_MS) + 2_000;
+        await Promise.race([
+          inflight.catch(() => undefined),
+          new Promise<void>((resolve) => setTimeout(resolve, waitMs)),
+        ]);
+      } else {
+        try {
+          await inflight;
+        } catch {
+          // 失败由调用方展示，这里仍返回当前缓存视图。
+        }
       }
       return this.view(word, sites, excludeSiteKey);
     }
@@ -355,8 +397,11 @@ class MemorySourceCache implements SourceCache {
       if (scopeAtStart !== this.scope) {
         return;
       }
-      this.publish(word, result.rows, sites, result.stats, options.force ? "manual" : "prefetch");
-      this.completeKeys.add(key);
+      this.publish(word, result.rows, sites, result.stats, options.force ? "manual" : "prefetch", options.partial);
+      // 短预算检索不标完整：慢站可能还没回来，留给下次 prefetch / 面板刷新补全。
+      if (!options.partial) {
+        this.completeKeys.set(key, this.now());
+      }
       if (!options.force) {
         this.prefetches += 1;
       }
@@ -393,13 +438,13 @@ class MemorySourceCache implements SourceCache {
     if (!key || sites.length === 0) {
       return;
     }
-    if (this.completeKeys.has(key) || this.pending.has(key)) {
+    if (this.isComplete(key) || this.pending.has(key)) {
       return;
     }
     const current = this.view(title, sites);
     if (current.complete) {
       // 搜索词就是完整片名：搜索结果已经是全量，无需再检索一次。
-      this.completeKeys.add(key);
+      this.completeKeys.set(key, this.now());
       return;
     }
     // 从搜索结果连续点开多部影片时串行预取，避免同时扇出多次 20s 聚合。
