@@ -1499,6 +1499,22 @@ textarea {
   letter-spacing: -0.01em;
 }
 
+/* 直播分组标题后的「展开全部 N 个 / 收起」内联链接。 */
+.section-title__more {
+  margin-left: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent, #3b82f6);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.section-title__more:hover {
+  text-decoration: underline;
+}
+
 .episode-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
