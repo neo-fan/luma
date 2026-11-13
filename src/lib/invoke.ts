@@ -5,6 +5,7 @@
  * `@tauri-apps/api`，禁止 import 任何 Node 内置模块。
  */
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { CACHE_TTL, pageCache } from "./pageCache";
 import { mergeHomeFallback } from "./home";
 import { pickRecoveryCandidate } from "./detailRecovery";
@@ -29,6 +30,8 @@ import type {
   LiveListResult,
   EpgResult,
   ProxyStatus,
+  RefreshOutcome,
+  RefreshSettings,
   ResultPage,
   SiteHealthResult,
   SpiderMethod,
@@ -177,6 +180,29 @@ export const api = {
 
   configRemove(id: string): Promise<void> {
     return call("config_remove", { id });
+  },
+
+  /** 订阅自动刷新设置（间隔 + active 的上次检查/变化/错误）。 */
+  configRefreshSettings(): Promise<RefreshSettings> {
+    return call("config_refresh_settings");
+  },
+
+  /** 设置自动刷新间隔（小时，0 = 关闭）。返回新的聚合视图。 */
+  configSetRefreshInterval(hours: number): Promise<RefreshSettings> {
+    return call("config_set_refresh_interval", { hours });
+  },
+
+  /** 手动检查订阅（id 省略 = active）；`changed` 为假时 snapshot 缺省。 */
+  configRefresh(id?: string): Promise<RefreshOutcome> {
+    return call("config_refresh", { id });
+  },
+
+  /**
+   * 后台定时刷新到点后的推送。放在本模块是为了守住「唯一 IPC 入口」：
+   * 页面只能通过这里订阅，不得直接 import `@tauri-apps/api/event`。
+   */
+  onConfigRefreshed(handler: (outcome: RefreshOutcome) => void): Promise<UnlistenFn> {
+    return listen<RefreshOutcome>("config-refreshed", (event) => handler(event.payload));
   },
 
   spiderInvoke(req: SpiderRequest): Promise<unknown> {

@@ -155,6 +155,38 @@ export interface ConfigMeta {
   name: string;
   source: ConfigSource;
   importedAt: string;
+  /** 只有网络地址导入的配置能定时回拉；file / 粘贴文本恒为 false。 */
+  refreshable: boolean;
+  /** 上次检查的墙钟毫秒（含无变化与失败），从未检查过则缺省。 */
+  lastCheckedAt?: number;
+  /** 上次内容真的变化并落库的时刻。 */
+  lastChangedAt?: number;
+  /** 上次检查失败的原因；成功后清空。 */
+  refreshError?: string;
+}
+
+/** 订阅自动刷新的全局设置 + active 配置的检查状态（config_refresh_settings）。 */
+export interface RefreshSettings {
+  /** 小时；0 = 关闭。 */
+  intervalHours: number;
+  configId?: string;
+  lastCheckedAt?: number;
+  lastChangedAt?: number;
+  error?: string;
+  /** 下次到期时刻；关闭或无 active 时缺省。 */
+  nextDueAt?: number;
+}
+
+/** 一次订阅刷新检查的结果（config_refresh / config-refreshed 事件）。 */
+export interface RefreshOutcome {
+  configId: string;
+  name: string;
+  /** false 表示远端内容没变，站点缓存无需替换。 */
+  changed: boolean;
+  sites: number;
+  enabled: number;
+  checkedAt: number;
+  snapshot?: ConfigSnapshot;
 }
 
 /** HTTP 拉取结果（http_fetch 返回） */

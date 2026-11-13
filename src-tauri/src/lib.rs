@@ -64,7 +64,7 @@ pub use error::{code, AppError};
 use config::ConfigStore;
 use store::LibraryStore;
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -123,6 +123,42 @@ pub fn run() {
                     tracing::error!(error = %err, "local proxy failed to start");
                 }
             }
+
+            // 订阅定时刷新：60s 一次轻量判定，到期才真正回拉配置。间隔由
+            // 设置页控制（0 = 关闭），改设置后下一个 tick 立即生效，不需要
+            // 重建任务。只刷 active 订阅：刷新非 active 配置对用户没有可见
+            // 收益，却会悄悄改掉别人正在切换过去的那份数据。
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        let store = handle.state::<ConfigStore>();
+                        let Some(id) = store.due_config_id() else {
+                            continue;
+                        };
+                        match store.refresh(Some(&id)).await {
+                            Ok(outcome) if outcome.changed => {
+                                tracing::info!(
+                                    config = %outcome.config_id,
+                                    sites = outcome.sites,
+                                    "subscription refreshed"
+                                );
+                                // 前端据此替换站点缓存；后台订阅更新不能静默
+                                // 改数据却不告诉界面，否则列表与 fan-out 会对不上。
+                                let _ = handle.emit("config-refreshed", &outcome);
+                            }
+                            Ok(_) => {}
+                            Err(err) => tracing::warn!(
+                                config = %id,
+                                code = %err.code,
+                                error = %err.message,
+                                "subscription refresh failed"
+                            ),
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -132,6 +168,9 @@ pub fn run() {
             config::config_activate,
             config::config_rename,
             config::config_remove,
+            config::config_refresh_settings,
+            config::config_set_refresh_interval,
+            config::config_refresh,
             config::site_set_enabled,
             http::http_fetch,
             spider::spider_invoke,

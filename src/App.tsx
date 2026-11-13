@@ -167,6 +167,8 @@ export default function App() {
   const [cache, setCache] = useState<SiteCache | null>(() => readSiteCache());
   const [preferredSite, setPreferredSite] = useState(readHomeSite);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  /** 全局一次性提示（目前只有后台订阅更新会用到）。 */
+  const [toast, setToast] = useState("");
 
   // 收缩偏好跨重启保留；StrictMode 双调用只是写同一个值。
   useEffect(() => {
@@ -316,6 +318,55 @@ export default function App() {
       return null;
     });
   }, []);
+
+  /**
+   * 订阅定时刷新的推送。
+   *
+   * 后台更新不能静默改数据：Rust 侧换了 active 快照，这里的站点缓存必须
+   * 同步替换，否则界面上还是旧站点、fan-out 却已经跑新站点。只在内容真的
+   * 变化（`changed`）时替换——没变化就什么都不做，连提示都不弹。
+   */
+  useEffect(() => {
+    let alive = true;
+    let unlisten: (() => void) | null = null;
+    void api
+      .onConfigRefreshed((outcome) => {
+        if (!outcome.changed || !outcome.snapshot) {
+          return;
+        }
+        handleImported(outcome.snapshot);
+        setToast(`「${outcome.name}」订阅已自动更新：${outcome.enabled} 个可用站点`);
+        log.info("config auto refreshed", {
+          id: outcome.configId,
+          sites: outcome.sites,
+          enabled: outcome.enabled,
+        });
+      })
+      .then((off) => {
+        if (alive) {
+          unlisten = off;
+        } else {
+          off();
+        }
+      })
+      .catch((err) => {
+        // 老后端 / 无事件权限时退化为「只在设置页手动检查」，不打断启动。
+        log.warn("config-refreshed listen failed", { message: errorMessage(err) });
+      });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [handleImported]);
+
+  // 订阅更新提示 4 秒自动消失；期间再次触发会重置计时。
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+    const timer = window.setTimeout(() => setToast(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   // 后端 active 配置与 localStorage 缓存可能不一致（重启后后端换了配置、
   // 外部删了配置文件等）。启动时以 Rust 的 ConfigStore 为准刷新一次，
@@ -508,6 +559,11 @@ export default function App() {
           {content}
         </Suspense>
       </main>
+      {toast ? (
+        <div className="app-toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      ) : null}
     </div>
   );
 }

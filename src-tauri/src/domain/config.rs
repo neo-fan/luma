@@ -14,6 +14,20 @@ use std::time::Duration;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPOS: usize = 20;
 
+/// 站点体检里「手动禁用」写入的原因串。订阅定时刷新会重新派生 runtime，
+/// 必须按这个串把用户手动屏蔽的站点再禁一遍，否则每天更新一次订阅就把
+/// 用户挑出来的慢源/死源全部复活。
+const MANUAL_DISABLE_REASON: &str = "已在站点体检中手动禁用";
+
+/// 订阅刷新的全局间隔（小时，0 = 关闭）。存 meta 而不是加表列：它是运行时
+/// 偏好，不需要跟着 import/runtime 双快照走。
+const META_REFRESH_INTERVAL: &str = "refresh_interval_hours";
+/// 每个配置的刷新状态：`refresh_state:<configId>` → RefreshState JSON。
+const META_REFRESH_PREFIX: &str = "refresh_state:";
+const DEFAULT_REFRESH_HOURS: u32 = 12;
+/// 上限一周：再长就不如关掉，省得「设置了但永远等不到」。
+const MAX_REFRESH_HOURS: u32 = 168;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSource {
     pub kind: String,
@@ -64,6 +78,115 @@ pub struct ConfigMeta {
     pub name: String,
     pub source: ConfigSource,
     pub imported_at: String,
+    /// 只有 `url` 来源能刷新：file/text 没有远端可回拉。
+    pub refreshable: bool,
+    /// 上次检查的墙钟毫秒（含「无变化」与失败）。
+    #[serde(default)]
+    pub last_checked_at: Option<u64>,
+    /// 上次**内容真的变了**并落库的时刻。
+    #[serde(default)]
+    pub last_changed_at: Option<u64>,
+    /// 上次检查失败的原因；成功后清空。
+    #[serde(default)]
+    pub refresh_error: Option<String>,
+}
+
+/// 订阅刷新的运行时状态，序列化进 meta。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RefreshState {
+    #[serde(default)]
+    checked_at: u64,
+    #[serde(default)]
+    changed_at: Option<u64>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// 设置页「订阅自动刷新」用的聚合视图：全局间隔 + active 配置的状态。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshSettings {
+    pub interval_hours: u32,
+    pub config_id: Option<String>,
+    pub last_checked_at: Option<u64>,
+    pub last_changed_at: Option<u64>,
+    pub error: Option<String>,
+    /// 下次到期的墙钟毫秒；关闭 / 无 active 时为 None，UI 拿它显示「约 N 小时后检查」。
+    pub next_due_at: Option<u64>,
+}
+
+/// 一次刷新检查的结果。`changed` 为真时 `snapshot` 是新的运行快照，
+/// 前端用它替换站点缓存；为假时 `snapshot` 为 None（不打扰界面）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshOutcome {
+    pub config_id: String,
+    pub name: String,
+    pub changed: bool,
+    pub sites: usize,
+    pub enabled: usize,
+    pub checked_at: u64,
+    #[serde(default)]
+    pub snapshot: Option<ConfigSnapshot>,
+}
+
+/// 内容签名：判断「订阅到底变没变」。
+///
+/// 只取会真正影响功能的字段，并且递归按 key 排序后再序列化——normalize 的
+/// 输出顺序理论上稳定，但一次多余的字段重排就让用户看到「每天都有更新」，
+/// 这个代价不值得省。`name` / `imported_at` 必须排除：用户改过名、或者只是
+/// 导入时间不同，都不是内容变化。
+fn content_signature(snapshot: &ConfigSnapshot) -> String {
+    let mut value = match serde_json::to_value(snapshot) {
+        Ok(value) => value,
+        Err(_) => return String::new(),
+    };
+    if let Some(map) = value.as_object_mut() {
+        map.remove("name");
+        map.remove("importedAt");
+        map.remove("imported_at");
+        map.remove("id");
+    }
+    canonical_json(&value)
+}
+
+/// 递归按 key 排序的 JSON 序列化；数组顺序保持原样（站点顺序有意义）。
+fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let parts: Vec<String> = keys
+                .into_iter()
+                .map(|key| {
+                    format!(
+                        "{}:{}",
+                        serde_json::to_string(key).unwrap_or_default(),
+                        canonical_json(&map[key])
+                    )
+                })
+                .collect();
+            format!("{{{}}}", parts.join(","))
+        }
+        Value::Array(items) => {
+            let parts: Vec<String> = items.iter().map(canonical_json).collect();
+            format!("[{}]", parts.join(","))
+        }
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+/// 到期判定（纯函数，便于单测）。间隔 0 = 关闭；从未检查过视为立即到期，
+/// 这样「装好就一直在跑」的程序启动后也会检查一次订阅。
+fn refresh_due(interval_hours: u32, checked_at: Option<u64>, now_ms: u64) -> bool {
+    if interval_hours == 0 {
+        return false;
+    }
+    match checked_at {
+        None => true,
+        Some(checked) => now_ms.saturating_sub(checked) >= u64::from(interval_hours) * 3_600_000,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +292,50 @@ fn derive_runtime(imported: &ConfigSnapshot) -> ConfigSnapshot {
         })
         .collect();
     runtime
+}
+
+/// 只有 URL 来源能回拉：file / 粘贴文本没有远端可更新。
+fn ensure_refreshable(source: &ConfigSource) -> Result<(), AppError> {
+    if source.kind == "url" {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            code::INVALID_ARGUMENT,
+            "只有网络地址导入的配置支持自动刷新",
+        ))
+    }
+}
+
+/// 站点体检里被手动禁用的站点 key。
+fn manual_disabled_keys(runtime: &ConfigSnapshot) -> Vec<String> {
+    runtime
+        .sites
+        .iter()
+        .filter(|site| {
+            site.get("disabledReason").and_then(Value::as_str) == Some(MANUAL_DISABLE_REASON)
+        })
+        .filter_map(|site| site.get("key").and_then(Value::as_str).map(str::to_string))
+        .collect()
+}
+
+/// 把手动禁用搬回新派生的 runtime。
+///
+/// `derive_runtime` 只按屏蔽策略算（jvm / dex），手动状态存在 runtime 层；
+/// 订阅刷新如果只重新派生，用户屏蔽的慢源就会被订阅更新悄悄复活。
+fn apply_manual_disables(runtime: &mut ConfigSnapshot, manual: &[String]) {
+    for site in runtime.sites.iter_mut() {
+        let key = site.get("key").and_then(Value::as_str).unwrap_or("");
+        if !manual.iter().any(|manual_key| manual_key == key) {
+            continue;
+        }
+        if let Some(map) = site.as_object_mut() {
+            map.insert("enabled".into(), Value::Bool(false));
+            map.insert(
+                "disabledReason".into(),
+                Value::String(MANUAL_DISABLE_REASON.into()),
+            );
+        }
+    }
 }
 
 /// `runtime` is always Some after `insert`/`load`; fall back to `imported` for
@@ -348,20 +515,40 @@ impl ConfigStore {
             guard.retain(|entry| entry.imported.id != id);
             guard.push(stored);
         }
-        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id);
+        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.clone());
         crate::netrules::replace(&headers);
+        // 刚导入即以「已检查」起算：否则后台任务在下一分钟就把同一份配置
+        // 重拉一遍，白花一次请求。写入失败不影响导入结果。
+        let _ = self.write_refresh_state(
+            &id,
+            &RefreshState {
+                checked_at: crate::store::now_ms(),
+                changed_at: None,
+                error: None,
+            },
+        );
         Ok(runtime)
     }
 
     pub fn list(&self) -> Vec<ConfigMeta> {
+        // 一次扫出全部刷新状态，避免配置列表逐行查库；读库失败只意味着
+        // 状态列显示「未检查过」，不影响列表本身。
+        let states = self.all_refresh_states();
         let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         guard
             .iter()
-            .map(|entry| ConfigMeta {
-                id: entry.imported.id.clone(),
-                name: entry.imported.name.clone(),
-                source: entry.source.clone(),
-                imported_at: entry.imported.imported_at.clone(),
+            .map(|entry| {
+                let state = states.get(&entry.imported.id);
+                ConfigMeta {
+                    id: entry.imported.id.clone(),
+                    name: entry.imported.name.clone(),
+                    source: entry.source.clone(),
+                    imported_at: entry.imported.imported_at.clone(),
+                    refreshable: entry.source.kind == "url",
+                    last_checked_at: state.map(|state| state.checked_at).filter(|at| *at > 0),
+                    last_changed_at: state.and_then(|state| state.changed_at),
+                    refresh_error: state.and_then(|state| state.error.clone()),
+                }
             })
             .collect()
     }
@@ -440,11 +627,255 @@ impl ConfigStore {
                 }
             }
         }
+        let refreshable = source.kind == "url";
+        let state = self.refresh_state(&imported.id);
         Ok(ConfigMeta {
             id: imported.id,
             name,
             source,
             imported_at: imported.imported_at,
+            refreshable,
+            last_checked_at: state.as_ref().map(|state| state.checked_at).filter(|at| *at > 0),
+            last_changed_at: state.as_ref().and_then(|state| state.changed_at),
+            refresh_error: state.and_then(|state| state.error),
+        })
+    }
+
+    // ---- 订阅刷新 ----------------------------------------------------------
+
+    fn refresh_state(&self, id: &str) -> Option<RefreshState> {
+        self.db
+            .meta_read(&format!("{META_REFRESH_PREFIX}{id}"))
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<RefreshState>(&raw).ok())
+    }
+
+    fn all_refresh_states(&self) -> std::collections::HashMap<String, RefreshState> {
+        let mut out = std::collections::HashMap::new();
+        for (key, raw) in self.db.meta_scan(META_REFRESH_PREFIX).unwrap_or_default() {
+            let Some(id) = key.strip_prefix(META_REFRESH_PREFIX) else {
+                continue;
+            };
+            if let Ok(state) = serde_json::from_str::<RefreshState>(&raw) {
+                out.insert(id.to_string(), state);
+            }
+        }
+        out
+    }
+
+    fn write_refresh_state(&self, id: &str, state: &RefreshState) -> Result<(), AppError> {
+        let raw = serde_json::to_string(state)?;
+        self.db
+            .meta_write(&format!("{META_REFRESH_PREFIX}{id}"), &raw)
+    }
+
+    /// 当前生效的刷新间隔（小时）；meta 缺失或损坏时回落到默认 12 小时。
+    pub fn refresh_interval_hours(&self) -> u32 {
+        self.db
+            .meta_read(META_REFRESH_INTERVAL)
+            .ok()
+            .flatten()
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .unwrap_or(DEFAULT_REFRESH_HOURS)
+            .min(MAX_REFRESH_HOURS)
+    }
+
+    pub fn refresh_settings(&self) -> RefreshSettings {
+        let interval_hours = self.refresh_interval_hours();
+        let config_id = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let state = config_id.as_deref().and_then(|id| self.refresh_state(id));
+        let next_due_at = match (&config_id, interval_hours) {
+            (Some(_), hours) if hours > 0 => {
+                let base = state
+                    .as_ref()
+                    .map(|state| state.checked_at)
+                    .filter(|at| *at > 0)
+                    .unwrap_or_else(crate::store::now_ms);
+                Some(base.saturating_add(u64::from(hours) * 3_600_000))
+            }
+            _ => None,
+        };
+        RefreshSettings {
+            interval_hours,
+            config_id,
+            last_checked_at: state.as_ref().map(|state| state.checked_at).filter(|at| *at > 0),
+            last_changed_at: state.as_ref().and_then(|state| state.changed_at),
+            error: state.and_then(|state| state.error),
+            next_due_at,
+        }
+    }
+
+    pub fn set_refresh_interval(&self, hours: u32) -> Result<RefreshSettings, AppError> {
+        let clamped = hours.min(MAX_REFRESH_HOURS);
+        self.db.meta_write(META_REFRESH_INTERVAL, &clamped.to_string())?;
+        Ok(self.refresh_settings())
+    }
+
+    /// 到期待刷新的配置 id；只考虑 active 且来源为 url 的。
+    ///
+    /// 后台任务每 60s 调一次，这里只做判定不发请求，保证「关掉自动刷新」
+    /// 之后立刻不再有出站流量。
+    pub fn due_config_id(&self) -> Option<String> {
+        let hours = self.refresh_interval_hours();
+        if hours == 0 {
+            return None;
+        }
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let (id, refreshable) = {
+            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let entry = pick(active.as_deref(), guard.as_slice())?;
+            (entry.imported.id.clone(), entry.source.kind == "url")
+        };
+        if !refreshable {
+            return None;
+        }
+        let checked_at = self.refresh_state(&id).map(|state| state.checked_at);
+        if refresh_due(hours, checked_at, crate::store::now_ms()) {
+            Some(id)
+        } else {
+            None
+        }
+    }
+
+    /// 重新拉取订阅并比对内容。
+    ///
+    /// 语义要点：
+    ///   * **无变化不写库**，只更新「上次检查」——否则每次定时检查都会整体
+    ///     重写 100 站快照，并把 import 时间刷成新的，用户看不出区别却丢了
+    ///     手动禁用（虽然这里已经保留，但白写一次仍是浪费）。
+    ///   * 内容变化时保留用户改过的名字与站点体检里的手动禁用；
+    ///   * `imported_at` 保持首次导入时间，变化时刻单独记 `last_changed_at`。
+    pub async fn refresh(&self, id: Option<&str>) -> Result<RefreshOutcome, AppError> {
+        let (target_id, imported, runtime, source) = {
+            let active = self
+                .active
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let entry = match id {
+                Some(id) => guard.iter().find(|entry| entry.imported.id == id),
+                None => pick(active.as_deref(), guard.as_slice()),
+            }
+            .ok_or_else(|| {
+                AppError::new(code::INVALID_ARGUMENT, "no config available to refresh")
+            })?;
+            (
+                entry.imported.id.clone(),
+                entry.imported.clone(),
+                runtime_of(entry).clone(),
+                entry.source.clone(),
+            )
+        };
+        ensure_refreshable(&source)?;
+
+        let now = crate::store::now_ms();
+        let fetched = match import_from_source(source.clone()).await {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                // 失败也要留痕：设置页显示「上次检查失败：…」，用户才知道
+                // 为什么站点列表一直没更新。
+                let mut state = self.refresh_state(&target_id).unwrap_or_default();
+                state.checked_at = now;
+                state.error = Some(err.message.clone());
+                let _ = self.write_refresh_state(&target_id, &state);
+                return Err(err);
+            }
+        };
+
+        let mut fresh = fetched;
+        fresh.id = target_id.clone();
+        fresh.name = imported.name.clone();
+        fresh.imported_at = imported.imported_at.clone();
+
+        let enabled_of = |snapshot: &ConfigSnapshot| {
+            snapshot
+                .sites
+                .iter()
+                .filter(|site| site.get("enabled").and_then(Value::as_bool).unwrap_or(true))
+                .count()
+        };
+
+        if content_signature(&fresh) == content_signature(&imported) {
+            let mut state = self.refresh_state(&target_id).unwrap_or_default();
+            state.checked_at = now;
+            state.error = None;
+            self.write_refresh_state(&target_id, &state)?;
+            return Ok(RefreshOutcome {
+                config_id: target_id,
+                name: fresh.name,
+                changed: false,
+                sites: runtime.sites.len(),
+                enabled: enabled_of(&runtime),
+                checked_at: now,
+                snapshot: None,
+            });
+        }
+
+        let manual = manual_disabled_keys(&runtime);
+        let mut next_runtime = derive_runtime(&fresh);
+        apply_manual_disables(&mut next_runtime, &manual);
+
+        let headers = next_runtime.headers.clone();
+        let imported_json = serde_json::to_string(&fresh)?;
+        let runtime_json = serde_json::to_string(&next_runtime)?;
+        let source_json = serde_json::to_string(&source)?;
+        let write = ConfigWrite {
+            id: &target_id,
+            name: &fresh.name,
+            imported_at: &fresh.imported_at,
+            imported_json: &imported_json,
+            runtime_json: &runtime_json,
+            source_json: &source_json,
+        };
+        let is_active = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_deref()
+            == Some(target_id.as_str());
+        // active 走 activate_config（同 id 再写一次 active，语义不变）；非
+        // active 只更新行，绝不因为「顺手刷新」把用户切到别的订阅。
+        if is_active {
+            self.db.activate_config(write)?;
+        } else {
+            self.db.update_config(write)?;
+        }
+        {
+            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(entry) = guard.iter_mut().find(|entry| entry.imported.id == target_id) {
+                entry.imported = fresh;
+                entry.runtime = Some(next_runtime.clone());
+                entry.source = source;
+            }
+        }
+        if is_active {
+            crate::netrules::replace(&headers);
+        }
+
+        let mut state = self.refresh_state(&target_id).unwrap_or_default();
+        state.checked_at = now;
+        state.changed_at = Some(now);
+        state.error = None;
+        self.write_refresh_state(&target_id, &state)?;
+
+        Ok(RefreshOutcome {
+            config_id: target_id,
+            name: next_runtime.name.clone(),
+            changed: true,
+            sites: next_runtime.sites.len(),
+            enabled: enabled_of(&next_runtime),
+            checked_at: now,
+            snapshot: Some(next_runtime),
         })
     }
 
@@ -494,7 +925,7 @@ impl ConfigStore {
                     map.insert("enabled".into(), Value::Bool(false));
                     map.insert(
                         "disabledReason".into(),
-                        Value::String("已在站点体检中手动禁用".into()),
+                        Value::String(MANUAL_DISABLE_REASON.into()),
                     );
                 }
             }
@@ -552,6 +983,8 @@ impl ConfigStore {
         // SQLite promotes the newest remaining config when the active one is
         // removed; the returned id keeps the cache and the DB in agreement.
         let next_active = self.db.delete_config(id)?;
+        // 刷新状态跟着配置一起走：留着只会在 meta 表里堆孤儿键。
+        let _ = self.db.meta_remove(&format!("{META_REFRESH_PREFIX}{id}"));
         {
             let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
             guard.retain(|entry| entry.imported.id != id);
@@ -866,6 +1299,30 @@ pub fn config_active(state: tauri::State<'_, ConfigStore>) -> Option<ConfigSnaps
 #[tauri::command]
 pub fn config_remove(state: tauri::State<'_, ConfigStore>, id: String) -> Result<(), AppError> {
     state.remove(&id)
+}
+
+/// 订阅自动刷新的全局设置 + active 配置的检查狀態。
+#[tauri::command]
+pub fn config_refresh_settings(state: tauri::State<'_, ConfigStore>) -> RefreshSettings {
+    state.refresh_settings()
+}
+
+/// 设置自动刷新间隔（小时，0 = 关闭；上限一周）。返回聚合视图，UI 直接覆盖显示。
+#[tauri::command]
+pub fn config_set_refresh_interval(
+    state: tauri::State<'_, ConfigStore>,
+    hours: u32,
+) -> Result<RefreshSettings, AppError> {
+    state.set_refresh_interval(hours)
+}
+
+/// 手动检查一份订阅（`id` 省略即 active）：设置页「立即检查」与每行的刷新按钮共用。
+#[tauri::command]
+pub async fn config_refresh(
+    state: tauri::State<'_, ConfigStore>,
+    id: Option<String>,
+) -> Result<RefreshOutcome, AppError> {
+    state.refresh(id.as_deref()).await
 }
 
 #[cfg(test)]
@@ -1344,5 +1801,157 @@ mod tests {
                 .and_then(Value::as_bool),
             Some(false)
         );
+    }
+
+    // ---- 订阅刷新 ----------------------------------------------------------
+
+    #[test]
+    fn signature_ignores_name_and_import_time() {
+        let mut a = snapshot("box", &["site_a"]);
+        let mut b = snapshot("box", &["site_a"]);
+        a.name = "我的订阅".into();
+        b.name = "别人的订阅".into();
+        b.imported_at = "2027-09-09T00:00:00Z".into();
+        assert_eq!(content_signature(&a), content_signature(&b));
+    }
+
+    #[test]
+    fn signature_detects_content_change() {
+        let a = snapshot("box", &["site_a", "site_b"]);
+        let b = snapshot("box", &["site_a", "site_c"]);
+        assert_ne!(content_signature(&a), content_signature(&b));
+
+        // 同一个站点的 api 变了也算内容变化（换域名的常见情形）。
+        let mut c = site_snapshot(vec![json!({ "key": "a", "name": "a", "api": "http://old" })]);
+        let mut d = site_snapshot(vec![json!({ "key": "a", "name": "a", "api": "http://new" })]);
+        c.imported_at = "one".into();
+        d.imported_at = "two".into();
+        assert_ne!(content_signature(&c), content_signature(&d));
+    }
+
+    #[test]
+    fn signature_is_key_order_independent() {
+        // 同一个站点，json! 字面量里字段顺序不同：签名必须一致，否则每次
+        // normalize 输出顺序一抖动，用户就会看到「每天都有更新」。
+        let a = site_snapshot(vec![json!({ "key": "a", "name": "a", "api": "http://x", "type": 3 })]);
+        let b = site_snapshot(vec![json!({ "type": 3, "api": "http://x", "name": "a", "key": "a" })]);
+        assert_eq!(content_signature(&a), content_signature(&b));
+    }
+
+    #[test]
+    fn refresh_due_respects_interval() {
+        let hour = 3_600_000u64;
+        // 关闭时永不到期。
+        assert!(!refresh_due(0, None, 1_000));
+        // 从未检查过 → 立即到期（启动后检查一次订阅）。
+        assert!(refresh_due(12, None, 1_000));
+        // 12 小时间隔：差 1 分钟不算到期，整 12 小时算。
+        assert!(!refresh_due(12, Some(0), 12 * hour - 60_000));
+        assert!(refresh_due(12, Some(0), 12 * hour));
+    }
+
+    #[test]
+    fn manual_disables_survive_rerivation() {
+        // runtime 里用户手动禁用了 slow；订阅刷新重新派生后必须仍然禁用，
+        // 同时新增的 jvm 源按策略自动禁用、其它源保持可用。
+        let old_runtime = site_snapshot(vec![
+            json!({ "key": "slow", "name": "slow", "api": "http://x", "enabled": false, "disabledReason": MANUAL_DISABLE_REASON }),
+            json!({ "key": "fast", "name": "fast", "api": "http://y", "enabled": true }),
+        ]);
+        let manual = manual_disabled_keys(&old_runtime);
+        assert_eq!(manual, vec!["slow".to_string()]);
+
+        let fresh = site_snapshot(vec![
+            json!({ "key": "slow", "name": "slow", "api": "http://x" }),
+            json!({ "key": "fast", "name": "fast", "api": "http://y" }),
+            json!({ "key": "jar", "name": "jar", "api": "http://z/csp.jar", "runtime": "jvm" }),
+        ]);
+        let mut next = derive_runtime(&fresh);
+        // 派生阶段先按策略禁掉 jvm，但还不知道手动禁用。
+        assert_eq!(
+            site_by_key(&next.sites, "slow").get("enabled").and_then(Value::as_bool),
+            None
+        );
+        apply_manual_disables(&mut next, &manual);
+        assert_eq!(
+            site_by_key(&next.sites, "slow").get("enabled").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            site_by_key(&next.sites, "slow")
+                .get("disabledReason")
+                .and_then(Value::as_str),
+            Some(MANUAL_DISABLE_REASON)
+        );
+        assert_eq!(
+            site_by_key(&next.sites, "fast").get("enabled").and_then(Value::as_bool),
+            None
+        );
+        // jvm 仍按导入策略禁用：两种原因不能互相覆盖。
+        assert_eq!(
+            site_by_key(&next.sites, "jar").get("enabled").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn refresh_rejects_non_url_sources() {
+        let err = ensure_refreshable(&text_source()).expect_err("text cannot refresh");
+        assert_eq!(err.code, code::INVALID_ARGUMENT);
+        assert_eq!(err.message, "只有网络地址导入的配置支持自动刷新");
+        assert!(ensure_refreshable(&ConfigSource {
+            kind: "url".into(),
+            value: "https://example.com/box.json".into(),
+            name: None,
+        })
+        .is_ok());
+    }
+
+    #[test]
+    fn refresh_interval_defaults_to_twelve_hours_and_clamps() {
+        let (_guard, dir) = isolate_data_dir();
+        let store = store_at(&dir);
+        assert_eq!(store.refresh_interval_hours(), DEFAULT_REFRESH_HOURS);
+        assert_eq!(store.set_refresh_interval(0).unwrap().interval_hours, 0);
+        assert_eq!(store.refresh_interval_hours(), 0);
+        // 超过一周被夹到上限，避免「设了 1000 小时」这种永不到期值。
+        assert_eq!(
+            store.set_refresh_interval(1000).unwrap().interval_hours,
+            MAX_REFRESH_HOURS
+        );
+    }
+
+    #[test]
+    fn due_only_for_active_url_config_that_reached_interval() {
+        let (_guard, dir) = isolate_data_dir();
+        let store = store_at(&dir);
+        let url_source = ConfigSource {
+            kind: "url".into(),
+            value: "https://example.com/box.json".into(),
+            name: None,
+        };
+        store.insert(snapshot("box", &["a"]), url_source).unwrap();
+
+        // 刚导入即以「已检查」起算，12 小时间隔下不该马上到期。
+        store.set_refresh_interval(12).unwrap();
+        assert!(store.due_config_id().is_none());
+
+        // 把上次检查挪到 13 小时前 → 到期。
+        let now = crate::store::now_ms();
+        store
+            .write_refresh_state(
+                "box",
+                &RefreshState {
+                    checked_at: now.saturating_sub(13 * 3_600_000),
+                    changed_at: None,
+                    error: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(store.due_config_id().as_deref(), Some("box"));
+
+        // 关闭后不再到期，即使状态是旧的。
+        store.set_refresh_interval(0).unwrap();
+        assert!(store.due_config_id().is_none());
     }
 }

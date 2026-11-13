@@ -2452,6 +2452,43 @@ textarea {
   padding-bottom: 0;
 }
 
+/* 订阅自动刷新：一行放「标题 + 状态 / 间隔 / 立即检查」，窄屏时允许换行 */
+.refresh-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.refresh-bar__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.refresh-bar__title {
+  font-size: 13px;
+}
+
+.refresh-bar__hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.refresh-bar__select {
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
 .config-list {
   list-style: none;
   margin: 0;
@@ -2500,6 +2537,41 @@ textarea {
 .config-item__meta {
   color: var(--muted);
   font-size: 12px;
+}
+
+/* 订阅检查状态：比来源信息低一级，不与「当前」标签抢注意力 */
+.config-item__refresh {
+  color: var(--muted);
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+/* 后台订阅更新的轻提示：右上角浮层，不占布局、不打断当前页面 */
+.app-toast {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  z-index: 60;
+  max-width: 380px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--panel-hover);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: var(--shadow-md);
+  animation: app-toast-in var(--dur) var(--ease);
+}
+
+@keyframes app-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* 导入区的「配置名称」：左侧固定标签，右侧输入 + 提示，窄屏自动换行 */

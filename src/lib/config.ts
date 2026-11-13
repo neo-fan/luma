@@ -5,7 +5,7 @@
  * `name` 常常是 `box`、`api` 甚至缺失，所以导入时默认用域名当名字，
  * 用户可以在导入前改掉，也可以在设置页随时重命名。
  */
-import type { ConfigSource } from "../types/tvbox";
+import type { ConfigMeta, ConfigSource } from "../types/tvbox";
 
 /** 把用户输入/粘贴的配置名收敛成列表里能直接显示的形式。 */
 export function cleanConfigName(value: string, limit = 48): string {
@@ -82,4 +82,47 @@ export function formatImportedAt(value: string): string {
   return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(
     time.getHours(),
   )}:${pad(time.getMinutes())}`;
+}
+
+/**
+ * 墙钟毫秒 → 相对时间。订阅检查时间每秒都在变老，绝对时间戳反而看不出
+ * 「刚查过还是三天没查」；未知/0 显示破折号，不要伪造成「刚刚」。
+ */
+export function formatRelativeTime(at: number | undefined, now = Date.now()): string {
+  if (!at || at <= 0) {
+    return "—";
+  }
+  const diff = Math.max(0, now - at);
+  const minute = 60_000;
+  if (diff < minute) {
+    return "刚刚";
+  }
+  if (diff < 60 * minute) {
+    return `${Math.floor(diff / minute)} 分钟前`;
+  }
+  if (diff < 24 * 60 * minute) {
+    return `${Math.floor(diff / (60 * minute))} 小时前`;
+  }
+  return `${Math.floor(diff / (24 * 60 * minute))} 天前`;
+}
+
+/**
+ * 配置行里的一句话刷新状态。四种状态互斥且用户可分辨：
+ * 不支持 / 失败 / 有更新 / 已是最新。`lastChangedAt` 新于 `lastCheckedAt`
+ * 只在「这次检查刚好带来变化」时出现，所以用它区分两句话。
+ */
+export function describeRefreshState(meta: ConfigMeta, now = Date.now()): string {
+  if (!meta.refreshable) {
+    return "本地配置，不支持自动更新";
+  }
+  if (meta.refreshError) {
+    return `检查失败：${meta.refreshError}`;
+  }
+  if (!meta.lastCheckedAt) {
+    return "尚未检查更新";
+  }
+  if (meta.lastChangedAt && meta.lastChangedAt >= (meta.lastCheckedAt ?? 0)) {
+    return `已更新 ${formatRelativeTime(meta.lastChangedAt, now)}`;
+  }
+  return `已是最新 · ${formatRelativeTime(meta.lastCheckedAt, now)}检查`;
 }
