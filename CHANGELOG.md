@@ -19,6 +19,11 @@
 - **粘贴文本导入后首页报 `fetch ./py/douban.py failed`**：文本导入的 origin 是 `inline`，没有 base URL，配置里 `./py/douban.py` 这类相对脚本地址解析不出来，运行态却仍把这些站点当可用（这份 `box.json` 的 101 个站点里有 53 个是相对写法）。现在派生运行策略时把「相对地址且没解析成绝对地址」的站点标 `enabled=false`，原因写「相对地址只有从 URL 导入的配置才能解析，请改用「导入 URL」」；导入原件一个字段不动，之后改从 URL 导入同一份配置仍会解析成绝对地址并启用。导入成功提示也改成按 `disabledReason` 去重展示（不再写死「不支持的 jar 源」）。
 - **空态被一整块虚线框包住、下方大片空白**：`.empty` 原来是整宽虚线框 + 76px 内边距，首页「该站点暂无推荐内容」看着像坏掉的占位图。改成无边框居中列（限宽 460px、`min-height: clamp(240px, 44vh, 420px)`），图标换成 52px 细描边圆底里的语义图标（缺省 `Inbox`；首页 `FolderOpen`、直播 `Tv`、搜索 `SearchX`、收藏 `Star`、历史 `History`），动作按钮是唯一的强调色元素；直播页占位框与站点选择器里的空态单独收掉 `min-height`，避免重复撑高。
 - **搜索页初始态还是一行灰字提示**：没输入关键词时的引导是手写的 `.search-hint` 段落（旧样式的虚线框），和新的空态组件不是一套东西。现在初始态也走 `Empty`：有可搜索站点时给「输入片名或关键词开始搜索」，一个站点都没有时给「还没有可搜索的站点」+「去导入配置」（直接跳设置页）；`styles.css` 里删掉 `.search-hint` 规则。新增 `tests/frontend/emptyStates.test.ts`（5 条）锁住「所有列表页的空态走同一个组件、搜索页不再退回手写提示」。
+- **直播页与其它页不是一套版式（播放器还被压扁、节目单挤不下）**：原来直播页是自成一体的「工作台」——宽度改到 1560、内边距 24、右列 `overflow-y: auto`，节目单展开时列高不够，16:9 的 `.player-stage` 被 flex 压成 1030×262 的扁条。现在：页面宽度/内边距/页头与其它页一致（1360 / 30+36，页头天然吸顶）；右列不再滚；画面按 `aspect-ratio: 16/9` 锁死、宽度 `min(100%, calc(56vh * 16 / 9))` 居中；频道名与清晰度并成画面左上角一块半透明胶囊（原 `LiveChannelBar` 整行删除），线路切换留在播放器自带控制条里；节目单上移到画面下方，默认展开，自己内部滚（`flex: 1` + `overflow-y: auto`），不再压画面。
+- **直播停在后台就没声了 / 直播和点播能同时出声**：直播页现在和点播播放器一样常驻在 `AppShell`（首次进过 `/live` 才挂载，之后切页只切 `visibility`，不销毁 `<video>`），切到搜索/设置/详情时后台继续播；进点播播放页时直播暂停（记下「是我暂停的」），回到 `/live` 时恢复；反向「直播出画就按停点播、换台也先按停点播」，两边不会同时出声。
+- **页面异常不落日志**：React 渲染异常被 react-router 的默认错误页接住后不会冒泡到 `window`，`installGlobalErrorLogging()` 抓不到。现在根路由挂 `errorElement`（`RouteError`），异常会写一条 `route error`（message / stack / hash）到前端日志通道，同时给「重试 / 回到首页 / 复制错误」三个动作。
+- **搜索页「封面一直在渲染」**：流式结果每来一批，列表增长就会让 `key` 里的数组下标变化，React 把卡片当新节点重挂，`<img>` 跟着重新下载封面（实测早期 18 张卡在 10 秒内全部被重挂、同一张封面重复请求）。`key` 改成 `siteKey + vod_id`（首页列表同理）；另外反代 `/image` 以前对「状态 200 但 `Content-Type` 是 `binary/octet-stream`」的真图直接 502（`pic.drleao.cn`、`pic.cdn.drama.9ddm.com`、`xjimg.cdn-xj.cc` 都这样），现在按魔数嗅探 JPEG/PNG/GIF/WebP/AVIF/BMP 后补对类型放行，认不出才拒；代理仍失败时前端直连原图再试一次。搜索 167 张卡片的封面失败数从约一半降到个位数。
+- **搜索等待态的进度面板观感**：原来的「扫光条 + 一行灰字」在结果区上方，配合卡片骨架里的 22px 蓝色转圈，看起来像一屏坏图；改成单行「呼吸点 + 进度文案（超宽省略） + 已等待 N 秒 + 取消」，底部发丝线与结果区分隔；骨架去掉转圈只留扫光。
 
 ### 工程
 
@@ -28,6 +33,7 @@
   - M3U：连续多条 URL 归并到上一条 `#EXTINF` 的频道（TVBox 的 `一个台名 N 条线路` 写法），同名同组频道合并 `urls` 去重。
   - EPG：覆盖率 9 天的 `e.xml` 单频道可吐 2000+ 条，按 `date` 当天 / 前后 3–21 小时裁剪到 240 条；`CCTV1` 不会被 `CCTV11` 的节目单污染；XML 实体二次转义（`&amp;apos;`）在上屏前解开。
 - `tests/offline/adapter_isolation.py` 增至 **14 项**：新增「`PYTHONIOENCODING=gbk` / `cp936` 下 14 KB 中文配置仍能原样解出」两条。用修复前的 `main.py` 跑这两条必失败（乱码或拆帧错位），修复后全绿。
+- **直播页常驻层与错误边界**：`routes.tsx` 里 `/live` 只留占位路由，页面本体由 `AppShell` 在首次进入后 `lazy` 挂载并常驻（外层自带 `Suspense`，否则点侧栏这种同步输入挂载懒组件会抛 `A component suspended while responding to synchronous input`）；根路由挂 `RouteError` 错误页。新增 `tests/frontend/posterFallback.test.ts`（2 条源码契约）锁住「代理失败只直连重试一次」。
 - `vitest` 排除 `.agents/`：隔离用的 git worktree 也在这棵树里，默认会被扫进去，导致用例数翻倍（326 → 658）、失败还分不清归属。
 - **日志按用途分三个通道**：`logs/app/`（宿主 Rust）、`logs/ui/`（前端，`tracing` target 固定 `ui`）、`logs/spider/`（Python 适配层）。滚动与过滤换成官方库 —— `tracing-appender`（`Rotation::DAILY` + `max_log_files`）与 `EnvFilter`，删掉自写的 `DailyFile` / `SharedWriter` / 级别解析；前端通道靠 `Targets` 过滤，两路写入各自 `non_blocking`（guard 常驻，退出时 flush）。
   - 每个通道保留最近 7 天，硬上限 **10 MiB**：超出时删最旧的一整天，不去切正在追加的句柄（`tracing-appender` 上游只支持按时间滚动）。适配层同样 10 MiB，超出滚成 `.1`。
