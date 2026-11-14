@@ -7,7 +7,6 @@ import ErrorBar from "../components/ErrorBar";
 import PlayerStage from "../components/player/PlayerStage";
 import PlayerResolution from "../components/player/PlayerResolution";
 import LiveChannelRail from "../components/player/LiveChannelRail";
-import LiveChannelBar from "../components/player/LiveChannelBar";
 import LiveEpgPanel from "../components/LiveEpgPanel";
 import { useLiveCatalog } from "../hooks/useLiveCatalog";
 import { usePlayResolution } from "../hooks/usePlayResolution";
@@ -16,16 +15,17 @@ import type { LiveLineControl } from "../hooks/usePlayerEngine";
 import { getLiveLine, setLiveLine } from "../lib/liveMemory";
 import { readLiveChannel, rememberLiveChannel } from "../lib/liveChannels";
 import { getEpgUrl } from "../lib/epgSettings";
-import { EXTERNAL_PLAY_ENABLED } from "../lib/features";
 import { notify } from "../lib/notify";
 import { noticeTtl } from "../lib/notice";
 import { resolutionBadge, resolutionDetail } from "../lib/resolution";
 import type { VideoMeta } from "../lib/resolution";
-import { api, errorMessage } from "../lib/invoke";
+import { api } from "../lib/invoke";
 import type { LiveChannel, LiveSource } from "../types/tvbox";
 
 interface LivePageProps {
   lives: LiveSource[];
+  /** 是否停在点播播放页：为 true 时直播必须让出声音（直播与点播只能一个在播）。 */
+  vodActive?: boolean;
 }
 
 /**
@@ -37,12 +37,12 @@ interface LivePageProps {
  * 换台只差一次点击」，所以 `/live` 本身收敛成播放页：
  *
  *   左侧 = 常驻频道目录（搜索 / 分组 / 上一台下一台）
- *   右侧 = 播放器 + 频道信息条 + 当日节目单
+ *   右侧 = 播放器（频道名与清晰度叠在画面左上角）+ 当日节目单
  *
  * 换台只改本页 state（playUrl 变化驱动解析与内核重建），不进路由、不重建页面。
  * 路由仍是 `/live`，侧栏高亮天然正确，也不再有「直播播放页」这个第二入口。
  */
-export default function LivePage({ lives }: LivePageProps) {
+export default function LivePage({ lives, vodActive = false }: LivePageProps) {
   const catalog = useLiveCatalog(lives);
 
   /** 当前频道 + 线路。只记名字：源每次重拉，地址都可能换。 */
@@ -58,8 +58,6 @@ export default function LivePage({ lives }: LivePageProps) {
   const [switchTip, setSwitchTip] = useState("");
   /** 自动换线路进行中：这段时间不铺红色错误条（有希望自愈）。 */
   const [recovering, setRecovering] = useState(false);
-  /** 信息条第二行：EPG 上报的「此刻正在播」。 */
-  const [nowProgram, setNowProgram] = useState("");
 
   const { flat, sourceKey, source } = catalog;
 
@@ -126,6 +124,57 @@ export default function LivePage({ lives }: LivePageProps) {
     width: 0,
     height: 0,
   });
+
+  /* ---------- 直播 / 点播互斥（只有一个能出声） ---------- */
+
+  /** 这次暂停是我们为了给点播让路做的：回到直播页时只恢复自己暂停的那一次。 */
+  const pausedForVod = useRef(false);
+
+  /**
+   * 点播播放器常驻在 AppShell 里（`.player-host`），直播出画时把它按停。
+   * 不做「暂停再恢复」的账：点播那边会有自己的播放按钮，用户回来点一下即可，
+   * 反过来自动播放反而可能把用户已经放弃的片子续上。
+   */
+  const pauseVodMedia = useCallback(() => {
+    document
+      .querySelectorAll<HTMLVideoElement>(".player-host video")
+      .forEach((item) => {
+        if (!item.paused) {
+          item.pause();
+        }
+      });
+  }, []);
+
+  /**
+   * 进点播播放页 → 直播暂停；离开点播页 → 恢复本次暂停。
+   * 页面本身挂在常驻层里不会卸载，所以这里只是 pause/play，不重建内核。
+   */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+    if (vodActive) {
+      if (!video.paused) {
+        video.pause();
+        pausedForVod.current = true;
+      }
+      return;
+    }
+    if (pausedForVod.current) {
+      pausedForVod.current = false;
+      void video.play().catch(() => {
+        /* 被浏览器拦下就停在原地，用户点播放器上的播放即可 */
+      });
+    }
+  }, [vodActive, playUrl]);
+
+  // 出画即认领声音：此时点播那边（如果还在后台播）必须让位。
+  useEffect(() => {
+    if (videoMeta.width > 0) {
+      pauseVodMedia();
+    }
+  }, [videoMeta.width, channel?.name, pauseVodMedia]);
 
   const {
     resolved,
@@ -324,6 +373,8 @@ export default function LivePage({ lives }: LivePageProps) {
 
   const playChannel = useCallback(
     (next: LiveChannel) => {
+      // 换台就是「现在要看直播」：点播那边立刻让位，不等出画（否则一两秒双声）。
+      pauseVodMedia();
       const remembered = getLiveLine(sourceKey, next.name);
       const idx = Math.min(
         Math.max(remembered, 0),
@@ -338,7 +389,7 @@ export default function LivePage({ lives }: LivePageProps) {
       setSwitchTip("");
       selectLine(next.name, idx, next.lines.length);
     },
-    [pick, selectLine, sourceKey],
+    [pick, selectLine, sourceKey, pauseVodMedia],
   );
 
   const step = (delta: 1 | -1) => {
@@ -370,17 +421,6 @@ export default function LivePage({ lives }: LivePageProps) {
       : null;
 
   const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
-
-  const playExternal = async () => {
-    if (!playUrl) {
-      return;
-    }
-    try {
-      await api.openExternal(resolved?.url || playUrl);
-    } catch (err) {
-      setVideoError(`打开外部播放器失败：${errorMessage(err)}`);
-    }
-  };
 
   // 进页面就预热节目单：默认 7.6MB XMLTV，点开才发现「加载节目单…」像坏了。
   useEffect(() => {
@@ -481,27 +521,11 @@ export default function LivePage({ lives }: LivePageProps) {
                 />
                 <PlayerResolution
                   host={playerRoot}
+                  channel={channel.name}
                   label={resolutionBadge(videoMeta)}
                   detail={resolutionDetail(videoMeta.width, videoMeta.height)}
                 />
-                <LiveChannelBar
-                  channelName={channel.name}
-                  program={nowProgram}
-                  lineCount={channel.lines.length}
-                  lineIndex={lineIdx}
-                  onPickLine={(index) =>
-                    selectLine(channel.name, index, channel.lines.length)
-                  }
-                  onPlayExternal={
-                    EXTERNAL_PLAY_ENABLED
-                      ? () => void playExternal()
-                      : undefined
-                  }
-                />
-                <LiveEpgPanel
-                  channelName={channel.name}
-                  onNow={setNowProgram}
-                />
+                <LiveEpgPanel channelName={channel.name} />
               </>
             ) : catalog.loading ? (
               <div className="live-main__placeholder">

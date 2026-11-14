@@ -1,4 +1,12 @@
-import { createHashRouter, Navigate as Redirect, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  createHashRouter,
+  Navigate as Redirect,
+  useLocation,
+  useNavigate,
+  useParams,
+  useRouteError,
+  useSearchParams,
+} from "react-router-dom";
 import AppShell, { useConfigActions } from "./AppShell";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
@@ -6,21 +14,89 @@ import HistoryPage from "./pages/HistoryPage";
 import HomePage from "./pages/HomePage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
-import { lazy, useEffect } from "react";
+import { useEffect } from "react";
+import Empty from "./components/Empty";
+import { log } from "./lib/logger";
 import { navBack, navNavigate, type DetailNavState, type PlayerNavState } from "./lib/nav";
-import { selectLives, useAppStore, useSiteState } from "./stores/appStore";
-
-/**
- * 直播页现在是**播放页**（自带 ArtPlayer + hls.js），不能再静态打进主包：
- * 首页/搜索只需要 DOM，把 ~750 kB 的解码器挂在启动路径上不值得。
- * AppShell 的 Suspense 会接住这次按需加载。
- */
-const LivePage = lazy(() => import("./pages/LivePage"));
+import { useAppStore, useSiteState } from "./stores/appStore";
 
 /**
  * 播放页本体走按需加载（ArtPlayer + hls.js 约 750 kB），但**渲染位置挪到了
  * AppShell 的常驻层**：路由只同步会话，播放器不随路由卸载，切页后继续播。
  */
+
+/**
+ * 路由级错误边界。
+ *
+ * react-router 默认渲染的 "Unexpected Application Error" 只有一段英文堆栈：
+ * 用户看不出发生了什么，日志里也没有记录（React 把这个异常交给了路由边界，
+ * 不会再冒泡到 window.onerror）。所以这里自己接住：
+ *   · 先把异常写进前端日志（`target: "ui"`，落到 logs/ui/ui.<date>.log）；
+ *   · 再给用户可操作的出口（重试 / 回首页 / 复制错误）。
+ * 边界只包一层：错误页本身不允许再依赖页面级组件，保持能在任何情况下渲染。
+ */
+function RouteError() {
+  const error = useRouteError();
+  const navigate = useNavigate();
+
+  const info = (() => {
+    if (error instanceof Error) {
+      return { message: error.message, stack: error.stack ?? "" };
+    }
+    return { message: String(error ?? "unknown error"), stack: "" };
+  })();
+
+  useEffect(() => {
+    log.error("route error", {
+      message: info.message,
+      stack: info.stack.slice(0, 3000),
+      hash: window.location.hash,
+    });
+  }, [info.message, info.stack]);
+
+  return (
+    <section className="page">
+      <header className="page-head">
+        <h1 className="page-title">页面出错了</h1>
+      </header>
+      <Empty
+        title={info.message}
+        description="这一步触发了前端异常，详情已经写进日志（设置 → 诊断里可以导出）。可以重试，或先回首页。"
+        action={
+          <div className="route-error__actions">
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => navigate(0)}
+            >
+              重试
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                window.location.hash = "#/";
+              }}
+            >
+              回到首页
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                void navigator.clipboard?.writeText(
+                  `${info.message}\n\n${info.stack}`,
+                );
+              }}
+            >
+              复制错误
+            </button>
+          </div>
+        }
+      />
+    </section>
+  );
+}
 
 /** 侧栏 / 命令面板的平级跳转（resetTo 语义）由 AppShell 直接处理。 */
 
@@ -109,15 +185,14 @@ function PlayerPageRoute() {
 }
 
 /**
- * 直播路由就是直播播放页本身（2026-11-14 用户要求：不再有「列表页 → 播放页」
- * 两级）。页面自己管理选中频道，换台只改 state 不进路由。
+ * 直播播放页**不挂在路由里**，而是和点播播放器一样常驻在 AppShell。
+ *
+ * 需求（2026-11-15 用户）：「直播页面需要支持后台播放，除非切换到点播页面，
+ * 不然他应该在后台播放」＋「直播和点播只能播放一个」。要保住同一条流，就必须
+ * 保住同一个 ArtPlayer / hls.js 实例：路由切走就卸载页面 = 重新拉流。
+ * 所以 `/live` 只占一个路由位（让 URL / 侧栏高亮成立），真正渲染在
+ * `AppShell` 的常驻层里，切页只切 `visibility`。
  */
-function LivePageRoute() {
-  // 选择器必须返回稳定引用：没导入配置时若返回新造的空数组，zustand 会
-  // 认为快照每次都在变，进直播页直接 `Maximum update depth exceeded`。
-  const lives = useAppStore(selectLives);
-  return <LivePage lives={lives} />;
-}
 
 function SettingsPageRoute() {
   const activeConfigId = useAppStore((s) => s.cache?.configId);
@@ -137,9 +212,11 @@ export const router = createHashRouter([
   {
     path: "/",
     element: <AppShell />,
+    // 任何子路由的渲染异常都收在这里（AppShell 自身崩了也能接住）。
+    errorElement: <RouteError />,
     children: [
       { index: true, element: <HomePageRoute /> },
-      { path: "live", element: <LivePageRoute /> },
+      { path: "live", element: null },
       { path: "search", element: <SearchPageRoute /> },
       { path: "favorites", element: <FavoritesRoute /> },
       { path: "history", element: <HistoryRoute /> },

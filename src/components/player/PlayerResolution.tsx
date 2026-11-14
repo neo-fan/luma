@@ -15,6 +15,14 @@ interface PlayerResolutionProps {
   label: string;
   /** tooltip：精确像素尺寸或清单声明值。 */
   detail?: string;
+  /**
+   * 直播态传入频道名：频道名与分辨率合并成画面左上角一块。
+   *
+   * 直播没有海报 / 简介，「频道叫什么」是画面旁唯一必须常驻的信息，而左下
+   * 信息条（原 `LiveChannelBar`）会占掉一整行高度、把节目单往下推。并进
+   * 角标后右列依次只有：画面 → 节目单，滚动距离更短（2026-11-15 用户要求）。
+   */
+  channel?: string;
 }
 
 /** 全屏时鼠标静止多久后收起角标。与 ArtPlayer 的控件渐隐节奏对齐。 */
@@ -36,7 +44,7 @@ function isFullscreen(host: HTMLElement): boolean {
 }
 
 /**
- * 画面右上角的分辨率角标。
+ * 画面左上角的分辨率角标（直播态把频道名并进来）。
  *
  * 数据来自解码后的真实画面尺寸（见 `lib/resolution`），挂载与状态由播放内核
  * 通过 `host` 注入；**视口内的 React 树拿不到全屏节点**，所以用 portal 渲染到
@@ -44,9 +52,14 @@ function isFullscreen(host: HTMLElement): boolean {
  *
  * 隐藏策略：窗口模式常驻（不抢画面，字号 12px、半透明）；全屏下鼠标静止
  * 3.2 秒后淡出，有任何指针动作立刻回来——这样长时间观影时它不会一直糊在画面
- * 右上角，但想知道清晰度时晃一下鼠标就能看到。
+ * 上，但想知道频道 / 清晰度时晃一下鼠标就能看到。
  */
-export default function PlayerResolution({ host, label, detail }: PlayerResolutionProps) {
+export default function PlayerResolution({
+  host,
+  label,
+  detail,
+  channel,
+}: PlayerResolutionProps) {
   const [idle, setIdle] = useState(false);
   const timer = useRef<number | null>(null);
 
@@ -110,7 +123,28 @@ export default function PlayerResolution({ host, label, detail }: PlayerResoluti
     };
   }, [host]);
 
-  if (!host || !label) {
+  if (!host) {
+    return null;
+  }
+  if (channel) {
+    // 直播：频道名常驻、分辨率贴在名字右侧；分不清清晰度时不占位置。
+    return createPortal(
+      <span
+        className={`player-chan${idle ? " is-idle" : ""}`}
+        title={channel}
+        aria-hidden="true"
+      >
+        <span className="player-chan__name">{channel}</span>
+        {label ? (
+          <span className="player-chan__res" title={detail || label}>
+            {label}
+          </span>
+        ) : null}
+      </span>,
+      host,
+    );
+  }
+  if (!label) {
     return null;
   }
   return createPortal(

@@ -64,13 +64,14 @@ export default function LiveEpgPanel({
 }: LiveEpgPanelProps) {
   const [data, setData] = useState<EpgResult | null>(null);
   /**
-   * 默认收起。
+   * 默认展开（2026-11-15 用户要求「节目单就可以上移了」）。
    *
-   * 直播的主体是画面：整天节目单展开时高度能顶到 400px，把 16:9 的画面挤成
-   * 一条；而「现在在播什么」这一条信息 90% 的时候已经够了。收起态在标题行
-   * 直接显示当前节目，想看后面还有什么再展开——只占一行，想开就开。
+   * 旧版默认收起，是因为展开时节目单高度能顶到 400px，把 16:9 的画面挤成一条
+   * （当时右列是自滚容器、画面可被 flex 压缩）。现在画面锁死 16:9、节目单跟着
+   * 页面滚，展开不会再压画面；既然它已经挪到画面正下方，默认就该把节目单摊开，
+   * 想看别的台时再点标题收起。
    */
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   /** 节目列表容器：加载完要把「正在播」那条滚到视野中间。 */

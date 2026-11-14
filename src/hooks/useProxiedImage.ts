@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/invoke";
 import { buildImageUrl, needsProxy } from "../lib/imageUrl";
 
@@ -82,9 +82,12 @@ export function useProxiedImage(pic: string | undefined): ProxiedImage {
   });
   const [broken, setBroken] = useState(false);
   const [loading, setLoading] = useState(false);
+  /** 代理失败后是否已经试过直连（每个 pic 只重试一次，避免死循环）。 */
+  const directRetried = useRef(false);
 
   useEffect(() => {
     let alive = true;
+    directRetried.current = false;
     setBroken(false);
     const value = pic?.trim() || "";
     if (!needsProxy(value)) {
@@ -121,9 +124,18 @@ export function useProxiedImage(pic: string | undefined): ProxiedImage {
   }, [src]);
 
   const onError = useCallback(() => {
+    const value = pic?.trim() || "";
+    // 代理这条路失败时（上游 TLS / 网关问题，本地 `/image` 回 502），直连一次：
+    // 普通 CDN 的 <img> 能拿到字节；只有真防盗链的站点会继续失败，那才落入
+    // 首字占位。每个 pic 只重试一次，避免 502→直连→失败 的来回抖动。
+    if (!directRetried.current && value && needsProxy(value) && src !== value) {
+      directRetried.current = true;
+      setSrc(value);
+      return;
+    }
     setBroken(true);
     setLoading(false);
-  }, []);
+  }, [pic, src]);
   const onLoad = useCallback(() => setLoading(false), []);
   return { src, broken, loading, onError, onLoad };
 }

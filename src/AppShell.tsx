@@ -1,5 +1,6 @@
 import {
   Suspense,
+  lazy,
   useCallback,
   createContext,
   useContext,
@@ -35,8 +36,15 @@ import {
   readableBuildTime,
 } from "./lib/version";
 import { navBack, registerNav, viewToLocation, type View } from "./lib/nav";
-import { useAppStore, useSiteState } from "./stores/appStore";
+import { useAppStore, useSiteState, selectLives } from "./stores/appStore";
 import type { ConfigSnapshot, LiveSource } from "./types/tvbox";
+
+/**
+ * 直播播放页按需加载（ArtPlayer + hls.js 约 750 kB，不能挂在启动路径上），
+ * 但**渲染位置在 AppShell 的常驻层**而不是路由里：切到别的页面时只切
+ * visibility，ArtPlayer / hls.js 实例与那条流继续活着（后台播放）。
+ */
+const LivePage = lazy(() => import("./pages/LivePage"));
 
 /** 侧栏展示用：prerelease 缩写（如 `1.2.0-beta` → `1.2.0.b`），数据源仍是合法 semver。 */
 const versionLabel = formatVersion(APP_VERSION);
@@ -102,6 +110,21 @@ export default function AppShell() {
   const location = useLocation();
   const rNav = useNavigate();
   const contentRef = useRef<HTMLElement | null>(null);
+
+  /* ---------- 直播常驻层 ---------- */
+  const lives = useAppStore(selectLives);
+  const isLiveRoute = location.pathname === "/live";
+  /**
+   * 首次进入直播页之后才把常驻层挂上：没进过直播的人不该为它加载
+   * ArtPlayer + hls.js 的 750 kB。挂上之后不再卸载——卸载就等于停播。
+   */
+  const [liveMounted, setLiveMounted] = useState(false);
+  useEffect(() => {
+    if (isLiveRoute) {
+      setLiveMounted(true);
+    }
+  }, [isLiveRoute]);
+
   /** 切页前保存、切页后恢复；key 是 react-router 分配的 history 序号。 */
   const scrollPositions = useRef(new Map<number, number>());
   const currentIdxRef = useRef(0);
@@ -445,6 +468,22 @@ export default function AppShell() {
           >
             <Outlet />
           </Suspense>
+          {/* 直播常驻层：停在 /live 时正常显示，切到其它页面只切 visibility
+              （DOM 与播放实例都还在，音频继续播）。进点播播放页时由 LivePage
+              自己暂停——直播和点播只能有一个在播。
+              LivePage 是 lazy 组件，必须自带 Suspense：它在同步输入（点侧栏）
+              期间挂载，没有边界的话 React 会直接抛「component suspended while
+              responding to synchronous input」。 */}
+          {liveMounted ? (
+            <Suspense fallback={null}>
+              <div
+                className={isLiveRoute ? "live-host" : "live-host is-idle"}
+                aria-hidden={!isLiveRoute}
+              >
+                <LivePage lives={lives} vodActive={isPlayerRoute} />
+              </div>
+            </Suspense>
+          ) : null}
         </main>
         {/* 播放器常驻层：切页不卸载，视频继续播（需求：播放页独立导航 + 后台播放）。 */}
         {vodSession ? (

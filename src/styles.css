@@ -458,6 +458,8 @@ textarea {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* 直播常驻层的隐藏态用绝对定位铺满，定位基准在这里。 */
+  position: relative;
 }
 
 /* 播放页常驻层：盖在内容区之上、侧栏（z-index 40）之下，自己负责滚动。
@@ -484,6 +486,28 @@ textarea {
 }
 
 .player-host.is-idle {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* 直播常驻层：挂在 AppShell 的 .content 里（与普通页面同一套骨架）。
+   切到别的页面时只切 visibility，DOM 与 ArtPlayer 实例都还在——音频继续播，
+   回到 /live 还是同一条流，不用重新拉流。隐藏态保持整块尺寸（绝对定位铺满），
+   否则播放器会按 0×0 重置排版，切回来画面要重算一遍。 */
+.live-host {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.live-host.is-idle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   visibility: hidden;
   pointer-events: none;
 }
@@ -535,26 +559,20 @@ textarea {
 /* ---------- 直播播放页：左换台 / 右观看 ---------- */
 
 /* 直播的核心动作是换台，不是看完一集。布局＝左侧常驻频道目录 + 右侧内容列：
-   右列宽度吃掉剩余空间（minmax(0,1fr)），画面按 16:9 自适应，下方频道条与
-   节目单同宽，三块左右边缘完全对齐。
-   （旧写法用 minmax(0, 50vh*16/9) 定宽，窗口一窄就撑破容器向右溢出，
-   右侧留一大片空、左侧目录却挤着，看起来就是「没对齐」。） */
+   右列宽度吃掉剩余空间（minmax(0,1fr)），画面按 16:9 自适应。
+   页面骨架与其它页完全一致（同一个 .page / .page-head / .page-body）：
+   页头（含「直播源」选择器）常驻在滚动区之外，天然吸顶。
+
+   （2026-11-15 用户反馈「直播页面 和其他页面应该保持一致，直播源 吸顶」：
+   之前直播页是自成一体的「工作台」——整页不滚、右列内滚、还改过 1560 宽度
+   与 24px 内边距，和首页/搜索的 1360/36 对不上。） */
 .page--live {
   --player-width: 100%;
-  /* 画面高度交给列宽决定：这里解除 80vh 的限高，否则窄列里会上下压扁。
-     节目单默认收起后，画面按 82vh 撑满（1280×800 下约 660 高，接近满屏
-     16:9）；展开节目单时右列自己滚，不会反过来压缩画面。 */
-  --player-max-h: 82vh;
-  --page-pad-x: 24px;
-  max-width: 1560px;
-  padding-inline: 24px;
-  /* 直播是**工作台**不是长文：页头（换源）＋左栏频道目录＋右侧画面
-     三块各自固定，整页不滚动。滚动只发生在内部两块（频道列表 / 右列）。 */
-  padding-bottom: 0;
 }
 
-/* 直播页的滚动区不滚，改成「填满剩余高度的布局容器」：滚动交给里面的
-   频道列表与右列，页头和左栏搜索框、遥控换台条都钉在视口里。 */
+/* 右列是「固定画面 + 可滚动节目单」的工作台：页面本身不滚（与播放页同一
+   思路），滚动只发生在左栏频道列表和节目单列表里，页头（直播源）永远在顶部。
+   宽度 / 内边距 / 页头与其它页保持一致，不再给直播页单独的 1560/24。 */
 .page--live .page-body {
   display: flex;
   flex-direction: column;
@@ -565,8 +583,11 @@ textarea {
 .page--live .live-layout {
   flex: 1;
   min-height: 0;
-  /* 两列等高：左栏目录跟着视口走，右列自己滚。 */
   align-items: stretch;
+}
+
+.page--live .live-rail {
+  height: 100%;
 }
 
 .live-layout {
@@ -579,30 +600,33 @@ textarea {
 .live-main {
   display: flex;
   flex-direction: column;
+  gap: 14px;
   min-width: 0;
-  /* 右列自己滚：画面 / 信息条 / 节目单依次排下去，滚轮只影响这一列，
-     左栏频道目录和顶部换源栏不动。 */
+  /* 右列限高：画面按 16:9 锁死，节目单拿剩下的高度并在内部滚。
+     这里不能给 `overflow-y: auto`——那样节目单展开时 flex 会把 16:9 的画面
+     压扁（2026-11-15 用户反馈「播放被压缩了」）。 */
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
-/* 右列三块同宽同边：画面 / 频道信息条 / 节目单。 */
+/* 右列两块同宽同边：画面 / 节目单。 */
 .live-layout .player-stage,
-.live-main > .live-bar,
 .live-main > .live-epg {
   width: 100%;
   margin-inline: 0;
 }
 
-/* 直播页只有画面这一层是「容器」：视频是主体，其余靠发丝线分区。 */
+/* 直播页只有画面这一层是「容器」：视频是主体，其余靠发丝线分区。
+   宽高锁 16:9，`flex: 0 0 auto` 禁止被压缩；高度上限 56vh，剩下的高度留给
+   节目单（852 高的窗口下节目单还有 250px 左右，约 5–6 条）。 */
 .live-layout .player-stage {
+  flex: 0 0 auto;
+  width: min(100%, calc(56vh * 16 / 9));
+  aspect-ratio: 16 / 9;
   min-height: 0;
+  margin-inline: auto;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
-}
-
-.live-main > .live-bar {
-  margin-top: 18px;
 }
 
 /* 频道目录还没到时占住右列：否则左侧目录已经铺开、右边一片空白，像加载失败。 */
@@ -621,12 +645,11 @@ textarea {
   padding: 24px 16px;
 }
 
-/* 目录常驻整屏高：几百上千个频道本来就该一滚到底，容器高度不随内容缩水。
-   整页不滚之后不需要 sticky——高度就是布局行高，列表在内部滚。 */
+/* 目录在 .page-body 里吸顶：几百上千个频道在自己的列表里滚，容器高度
+   由 `.page--live .live-rail` 那条 max-height 兜住。 */
 .live-rail {
   display: flex;
   flex-direction: column;
-  height: 100%;
   min-height: 0;
   padding-right: 10px;
   border-right: 1px solid var(--border);
@@ -971,15 +994,33 @@ textarea {
   white-space: nowrap;
 }
 
-/* 直播态节目单面板：频道名标题 + 可滚动节目列表，当前节目高亮。 */
+/* 直播态节目单面板：频道名标题 + 节目列表，当前节目高亮。整块吃掉画面
+   下面的剩余高度，标题常驻、列表内部滚（用户 2026-11-15：「节目单滚动是不是
+   更合适？」——页面不拉长，翻节目单的时候画面也还在原地）。 */
 .live-epg {
-  margin-top: 18px;
-  padding: 16px 2px 0;
+  margin-top: 0;
+  padding: 12px 2px 0;
   border: 0;
   border-top: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.live-main > .live-epg {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.live-main > .live-epg .epg-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* 频道台标：来自 fanmingming/live 仓库的 PNG（多为透明底彩图）。
@@ -2150,34 +2191,21 @@ textarea {
  * 上游图床经常要几秒（实测 /image p50 129ms、max 5.2s），没有这层提示，
  * 用户看到的就是一片纯色块，分不清「在加载」还是「本来就没图」。
  * 骨架必须与「加载失败」的首字占位明显区分——前者有扫光动画且没有字，
- * 后者是静止的大号首字。 */
+ * 后者是静止的大号首字。
+ *
+ * 2026-11-15：去掉骨架中央的转圈。一圈亮蓝压在每张卡上，观感像「坏图 /
+ * 播放器报错」，一屏十几张同时转更吵；扫光本身已经足够表达「在取图」。 */
 .vod-card__skeleton {
   position: absolute;
   inset: 0;
   background: linear-gradient(
     100deg,
     var(--panel-sunken) 28%,
-    #232c38 48%,
+    rgba(255, 255, 255, 0.055) 48%,
     var(--panel-sunken) 68%
   );
   background-size: 220% 100%;
   animation: vod-skeleton 1.4s linear infinite;
-}
-
-/* 骨架中央的小脉冲点：让「正在取图」在任何一帧都可辨认，
- * 不依赖动画是否恰好停在亮处（截图与静态检视同样成立）。 */
-.vod-card__skeleton::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 22px;
-  height: 22px;
-  margin: -11px 0 0 -11px;
-  border-radius: 50%;
-  border: 2px solid var(--border-strong);
-  border-top-color: var(--accent);
-  animation: vod-skeleton-spin 0.9s linear infinite;
 }
 
 @keyframes vod-skeleton {
@@ -2186,22 +2214,11 @@ textarea {
   }
 }
 
-@keyframes vod-skeleton-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* 减弱动效偏好下停止扫光，保留静态底色与脉冲点（不制造持续重绘）。 */
+/* 减弱动效偏好下停止扫光，保留静态底色（不制造持续重绘）。 */
 @media (prefers-reduced-motion: reduce) {
   .vod-card__skeleton {
     animation: none;
     background: var(--panel-sunken);
-  }
-
-  .vod-card__skeleton::after {
-    animation: none;
-    border-top-color: var(--accent);
   }
 }
 
@@ -2374,6 +2391,14 @@ textarea {
   margin-top: 16px;
 }
 
+/* 路由级错误页的按钮组：并排；窄窗口自动换行，别把按钮挤成一小条。 */
+.route-error__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
 .spinner {
   display: flex;
   align-items: center;
@@ -2423,55 +2448,59 @@ textarea {
 
 /* ---------- 聚合搜索等待态：进度行 + 骨架网格 ---------- */
 
-/* 进度行：不假装有百分比（后端一次 IPC 扇出、无增量事件），
- * 给「已耗时 N 秒 + 上限 + 取消」——可预期的等待。 */
+/* 进度行：不假装有百分比（后端一次 IPC 扇出、无增量事件）。
+ * 2026-11-15 改版：原来的「长蓝条 + 右对齐两行文案 + 取消」在 1288 宽下
+ * 像一条被拉长的报错横幅；现在收成一行——呼吸点 + 进度文案（可截断）+
+ * 已等待时间 + 取消，底部用一条发丝线与结果区分开。 */
 .search-progress {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-progress__pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  animation: search-progress-pulse 1.4s ease-in-out infinite;
 }
 
 .search-progress__label {
-  flex: 1;
-  color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-soft);
   font-size: var(--fs-sm);
 }
 
-/* 细进度条：不定长的往复扫光，表达「进行中」而非「进度百分比」。 */
-.search-progress__bar {
-  position: relative;
-  flex: 2.2;
-  height: 4px;
-  border-radius: var(--r-pill);
-  background: var(--panel-sunken);
-  overflow: hidden;
+.search-progress__meta {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-.search-progress__bar::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  width: 36%;
-  border-radius: inherit;
-  background: var(--accent);
-  animation: search-progress-sweep 1.3s ease-in-out infinite alternate;
-}
-
-@keyframes search-progress-sweep {
-  from {
-    transform: translateX(-20%);
+@keyframes search-progress-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
   }
-  to {
-    transform: translateX(190%);
+
+  50% {
+    opacity: 1;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .search-progress__bar::after {
+  .search-progress__pulse {
     animation: none;
-    /* 静态时停在中间，仍是「进行中」的暗示而非死条。 */
-    left: 32%;
+    opacity: 0.8;
   }
 }
 
@@ -3167,6 +3196,62 @@ textarea {
   font-size: var(--fs-sm);
 }
 
+/* 直播态左上角：频道名 + 清晰度并成一块。原 LiveChannelBar 那一整行已经
+   删掉，右列只剩「画面 → 节目单」两段，节目单因此上移。定位与 .player-res
+   同源：两者都 portal 进 ArtPlayer 根节点，全屏时才能留在画面里。 */
+.player-chan {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 35;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 72%;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  background: rgba(10, 12, 18, 0.55);
+  backdrop-filter: blur(6px);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: var(--fs-sm);
+  pointer-events: none;
+  user-select: none;
+  transition:
+    opacity 0.24s var(--ease),
+    transform 0.24s var(--ease);
+}
+
+.player-chan.is-idle {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.player-chan__name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-chan__res {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.art-fullscreen .player-chan,
+.art-fullscreen-web .player-chan {
+  top: 20px;
+  left: 24px;
+  font-size: var(--fs-h3);
+}
+
 /* 提示层在场时，把 ArtPlayer 自带的加载指示收起来。
    `.art-loading` 里是 50×50 的方点阵 svg（`preserveAspectRatio` 居中于画面），
    我们的 `.player-status__pulse` 是 72×72 的呼吸光环，两者同在中点——实测
@@ -3392,155 +3477,6 @@ textarea {
   align-self: flex-start;
 }
 
-/* 直播播放页的频道信息条：替代 PlayerAbout（直播没有海报/简介/换源概念）。
-   单行水平布局：台标 + 频道名 + 线路 + 外部播放，节目单在下方独立成卡。 */
-.live-bar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-top: 18px;
-  padding: 16px 2px 0;
-  border: 0;
-  border-top: 1px solid var(--border);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.live-bar__logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--panel-sunken);
-}
-
-.live-bar__body {
-  flex: 1;
-  min-width: 0;
-}
-
-.live-bar__title {
-  margin: 0;
-  font-size: var(--fs-h2);
-  font-weight: var(--fw-semibold);
-  letter-spacing: -0.02em;
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.live-bar__meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  min-width: 0;
-}
-
-.live-bar__line {
-  color: var(--text-soft);
-}
-
-/* 正在播出的节目：跟「正在直播」同一行，占满剩余宽度并省略——比再补一行
-   简介更省垂直空间，也不与下方节目单重复。 */
-.live-bar__program {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-soft);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 直播线路切换：极小号 chip，放在频道名下面一行。播放器控制栏里的 selector
-   只有出画后才有，视频卡住时用户更需要这里能点。
-
-   单个频道最多见过 19 条线路（CCTV1 聚合了各地方线路）：不限制的话这排 chip
-   会在窄列里折成好几行、把信息条撑到半屏高。这里固定单行、横向滚动，chips
-   本身不压缩（`nowrap`），信息条高度才不会随线路数量跳。 */
-.live-bar__lines {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 52%;
-  margin-left: 4px;
-  padding-bottom: 1px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.live-bar__lines::-webkit-scrollbar {
-  display: none;
-}
-
-.live-line {
-  flex: 0 0 auto;
-  white-space: nowrap;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--fs-2xs);
-  cursor: pointer;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
-}
-
-.live-line:hover {
-  background: var(--panel-2, rgba(255, 255, 255, 0.04));
-  color: var(--text);
-}
-
-.live-line.is-active {
-  border-color: var(--accent, #3b82f6);
-  background: var(--accent-soft, rgba(59, 130, 246, 0.16));
-  color: var(--accent-ink, #7aa2ff);
-  font-weight: var(--fw-semibold);
-}
-
-/* 「正在直播」用状态点 + 小字，别做成大红块——克制表达层级。 */
-.live-bar__onair {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-.live-bar__onair::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ok);
-  animation: live-dot 1.6s ease-in-out infinite;
-}
-
-@keyframes live-dot {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-.live-bar__actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 2px;
-}
 
 .player-about .chip-row {
   margin-bottom: 10px;

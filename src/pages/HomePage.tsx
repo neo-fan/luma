@@ -616,9 +616,10 @@ export default function HomePage({
           onRetry={refreshVisible}
         >
           <div className="vod-grid">
-            {shownList.map((vod, index) => (
+            {shownList.map((vod) => (
               <VodCard
-                key={`${vod.vod_id}-${index}`}
+                // 不用下标拼 key：刷新/切分类时列表重排会让 React 重挂卡片、重下封面。
+                key={String(vod.vod_id)}
                 title={vod.vod_name}
                 pic={vod.vod_pic}
                 remarks={vod.vod_remarks}

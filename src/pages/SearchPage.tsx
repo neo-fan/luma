@@ -728,12 +728,13 @@ export default function SearchPage({
         {loading ? (
           <>
             {/* 进度行：真实语义是「无增量事件的等待」——不假装有百分比，
-             * 给已耗时 + 上限 + 取消入口，比孤立转圈可预期。 */}
+             * 只给「已响应多少 / 已出多少 + 已等待 + 取消」，比孤立转圈可预期。 */}
             <div className="search-progress" role="status" aria-live="polite">
-              <span className="search-progress__bar" aria-hidden="true" />
+              <span className="search-progress__pulse" aria-hidden="true" />
               <span className="search-progress__label">
-                {progress || "正在检索…"} 已等待 {elapsed} 秒 · 可直接改词重搜
+                {progress || "正在检索…"}
               </span>
+              <span className="search-progress__meta">已等待 {elapsed} 秒</span>
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
@@ -835,9 +836,11 @@ export default function SearchPage({
 
         {visibleHits.length > 0 ? (
           <div className="vod-grid">
-            {visibleHits.map((hit, index) => (
+            {visibleHits.map((hit) => (
               <VodCard
-                key={`${hit.siteKey}-${hit.vod.vod_id}-${index}`}
+                // key 里不能带数组下标：流式搜索每来一批结果列表就会增长/重排，
+                // 下标一变 React 会当成新卡片重新挂载，<img> 跟着重新下载封面。
+                key={`${hit.siteKey}-${hit.vod.vod_id}`}
                 title={hit.vod.vod_name}
                 pic={hit.vod.vod_pic}
                 remarks={hit.vod.vod_remarks}
