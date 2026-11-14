@@ -6,6 +6,7 @@ import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
 import PlayerAbout from "../components/player/PlayerAbout";
 import LiveChannelBar from "../components/player/LiveChannelBar";
+import LiveChannelRail from "../components/player/LiveChannelRail";
 import EpisodePanel from "../components/player/EpisodePanel";
 import PlayerResolution from "../components/player/PlayerResolution";
 import LiveEpgPanel from "../components/LiveEpgPanel";
@@ -37,6 +38,7 @@ import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
 import { setLiveLine } from "../lib/liveMemory";
 import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
+import type { LiveChannel } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
@@ -1007,6 +1009,39 @@ export default function PlayerPage({
     [liveLinesArr, liveIdx, liveSource, vodId, vodName, episodeName, siteKey, liveUa, navigate],
   );
 
+  /**
+   * 左侧频道栏换台。
+   *
+   * 同频道只切线路（复用 pickLiveLine，不重建会话）；换频道则把整条线路数组
+   * 一起带过去，与 LivePage 点进来的导航形状完全一致——播放页只认这一种入参，
+   * 否则换台后会退化成「单线路」，左栏与线路 chip 全都没了。
+   */
+  const pickLiveChannel = useCallback(
+    (channel: LiveChannel, lineIndex: number) => {
+      const lines = channel.lines.length > 0 ? channel.lines : [channel.url];
+      const idx = Math.min(Math.max(lineIndex, 0), lines.length - 1);
+      if (channel.name === vodName) {
+        pickLiveLine(idx);
+        return;
+      }
+      setLiveLine(liveSource ?? "", channel.name, idx);
+      videoRef.current = null;
+      navigate({
+        name: "player",
+        siteKey: "live",
+        vodId: channel.name,
+        vodName: channel.name,
+        episodeName: channel.name,
+        playUrl: lines[idx],
+        liveLines: lines,
+        liveLine: idx,
+        liveSource,
+        ua: liveUa,
+      });
+    },
+    [pickLiveLine, liveSource, vodName, liveUa, navigate],
+  );
+
   // 线路按钮只服务直播多线路；单线路不给控制栏添一个永远只有一项的菜单。
   liveLineRef.current =
     siteKey === "live" && liveLinesArr.length > 1
@@ -1021,13 +1056,36 @@ export default function PlayerPage({
       ? null
       : { canNext: canNext && Boolean(currentLine), onNext: () => goEpisode(1) };
 
+  const live = siteKey === "live";
+
+  /* 播放舞台：直播/点播共用同一份节点，避免两套布局各写一遍 Stage 参数。
+     分辨率角标是 portal（渲染进 ArtPlayer 根节点），放这里只是位置整齐。 */
+  const stageNode = (
+    <>
+      <PlayerStage
+        resolving={resolving}
+        stage={stage}
+        reloading={reloading}
+        playable={playable}
+        recovering={recovering}
+        resolveError={resolveError}
+        containerRef={containerRef}
+      />
+      <PlayerResolution
+        host={playerRoot}
+        label={resolutionBadge(videoMeta)}
+        detail={resolutionDetail(videoMeta.width, videoMeta.height)}
+      />
+    </>
+  );
+
   return (
-    <section className="page page--player">
+    <section className={live ? "page page--player page--live" : "page page--player"}>
       <PlayerHeader
         vodName={vodName}
         episodeName={episodeName}
         onBack={onBack}
-        favorite={siteKey === "live" ? null : favorite}
+        favorite={live ? null : favorite}
         favBusy={favBusy}
         onToggleFavorite={() => void toggleFavorite()}
       />
@@ -1038,71 +1096,59 @@ export default function PlayerPage({
         <ErrorBar message={`播放地址解析失败：${resolveError}`} />
       ) : null}
 
-      <PlayerStage
-        resolving={resolving}
-        stage={stage}
-        reloading={reloading}
-        playable={playable}
-        recovering={recovering}
-        resolveError={resolveError}
-        containerRef={containerRef}
-      />
-
-      {/* 分辨率角标：真正渲染在 ArtPlayer 的全屏节点里（portal），这里只提供数据。 */}
-      <PlayerResolution
-        host={playerRoot}
-        label={resolutionBadge(videoMeta)}
-        detail={resolutionDetail(videoMeta.width, videoMeta.height)}
-      />
-
-      {/* 直播用频道信息条：没有海报/简介/换源概念，复用影片卡只会渲染
-          「无封面」死占位；节目单紧跟其下（见下方 LiveEpgPanel）。 */}
-      {siteKey === "live" ? (
-        <LiveChannelBar
-          channelName={vodName}
-          lineCount={liveLinesArr.length}
-          lineIndex={liveIdx}
-          onPickLine={pickLiveLine}
-          onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
-        />
+      {live ? (
+        /* 直播两栏：左「换台」目录常驻可滚，右「看」——播放器收窄、节目单在下。
+           直播的核心动作是换台，把频道列表钉在播放器旁边，换台只差一次点击，
+           比「返回列表→滚动→再点进来」省两步；播放器也因此让出宽度。 */
+        <div className="live-layout">
+          <LiveChannelRail
+            currentName={vodName}
+            sourceKey={liveSource ?? ""}
+            onPick={pickLiveChannel}
+          />
+          <div className="live-main">
+            {stageNode}
+            <LiveChannelBar
+              channelName={vodName}
+              lineCount={liveLinesArr.length}
+              lineIndex={liveIdx}
+              onPickLine={pickLiveLine}
+              onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
+            />
+            {/* 直播态节目单：按频道名匹配当前频道的当日节目并高亮正在播放项。 */}
+            <LiveEpgPanel channelName={vodName} reloadKey={`${vodName}|${liveIdx}|${playUrl}`} />
+          </div>
+        </div>
       ) : (
-        /* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。
-           外部播放按钮由 EXTERNAL_PLAY_ENABLED 控制，关闭时整个入口不渲染。 */
-        <PlayerAbout
-          vod={vod}
-          fallbackName={vodName}
-          siteKey={siteKey}
-          siteName={siteName}
-          lineName={currentLine?.name}
-          episodeLabel={nowEpisode || undefined}
-          onSwitchSource={siteKey === "live" ? undefined : () => setShowSources(true)}
-          onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
-        />
+        <>
+          {stageNode}
+          {/* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。 */}
+          <PlayerAbout
+            vod={vod}
+            fallbackName={vodName}
+            siteKey={siteKey}
+            siteName={siteName}
+            lineName={currentLine?.name}
+            episodeLabel={nowEpisode || undefined}
+            onSwitchSource={() => setShowSources(true)}
+            onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
+          />
+
+          {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
+          {lines.length > 0 ? (
+            <EpisodePanel
+              lines={lines}
+              panelLine={panelLine}
+              lineIndex={lineIndex}
+              episodeIndex={episodeIndex}
+              setPanelLine={setPanelLine}
+              goToEpisode={goToEpisode}
+            />
+          ) : null}
+        </>
       )}
 
-      {/* 直播线路切换在播放器控制栏里（PlayerStage → ArtPlayer controls），
-          不再在下方单独占一行 chip；节目单紧跟在信息卡下面。 */}
-      {/* 直播态节目单：按频道名匹配当前频道的当日节目并高亮正在播放项。 */}
-      {siteKey === "live" ? (
-        <LiveEpgPanel
-          channelName={vodName}
-          reloadKey={`${vodName}|${liveIdx}|${playUrl}`}
-        />
-      ) : null}
-
-      {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
-      {siteKey !== "live" && lines.length > 0 ? (
-        <EpisodePanel
-          lines={lines}
-          panelLine={panelLine}
-          lineIndex={lineIndex}
-          episodeIndex={episodeIndex}
-          setPanelLine={setPanelLine}
-          goToEpisode={goToEpisode}
-        />
-      ) : null}
-
-      {showSources ? (
+      {showSources && !live ? (
         <SourcePicker
           title={vodName}
           currentSiteKey={siteKey}

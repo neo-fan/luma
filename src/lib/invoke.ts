@@ -241,8 +241,9 @@ export const api = {
    * 条目里，force/scope 语义不变。
    */
   home(siteKey: string, force = false): Promise<HomeResult> {
+    const key = cacheKeys.home(siteKey);
     return pageCache.load(
-      cacheKeys.home(siteKey),
+      key,
       CACHE_TTL.home,
       async () => {
         const base = await spider<HomeResult>(siteKey, "homeContent", []);
@@ -251,7 +252,16 @@ export const api = {
         }
         try {
           const extra = await spider<HomeResult>(siteKey, "homeVideoContent", []);
-          return mergeHomeFallback(base, extra);
+          const merged = mergeHomeFallback(base, extra);
+          if ((merged.list ?? []).length === 0 && (merged.classes ?? []).length > 0) {
+            // 分类有、推荐空：严格分家的源（豆瓣[py]）此刻多半是它自己吞掉了
+            // 上游异常（脚本里 except 后返回空 list）。这种情况**不能进长缓存**，
+            // 否则首页会空着挂满一整个 TTL，用户看到的就是「首页推荐没了」。
+            // 立刻失效，下次进首页重试；同时留一条日志便于排查。
+            log.warn("home recommendation empty", { siteKey });
+            pageCache.invalidate(key);
+          }
+          return merged;
         } catch (err) {
           log.warn("homeVideoContent unavailable", {
             siteKey,

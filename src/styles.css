@@ -26,31 +26,35 @@
   --fw-medium: 500;
   --fw-semibold: 600;
 
-  /* 色阶：从最底层画布到浮层，逐级抬亮 */
-  --bg: #0b0d12;
-  --bg-soft: #0e1118;
-  --panel: #141922;
-  --panel-hover: #1a202c;
-  --panel-raised: #1b2230;
+  /* 色阶：中性石墨（不带蓝调），由暗到亮只抬明度、不改色相——蓝色只留给
+     强调色，界面因此不会「到处都泛蓝」。 */
+  --bg: #0a0a0b;
+  --bg-soft: #0f0f11;
+  --panel: #141416;
+  /* 二级面板（表头/沉底行）：被早期样式引用但从未定义，之前一直走 fallback，
+     两处 rgba 与整套色阶的明度对不上。 */
+  --panel-2: #171719;
+  --panel-hover: #1c1c1f;
+  --panel-raised: #212124;
   /* 海报占位底：深色主题下纯 panel 与图片边缘混在一起，占位块要更沉一点。 */
-  --panel-sunken: #12161e;
+  --panel-sunken: #0e0e10;
 
-  --border: #222a37;
-  --border-strong: #303b4d;
+  --border: #232326;
+  --border-strong: #35353a;
 
-  --text: #e9edf5;
-  --text-soft: #c3cad8;
-  --muted: #8a94a8;
+  --text: #ededef;
+  --text-soft: #c6c6cb;
+  --muted: #8b8b92;
   /* 极弱辅助文字：原 #5e687b 在 --panel 上只有 3.14:1（AA 需 4.5:1），
      这类小字（站点名、时间戳、原因说明）必须看得清。提到 #7b8699 = 5.05:1。 */
-  --faint: #7b8699;
+  --faint: #78787f;
 
   /* 与 src-tauri/icons/icon.svg 的品牌渐变同源 */
-  --accent: #6e8bff;
-  --accent-2: #9a8cff;
-  --accent-soft: rgba(110, 139, 255, 0.14);
-  --accent-softer: rgba(110, 139, 255, 0.08);
-  --accent-ink: #a9bcff;
+  --accent: #5b7cfa;
+  --accent-2: #8b8cf5;
+  --accent-soft: rgba(91, 124, 250, 0.16);
+  --accent-softer: rgba(91, 124, 250, 0.09);
+  --accent-ink: #9fb4ff;
   /* 压在 --accent 底上的文字色：深墨而非白色（白字仅 3.09:1，AA 不达标）。 */
   --badge-on-accent: #0b0d12;
   --ok: #4ade9b;
@@ -68,14 +72,17 @@
   --icon-hover: rgba(233, 237, 245, 0.08);
   --icon-on: rgba(233, 237, 245, 0.13);
 
-  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.18);
-  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.32);
-  --shadow-lg: 0 28px 80px rgba(0, 0, 0, 0.55);
+  /* 卡片一律不投影：层级靠「明度 + 发丝线 + 留白」，投影只留给真正的浮层
+     （下拉菜单 / 弹窗 / Toast），否则整页会显得一层层浮起来。 */
+  --shadow-sm: none;
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.42);
+  --shadow-lg: 0 28px 80px rgba(0, 0, 0, 0.6);
 
-  /* 圆角 4 档：8 / 12 / 16 / 胶囊；超过 16px 的大圆角不做 */
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 16px;
+  /* 圆角 3 档：6 / 10 / 12 + 胶囊。大圆角会让界面显得「软、圆、糊」，
+     简约风格只保留能包住控件的量级。 */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 12px;
   --r-pill: 999px;
   --radius: var(--r-md); /* 兼容早期组件 */
 
@@ -467,6 +474,242 @@ textarea {
 .page--player > .live-epg {
   width: var(--player-width);
   margin-inline: auto;
+}
+
+/* ---------- 直播播放页：左换台 / 右观看 ---------- */
+
+/* 直播的核心动作是换台，不是看完一集。布局＝左侧常驻频道目录 + 右侧内容列：
+   右列宽度吃掉剩余空间（minmax(0,1fr)），画面按 16:9 自适应，下方频道条与
+   节目单同宽，三块左右边缘完全对齐——整块内容铺满页面，不再居中留大边。
+   （旧写法用 minmax(0, 50vh*16/9) 定宽，窗口一窄就撑破容器向右溢出，
+   右侧留一大片空、左侧目录却挤着，看起来就是「没对齐」。） */
+.page--live {
+  --player-width: 100%;
+  /* 画面高度交给列宽决定：这里解除 80vh 的限高，否则窄列里会上下压扁。 */
+  --player-max-h: 100vh;
+  max-width: 1560px;
+  padding-inline: 24px;
+}
+
+.live-layout {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.live-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* 右列三块同宽同边：画面 / 频道信息条 / 节目单。 */
+.live-layout .player-stage,
+.live-main > .live-bar,
+.live-main > .live-epg,
+.live-main > .player-about {
+  width: 100%;
+  margin-inline: 0;
+}
+
+/* 列宽由布局决定，380px 的最小高度会让窄列里的 16:9 画面上下留黑边。 */
+.live-layout .player-stage {
+  min-height: 0;
+}
+
+.live-main > .live-bar {
+  margin-top: 14px;
+}
+
+/* 目录常驻整屏高：2900+ 频道本来就该一滚到底，卡片高度不随内容缩水，
+   也不会像「只有 5 个台」时那样留一片空底。 */
+.live-rail {
+  position: sticky;
+  top: 10px;
+  display: flex;
+  flex-direction: column;
+  height: min(calc(100vh - 124px), 760px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.live-rail__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.live-rail__search {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  font-size: var(--fs-xs);
+}
+
+.live-rail__count {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
+.live-rail__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 6px 10px;
+  overscroll-behavior: contain;
+}
+
+/* 分组只是一条吸顶小标题，频道连续排下去：不做二级筛选，滚到底就是全部。 */
+.live-rail__group-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 8px 6px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+}
+
+.live-rail__group-num {
+  color: var(--faint);
+  font-weight: var(--fw-regular);
+}
+
+.live-rail__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-rail__item:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.live-rail__item.is-active {
+  background: var(--panel-raised);
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.live-rail__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-rail__badge {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--accent-softer);
+  color: var(--accent-ink);
+  font-size: var(--fs-2xs);
+  text-align: center;
+}
+
+/* 窄窗兜底：目录挪到画面下方（一行高），否则 236px 会把画面挤成竖条。 */
+@media (max-width: 1000px) {
+  .live-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .live-rail {
+    position: static;
+    order: 2;
+    height: 260px;
+  }
+}
+
+.live-rail__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-rail__item:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.live-rail__item.is-active {
+  background: var(--panel-raised);
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.live-rail__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-rail__badge {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill, 999px);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  text-align: center;
+}
+
+/* 窄窗兜底：目录退回画面下方（横向滚动的换台条），否则两个 264+ 的
+   最小宽度会互相挤到不可用。 */
+@media (max-width: 1080px) {
+  .live-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .live-rail {
+    position: static;
+    height: 240px;
+    order: 2;
+  }
 }
 
 /* ---------- 页头 ---------- */
@@ -2278,36 +2521,102 @@ textarea {
   background: transparent;
 }
 
+/* 等待态：画面正中一个呼吸光环 + 旋转弧，文字压在下方，不用卡片框——
+   深色卡片压在深色画面上像一块补丁，用户反馈「不协调」。错误态才用卡片。
+   ⚠️ 文字颜色必须写死浅色：这里叠在黑色播放器上，用主题变量 `--text`
+   在浅色主题下是深灰，实测几乎看不见。 */
 .player-status {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   max-width: min(78%, 460px);
+  text-align: center;
+}
+
+.player-status.is-busy {
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.85);
+}
+
+.player-status.is-error {
+  gap: 8px;
   padding: 16px 22px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: var(--r-lg);
   background: rgba(10, 12, 18, 0.72);
   backdrop-filter: blur(10px);
-  text-align: center;
-  /* 控制栏在画面底部，卡片居中不会压住它 */
-  transform: translateY(-18px);
 }
 
-.player-status .spinner {
-  padding: 0;
+.player-status__pulse {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 2px;
+}
+
+/* 外圈呼吸光：比旋转弧大一圈，节律 2.6s，暗示「在等，但没有死」。 */
+.player-status__pulse::before {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(96, 148, 255, 0.3), transparent 68%);
+  animation: player-breathe 2.6s ease-in-out infinite;
+}
+
+.player-status__ring {
+  width: 46px;
+  height: 46px;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.95s linear infinite;
+}
+
+.player-status__dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+  animation: player-dot 1.8s ease-in-out infinite;
+}
+
+@keyframes player-breathe {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes player-dot {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .player-status__title {
   margin: 0;
-  color: var(--text);
+  color: #f3f6fb;
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
 }
 
 .player-status__desc {
   margin: 0;
-  color: var(--muted);
+  color: rgba(255, 255, 255, 0.66);
   font-size: var(--fs-xs);
   line-height: 1.5;
 }
@@ -3536,4 +3845,288 @@ button:focus:not(:focus-visible) {
     /* 侧栏文字的淡入带 90ms 延迟，只清时长会留下「晚一拍才出现」的空白帧。 */
     transition-delay: 0ms !important;
   }
+}
+
+/* ---------- 播放页平面化（2026-11-14） ----------
+   问题：播放页从上到下是「圆角卡片套圆角卡片」——画面一张卡、频道条一张卡、
+   节目单一张卡、选集又一张卡，每张都带边框 + 圆角 + 投影。信息层级全靠阴影
+   区分，视觉上会显得又碎又浮，视频这个真正的主体反而不突出。
+   做法：只保留画面一层描边（视频是主体），其余内容块退化成**用发丝分隔线分区
+   的平面**——无边框、无圆角、无投影，靠留白与线划分层次。强调色只留给
+   「当前频道 / 正在播出」，不再满屏点缀。 */
+
+.page--player .player-stage {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: none;
+}
+
+.page--player .player-about,
+.page--player .player-episodes,
+.page--player .live-bar,
+.page--player .live-epg {
+  margin-top: 16px;
+  padding: 16px 2px 2px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 影片信息卡里的海报也是卡片：平面化后改成带描边的缩略图，不再叠圆角阴影。 */
+.page--player .player-about__poster {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+/* 节目单：时间列 + 竖线是主要内容骨架，去掉卡片后靠线本身表达层级。 */
+.page--player .live-epg .epg-list {
+  max-height: 340px;
+}
+
+/* 目录栏：从「浮起来的卡片」变成贴着内容的侧边栏（右侧发丝线分隔）。 */
+.live-rail {
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-right: 10px;
+}
+
+.live-rail__head {
+  padding: 2px 2px 10px;
+}
+
+/* 吸顶分组标题必须铺底色，否则滚动时和条目文字叠在一起；底色取页面底
+   而不是卡片底（平面化后这里没有卡片底了）。 */
+.live-rail__group-title {
+  padding: 10px 2px 6px;
+  background: var(--bg);
+}
+
+.live-rail__scroll {
+  padding: 4px 2px 12px;
+}
+
+.live-rail__item {
+  padding: 7px 8px;
+}
+
+/* 选中态只用一个淡色底 + 左侧 2px 强调条，不再整块抬亮。 */
+.live-rail__item.is-active {
+  background: var(--accent-softer);
+  color: var(--accent-ink);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.live-rail__badge {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--faint);
+}
+
+/* ============================================================
+   简约设计语言 v2（2026-11-14）
+   ------------------------------------------------------------
+   参考 Notion / Linear / Vercel Dashboard 的克制系做法，四条规则：
+   1. 单色阶：灰阶只抬明度不带色相，彩色只出现在「当前选中 / 状态」上；
+   2. 无卡片感：内容块靠留白和发丝线分区，不叠背景 + 圆角 + 投影；
+   3. 小圆角：控件 6px、容器 10–12px，只保留包住内容的量级；
+   4. 交互靠明度：hover 抬 3% 背景，active 用淡色底 + 2px 左标，不做缩放/
+      浮起/发光——列表密排时这些动效会互相干扰。
+   选择器只做视觉覆盖，不动任何 className 契约（探针依赖 DOM 与类名）。
+   ============================================================ */
+
+/* ---------- 侧栏 ---------- */
+.sidebar {
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+
+.nav__item {
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.nav__item:hover {
+  background: var(--panel-hover);
+  color: var(--text-soft);
+}
+
+/* 当前页：淡色底 + 左侧 2px 竖标。比「整块填亮」安静，位置感反而更明确。 */
+.nav__item.is-active {
+  background: var(--accent-softer);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.nav__item.is-active .nav__icon {
+  color: var(--accent-ink);
+}
+
+/* ---------- 页头 / 分节 ---------- */
+.page-title {
+  font-size: 21px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+}
+
+.page-meta {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+
+/* 分节之间用一条发丝线 + 留白，代替「每节一张卡」。 */
+.section {
+  margin-top: 24px;
+}
+
+.section + .section {
+  padding-top: 22px;
+  border-top: 1px solid var(--border);
+}
+
+.section-title {
+  margin-bottom: 12px;
+  color: var(--text-soft);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+}
+
+/* ---------- chip：从胶囊改小圆角，默认透明，靠边框与 hover 表达可点 ---------- */
+.chip {
+  padding: 5px 11px;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+}
+
+.chip:hover {
+  background: var(--panel-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.chip.is-active {
+  background: var(--accent-softer);
+  border-color: rgba(91, 124, 250, 0.45);
+  color: var(--accent-ink);
+}
+
+/* ---------- 表单控件 ---------- */
+.input {
+  height: 36px;
+  border-radius: var(--r-sm);
+  background: var(--panel-sunken);
+  border-color: var(--border);
+}
+
+.input:hover {
+  border-color: var(--border-strong);
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-softer);
+}
+
+.btn {
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-soft);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--panel-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* 焦点可见但克制：只在键盘操作时出现。 */
+button:focus-visible,
+.chip:focus-visible,
+.nav__item:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- 海报卡：不浮起、不发光，hover 只提亮描边与标题 ---------- */
+.vod-card__poster {
+  border-radius: var(--r-sm);
+  background: var(--panel-sunken);
+}
+
+.vod-card:hover .vod-card__poster {
+  transform: none;
+  border-color: var(--border-strong);
+  box-shadow: none;
+}
+
+.vod-card:hover .vod-card__name {
+  color: var(--text);
+}
+
+/* ---------- 滚动条：细、无轨道底色 ---------- */
+.live-rail__scroll,
+.epg-list,
+.sidebar__nav,
+.source-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* 线路数徽标：实心 accent 小圆点在简约语言里太跳（一屏几十个），改成描边数字。 */
+.chip__badge {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--faint);
+}
+
+.chip.is-active .chip__badge {
+  border-color: rgba(91, 124, 250, 0.45);
+  color: var(--accent-ink);
+}
+
+/* 分组 chip 的计数：与徽标区分开，只做弱化数字。 */
+.group-tabs .chip__count {
+  opacity: 1;
+  color: var(--faint);
+}
+
+.group-tabs .chip.is-active .chip__count {
+  color: var(--accent-ink);
+}
+
+/* 剧集格：28–160 个按钮平铺时，实底卡片会连成一片「砖墙」。改成无底 + 发丝线，
+   hover/选中才上色——一眼能看清哪些是当前集，页面也不会被格子压满。 */
+.episode {
+  background: transparent;
+  color: var(--muted);
+}
+
+.episode:hover {
+  background: var(--panel-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.episode.is-active {
+  background: var(--accent-softer);
+  border-color: rgba(91, 124, 250, 0.45);
+  color: var(--accent-ink);
+}
+
+/* 详情页主视觉：唯一的「重点容器」，只保留发丝线与浅底，不再叠投影。 */
+.detail-hero {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: none;
 }

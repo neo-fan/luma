@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
-import Spinner from "../Spinner";
 import { EXTERNAL_PLAY_FALLBACK } from "../../lib/features";
 
 interface PlayerStageProps {
@@ -88,8 +87,15 @@ export default function PlayerStage({
 
       {status ? (
         <div className="player-overlay" aria-live="polite">
-          <div className="player-status">
-            {status.busy ? <Spinner label="" /> : null}
+          {/* 等待态用「呼吸光环 + 旋转弧」占据画面正中，文字压在下方：纯转圈
+              在小窗口里太轻，用户会以为没在动；错误态才用卡片承载长文案。 */}
+          <div className={status.busy ? "player-status is-busy" : "player-status is-error"}>
+            {status.busy ? (
+              <span className="player-status__pulse" aria-hidden="true">
+                <span className="player-status__ring" />
+                <span className="player-status__dot" />
+              </span>
+            ) : null}
             <p className="player-status__title">{status.title}</p>
             {status.desc ? <p className="player-status__desc">{status.desc}</p> : null}
             {slowHint ? <p className="player-status__desc">{slowHint}</p> : null}

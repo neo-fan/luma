@@ -92,6 +92,10 @@ export default function LiveEpgPanel({ channelName, reloadKey }: LiveEpgPanelPro
    * 默认节目单是整天的（央视 30+ 条），列表又只有 300px 高——不滚的话用户
    * 看到的永远是凌晨那几条，反而以为节目单不对。用父容器的 scrollTop 而不是
    * `scrollIntoView`，后者会连带把整个页面滚走。
+   *
+   * ⚠️ 不能用 `now.offsetTop`：`<li>` 的 offsetParent 是最近的有定位祖先，
+   * 不一定是 `.epg-list`（卡片有 position 就会算错），实测会停在错误位置。
+   * 统一用相对矩形换算，并把当前节目放到视口上方 1/3 处（上下都留上下文）。
    */
   useEffect(() => {
     const list = listRef.current;
@@ -99,7 +103,13 @@ export default function LiveEpgPanel({ channelName, reloadKey }: LiveEpgPanelPro
     if (!list || !now) {
       return;
     }
-    list.scrollTop = Math.max(0, now.offsetTop - list.clientHeight / 2 + now.clientHeight / 2);
+    const box = list.getBoundingClientRect();
+    const item = now.getBoundingClientRect();
+    if (item.top >= box.top && item.bottom <= box.bottom) {
+      // 已经在视野里（例如列表本身不满一屏）：不要为了「居中」硬跳一下。
+      return;
+    }
+    list.scrollTop += item.top - box.top - box.height / 3;
   }, [data]);
 
   if (!channelName.trim()) {

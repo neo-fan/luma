@@ -10,53 +10,19 @@ import { usePageState } from "../lib/usePageState";
 import { getLiveLine, setLiveLine } from "../lib/liveMemory";
 import ChannelLogo from "../components/ChannelLogo";
 import { getEpgUrl } from "../lib/epgSettings";
+import {
+  expandChannels,
+  isListableSource,
+  liveSourceKey,
+  normalizeGroups,
+  primeLiveGroups,
+  rememberLiveSource,
+} from "../lib/liveChannels";
 import type { LiveChannel, LiveGroup, LiveSource } from "../types/tvbox";
 
 interface LivePageProps {
   lives: LiveSource[];
   navigate: Navigate;
-}
-
-/** 分组容器型源（只有 `channels`，没有 `url`）直接展开，无需请求网络。 */
-function expandChannels(source: LiveSource): LiveGroup[] {
-  const channels = (source.channels ?? [])
-    .map((channel) => {
-      // 容器源的 urls 本身就是多线路；同一频道不再拍平成多个 chip。
-      const lines = Array.from(
-        new Set((channel.urls ?? []).filter((url) => /^https?:\/\//i.test(url))),
-      );
-      if (lines.length === 0) {
-        return null;
-      }
-      return { name: channel.name || lines[0], url: lines[0], lines };
-    })
-    .filter((channel): channel is LiveChannel => channel !== null);
-  if (channels.length === 0) {
-    return [];
-  }
-  return [{ name: source.group || source.name || "未分组", channels }];
-}
-
-/** 确保每条频道都带 `lines`：后端发 `urls`，前端按线路处理前归一化一次。 */
-function normalizeGroups(groups: LiveGroup[]): LiveGroup[] {
-  return groups.map((group) => ({
-    ...group,
-    channels: group.channels.map((channel) => {
-      const lines = channel.lines?.length
-        ? channel.lines
-        : Array.from(new Set((channel.urls ?? []).filter(Boolean)));
-      const resolved = lines.length > 0 ? lines : [channel.url];
-      return { ...channel, lines: resolved, url: resolved[0] };
-    }),
-  }));
-}
-
-/** 有列表地址，或能从分组容器里展开出至少一个可播放频道。 */
-function isListable(source: LiveSource): boolean {
-  if (source.url) {
-    return true;
-  }
-  return expandChannels(source).length > 0;
 }
 
 /** 折叠态单组分批上限；展开后再放宽到 EXPANDED_LIMIT，避免一次性塞进几千节点。 */
@@ -84,7 +50,7 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
   const active = lives[activeIndex];
   const sourceUrl = active?.url ?? "";
   // 源标识：既用于列表缓存键，也用于线路偏好记忆键，保持一致。
-  const sourceKey = sourceUrl || `container:${activeIndex}`;
+  const sourceKey = active ? liveSourceKey(active, activeIndex) : "";
   // m3u 列表按源地址保留，播完一个频道返回时不再重新下载解析几千行。
   const [groups, setGroups] = usePageState<LiveGroup[]>(
     `live:${sourceKey}:groups`,
@@ -142,14 +108,20 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       setGroups([]);
       return;
     }
+    // 记住源地址：播放页左侧频道栏在 pageState 已空（刷新 / 从历史直达）时
+    // 靠它重新拉一次列表，否则会是一排空白。
+    rememberLiveSource(sourceKey, active);
     // 已有缓存且未要求强制刷新：直接复用（切回已加载过的源不再重新下载）。
     if (groups.length > 0 && !forceReload) {
+      // 进程内目录也同步一份，播放页侧栏直接命中，不再二次 IPC。
+      primeLiveGroups(sourceKey, groups);
       return;
     }
     if (!sourceUrl) {
       // 分组容器：本地展开即可，别拿 undefined 去请求接口。
-      const local = expandChannels(active);
-      setGroups(normalizeGroups(local));
+      const local = normalizeGroups(expandChannels(active));
+      setGroups(local);
+      primeLiveGroups(sourceKey, local);
       setLoading(false);
       setError(local.length === 0 ? "该直播源是分组容器，没有可直接播放的地址。" : "");
       setForceReload(false);
@@ -161,9 +133,11 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
       setError("");
       try {
         const result = await api.liveParse(sourceUrl, active.ua, forceReload);
+        const next = normalizeGroups(result.groups ?? []);
         if (alive) {
-          setGroups(normalizeGroups(result.groups ?? []));
+          setGroups(next);
         }
+        primeLiveGroups(sourceKey, next);
       } catch (err) {
         if (alive) {
           setGroups([]);
@@ -180,10 +154,10 @@ export default function LivePage({ lives, navigate }: LivePageProps) {
     return () => {
       alive = false;
     };
-  }, [active, groups, forceReload]);
+  }, [active, groups, forceReload, sourceKey, sourceUrl]);
 
   // 每个源是否可列：只在 lives 变化时重算，过滤输入不触发。
-  const listable = useMemo(() => lives.map(isListable), [lives]);
+  const listable = useMemo(() => lives.map(isListableSource), [lives]);
 
   // 过滤结果：pattern 不变就不重算（loading/error 等状态变化也不会全量重过滤）。
   const visible = useMemo(() => {
