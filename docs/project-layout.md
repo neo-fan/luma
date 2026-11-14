@@ -40,6 +40,7 @@ tvbox/
 ├── CHANGELOG.md                           # 版本变更日志（每次发版更新）
 ├── SPEC_REVIEW.md                         # 规格书 v1.0 修订建议（归档，非实现依据）
 ├── .gitignore                             # 三类产物 + 运行时产物 + 敏感数据忽略规则
+├── .github/workflows/check.yml            # CI：离线回归三 job（checks / rust / py-adapter），不跑窗口探针
 ├── package.json / pnpm-lock.yaml          # 前端依赖与锁文件（pnpm 9.15.4）
 ├── tsconfig.json / vite.config.ts         # 构建配置（dev 端口 1420）
 ├── index.html  public/                    # 前端入口与静态资源（含 icon.svg）
@@ -54,6 +55,7 @@ tvbox/
 │   ├── MAINTENANCE.md                     # 维护与升级（契约/依赖/回归分层/工程债）
 │   ├── RELEASING.md                       # 发布流程（版本同步清单/检查/打包/验收）
 │   ├── log/                               # 逐轮开发日志（从 AGENTS.md 迁出，按月份）
+│   │                                      #   2026-11-decisions.md = AGENTS.md 2026-11 决策段逐字存档
 │   ├── verification-config.md             # 抓取记录（含真实地址，不入库）
 │   ├── verification-report.md             # 真实配置形态验证报告
 │   ├── site-compat-report.md              # 全站兼容性扫描结论（101 站点逐站）

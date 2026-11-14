@@ -18,11 +18,20 @@
 | 层 | 命令 | 依赖 | 用途 |
 |---|---|---|---|
 | 离线（必过） | `python tools/check.py` | 无窗口、无外网 | 每次改动的**最低门槛** |
+| CI | `.github/workflows/check.yml` | 干净 runner（GitHub Actions） | 推送/PR 自动跑：`--ci` 子集 + rust 单测 + py 适配层 |
 | 窗口探针 | `node tools/run_probes.mjs` | debug 窗口 + CDP 9222 + Vite 1420 | 改 UI / 播放 / 配置链路后 |
 | 阶段断言 | `python tests/e2e/p0.py` ~ `p3.py` | stub + 运行中的应用 | 改 sidecar / 打包后 |
 | 真实配置 | 导入 → 搜索 → 详情 → 播放 | 外网 | 源兼容结论（外网抖动不算回归） |
 
 `check.py` 覆盖：契约、Python 兼容、py 框架、语法编译、前端单测、Rust 单测、运行时产物体检。加 `--full` 会额外跑 `pnpm build`。
+
+`--ci` 是**便携子集**（契约 + Python 语法 + 前端单测），只挑「任何干净机器都能跑」的检查：
+
+- py 适配层断言要 pip 依赖（lxml / pyquery / pycryptodome）→ 由 CI 的 `py-adapter` job 单独装 `tools/python-requirements.txt` 后跑；
+- Rust 单测需要 `dist/` 与 `bundle.resources` 路径（`tauri-build` 每次构建都复制，缺路径直接失败）→ 由 `rust` job 先 `pnpm build`、再用空目录/空文件补齐 `sidecars/{jre,python-embed}` 与 `src-tauri/binaries/qjs-runner-<triple>.exe` 后跑；
+- 运行时产物体检只对**本机已 prepare 过**的仓库有意义，CI 里没有这些产物。
+
+**窗口探针不进 CI**：需要 debug 窗口 + CDP 9222，仍留在发版手工清单（`docs/RELEASING.md` §2.2）。
 
 ## 3. 契约变更流程（最容易踩）
 
@@ -59,7 +68,8 @@
 
 ## 6. 文档维护
 
-- **规范与决策**写 `AGENTS.md`；**逐轮过程**写 `docs/log/YYYY-MM.md`；**阶段交付**写 `docs/tasks/`。
+- **规范与决策**写 `AGENTS.md`；**逐轮过程**写 `docs/log/YYYY-MM.md`；**阶段交付**写 `docs/tasks/`；**已归档的历史决策段**在 `docs/log/2026-11-decisions.md`。
+- **`AGENTS.md` 有硬预算：≤ 20 KB**。它是给 AI 协作者的指令文件，超过 65 KB 的指令预算就会被截断 —— 2026-11-14 实测 95,925 字节时第 298 行之后（含「常用命令 / 开发约定 / 编码约定」）全部读不到。写新内容前先问「这是当前规范，还是一条决策记录？」：决策记录进 `docs/log/`，`AGENTS.md` 只在末尾台账加一行。
 - `AGENTS.md` 里各交付段落的测试数字是**当时快照**，当前基线以 `docs/RELEASING.md` 与 `tools/check.py` 输出为准，不要拿旧数字改代码。
 - 归档资产（`SPEC_REVIEW.md`、`DESIGN-SPEC.md`、`docs/ui-preview.html`、`docs/spec-v1.1/cloud-actions.json`）文件头已标注，**不是实现依据**；实现依据只有 `docs/spec-v1.1/CHANGELOG.md` + `replacements.md`。
 - `docs/site-compat-report.md` 是 2026-11-12 冻结快照，表内「暂不支持」不代表当前支持范围。
@@ -82,7 +92,7 @@
 
 ## 9. 已知工程债（按优先级）
 
-1. **无 CI**：`tools/check.py` 已提供离线一键入口，但尚未接入持续集成；发版仍靠人工执行清单。
+1. **CI 首次远端运行待验证**：`.github/workflows/check.yml` 已落地（`checks` / `rust` / `py-adapter` 三个 job），但本机没有远端仓库，尚未在 GitHub runner 上实跑过；首次推送后要按实际报错调（重点看 `rust` job 的 `pnpm build` + 资源桩是否够用）。
 2. Rust `#[path]` 是物理分层，逻辑模块名仍是 `crate::config`，依赖方向不受编译器约束（刻意取舍，第二阶段再做前缀化）。
 3. 超长文件：`domain/config.rs`、`proxy.rs`、`PlayerPage.tsx` + `usePlayerEngine.ts`。
 4. `tools/` 71 个探针平铺，缺 `probes/` 子目录归类。
