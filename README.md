@@ -65,7 +65,7 @@ corepack pnpm tauri build                   # 发版：自动 pnpm build + cargo
 
 产物：
 
-- `src-tauri/target/release/bundle/nsis/Luma_1.0.0_x64-setup.exe` —— 官方 NSIS 安装器（双击安装，写入开始菜单 / 卸载项）。
+- `src-tauri/target/release/bundle/nsis/Luma_1.0.1_x64-setup.exe` —— 官方 NSIS 安装器（双击安装，写入开始菜单 / 卸载项）。
 
 首次构建前如需重建随包运行时（JRE / Python embeddable / qjs-runner 二进制）：
 
@@ -101,7 +101,7 @@ python tools/prepare_runtime.py    # jlink JRE + Python embeddable + externalBin
 
 ## 日志与诊断
 
-- **版本**：`1.0.0`。侧栏、设置页与 `tauri.conf.json` 使用同一版本号。
+- **版本**：`1.0.1`。侧栏、设置页与 `tauri.conf.json` 使用同一版本号。
 - **位置**：开发 / 安装模式 `%APPDATA%\Luma\logs\luma-YYYY-MM-DD.log`；便携模式为 exe 同级 `data/logs\`。每天一个文件，保留最近 7 天。
 - **级别**：默认 `info`；需要排查 sidecar / 聚合细节时设 `LUMA_LOG=debug` 后重启。日志同时写文件与控制台（release 包无控制台，只看文件）。
 - **内容**：启动摘要（版本、平台、数据目录、配置 id）、前端关键操作（搜索完成、手动/自动换源、播放解析失败、配置导入导出）、IPC 错误、未捕获异常与 Promise rejection。
@@ -110,7 +110,7 @@ python tools/prepare_runtime.py    # jlink JRE + Python embeddable + externalBin
 
 ## 运行
 
-- 安装版：双击 `Luma_1.0.0_x64-setup.exe` 按向导安装，从开始菜单启动；卸载走系统「添加/删除程序」。
+- 安装版：双击 `Luma_1.0.1_x64-setup.exe` 按向导安装，从开始菜单启动；卸载走系统「添加/删除程序」。
 - 未签名安装器首次运行可能触发 SmartScreen：点击「更多信息」→「仍要运行」。正式分发需要 OV/EV 代码签名证书。
 
 数据目录：安装模式下位于 `%APPDATA%\Luma\luma.db`（单个 SQLite，含 `-wal` / `-shm` 辅助文件）；若把安装目录整体放到可写位置且存在 `data/` 子目录，则自动进入便携模式、数据随文件夹移动。删除数据目录即清空配置/收藏/历史。

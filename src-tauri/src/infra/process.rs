@@ -15,6 +15,15 @@ use tokio::process::{Child, Command};
 /// Hard cap for adapter calls; overridable for tests.
 pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Windows `CREATE_NO_WINDOW`: the host is a GUI-subsystem binary
+/// (`windows_subsystem = "windows"`), while python/java/qjs sidecars are
+/// console-subsystem executables. Without this flag every adapter call makes
+/// Windows allocate a new conhost window for the child, flashing a black
+/// console in front of the app. Stdio stays piped, so this does not affect
+/// the JSON-over-stdout protocol.
+#[cfg(windows)]
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 pub fn call_timeout() -> Duration {
     crate::env::get("CALL_TIMEOUT_MS")
         .and_then(|value| value.parse::<u64>().ok())
@@ -43,6 +52,9 @@ impl Guarded {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
+        // GUI host -> console sidecar: suppress the child's console window.
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
         if let Some(dir) = cwd {
             command.current_dir(dir);
         }

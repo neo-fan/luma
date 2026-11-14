@@ -35,7 +35,7 @@ python tools/check.py
 
 `check.py` 串行执行并汇总：契约校验、Python 兼容、py 框架、`py_compile`、前端单测、`cargo test --lib`、`prepare_runtime.py --check`。任一失败即非零退出。
 
-**当前基线（1.0.0）**：`python tools/check.py` **7/7 全绿**；其中 `pnpm test` 326/326、`cargo test --lib` 116 passed / 1 ignored、`py_compat_check` 37/37、`contract_check` 8 类型 + 7 方法对齐、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
+**当前基线（1.0.1）**：`python tools/check.py` **7/7 全绿**；其中 `pnpm test` 326/326、`cargo test --lib` 116 passed / 1 ignored、`py_compat_check` 37/37、`contract_check` 8 类型 + 7 方法对齐、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
 
 ### 2.2 窗口回归（需要 debug 窗口）
 
@@ -58,7 +58,7 @@ corepack pnpm tauri build
 
 > **为什么两步**：Tauri 官方只负责「把 `dist/` 嵌入 exe + 打包安装器」，它不会替你构建 JRE / Python embeddable / qjs-runner 这些 sidecar 运行时。这一步是项目特有的，不是重新造 Tauri 的轮子——`prepare_runtime.py` 只产出 `tauri.conf.json` 里 `bundle.resources` / `bundle.externalBin` 指向的源文件，构建本身仍 100% 交给 `tauri build`。
 
-产物：`src-tauri/target/release/bundle/nsis/Luma_1.0.0_x64-setup.exe`（NSIS 安装器）。
+产物：`src-tauri/target/release/bundle/nsis/Luma_1.0.1_x64-setup.exe`（NSIS 安装器）。
 
 ### 2.4 安装器外观（官方 `bundle.windows.nsis`）
 

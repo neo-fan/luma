@@ -64,6 +64,13 @@ pub fn mpv_play(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    // GUI host -> console binary: never let mpv allocate a conhost window.
+    // mpv draws its own video window, so this only suppresses the console.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(crate::process::CREATE_NO_WINDOW);
+    }
     if let Some(title) = title.filter(|value| !value.trim().is_empty()) {
         command.arg(format!("--force-media-title={title}"));
     }
