@@ -6,8 +6,8 @@ later phase is reported as N/A instead of FAIL, which is the v1.1 wording of
 12.2 (`docs/spec-v1.1/replacements.md`, R1).
 
 Usage:
-    python3 tests/e2e/p0.py            # full run, needs stub + running app for HTTP parts
-    python3 tests/e2e/p0.py --offline  # skip assertions that need the desktop app
+    python3 tests/acceptance/p0.py            # full run, needs stub + running app for HTTP parts
+    python3 tests/acceptance/p0.py --offline  # skip assertions that need the desktop app
 """
 
 from __future__ import annotations
@@ -99,9 +99,9 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true", help="skip checks that need the running app")
     args = parser.parse_args()
 
-    run_script("T-05 config", "six shapes + normalization", ROOT / "tests/e2e/t05_config.py")
-    run_script("T-04 contract", "schema <-> types alignment", ROOT / "tests/e2e/contract_check.py")
-    run_script("T-03 capabilities", "closed permission set", ROOT / "tests/e2e/capabilities_check.py")
+    run_script("T-05 config", "six shapes + normalization", ROOT / "tests/offline/config_shapes_check.py")
+    run_script("T-04 contract", "schema <-> types alignment", ROOT / "tests/offline/contract_check.py")
+    run_script("T-03 capabilities", "closed permission set", ROOT / "tests/offline/capabilities_check.py")
 
     online = not args.offline
     if online:
@@ -114,11 +114,11 @@ def main() -> int:
 
     # 12.2: capabilities that only land in P1/P2 are N/A at P0.
     for name, note in [
-        ("py runtime isolation", "asserted by tests/e2e/p1.py"),
-        ("js runtime isolation", "asserted by tests/e2e/p1.py"),
+        ("py runtime isolation", "asserted by tests/acceptance/p1.py"),
+        ("js runtime isolation", "asserted by tests/acceptance/p1.py"),
         ("jar runtime isolation", "scheduled for P2"),
-        ("ext passthrough to sidecars", "asserted by tests/e2e/p1.py"),
-        ("crash isolation / no zombie process", "asserted by tests/e2e/p1.py"),
+        ("ext passthrough to sidecars", "asserted by tests/acceptance/p1.py"),
+        ("crash isolation / no zombie process", "asserted by tests/acceptance/p1.py"),
     ]:
         record("12.2 matrix", name, "N/A", note)
 

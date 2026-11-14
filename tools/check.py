@@ -63,7 +63,7 @@ CARGO = shutil.which("cargo") or "cargo"
 SYNTAX_SNIPPET = (
     "import pathlib,sys\n"
     "bad=[]\n"
-    "for base in ('tools','sidecars/py','tests/e2e'):\n"
+    "for base in ('tools','sidecars/py','tests'):\n"
     "    for p in pathlib.Path(base).rglob('*.py'):\n"
     "        if '__pycache__' in p.parts: continue\n"
     "        try: compile(p.read_text(encoding='utf-8'),str(p),'exec')\n"
@@ -75,12 +75,12 @@ SYNTAX_SNIPPET = (
 
 def checks(full: bool, quick: bool, ci: bool = False) -> list[tuple[str, list[str]]]:
     py = interp()
-    items: list[tuple[str, list[str]]] = [("contract (schema <-> TS)", [py, "tests/e2e/contract_check.py"])]
+    items: list[tuple[str, list[str]]] = [("contract (schema <-> TS)", [py, "tests/offline/contract_check.py"])]
     if not ci:
         items += [
-            ("py compatibility", [py, "tests/e2e/py_compat_check.py"]),
-            ("py base spider", [py, "tests/e2e/py_base_spider_check.py"]),
-            ("adapter isolation", [py, "tests/e2e/adapter_isolation.py"]),
+            ("py compatibility", [py, "tests/offline/py_compat_check.py"]),
+            ("py base spider", [py, "tests/offline/py_base_spider_check.py"]),
+            ("adapter isolation", [py, "tests/offline/adapter_isolation.py"]),
             ("runtime artifacts", [py, "tools/prepare_runtime.py", "--check"]),
         ]
     items += [

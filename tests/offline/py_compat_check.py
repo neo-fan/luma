@@ -15,7 +15,7 @@
    不会把脚本目录加进 sys.path，导入顺序错了会让所有 py 源
    `ModuleNotFoundError` 且「produced no frame」。
 
-运行： `python tests/e2e/py_compat_check.py`
+运行： `python tests/offline/py_compat_check.py`
 """
 
 from __future__ import annotations

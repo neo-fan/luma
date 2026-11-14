@@ -7,7 +7,7 @@
  * 2. `CCTV-1 综合` 这种写法必须先收敛成 `CCTV1` 才能命中，仓库里没有带「综合」的图。
  */
 import { describe, expect, it } from "vitest";
-import { channelLogoNames, channelLogoUrls } from "../../src/lib/channelLogo";
+import { channelLogoNames, channelLogoUrls } from "./channelLogo";
 
 describe("channelLogoNames", () => {
   it("标准频道名原样使用", () => {

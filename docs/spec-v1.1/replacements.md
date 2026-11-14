@@ -380,7 +380,7 @@ export interface AppError {
 - **替换为**：
 
 ````markdown
-归一化契约以 `contracts/tvbox.schema.json` 为唯一真源。`src/types/tvbox.ts`、`error.rs` 的 serde struct、Python 输出字段必须与之对齐；`tests/e2e/contract_check.py` 比对三端字段名，作为 T-04 与 T-13 的必跑断言。新增字段须先改 schema，再改三端实现与验收脚本。
+归一化契约以 `contracts/tvbox.schema.json` 为唯一真源。`src/types/tvbox.ts`、`error.rs` 的 serde struct、Python 输出字段必须与之对齐；`tests/offline/contract_check.py` 比对三端字段名，作为 T-04 与 T-13 的必跑断言。新增字段须先改 schema，再改三端实现与验收脚本。
 ````
 
 ---
@@ -556,13 +556,13 @@ v1.1 不启用一次性 token 鉴权；后续如需加固，须单独评估对�
 - **原文**：
 
 ````text
-`python tests/e2e/p0.py` 全绿
+`python tests/acceptance/p0.py` 全绿
 ````
 
 - **替换为**：
 
 ````markdown
-`python tests/e2e/p0.py` 全绿（按 12.2 累积断言口径：仅断言 P0 已交付能力，未交付项标 `N/A` 不参与判定，`FAIL = 0` 即通过）
+`python tests/acceptance/p0.py` 全绿（按 12.2 累积断言口径：仅断言 P0 已交付能力，未交付项标 `N/A` 不参与判定，`FAIL = 0` 即通过）
 ````
 
 ### 9-5 T-13（R6 + R8 联动）
@@ -631,13 +631,13 @@ v1.1 不启用一次性 token 鉴权；后续如需加固，须单独评估对�
 - **原文**：
 
 ````text
-`python tests/e2e/p1.py` 全绿
+`python tests/acceptance/p1.py` 全绿
 ````
 
 - **替换为**：
 
 ````markdown
-`python tests/e2e/p1.py` 全绿（按 12.2 累积断言口径：仅断言 P1 及之前已交付能力，未交付项标 `N/A`，`FAIL = 0` 即通过）
+`python tests/acceptance/p1.py` 全绿（按 12.2 累积断言口径：仅断言 P1 及之前已交付能力，未交付项标 `N/A`，`FAIL = 0` 即通过）
 ````
 
 ### 9-10 T-20（R9）
@@ -693,13 +693,13 @@ v1.1 不启用一次性 token 鉴权；后续如需加固，须单独评估对�
 - **原文**：
 
 ````text
-`python tests/e2e/p2.py` 全绿
+`python tests/acceptance/p2.py` 全绿
 ````
 
 - **替换为**：
 
 ````markdown
-`python tests/e2e/p2.py` 全绿（按 12.2 累积断言口径：仅断言 P2 及之前已交付能力，未交付项标 `N/A`，`FAIL = 0` 即通过）
+`python tests/acceptance/p2.py` 全绿（按 12.2 累积断言口径：仅断言 P2 及之前已交付能力，未交付项标 `N/A`，`FAIL = 0` 即通过）
 ````
 
 ### 9-14 T-32（R11 方案 A）
@@ -844,13 +844,13 @@ proxy 只监听 `127.0.0.1`，按 7.5 做目标白名单与请求限制，不暴
 - **原文**：
 
 ````text
-`tests/e2e/p0.py` ~ `p3.py`，每阶段至少覆盖：配置解析、路由判定、6 个 spider 方法、聚合超时、崩溃隔离、播放四级降级、proxy 转发、ext 透传、进程无残留。脚本输出 `PASS/FAIL` 计数，任一 FAIL 即阶段不通过。
+`tests/acceptance/p0.py` ~ `p3.py`，每阶段至少覆盖：配置解析、路由判定、6 个 spider 方法、聚合超时、崩溃隔离、播放四级降级、proxy 转发、ext 透传、进程无残留。脚本输出 `PASS/FAIL` 计数，任一 FAIL 即阶段不通过。
 ````
 
 - **替换为**：
 
 ````markdown
-`tests/e2e/p0.py` ~ `p3.py` 采用累积式断言：每个脚本只断言本阶段及之前已交付的能力，
+`tests/acceptance/p0.py` ~ `p3.py` 采用累积式断言：每个脚本只断言本阶段及之前已交付的能力，
 未交付能力标 `N/A`（不计数、不计 FAIL）；该项在对应阶段交付后转为必测，并在后续阶段回归。
 脚本输出 `PASS / FAIL / N/A` 计数，任一 `FAIL` 即阶段不通过；`N/A` 项必须在阶段交付物中
 列出并注明启用阶段。

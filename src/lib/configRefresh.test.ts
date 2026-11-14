@@ -5,8 +5,8 @@
  * 且不能把「从未检查」伪装成「刚刚」。
  */
 import { describe, expect, it } from "vitest";
-import { describeRefreshState, formatRelativeTime } from "../../src/lib/config";
-import type { ConfigMeta } from "../../src/types/tvbox";
+import { describeRefreshState, formatRelativeTime } from "./config";
+import type { ConfigMeta } from "../types/tvbox";
 
 const NOW = new Date("2026-11-13T12:00:00Z").getTime();
 const MINUTE = 60_000;

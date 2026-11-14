@@ -41,10 +41,12 @@ dev 与安装交付版统一用随包 `sidecars/python-embed/python.exe`（`brid
 ```powershell
 corepack pnpm tauri dev        # 出窗口，前端热更新 + Rust 重编译
 corepack pnpm build            # 仅前端产物（验证打包无误）
-corepack pnpm test             # 前端单测（src/**/*.test.ts 19 + tests/frontend 18）
+corepack pnpm test             # 前端单测：src 下与被测模块同目录 33 个 + tests/frontend 6 个跨文件约定
 cargo check  --manifest-path src-tauri/Cargo.toml
 cargo test   --manifest-path src-tauri/Cargo.toml --lib
 ```
+
+> 测试放哪、四层各自跑到什么程度，见 `docs/TESTING.md`。日常最低门槛就是 `python tools/check.py`。
 
 **交付节奏**（用户约定）：改完**停在 debug 模式**（`pnpm dev:app`）确认即可，**不要每次都 `tauri build` 打包**；`tauri build` 编译 + 打包约 3~4 分钟、反馈回路过长，只在用户明确要求或发版时打。发版统一用官方 `tauri build`，不手搓打包脚本。
 
@@ -150,20 +152,20 @@ $env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（安装版�
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 corepack pnpm test
-python tests/e2e/parse_check.py            # 解析池与配置字段
-python tests/e2e/py_compat_check.py        # TVBox py 脚本通用兼容 / 错误日志
-python tests/e2e/py_base_spider_check.py   # py 框架与原生对齐
+python tests/offline/parse_check.py            # 解析池与配置字段
+python tests/offline/py_compat_check.py        # TVBox py 脚本通用兼容 / 错误日志
+python tests/offline/py_base_spider_check.py   # py 框架与原生对齐
 python tools/prepare_runtime.py --check    # 随包 JRE/Python 依赖齐全度
-python tests/e2e/contract_check.py         # 校验 contracts/tvbox.schema.json 与 TS 侧字段
+python tests/offline/contract_check.py         # 校验 contracts/tvbox.schema.json 与 TS 侧字段
 ```
 
 ### 5.2 需窗口（CDP 驱动真实窗口）
 
 ```powershell
-python tests/e2e/p0.py     # P0 基线（需 stub + 运行中的应用，可用 --offline）
-python tests/e2e/p1.py     # P1 子进程运行时
-python tests/e2e/p2.py     # P2 jar / JVM 运行时
-python tests/e2e/p3.py     # P3 嗅探 / mpv / 打包
+python tests/acceptance/p0.py     # P0 基线（需 stub + 运行中的应用，可用 --offline）
+python tests/acceptance/p1.py     # P1 子进程运行时
+python tests/acceptance/p2.py     # P2 jar / JVM 运行时
+python tests/acceptance/p3.py     # P3 嗅探 / mpv / 打包
 node tools/run_probes.mjs                 # 一条命令跑全部窗口探针
 node tools/run_probes.mjs --with-ui       # 连 UI 冒烟（会切桩配置，放最后）
 node tools/run_probes.mjs --only=flv,history

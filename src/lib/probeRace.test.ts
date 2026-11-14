@@ -6,8 +6,8 @@
  * 成功后立刻中止其余在飞的请求。
  */
 import { describe, expect, it } from "vitest";
-import { firstPlayable } from "../../src/lib/probeRace";
-import type { RaceCandidate } from "../../src/lib/probeRace";
+import { firstPlayable } from "./probeRace";
+import type { RaceCandidate } from "./probeRace";
 
 const candidate = (line: string): RaceCandidate => ({ line, name: line, url: `https://x/${line}` });
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

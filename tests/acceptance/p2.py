@@ -13,8 +13,8 @@ Phases:
   app     — optional (--with-app): real window routing through CDP
 
 Usage:
-    python3 tests/e2e/p2.py
-    python3 tests/e2e/p2.py --no-cumulative   # P2 assertions only
+    python3 tests/acceptance/p2.py
+    python3 tests/acceptance/p2.py --no-cumulative   # P2 assertions only
 """
 
 from __future__ import annotations
@@ -285,11 +285,11 @@ def jvm_phase() -> None:
 
 def cumulative_phase() -> None:
     py = sys.executable
-    run_script("12.2 cumul", "p0.py (offline)", [py, "tests/e2e/p0.py", "--offline"])
-    run_script("12.2 cumul", "p1.py (adapter)", [py, "tests/e2e/p1.py", "--adapter"])
-    run_script("12.2 cumul", "config_compat.py", [py, "tests/e2e/config_compat.py"])
-    run_script("12.2 cumul", "contract_check.py", [py, "tests/e2e/contract_check.py"])
-    run_script("12.2 cumul", "capabilities_check.py", [py, "tests/e2e/capabilities_check.py"])
+    run_script("12.2 cumul", "p0.py (offline)", [py, "tests/acceptance/p0.py", "--offline"])
+    run_script("12.2 cumul", "p1.py (adapter)", [py, "tests/acceptance/p1.py", "--adapter"])
+    run_script("12.2 cumul", "config_compat.py", [py, "tests/offline/config_compat.py"])
+    run_script("12.2 cumul", "contract_check.py", [py, "tests/offline/contract_check.py"])
+    run_script("12.2 cumul", "capabilities_check.py", [py, "tests/offline/capabilities_check.py"])
     # P3 sniffing is the only group still not delivered in P2.
     record("12.2 N/A", "sniffing (4th playback fallback)", "N/A", "enabled in P3")
 

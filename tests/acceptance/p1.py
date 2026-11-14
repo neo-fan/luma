@@ -10,8 +10,8 @@ Two phases:
              isolation and that no python child survives a crash.
 
 Usage:
-    python3 tests/e2e/p1.py            # adapter + app (app part skipped if absent)
-    python3 tests/e2e/p1.py --adapter  # adapter only
+    python3 tests/acceptance/p1.py            # adapter + app (app part skipped if absent)
+    python3 tests/acceptance/p1.py --adapter  # adapter only
 """
 
 from __future__ import annotations

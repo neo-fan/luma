@@ -61,7 +61,7 @@ node tools/run_probes.mjs --with-ui  # 追加会切桩配置的 UI 冒烟，放�
 
 `contracts/tvbox.schema.json` 是唯一真源，改字段的顺序是：
 schema → `src/types/tvbox.ts` → Rust 序列化 / `sidecars/py/normalize.py` →
-`python tests/e2e/contract_check.py` 必须 `CONTRACT OK`。
+`python tests/offline/contract_check.py` 必须 `CONTRACT OK`。
 新增 Tauri command 或错误码需要先在文档里写清楚，`contract_check` 与 capabilities 也要同步。
 
 **配置快照**

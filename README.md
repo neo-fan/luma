@@ -147,7 +147,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib   # Rust 单测
 node tools/run_probes.mjs --list       # 窗口探针清单（需要 debug 窗口 + CDP 9222）
 ```
 
-阶段断言（`tests/e2e/p0.py` ~ `p3.py`）采用累积断言：未交付能力标 `N/A`，`FAIL = 0` 即通过。CI 入口见 `.github/workflows/check.yml`。
+阶段断言（`tests/acceptance/p0.py` ~ `p3.py`）采用累积断言：未交付能力标 `N/A`，`FAIL = 0` 即通过。CI 入口见 `.github/workflows/check.yml`。
 
 ## 项目结构
 

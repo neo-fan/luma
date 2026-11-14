@@ -1,6 +1,6 @@
 """Self-made py spider that always fails, for crash-isolation assertions.
 
-Used by tests/e2e/p1.py: one broken site must not take down the other sources
+Used by tests/acceptance/p1.py: one broken site must not take down the other sources
 or the adapter.
 """
 

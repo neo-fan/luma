@@ -7,7 +7,7 @@ This script checks that `src/types/tvbox.ts` and (when present) the Rust
 any mismatch so it can be wired into T-04 / T-13 assertions.
 
 Usage:
-    python3 tests/e2e/contract_check.py
+    python3 tests/offline/contract_check.py
 """
 
 from __future__ import annotations

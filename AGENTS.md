@@ -18,7 +18,7 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 |---|---|
 | 版本 | `1.0.3`（`package.json` 唯一来源；同步清单见 `docs/RELEASING.md` §1） |
 | 交付物 | `src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe` |
-| 回归基线 | `python tools/check.py` 8/8；`pnpm test` 326；`cargo test --lib` 153 passed / 1 ignored |
+| 回归基线 | `python tools/check.py` 8/8；`pnpm test` 336（39 个文件）；`cargo test --lib` 159 passed / 1 ignored |
 | 窗口探针 | `node tools/run_probes.mjs --list`（需要 debug 窗口 + CDP 9222） |
 | 发布状态 | **本地私有，暂不发布**：无 remote、未 push；`LICENSE` 是占位（All rights reserved），不要当成已开源 |
 
@@ -61,7 +61,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 
 1. **构建与打包只走 Tauri 官方工具链**：`tauri dev`（debug）/ `tauri build`（release）/ `tauri icon`（图标）。裸 `cargo build --release` 不会把 `frontendDist` 嵌进 exe，窗口会回退到 `devUrl` 报 `ERR_CONNECTION_REFUSED`。Cargo profile 用官方 [App Size](https://v2.tauri.app/concept/size/) 建议值，不要加项目私有 tweak。
 2. **随包运行时优先**：sidecar 运行时一律走 `paths::sidecar_roots()`，优先级 = 显式环境变量（`LUMA_JAVA` / `LUMA_PYTHON` / `LUMA_QJS_RUNNER`）→ 随包 `sidecars/jre`、`sidecars/python-embed`、exe 同目录 `qjs-runner.exe` → 宿主兜底。用户无需安装 JDK；`prepare_runtime.py` 禁止硬编码本机路径。
-3. **契约单一真源** `contracts/tvbox.schema.json`：改字段先改 schema → `src/types/tvbox.ts` → Rust 序列化与 `sidecars/py/normalize.py` → `python tests/e2e/contract_check.py` 必须 `CONTRACT OK`。字段 camelCase、`additionalProperties: false`；不许删 TS 字段来「修」校验。
+3. **契约单一真源** `contracts/tvbox.schema.json`：改字段先改 schema → `src/types/tvbox.ts` → Rust 序列化与 `sidecars/py/normalize.py` → `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。字段 camelCase、`additionalProperties: false`；不许删 TS 字段来「修」校验。
 4. **双快照不可越过**：运行策略只改 `runtime_json`，`imported_json` 一个字段都不许动。
 5. **换线只认证据**：`dead` 仅限 4xx/5xx、非 `#EXTM3U`、首分片是图片/HTML；超时算 `unknown`，连续 3 次才换。**慢 ≠ 死**。
 6. **headers 优先级**：爬虫显式 UA/Referer/Cookie > 配置级 `headers[]`（host 精确 → 通配）> 默认值（`okhttp/3.15` + `{scheme}://{host}/`）。默认值必须由反代最后补，不能提前折进 proxyUrl 的 query。
@@ -124,6 +124,7 @@ node tools/run_probes.mjs             # 全套；--list / --only=a,b / --with-ui
 |---|---|
 | 理解进程模型 / 四类源 / 数据流 / ADR | `docs/ARCHITECTURE.md` |
 | 环境准备 / 四端调试 / 日志 / 常见坑 | `docs/DEVELOPMENT.md` |
+| 测试分层 / 用例该放哪 / 各层命令 | `docs/TESTING.md` |
 | 改项目要守什么规矩 / 已知工程债 | `docs/MAINTENANCE.md` |
 | 升版本 / 打包 / 验收 | `docs/RELEASING.md` |
 | 目录、产物归口、编码约定 | `docs/project-layout.md` |

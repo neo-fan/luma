@@ -17,7 +17,7 @@
 4. stdio 恒为 UTF-8：即便环境把 `PYTHONIOENCODING` 设成 `gbk` / `cp936`
    （中文 Windows 的默认代码页），含中文的配置帧也必须原样送达并解出中文。
 
-运行： `python tests/e2e/adapter_isolation.py`（`tools/check.py` 已接入）。
+运行： `python tests/offline/adapter_isolation.py`（`tools/check.py` 已接入）。
 """
 
 from __future__ import annotations

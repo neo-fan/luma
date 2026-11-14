@@ -10,7 +10,7 @@ import {
   ledgerSiteSeen,
   ledgerSuccess,
   markAutoNav,
-} from "../../src/lib/failoverLedger";
+} from "./failoverLedger";
 
 describe("failoverLedger", () => {
   beforeEach(() => {

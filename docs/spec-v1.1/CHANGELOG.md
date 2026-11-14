@@ -18,7 +18,7 @@
 | R5（采纳） | Rust `process.rs` 为唯一拉起主体，删除 `capabilities` 里的 `shell:allow-spawn`，sidecar 清单集中到 13 节 `externalBin`。 |
 | R6（线程池） | Python 主循环采用 `ThreadPoolExecutor(max_workers=8)`，新增 7.2.1「并发与取消语义」定义 id 单调 / epoch / 取消帧 / 崩溃重启 / 迟到帧回收。 |
 | R7（目标白名单） | 保留 9978 默认端口、不做一次性 token，新增 7.5.1 动态端口注入表，并定义 SSRF 目标白名单与请求限制。 |
-| R8（轻量方案） | `AppError` 补 `rawSaved` / `details` 字段，新增 `contracts/tvbox.schema.json` 为唯一真源 + `tests/e2e/contract_check.py` 校验脚本，不引入新依赖。 |
+| R8（轻量方案） | `AppError` 补 `rawSaved` / `details` 字段，新增 `contracts/tvbox.schema.json` 为唯一真源 + `tests/offline/contract_check.py` 校验脚本，不引入新依赖。 |
 | R9（采纳） | 「目标 jar」定义为 `tests/fixtures/jars/` 下的自编模板 jar（class / dex 两种形态），跑通率量化为模板 jar 100%，不对第三方 jar 作承诺。 |
 | R10（采纳） | JDK 统一 17（开发 / 编译 / `jlink` 裁剪），不探测、不兼容 JDK 8。 |
 | R11（方案 A） | Python 随包分发，T-32 的「按需版 ≤25MB」改为 `docs/size-report.md` 实测口径（v1.1 按需版目标 ≤45MB，含 Python embeddable 与前端产物）。 |
@@ -63,13 +63,13 @@
 | 路径 | 用途 | 关联 |
 | --- | --- | --- |
 | `contracts/tvbox.schema.json` | 归一化契约唯一真源，`src/types/tvbox.ts` / `error.rs` 的 serde struct / Python 输出字段与之对齐 | R8 |
-| `tests/e2e/contract_check.py` | 比对三端字段名，作为 T-04 与 T-13 的必跑断言 | R8 |
+| `tests/offline/contract_check.py` | 比对三端字段名，作为 T-04 与 T-13 的必跑断言 | R8 |
 | `sidecars/qjs-runner/` | JS sidecar：独立可执行文件，内部 `rquickjs` 每请求新建 context、不共享 | R4 |
 | `docs/size-report.md` | T-32 前产出，逐项列出主程序 / 前端产物 / Python embeddable / JRE / mpv 的实测体积（压缩前 / 后） | R11 |
 | `tests/fixtures/jars/template-class.jar` | 自编纯 class 形态模板 jar，作为 T-20 `javap` 守恒与 T-23 跑通率基准 | R9 |
 | `tests/fixtures/jars/template-dex.jar` | 自编 dex 形态模板 jar，同上 | R9 |
 
-> 另：`qjs-runner` 需在 `tauri.conf.json` 的 `externalBin` 注册；`tests/e2e/p0.py ~ p3.py` 为 v1.0 已有脚本，v1.1 仅更新其累积断言语义，非新增文件。
+> 另：`qjs-runner` 需在 `tauri.conf.json` 的 `externalBin` 注册；`tests/acceptance/p0.py ~ p3.py` 为 v1.0 已有脚本，v1.1 仅更新其累积断言语义，非新增文件。
 
 ---
 

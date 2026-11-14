@@ -14,8 +14,8 @@ import {
   forgetCards,
   recallCard,
   rememberCards,
-} from "../../src/lib/cardIndex";
-import type { VodInfo } from "../../src/types/tvbox";
+} from "./cardIndex";
+import type { VodInfo } from "../types/tvbox";
 
 function vod(id: string, name: string, patch: Partial<VodInfo> = {}): VodInfo {
   return {

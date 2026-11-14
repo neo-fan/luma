@@ -86,6 +86,6 @@ jobs:
       - name: Install adapter dependencies (same pins as the bundled runtime)
         run: python -m pip install --disable-pip-version-check -r tools/python-requirements.txt
       - name: TVBox py spider compatibility
-        run: python tests/e2e/py_compat_check.py
+        run: python tests/offline/py_compat_check.py
       - name: py base spider framework alignment
-        run: python tests/e2e/py_base_spider_check.py
+        run: python tests/offline/py_base_spider_check.py

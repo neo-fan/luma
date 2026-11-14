@@ -243,7 +243,7 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 
 | 用例 | 结果 |
 |------|------|
-| classic stub（`var spider`） | 7 个方法全通过（`tests/e2e/p1.py --adapter` 18/18） |
+| classic stub（`var spider`） | 7 个方法全通过（`tests/acceptance/p1.py --adapter` 18/18） |
 | 合成 ESM 模块 | 模块声明、求值、导出发现、短名派发链路连通 |
 | 真实 `apple.js` | 返回 5 个真实分类 |
 | 真实 `荐片.js` | 返回 4 个真实分类 |

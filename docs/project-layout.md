@@ -149,8 +149,11 @@ luma/
 | 前端源码 | `src/` | React + TypeScript + Vite |
 | Rust 宿主源码 | `src-tauri/src/{infra,domain}/` | 命令、进程管理、proxy、运行时，按层归档 |
 | sidecar 源码 | `sidecars/{py,java,qjs-runner}/` | 入库；二进制产物目录见 §1 |
-| 验收脚本与 stub | `tests/e2e/`、`tools/probes/probe_*.mjs` | 分阶段断言 + CDP 窗口探针 |
-| 前端单测 | 纯函数放被测模块同目录 `*.test.ts`；跨模块契约放 `tests/frontend/` | 两种位置各司其职，跨模块契约不塞回 `src/` |
+| 离线检查脚本 | `tests/offline/` | 契约、py 兼容、解析池、适配层隔离等确定性检查，全部接进 `tools/check.py` |
+| 阶段验收脚本 | `tests/acceptance/p0.py~p3.py` | 规格书 12.2 累积断言；stub 在 `tests/stub_server.py` |
+| 前端单测 | 与被测模块同目录 `*.test.ts`（`src/lib`、`src/pages`、`src/stores`） | 只测本模块；不为了放测试而新建目录 |
+| 跨文件约定测试 | `tests/frontend/` | 读源码文本断言「哪些文件里必须出现什么」，不属于任何单模块 |
+| 窗口探针 | `tools/{probes,verify,diag,audit}/` | 靠 CDP 9222 取证的脚本，统一入口 `tools/run_probes.mjs` |
 | 离线工具 | `tools/` | 不参与构建、不发网络请求的开发辅助脚本（`prepare_runtime.py` 例外，参与随包运行时准备） |
 | 机制说明与专项报告 | `docs/`，文件名 ASCII kebab | 如 `js-support.md`、`size-report.md`；结论性长文不写进 `AGENTS.md`，只在其中留摘要与指针 |
 | 对外说明与贡献流程 | 仓库根 `README.md` / `CONTRIBUTING.md` / `SECURITY.md` / `THIRD-PARTY-NOTICES.md` | 面向使用者与贡献者，不写内部过程 |

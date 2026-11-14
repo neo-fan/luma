@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const spiderInvoke = vi.fn();
 const parseResolve = vi.fn();
 
-vi.mock("../../src/lib/invoke", () => ({
+vi.mock("./invoke", () => ({
   api: {
     spiderInvoke: (...args: unknown[]) => spiderInvoke(...args),
     parseResolve: (...args: unknown[]) => parseResolve(...args),
@@ -18,7 +18,7 @@ vi.mock("../../src/lib/invoke", () => ({
   errorMessage: (err: unknown) => String(err),
 }));
 
-const { resolveEpisodeTarget } = await import("../../src/lib/episodeResolve");
+const { resolveEpisodeTarget } = await import("./episodeResolve");
 
 afterEach(() => {
   spiderInvoke.mockReset();

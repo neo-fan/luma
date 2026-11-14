@@ -8,7 +8,7 @@
  * 这里把它改成小并发竞速：第一个成功立刻中止其余请求并返回，用户等待时间
  * 从「各条之和」降到「最快那条」。
  *
- * 纯逻辑、无 React 依赖，便于单测（`tests/frontend/probeRace.test.ts`）。
+ * 纯逻辑、无 React 依赖，便于单测（`src/lib/probeRace.test.ts`）。
  */
 
 export interface RaceCandidate {

@@ -8,7 +8,7 @@ do not. This script locks down the two gaps that make a real config look broken:
 * the vendored `base.spider` framework (BOM source, zero-arg `__init__`,
   `init(ext)` hook and `self.html(...).xpath(...)`).
 
-No network access is needed. Usage:  python tests/e2e/config_compat.py
+No network access is needed. Usage:  python tests/offline/config_compat.py
 """
 
 from __future__ import annotations

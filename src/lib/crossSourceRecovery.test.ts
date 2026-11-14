@@ -7,14 +7,14 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../src/lib/sourceCache", () => ({ ensureSources: vi.fn() }));
-vi.mock("../../src/lib/invoke", () => ({ api: { detail: vi.fn() } }));
+vi.mock("./sourceCache", () => ({ ensureSources: vi.fn() }));
+vi.mock("./invoke", () => ({ api: { detail: vi.fn() } }));
 
-import { findPlayableSource } from "../../src/lib/crossSourceRecovery";
-import { ensureSources } from "../../src/lib/sourceCache";
-import { api } from "../../src/lib/invoke";
-import type { SourceOption } from "../../src/lib/sources";
-import type { Site } from "../../src/types/tvbox";
+import { findPlayableSource } from "./crossSourceRecovery";
+import { ensureSources } from "./sourceCache";
+import { api } from "./invoke";
+import type { SourceOption } from "./sources";
+import type { Site } from "../types/tvbox";
 
 const sites = [] as Site[];
 const site = (key: string, changeable?: boolean) =>

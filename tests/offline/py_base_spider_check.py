@@ -14,7 +14,7 @@ avbox），我们的 `sidecars/py/base/spider.py` 是子进程版复刻。本断
 豆瓣 `homeVideoContent` 经 frodo 接口出数据是「header 修复」的端到端铁证；
 该项依赖外网，连不上记 N/A，不影响离线断言的 PASS/FAIL。
 
-运行： `<python-embed>/python.exe tests/e2e/py_base_spider_check.py`
+运行： `<python-embed>/python.exe tests/offline/py_base_spider_check.py`
 """
 
 from __future__ import annotations

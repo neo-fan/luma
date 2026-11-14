@@ -230,7 +230,7 @@ def dispatch(method: str, params: dict) -> dict:
 
 
 def debug_handler(method: str, params: dict) -> dict:
-    """Fault injection used by tests/e2e/p1.py; gated behind an env flag."""
+    """Fault injection used by tests/acceptance/p1.py; gated behind an env flag."""
     if method == "debug.echo":
         delay = float(params.get("delayMs") or 0) / 1000.0
         if delay > 0:

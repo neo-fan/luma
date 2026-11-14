@@ -5,7 +5,7 @@
  *   contracts/tvbox.schema.json（真源）
  *   src-tauri/src/error.rs 等 serde 结构
  *   sidecars/py 的输出 JSON
- * 三者由 tests/e2e/contract_check.py 比对（v1.1 R8）。
+ * 三者由 tests/offline/contract_check.py 比对（v1.1 R8）。
  */
 
 /** 站点运行时分派结果（6.2） */

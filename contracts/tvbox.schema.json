@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tvbox.local/contracts/tvbox.schema.json",
   "title": "TVBox normalized contract",
-  "description": "归一化数据契约的单一真源（规格书 6.2 / 7.1；v1.1 R8）。前端 src/types/tvbox.ts、Rust serde 结构与 Python 输出必须与本文件对齐，由 tests/e2e/contract_check.py 比对。",
+  "description": "归一化数据契约的单一真源（规格书 6.2 / 7.1；v1.1 R8）。前端 src/types/tvbox.ts、Rust serde 结构与 Python 输出必须与本文件对齐，由 tests/offline/contract_check.py 比对。",
   "$defs": {
     "RuntimeKind": {
       "type": "string",

@@ -3,7 +3,7 @@
  * `manifestParsingError` 的真实含义几乎总是「源返回的不是 m3u8」。
  */
 import { describe, expect, it } from "vitest";
-import { describeHlsError, isTimingFailure } from "../../src/lib/playErrors";
+import { describeHlsError, isTimingFailure } from "./playErrors";
 
 describe("describeHlsError", () => {
   it("explains a manifest that is not a playlist", () => {

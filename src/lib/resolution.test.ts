@@ -11,7 +11,7 @@ import {
   resolutionDetail,
   resolutionFromVideo,
   resolutionLabel,
-} from "../../src/lib/resolution";
+} from "./resolution";
 
 describe("resolutionLabel", () => {
   it("只出 720P / 1080P / 2K / 4K 四档", () => {

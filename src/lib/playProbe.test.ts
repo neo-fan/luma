@@ -6,7 +6,7 @@
  * 死线路当成可用线路切过去，hls.js 拿到 JSON 后报 manifestParsingError。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { probeLineVerdict, probePlayable } from "../../src/lib/playProbe";
+import { probeLineVerdict, probePlayable } from "./playProbe";
 
 const g = globalThis as unknown as Record<string, unknown>;
 

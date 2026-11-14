@@ -6,7 +6,7 @@ normalization, and checks the merged multi-repo path. Also exercises the stdio
 JSON-RPC adapter (ping + config.decrypt).
 
 Usage:
-    python3 tests/e2e/t05_config.py
+    python3 tests/offline/config_shapes_check.py
 """
 
 from __future__ import annotations

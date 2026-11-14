@@ -10,7 +10,7 @@
 //! `assets://js/lib/*` and relative imports onto a bundled asset directory, and
 //! falls back to HTTP for anything else. Only `req`, `local`, `console`, `md5X`
 //! and a few `__tvbox_*` internals are injected; `require`, `process`, `fetch`
-//! stay undefined (verified by `tests/e2e/p1.py`).
+//! stay undefined (verified by `tests/acceptance/p1.py`).
 //!
 //! A hard wall-clock limit interrupts the interpreter, so an infinite loop
 //! cannot wedge the sidecar; the host additionally kills the process tree.

@@ -20,10 +20,12 @@
 | 离线（必过） | `python tools/check.py` | 无窗口、无外网 | 每次改动的**最低门槛** |
 | CI | `.github/workflows/check.yml` | 干净 runner（GitHub Actions） | 推送/PR 自动跑：`--ci` 子集 + rust 单测 + py 适配层 |
 | 窗口探针 | `node tools/run_probes.mjs` | debug 窗口 + CDP 9222 + Vite 1420 | 改 UI / 播放 / 配置链路后 |
-| 阶段断言 | `python tests/e2e/p0.py` ~ `p3.py` | stub + 运行中的应用 | 改 sidecar / 打包后 |
+| 阶段断言 | `python tests/acceptance/p0.py` ~ `p3.py` | stub + 运行中的应用 | 改 sidecar / 打包后 |
 | 真实配置 | 导入 → 搜索 → 详情 → 播放 | 外网 | 源兼容结论（外网抖动不算回归） |
 
 `check.py` 覆盖：契约、Python 兼容、py 框架、语法编译、前端单测、Rust 单测、运行时产物体检。加 `--full` 会额外跑 `pnpm build`。
+
+新增/调整用例前先看 `docs/TESTING.md`：单测（`src/**`、Rust 内联）/ 离线检查（`tests/offline/`）/ 阶段验收（`tests/acceptance/`）/ 窗口探针（`tools/`）的边界与命令都在那一份里，加进 `check.py` 要同步本表与那里的清单。
 
 `--ci` 是**便携子集**（契约 + Python 语法 + 前端单测），只挑「任何干净机器都能跑」的检查：
 
@@ -40,7 +42,7 @@
 1. 先改 `$defs` 里的字段（含 `description` 说明语义）。
 2. 再改 `src/types/tvbox.ts` 的接口字段与注释。
 3. 再改 Rust 序列化侧（`src-tauri/src/domain/spider/` 等）与 `sidecars/py/normalize.py`。
-4. `python tests/e2e/contract_check.py` 必须 `CONTRACT OK`。
+4. `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。
 5. 字段名是 camelCase 且 `additionalProperties: false`，新增字段**必须**同步 schema，否则校验报 `in TS, missing in schema`。
 
 > 1.0.0 修过一次真实漂移：`Site.searchableDeclared`、`SpiderRequest.stream/streamId` 三端早已在用，schema 却漏了。不要删 TS 字段来"修"校验。

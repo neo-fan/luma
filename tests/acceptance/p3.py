@@ -7,8 +7,8 @@ manual acceptance and which is **not implemented** — it is reported as N/A
 rather than silently passed.
 
 Usage:
-    python3 tests/e2e/p3.py
-    python3 tests/e2e/p3.py --no-cumulative
+    python3 tests/acceptance/p3.py
+    python3 tests/acceptance/p3.py --no-cumulative
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def run_script(group: str, name: str, argv: list[str], timeout: int = 300) -> bo
 def t28_phase() -> None:
     configs = sorted((ROOT / "tests" / "fixtures" / "configs").glob("*.json"))
     check(len(configs) >= 5, "T-28 dialects", "fixture configs present", f"{len(configs)} files")
-    run_script("T-28 dialects", "config_compat.py", [sys.executable, "tests/e2e/config_compat.py"])
+    run_script("T-28 dialects", "config_compat.py", [sys.executable, "tests/offline/config_compat.py"])
 
 
 def t29_t30_phase() -> None:
@@ -140,11 +140,11 @@ def t33_phase() -> None:
 
 def cumulative_phase() -> None:
     py = sys.executable
-    run_script("12.2 cumul", "p0.py (offline)", [py, "tests/e2e/p0.py", "--offline"])
-    run_script("12.2 cumul", "p1.py (adapter)", [py, "tests/e2e/p1.py", "--adapter"])
-    run_script("12.2 cumul", "p2.py", [py, "tests/e2e/p2.py"], timeout=600)
-    run_script("12.2 cumul", "contract_check.py", [py, "tests/e2e/contract_check.py"])
-    run_script("12.2 cumul", "capabilities_check.py", [py, "tests/e2e/capabilities_check.py"])
+    run_script("12.2 cumul", "p0.py (offline)", [py, "tests/acceptance/p0.py", "--offline"])
+    run_script("12.2 cumul", "p1.py (adapter)", [py, "tests/acceptance/p1.py", "--adapter"])
+    run_script("12.2 cumul", "p2.py", [py, "tests/acceptance/p2.py"], timeout=600)
+    run_script("12.2 cumul", "contract_check.py", [py, "tests/offline/contract_check.py"])
+    run_script("12.2 cumul", "capabilities_check.py", [py, "tests/offline/capabilities_check.py"])
     run_script("12.2 cumul", "javap_conserve.py", [py, "tools/javap_conserve.py"])
 
 

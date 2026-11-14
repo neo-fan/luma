@@ -14,10 +14,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { MIN_RECOVERY_SCORE, pickRecoveryCandidate } from "../../src/lib/detailRecovery";
-import { api } from "../../src/lib/invoke";
-import { pageCache } from "../../src/lib/pageCache";
-import type { VodInfo } from "../../src/types/tvbox";
+import { MIN_RECOVERY_SCORE, pickRecoveryCandidate } from "./detailRecovery";
+import { api } from "./invoke";
+import { pageCache } from "./pageCache";
+import type { VodInfo } from "../types/tvbox";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const invokeMock = vi.mocked(invoke);

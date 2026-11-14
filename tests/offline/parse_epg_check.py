@@ -1,7 +1,7 @@
 """parse_epg 回归测试：频道名匹配、时区换算、跨频道隔离、边界。
 
 纯脚本风格（与 py_compat_check.py 一致）：assert 失败即非零退出。
-运行：python tests/e2e/parse_epg_check.py
+运行：python tests/offline/parse_epg_check.py
 """
 import os
 import sys

@@ -16,7 +16,7 @@ import {
   markLineBad,
   markLineGood,
   resetLineHealth,
-} from "../../src/lib/lineHealth";
+} from "./lineHealth";
 
 /** 最小 localStorage 桩：lineHealth 每次调用都读全局，桩生效。 */
 function installStorage(): void {
