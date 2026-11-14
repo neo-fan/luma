@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sidecars" / "py"))
 
 from base.spider import Spider  # noqa: E402
+import base.spider as spider_mod  # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -99,6 +100,14 @@ class _FakeSession:
 
 
 def test_encoding() -> None:
+    # `fetch`/`post` only honour the injected `_session` when `requests` is
+    # importable; without it the adapter deliberately falls back to urllib and
+    # the fake session is bypassed — which used to turn this offline check into
+    # a real DNS lookup and crash the gate. The bundled python-embed ships
+    # requests, so run this file with it (`tools/check.py` does that).
+    if spider_mod.requests is None:
+        na("http", "fetch/post 强制 utf-8", "requests 不可用（请用 sidecars/python-embed 运行）")
+        return
     s = Spider()
     s._session = _FakeSession()  # type: ignore[assignment]
     check(s.fetch("http://x").encoding == "utf-8", "http", "fetch() 强制 rsp.encoding=utf-8")

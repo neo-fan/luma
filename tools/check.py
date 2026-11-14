@@ -5,6 +5,7 @@ Usage:
     python tools/check.py            # default gate
     python tools/check.py --full     # also run `pnpm build`
     python tools/check.py --quick    # skip cargo test (useful while iterating on TS)
+    python tools/check.py --ci       # portable subset (CI job "checks")
     python tools/check.py --list     # show the checks and exit
 
 Exit code is non-zero if any check fails. Every check is a subprocess so this
@@ -15,6 +16,7 @@ packages and never writes into the source tree.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -22,7 +24,28 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = sys.executable
+
+
+def interp() -> str:
+    """Interpreter for the Python-side checks.
+
+    Prefer the bundled `sidecars/python-embed` because that is what the adapter
+    actually runs on: it ships requests / lxml / pyquery / pycryptodome. Falling
+    back to the host interpreter silently changes behaviour — without `requests`
+    the adapter uses its urllib fallback and `py_base_spider_check` starts doing
+    real DNS lookups, which used to crash the gate instead of failing a check.
+    Override with `LUMA_PYTHON` (same env var the Rust side uses).
+    """
+    override = os.environ.get("LUMA_PYTHON")
+    if override and Path(override).is_file():
+        return override
+    for candidate in (
+        ROOT / "sidecars" / "python-embed" / "python.exe",
+        ROOT / "sidecars" / "python-embed" / "bin" / "python3",
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
 
 
 def pnpm() -> list[str]:
@@ -50,16 +73,20 @@ SYNTAX_SNIPPET = (
 )
 
 
-def checks(full: bool, quick: bool) -> list[tuple[str, list[str]]]:
-    items: list[tuple[str, list[str]]] = [
-        ("contract (schema <-> TS)", [PY, "tests/e2e/contract_check.py"]),
-        ("py compatibility", [PY, "tests/e2e/py_compat_check.py"]),
-        ("py base spider", [PY, "tests/e2e/py_base_spider_check.py"]),
-        ("runtime artifacts", [PY, "tools/prepare_runtime.py", "--check"]),
-        ("python syntax", [PY, "-c", SYNTAX_SNIPPET]),
+def checks(full: bool, quick: bool, ci: bool = False) -> list[tuple[str, list[str]]]:
+    py = interp()
+    items: list[tuple[str, list[str]]] = [("contract (schema <-> TS)", [py, "tests/e2e/contract_check.py"])]
+    if not ci:
+        items += [
+            ("py compatibility", [py, "tests/e2e/py_compat_check.py"]),
+            ("py base spider", [py, "tests/e2e/py_base_spider_check.py"]),
+            ("runtime artifacts", [py, "tools/prepare_runtime.py", "--check"]),
+        ]
+    items += [
+        ("python syntax", [py, "-c", SYNTAX_SNIPPET]),
         ("frontend unit tests", pnpm() + ["test"]),
     ]
-    if not quick:
+    if not quick and not ci:
         items.append(("rust unit tests", [CARGO, "test", "--manifest-path", "src-tauri/Cargo.toml", "--lib"]))
     if full:
         items.append(("frontend build", pnpm() + ["build"]))
@@ -70,17 +97,35 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Luma offline regression gate")
     ap.add_argument("--full", action="store_true", help="also run pnpm build")
     ap.add_argument("--quick", action="store_true", help="skip cargo test")
+    ap.add_argument(
+        "--ci",
+        action="store_true",
+        help="portable subset for CI: contract + python syntax + frontend tests "
+        "(skips py adapter checks that need pip deps, rust tests that need "
+        "bundle.resources, and the local runtime artifacts probe)",
+    )
     ap.add_argument("--list", action="store_true", help="list checks and exit")
     args = ap.parse_args()
 
-    todo = checks(args.full, args.quick)
+    todo = checks(args.full, args.quick, args.ci)
     if args.list:
         for name, cmd in todo:
             print(f"{name:26s} {' '.join(cmd)}")
         return 0
 
+    skipped = []
+    if args.ci:
+        skipped = [
+            "py compatibility / py base spider (need pip deps, run in the py-adapter job)",
+            "runtime artifacts (needs locally prepared jre/python-embed)",
+            "rust unit tests (tauri-build copies bundle.resources, needs stubs)",
+        ]
+
     print(f"Luma offline check  ({len(todo)} checks, cwd={ROOT})")
+    print(f"python interpreter   {interp()}")
     print("=" * 68)
+    for line in skipped:
+        print(f"[SKIP] {line}")
     failures: list[str] = []
     for name, cmd in todo:
         started = time.monotonic()
