@@ -11,6 +11,27 @@ import { buildImageUrl, needsProxy } from "../lib/imageUrl";
 const PROXY_BASE_TIMEOUT_MS = 2500;
 let proxyBasePromise: Promise<string | null> | null = null;
 
+/**
+ * 已经算好的代理地址（`vod_pic` → `/image?url=…`）。
+ *
+ * 代理端口在进程内固定，同一个 `vod_pic` 每次都能拼出同一个地址；而换集
+ * 会重挂载播放页，信息卡的海报要等 `proxy_status` 回来才拿到 `src`，中间
+ * 那一帧就是「无封面」——用户看到海报闪一下。记住结果后首帧直接有值，
+ * React 会照常渲染 `<img>`，浏览器命中已解码的图，不再闪。
+ */
+const RESOLVED_SRC = new Map<string, string>();
+const MAX_RESOLVED_SRC = 400;
+
+function rememberResolved(pic: string, src: string): void {
+  if (RESOLVED_SRC.size >= MAX_RESOLVED_SRC) {
+    const oldest = RESOLVED_SRC.keys().next().value;
+    if (oldest !== undefined) {
+      RESOLVED_SRC.delete(oldest);
+    }
+  }
+  RESOLVED_SRC.set(pic, src);
+}
+
 export function getProxyBaseUrl(): Promise<string | null> {
   if (proxyBasePromise) return proxyBasePromise;
   proxyBasePromise = Promise.race([
@@ -54,9 +75,11 @@ export interface ProxiedImage {
  * of firing a doomed direct request (which would trip onError/broken).
  */
 export function useProxiedImage(pic: string | undefined): ProxiedImage {
-  const [src, setSrc] = useState<string | null>(() =>
-    needsProxy(pic) ? null : (pic?.trim() || null),
-  );
+  const [src, setSrc] = useState<string | null>(() => {
+    const value = pic?.trim() || "";
+    if (!value) return null;
+    return needsProxy(value) ? (RESOLVED_SRC.get(value) ?? null) : value;
+  });
   const [broken, setBroken] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -68,10 +91,20 @@ export function useProxiedImage(pic: string | undefined): ProxiedImage {
       setSrc(value || null); // data: / relative / empty -> direct
       return;
     }
+    // 地址之前算过：直接用，避免重挂载时退回占位符再闪回来。
+    const known = RESOLVED_SRC.get(value);
+    if (known) {
+      setSrc(known);
+      return;
+    }
     // Wait for the proxy base before rendering, so we never fire a 418 request.
     setSrc(null);
     getProxyBaseUrl().then((base) => {
-      if (alive) setSrc(buildImageUrl(value, base));
+      const built = buildImageUrl(value, base);
+      if (built) {
+        rememberResolved(value, built);
+      }
+      if (alive) setSrc(built);
     });
     return () => {
       alive = false;
