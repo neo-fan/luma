@@ -36,9 +36,9 @@ project-root/
 
 ```text
 tvbox/
-├── AGENTS.md                              # 项目协作说明与架构索引
+├── AGENTS.md                              # 项目协作说明与架构索引（≤ 20 KB）
 ├── CHANGELOG.md                           # 版本变更日志（每次发版更新）
-├── SPEC_REVIEW.md                         # 规格书 v1.0 修订建议（归档，非实现依据）
+├── README.md                              # 对外说明（免责声明/功能/构建/使用/已知限制）
 ├── .gitignore                             # 三类产物 + 运行时产物 + 敏感数据忽略规则
 ├── .github/workflows/check.yml            # CI：离线回归三 job（checks / rust / py-adapter），不跑窗口探针
 ├── package.json / pnpm-lock.yaml          # 前端依赖与锁文件（pnpm 9.15.4）
@@ -54,15 +54,15 @@ tvbox/
 │   ├── DEVELOPMENT.md                     # 开发调试指南（环境/四端调试/日志/回归/常见坑）
 │   ├── MAINTENANCE.md                     # 维护与升级（契约/依赖/回归分层/工程债）
 │   ├── RELEASING.md                       # 发布流程（版本同步清单/检查/打包/验收）
+│   ├── js-support.md                      # JS 源机制、ESM 加载与随包资源清单（含 SHA256）
+│   ├── size-report.md                     # 体积实测报告
+│   ├── verification-config.md             # 抓取记录（含真实地址，不入库）
 │   ├── log/                               # 逐轮开发日志（从 AGENTS.md 迁出，按月份）
 │   │                                      #   2026-11-decisions.md = AGENTS.md 2026-11 决策段逐字存档
-│   ├── verification-config.md             # 抓取记录（含真实地址，不入库）
-│   ├── verification-report.md             # 真实配置形态验证报告
-│   ├── site-compat-report.md              # 全站兼容性扫描结论（101 站点逐站）
-│   ├── js-support.md                      # JS 源机制、ESM 加载与随包资源清单（含 SHA256）
-│   ├── zyfun-comparison.md                # 竞品 zyfun 对比分析（能力/取舍）
-│   ├── avbox-sync-assessment.md           # 上游 AVBox 参考评估（结论：不引入其代码）
-│   ├── size-report.md                     # 体积实测报告
+│   ├── archive/                           # 冻结快照，非实现依据（索引见 archive/README.md）
+│   │                                      #   SPEC_REVIEW / DESIGN-SPEC / ui-preview.html /
+│   │                                      #   site-compat-report / zyfun-comparison /
+│   │                                      #   avbox-sync-assessment / verification-report
 │   ├── spec-v1.0/  spec-v1.1/            # 需求文档归档与本地基线
 │   └── tasks/                             # T-xx 交付记录
 │
@@ -135,7 +135,7 @@ tvbox/
 | 类别 | 放置位置 | 说明 |
 |---|---|---|
 | 需求文档与修订稿 | `docs/spec-v1.0/`、`docs/spec-v1.1/` | 按版本号分目录；文件名用 ASCII |
-| 修订建议 | 根目录 `SPEC_REVIEW.md` | 唯一一份，历史分析口径 |
+| 修订建议与历史评估 | `docs/archive/` | 冻结快照，只溯源、不改写；索引见 `docs/archive/README.md` |
 | 项目协作说明 | 根目录 `AGENTS.md` | 索引与协作约定 |
 | T-xx 交付记录 | `docs/tasks/` | 每个任务一份 |
 | 真实配置样本 | `tests/fixtures/manual/` | 含外部地址，**不入库、不被代码引用** |
@@ -147,7 +147,8 @@ tvbox/
 | 验收脚本与 stub | `tests/e2e/`、`tools/probe_*.mjs` | 分阶段断言 + CDP 窗口探针 |
 | 前端单测 | 纯函数放被测模块同目录 `*.test.ts`；跨模块契约放 `tests/frontend/` | 两种位置各司其职，跨模块契约不塞回 `src/` |
 | 离线工具 | `tools/` | 不参与构建、不发网络请求的开发辅助脚本（`prepare_runtime.py` 例外，参与随包运行时准备） |
-| 机制说明与专项报告 | `docs/`，文件名 ASCII kebab | 如 `js-support.md`、`site-compat-report.md`；结论性长文不写进 `AGENTS.md`，只在其中留摘要与指针 |
+| 机制说明与专项报告 | `docs/`，文件名 ASCII kebab | 如 `js-support.md`、`size-report.md`；结论性长文不写进 `AGENTS.md`，只在其中留摘要与指针 |
+| 冻结快照（竞品/走查/实测） | `docs/archive/` | 带日期与「非实现依据」横幅；只进不出，不在这里新增结论 |
 
 ## 5. 编码约定
 

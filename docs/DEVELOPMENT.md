@@ -167,7 +167,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 3. **Vite 转换缓存让探针连跑旧代码** → 误判"修复无效"。探针开头已加 `Network.setCacheDisabled` + reload `ignoreCache:true` + 拉 `PlayerPage.tsx` 自检特征，确保不把 stale 模块当产品 bug。
 4. **CDP 9222 被残留 luma 占用** → WebView2 起不来；先清残留进程。
 5. **嗅探窗口冲突**：dev 的 `--remote-debugging-port=9222` 会让第二个 WebView2 返 `0x8007139F`；嗅探窗口必须给独立 `data_directory` 且覆盖 `--remote-debugging-port=0`。
-6. **F 盘回收站占满** → cargo 链接 `os error 112`；已把 `src-tauri/target` 与 `release` 做成指向 `E:\luma-build\{target,release}` 的 junction，路径不变、输出不占 F 盘（彻底解决需清空 F 盘回收站）。
+6. **F 盘空间不足** → cargo 链接报 `os error 112`。曾用 junction 把 `src-tauri/target`、`release` 指到 `E:\luma-build`，**现在已不使用**（两者都是本仓库内的普通目录，`release/` 旧便携产物也已删除）。再遇到空间问题优先清回收站，或临时 `CARGO_TARGET_DIR=<另一块盘>`，不要手搓 junction 掩盖问题。
 
 ## 8. 相关文档
 
@@ -178,5 +178,5 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 - `docs/RELEASING.md` —— 版本同步清单、发版检查、打包与验收
 - `docs/project-layout.md` —— 目录 / 产物 / 编码权威
 - `docs/js-support.md` —— JS 源支持现状与限制
-- `docs/site-compat-report.md` —— 站点兼容性**冻结快照**（不代表当前支持范围）
+- `docs/archive/` —— 冻结快照（竞品/走查/实测），**不代表当前支持范围**；索引见 `docs/archive/README.md`
 - `CHANGELOG.md` —— 版本变更记录

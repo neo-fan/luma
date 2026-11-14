@@ -2,7 +2,7 @@
 
 > 日期：2026-11-08
 > 对象：<<internal design doc>>（doc 节点 `aJ5N61nUGzZS42QCOSOl4D`）
-> 输入：根目录 `SPEC_REVIEW.md` 的 11 条修订建议（R1~R11）与 5 个决策；用户已确认「全按推荐」。
+> 输入：`docs/archive/SPEC_REVIEW.md`（原根目录，2026-11-14 归档）的 11 条修订建议（R1~R11）与 5 个决策；用户已确认「全按推荐」。
 > 本文件是本地修订稿的变更说明；逐条可粘贴文本见同目录 `replacements.md`。
 
 ---
@@ -79,4 +79,4 @@
 - v1.0 原文逐字节归档在 `docs/spec-v1.0/spec-v1.0-raw.md`（161426 字节）；`cloud-actions.json` 为那次云端写入的审计记录，只作留档。
 - 已用 Git 管理（`main` 分支，初始基线已提交）；真实配置样本与抓取记录不入库；目录与编码约定见 `docs/project-layout.md`；`AGENTS.md` 已同步为本地基线。
 - **仍未开工、未建代码**：只有文档、目录骨架与 `tools/inspect_config.py` 一个离线脚本；无源码、无构建脚本、无依赖。
-- 下一步：按 P0 / T-01 起建工程；按 `docs/verification-report.md` 第 5 节构造 6 类脱敏 fixture（全部指向 `127.0.0.1`）。
+- 下一步：按 P0 / T-01 起建工程；按 `docs/archive/verification-report.md` 第 5 节构造 6 类脱敏 fixture（全部指向 `127.0.0.1`）。
