@@ -53,8 +53,41 @@ fn project_root() -> PathBuf {
     crate::paths::find(&["sidecars", "java", "runner.jar"]).unwrap_or_else(crate::paths::source_root)
 }
 
+/// The JRE shipped with the app, if `prepare_runtime.py` built it.
+///
+/// Mirrors `paths::embedded_python()`: dev picks the checkout copy, portable
+/// picks the resource-dir copy, with no env var to remember.
+fn bundled_java() -> Option<PathBuf> {
+    let exe = if cfg!(windows) { "java.exe" } else { "java" };
+    let root = crate::paths::find(&["sidecars", "jre", "bin", exe])?;
+    let java = root.join("sidecars").join("jre").join("bin").join(exe);
+    java.is_file().then_some(java)
+}
+
+/// Resolve the JVM launcher. Priority: explicit override -> bundled JRE ->
+/// JAVA_HOME -> PATH. Falling back to a host JDK first means dev runs a
+/// different VM than the portable build, i.e. the exact dev/prod drift
+/// `embedded_python()` was written to avoid.
+fn resolve_java() -> String {
+    if let Some(explicit) = crate::env::get("JAVA") {
+        return explicit;
+    }
+    if let Some(bundled) = bundled_java() {
+        return bundled.to_string_lossy().to_string();
+    }
+    let exe = if cfg!(windows) { "java.exe" } else { "java" };
+    if let Ok(home) = std::env::var("JAVA_HOME") {
+        let candidate = PathBuf::from(home).join("bin").join(exe);
+        if candidate.is_file() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+    exe.to_string()
+}
+
 /// Resolve the JVM launcher and the runner jar. No absolute machine path is
-/// baked in: `LUMA_JAVA` / `LUMA_JVM_RUNNER` / `JAVA_HOME` decide at runtime.
+/// baked in: `LUMA_JAVA` / `LUMA_JVM_RUNNER` and the shipped `sidecars/jre`
+/// decide at runtime.
 fn jvm_command() -> Result<(String, Vec<String>), AppError> {
     let runner = match crate::env::get("JVM_RUNNER") {
         Some(path) => PathBuf::from(path),
@@ -68,14 +101,7 @@ fn jvm_command() -> Result<(String, Vec<String>), AppError> {
         .with_details(json!({ "path": runner })));
     }
 
-    let java = crate::env::get("JAVA").unwrap_or_else(|| {
-        std::env::var("JAVA_HOME")
-            .map(|home| {
-                let exe = if cfg!(windows) { "java.exe" } else { "java" };
-                PathBuf::from(home).join("bin").join(exe).to_string_lossy().to_string()
-            })
-            .unwrap_or_else(|_| "java".to_string())
-    });
+    let java = resolve_java();
     let port = crate::env::get_or("PROXY_PORT", "9978");
 
     Ok((
@@ -334,6 +360,18 @@ mod tests {
         assert!(args.iter().any(|a| a.starts_with("-Dtvbox.proxy.port=")));
         assert_eq!(args.last().map(String::as_str), Some("SpiderRunner"));
         assert!(args.iter().any(|a| a.ends_with("runner.jar")));
+    }
+
+    #[test]
+    fn bundled_jre_is_preferred_when_present() {
+        if let Some(path) = bundled_java() {
+            assert!(path.is_file());
+            let exe = if cfg!(windows) { "java.exe" } else { "java" };
+            assert!(path.ends_with(exe));
+            if crate::env::get("JAVA").is_none() {
+                assert_eq!(resolve_java(), path.to_string_lossy().to_string());
+            }
+        }
     }
 
     #[test]

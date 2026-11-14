@@ -51,7 +51,7 @@
 | `cms` | 主进程直接 HTTP | ✅ 主体 | `api.php/provide/vod`，直链 m3u8 |
 | `python` | Python 适配层 | ✅ 支持 | `spider` 方法经 `py/main.py` 桥，含 JSON 安全/空信封/`_absolutize` 降级 |
 | `quickjs` | qjs-runner | ✅ 支持（部分） | ESM 加载 + cheerio 等价；`initEnv` 完整 polyfill、FongMi class-based 仍未支持 |
-| `jvm` | JVM runner | ⚠️ 仅模板 jar | 用户真实配置的全局 `spider` 是 Android dex jar（ART/okhttp/gson/QuickJS 依赖），Win x64 无法加载 → 源级快速失败 + 原因 |
+| `jvm` | JVM runner | ❌ **社区配置不支持** | 导入时 `runtime=jvm` 站点自动屏蔽；Android dex jar 依赖 ART/okhttp/gson/QuickJS，Win x64 无法加载。通道仅为 `p2.py` 回归 + 自编纯 class 模板 jar 保留 |
 
 策略入口 `spider_invoke` 单点补运行策略检查，防止绕过；`derive_runtime()` 从 `imported` 单向派生 `runtime` 快照（命中站点 `enabled=false` + `disabledReason`），fan-out/播放只读 `runtime`。
 
@@ -129,4 +129,12 @@ src/types/tvbox.ts  归一化契约 TS 侧
 
 ## 12. 调试入口
 
-见 `docs/DEVELOPMENT.md`：环境准备、四端调试（前端 CDP 9222、Rust cargo check、Python spider.log、JVM `LUMA_JAVA=JDK17`、qjs-runner 重编）、日志（`LUMA_LOG=debug`）、回归（离线 `cargo test --lib` / `pnpm test` / `parse_check` 与窗口 `run_probes.mjs`）、环境变量速查、常见坑 6 条。
+见 `docs/DEVELOPMENT.md`：环境准备、四端调试（前端 CDP 9222、Rust cargo check、Python spider.log、JVM 随包 JRE、qjs-runner 重编）、日志（`LUMA_LOG=debug`）、回归（离线 `cargo test --lib` / `pnpm test` / `parse_check` 与窗口 `run_probes.mjs`）、环境变量速查、常见坑 6 条。
+
+## 13. ADR：随包运行时优先于宿主环境（2026-11-14）
+
+**Context**：`prepare_runtime.py` 用 `jlink` 产出 `sidecars/jre` 并随包分发，但 `jvm.rs` 原先按 `LUMA_JAVA -> JAVA_HOME -> PATH java` 解析，从不使用这个 JRE；开发机默认 JDK 23 与交付 JRE 17 行为不一致，且需要用户额外安装 JDK。`python-embed` 早已用 `paths::embedded_python()` 解决同类问题。
+
+**Decision**：所有 sidecar 运行时统一走 `sidecar_roots()` 探测，优先级 = 显式环境变量覆盖 -> 随包运行时 -> 宿主环境兜底。JVM 按此改造；`prepare_runtime.py` 删除硬编码的 `D:/software/java/...`，JDK 17 仅在**重建产物**时需要（设 `LUMA_JDK17_HOME` / `JAVA_HOME` 或 PATH 上的 `jlink`）。jar 源能力边界在 README 明确标为「社区配置不支持」。
+
+**Consequences**：零配置启动、dev/交付同源、用户无需装 JDK、JRE 从死产物变为真实依赖。代价：若 `sidecars/jre` 缺失且宿主无 JDK，jar 通道仍会失败（该通道本就不承载交付能力）；保留 26MB 随包体积，换取 `p2.py` 回归资产不失效。

@@ -13,7 +13,8 @@
   * 所有路径相对项目根（本文件上一级），不硬编码盘符。
   * 已存在即跳过，可重复执行。
   * 第 4 步是入库源码资源的只读体检，离线可用，绝不联网下载资源。
-  * JDK 解析顺序：LUMA_JDK17_HOME -> JAVA_HOME -> 默认开发机路径。
+  * JDK 只在重建 JRE 时需要：LUMA_JDK17_HOME -> JAVA_HOME -> PATH 上的 jlink；
+    不硬编码任何本机盘符。运行期一律用随包 sidecars/jre，无需安装 JDK。
 
 用法：
   python tools/prepare_runtime.py                    # 全量（缺失项补齐）
@@ -41,10 +42,6 @@ ROOT = Path(__file__).resolve().parents[1]
 JRE_DIR = ROOT / "sidecars" / "jre"
 PY_DIR = ROOT / "sidecars" / "python-embed"
 BIN_DIR = ROOT / "src-tauri" / "binaries"
-
-# JDK 17 的默认位置只是开发机约定（本机安装路径），部署/CI 请用
-# LUMA_JDK17_HOME 或 JAVA_HOME 覆盖。
-DEFAULT_JDK17_HOME = Path("D:/software/java/oracle-jdk-17")
 
 JLINK_MODULES = "java.base,java.net.http,java.logging,jdk.unsupported"
 JLINK_FLAGS = [
@@ -124,9 +121,11 @@ def resolve_jdk17() -> Path | None:
         if value and (Path(value) / "bin" / "jlink.exe").exists():
             print(f"  [jdk] 使用 {env}={value}")
             return Path(value)
-    if (DEFAULT_JDK17_HOME / "bin" / "jlink.exe").exists():
-        print(f"  [jdk] 使用默认开发机路径 {DEFAULT_JDK17_HOME}")
-        return DEFAULT_JDK17_HOME
+    which = shutil.which("jlink")
+    if which:
+        jdk = Path(which).parent.parent
+        print(f"  [jdk] 使用 PATH 上的 jlink -> {jdk}")
+        return jdk
     return None
 
 
@@ -147,7 +146,7 @@ def step_jre(force: bool = False) -> bool:
 
     jdk = resolve_jdk17()
     if jdk is None:
-        print("  [fail] 找不到 JDK 17（LUMA_JDK17_HOME / JAVA_HOME / 默认路径均无效）")
+        print("  [fail] 重建 JRE 需 JDK 17：设 LUMA_JDK17_HOME / JAVA_HOME，或让 jlink 在 PATH 上")
         return False
 
     jlink = jdk / "bin" / "jlink.exe"

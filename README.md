@@ -45,7 +45,7 @@ docs/                    需求基线、目录约定、JSON 源支持与兼容�
 |---|---|
 | 运行 | Windows 11 x64；WebView2 常青版（系统自带，不随包分发） |
 | 开发 | Node 20+ / pnpm；Rust stable ≥ 1.77.2（`x86_64-pc-windows-msvc`）；VS2022 Build Tools + Win11 SDK |
-| JVM 源 | JDK 17（编译、运行、`jlink` 统一 17；不探测、不兼容 JDK 8） |
+| jar 源 | **运行期无需 JDK**：使用随包 `sidecars/jre`（`jlink` 裁剪的 17）。仅重建 JRE / 编译 `runner.jar` 时才需本机 JDK 17 |
 | 可选 | mpv（`sidecars/mpv/mpv.exe`），用于解码兜底 |
 
 ## 构建
@@ -77,11 +77,7 @@ python sidecars/java/build.py      # 桩类 + SpiderRunner + 模板 jar（需 JD
 python tools/prepare_runtime.py    # jlink JRE + Python embeddable + externalBin staging
 ```
 
-开发期必须显式指定 JDK 17，否则会落到系统默认版本：
-
-```powershell
-$env:LUMA_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
-```
+> **不需要安装或配置 JDK 17**。运行期 JVM 通道优先用随包 `sidecars/jre/bin/java.exe`（dev 与便携版同源）；`LUMA_JAVA` 仅用于临时改用其它虚拟机调试。只有 `--force` 重建 JRE 或重新编译 `runner.jar` 才需要本机 JDK 17（构建期一次性）。
 
 ### 运行期环境变量
 
@@ -90,7 +86,7 @@ $env:LUMA_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 | 变量 | 用途 |
 |---|---|
 | `LUMA_PYTHON` | 覆盖 Python 解释器（缺省用随包 `python-embed`，再缺省 `python`） |
-| `LUMA_JAVA` | 覆盖 java 可执行文件（缺省 `JAVA_HOME` 或 `java`） |
+| `LUMA_JAVA` | 覆盖 java 可执行文件（缺省优先用随包 `sidecars/jre`，再兜底 `JAVA_HOME` / `java`） |
 | `LUMA_JVM_RUNNER` | 覆盖 `runner.jar` 路径 |
 | `LUMA_MPV` | 覆盖 `mpv.exe` 路径 |
 | `LUMA_PROXY_PORT` | 本地反代端口，默认 9978 |
@@ -173,14 +169,16 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 | `parses[]` 通用解析池 | ✅ 支持 | type 0 嗅探 / type 1 JSON 接口 / type 4 并行竞速 |
 | 配置级 `headers[]` | ✅ 支持 | 按 host 注入 UA/Referer，防盗链 CDN 必需 |
 | 直播（`lives`） | ✅ 支持 | m3u8 经本地代理重写后播放 |
-| jar（`csp_*` / `spider` 全局 jar） | ⚠️ 仅纯 class jar | 见下方说明 |
+| jar（`csp_*` / 全局 `spider` jar） | ❌ **社区配置不支持** | 导入时自动屏蔽；仅自编纯 class 模板 jar 用于回归，见下方 |
 | js（drpy2 / `var spider`） | ✅ 支持 | 独立 `qjs-runner` sidecar，内置 ESM 加载器与 8 个随包库 |
 
-本项目**以 CMS + Python + JS 三类源为交付目标**。实测用户配置 101 个站点中，这三类覆盖了实际可播的绝大部分内容；jar 类因 Android dex 依赖宿主类而无法在 Windows x64 上运行。
+本项目**以 CMS + Python + JS 三类源为交付目标，jar 源明确不作为支持能力**。实测用户配置 101 个站点中，前三类覆盖实际可播的绝大部分内容；jar 类因 Android dex 依赖宿主类而无法在 Windows x64 上运行，**导入配置时即自动屏蔽**（`runtime=jvm` → `enabled=false` + `disabledReason`），不参与搜索、不拖慢聚合、失败原因不呈现给用户。
+
+> JVM 通道保留仅用于两件事：① `p2.py` 阶段回归；② 加载自编纯 class 模板 jar。它是实验/测试能力，**不代表能运行社区 jar**，也不需要用户安装 JDK。
 
 JS 源的支持范围与限制：支持经典 `var spider` 脚本、drpy2 风格脚本与 ES 模块（`export default` / `export function __jsEvalReturn()`），内置 `assets://js/lib/*` 解析、`req` / `local` / `console` / `md5X` 宿主注入与 drpy2 polyfill。**仍未支持** drpy2 `initEnv` 完整 polyfill 与 FongMi 新版 class-based `Spider` 规范。机制与随包资源清单见 `docs/js-support.md`。
 
-### 为什么 jar 源基本不可用
+### 为什么社区 jar 源不支持
 
 社区配置里的 jar 绝大多数是 **Android dex jar**，把它跑起来在 Windows x64 上不是「实现代价大」，而是走不通：
 
@@ -188,7 +186,7 @@ JS 源的支持范围与限制：支持经典 `var spider` 脚本、drpy2 风格
 - 还依赖 ART、OkHttp、gson、NanoHTTPD、QuickJS binding 与整套 `android.util.*`，桩类无法补全；
 - 这些站点的差异全在 jar 内部的 XPath 规则引擎里，无法绕开。
 
-所以 jar 源会**快速失败并给出原因**，不会拖慢搜索。纯 class jar 仍可正常加载，行为由 `SpiderRunner` 反射分发。
+所以**导入阶段就把这些站点屏蔽掉**，不会进入搜索聚合、不会拖慢响应。自编纯 class 模板 jar 仍可加载，行为由 `SpiderRunner` 反射分发，仅用于回归测试。
 
 ## 已知限制
 

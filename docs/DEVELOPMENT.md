@@ -19,16 +19,16 @@ clone → 装依赖 → 准备运行时 → pnpm tauri dev → 改代码热更�
 | 前端 | Node 20+ / `pnpm`（由 corepack 固定版本） |
 | Rust | stable ≥ 1.77.2，`x86_64-pc-windows-msvc` |
 | 构建 | VS2022 Build Tools + Win11 SDK（MSVC） |
-| JVM 源 | **JDK 17**（编译、运行、`jlink` 统一 17；不兼容 JDK 8） |
+| jar 源 | **运行期无需 JDK**（用随包 `sidecars/jre`）；仅重建 JRE / 编译 `runner.jar` 时需 JDK 17 |
 | 可选 | `mpv`（`sidecars/mpv/mpv.exe`）用于解码兜底 |
 
 ```powershell
 corepack pnpm install                       # 前端依赖
-python sidecars/java/build.py              # 桩类 + SpiderRunner + 模板 jar（需 JDK 17）
 python tools/prepare_runtime.py            # jlink JRE + python-embed + externalBin（幂等；--force 强做，--check 只体检）
+# 仅当要重新编译模板 jar 时（构建期一次性，需 JDK 17）：
+#   python sidecars/java/build.py
 
-# 开发必须显式指定 JDK 17，否则会落到系统默认版本：
-$env:LUMA_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
+# 不需要设 LUMA_JAVA：运行期优先用随包 sidecars/jre/bin/java.exe，dev 与交付同源
 
 # 可选：把 mpv.exe 放进 sidecars/mpv/ 即启用解码兜底
 ```
@@ -91,10 +91,11 @@ $env:PATH    = "$vc\bin\Hostx64\x64;$sdk\bin\10.0.26100.0\x64;$env:PATH"   # 必
 - 诊断日志写 `logs/spider.log`（每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback）；`LUMA_ADAPTER_LOG` 可改路径，默认 `%APPDATA%\Luma\logs\spider.log`。日志模块对 spider 协议尽力而为——缺失也不让 py 源整体失效。
 - 临时切解释器：`$env:LUMA_PYTHON = <path>`。
 
-### 3.4 JVM spider 桥
+### 3.4 JVM spider 桥（仅实验/回归通道）
 
-- 必须 JDK 17：`$env:LUMA_JAVA` 指向 17；`$env:LUMA_JVM_RUNNER` 覆盖 `runner.jar`。
-- 注意：dev 启动若未显式设 `LUMA_JAVA`，可能落到系统默认 JDK 23，导致 jar 桥行为不一致。
+- **社区 jar 源不支持**：导入时 `runtime=jvm` 站点已自动屏蔽，正常使用不会启动 JVM。此通道只服务 `p2.py` 回归与自编纯 class 模板 jar。
+- **不需要 JDK 17**：`resolve_java()` 优先探测随包 `sidecars/jre/bin/java.exe`（与 `embedded_python()` 同一套 `sidecar_roots()` 探测），其次才 `JAVA_HOME` / PATH。零配置即可，避免 dev 用 JDK 23、交付用 JRE 17 的漂移。
+- `$env:LUMA_JAVA` 仅在需要临时改用其它虚拟机时设置；`$env:LUMA_JVM_RUNNER` 覆盖 `runner.jar`。
 
 ### 3.5 QuickJS 侧载进程（JS 源）
 
@@ -148,7 +149,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 | 变量 | 用途 | 调试常用值 |
 |---|---|---|
 | `LUMA_PYTHON` | 覆盖 Python 解释器 | 临时切测试解释器 |
-| `LUMA_JAVA` | 覆盖 java 可执行文件 | JDK 17 路径（**必设**） |
+| `LUMA_JAVA` | 覆盖 java 可执行文件 | 一般**不设**，缺省用随包 `sidecars/jre` |
 | `LUMA_JVM_RUNNER` | 覆盖 `runner.jar` | 自测用 |
 | `LUMA_MPV` | 覆盖 `mpv.exe` | — |
 | `LUMA_PROXY_PORT` | 本地反代端口 | 默认 9978 |
