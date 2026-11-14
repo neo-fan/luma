@@ -75,24 +75,24 @@ class Cdp {
   }
 
   /**
-   * 冻结一帧再截：提示层常常只存在几十毫秒，`captureScreenshot` 有几十毫秒
-   * 的抓取延迟，直接截会拍到「提示已消失、ArtPlayer loading 回来」的下一帧，
-   * 与同一次采样读出的事实相反（我第一版就被这张误导过）。
-   * 暂停虚拟时间后 React 状态与动画都停住，截到的就是采样那一刻。
+   * 截一帧并校验它确实是「采样那一刻」的画面。
+   *
+   * `captureScreenshot` 有几十毫秒延迟，提示层又只活 60~100ms，直接截常常拍到
+   * 「提示已消失、ArtPlayer loading 回来」的下一帧，与同一次采样读出的事实相反。
+   *
+   * ⚠️ 别用 `Emulation.setVirtualTimePolicy({policy:'pause'})` 冻结：`advance`
+   * 的 budget 用完后 Chrome 会**自动回到 pause**，页面定时器从此不再推进，
+   * React 不再调度渲染——我这么干过一次，整个窗口白屏卡在 boot，只能重启 app。
+   * 这里改成「截完再采一次，前后一致才算有效」，失败就重试两次，不做任何全局状态改动。
    */
-  async freezeShot(name) {
-    try {
-      await this.send("Emulation.setVirtualTimePolicy", { policy: "pause" });
-    } catch {
-      /* 不支持就退回普通截图 */
+  async verifiedShot(name, sampleExpr, wantTitle) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await this.shot(name);
+      const after = await this.eval(sampleExpr);
+      if (after?.overlay && after?.title === wantTitle) return true;
     }
-    await new Promise((r) => setTimeout(r, 120));
-    await this.shot(name);
-    try {
-      await this.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: 200 });
-    } catch {
-      /* ignore */
-    }
+    console.log(`[warn] ${name}：截图与采样对不上（提示层已经过去），这张图不能当证据`);
+    return false;
   }
 
   close() {
@@ -331,11 +331,15 @@ while (Date.now() < end) {
     // 每种提示文案各拍一张，用于肉眼确认「中间只剩一套指示器」。
     if (s.overlay && !shotTitles.has(s.title)) {
       shotTitles.add(s.title);
-      await cdp.freezeShot(`player-overlay-${s.title.replace(/[^\u4e00-\u9fa5a-z0-9]+/gi, "_").slice(0, 18)}`);
+      await cdp.verifiedShot(
+        `player-overlay-${s.title.replace(/[^\u4e00-\u9fa5a-z0-9]+/gi, "_").slice(0, 18)}`,
+        SAMPLE,
+        s.title,
+      );
     }
     if (both && !overlapShot) {
       overlapShot = true;
-      await cdp.freezeShot("player-overlay-overlap");
+      await cdp.verifiedShot("player-overlay-overlap", SAMPLE, s.title);
     }
   }
   await new Promise((r) => setTimeout(r, SAMPLE_INTERVAL));

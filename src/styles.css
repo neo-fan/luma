@@ -2574,17 +2574,11 @@ textarea {
   justify-content: center;
 }
 
-/* ArtPlayer 自带 `svg { fill: var(--art-font-color) }`，会覆盖 SVG 上的
-   `fill="none"` 表现属性（属性优先级低于 CSS），把 Lucide 描边图标填成实心。
-   这里在 path 上显式还原为「只描边不填充」，与内置图标的实心风格区分开。 */
-.player-art .art-control-next-episode svg path,
-.player-art .art-control-reload svg path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.75;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
+/* 内置图标与外挂图标（下一集 / 刷新）都走纯填充：颜色来自 ArtPlayer 的
+   `.art-video-player svg{fill:var(--art-font-color)}`，不在 path 上写 fill
+   或 stroke。早期这里用 CSS 把 path 强制还原成「只描边不填充」，结果两个
+   按钮在原生实心图标旁边明显轻一档（用户反馈「不搭」），已随 icons.ts
+   换成填充路径一起删掉。 */
 
 /* 最后一集禁用：保留占位，避免控制栏按钮左右跳动。 */
 .player-art .art-control-next-episode.is-disabled {
