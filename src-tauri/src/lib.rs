@@ -26,7 +26,7 @@ pub mod env;
 pub mod error;
 #[path = "infra/http.rs"]
 pub mod http;
-#[path = "infra/logging.rs"]
+#[path = "infra/logging/mod.rs"]
 pub mod logging;
 #[path = "infra/netrules.rs"]
 pub mod netrules;
