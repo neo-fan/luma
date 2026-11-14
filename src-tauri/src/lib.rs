@@ -42,7 +42,7 @@ pub mod window;
 // ---- domain/：业务语义 ----
 #[path = "domain/clipboard.rs"]
 pub mod clipboard;
-#[path = "domain/config.rs"]
+#[path = "domain/config/mod.rs"]
 pub mod config;
 #[path = "domain/ghproxy.rs"]
 pub mod ghproxy;
