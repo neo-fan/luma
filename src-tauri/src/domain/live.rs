@@ -1,12 +1,19 @@
 //! Live playlist entry (spec 7.2 `live.parseM3u` / 8.x 直播).
 //!
-//! Rust fetches the m3u/txt list (per-entry UA from the config), the Python
-//! adapter does the parsing — the same split used for CMS.
+//! Rust fetches the m3u/txt list (per-entry UA from the config) and parses it
+//! in-process. Parsing used to be a `live.parseM3u` round-trip to the Python
+//! adapter; a playlist is pure framework work (no third-party script), so it
+//! belongs here — the sidecar only runs user/community spiders.
 
-use crate::bridge;
+#[path = "live/m3u.rs"]
+mod m3u;
+
+#[path = "live/epg.rs"]
+mod epg;
+
 use crate::error::{code, AppError};
 use crate::http;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -34,11 +41,7 @@ pub async fn live_parse(url: String, ua: Option<String>) -> Result<Value, AppErr
     })
     .await?;
 
-    bridge::call(
-        "live.parseM3u",
-        json!({ "raw": response.body, "url": url }),
-    )
-    .await
+    Ok(m3u::parse(&response.body, &url))
 }
 
 /// In-memory cache of the raw XMLTV payload, keyed by EPG url. Programme lists
@@ -165,11 +168,7 @@ pub async fn live_epg(
         }
     }
 
-    let parsed = bridge::call(
-        "live.parseEpg",
-        json!({ "raw": raw, "channel": channel, "date": date }),
-    )
-    .await?;
+    let parsed = epg::parse(&raw, &channel, date.as_deref());
 
     let mut guard = epg_result_cache()
         .lock()

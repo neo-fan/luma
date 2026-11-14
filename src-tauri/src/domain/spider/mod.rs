@@ -9,6 +9,7 @@
 //! fail fast with a reason instead of being silently skipped.
 
 pub mod cms;
+mod cms_parse;
 pub mod jvm;
 pub mod python;
 pub mod quickjs;

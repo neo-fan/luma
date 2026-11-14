@@ -44,6 +44,10 @@ base64 = "0.22"
 flate2 = "1"
 # importedAt 用 RFC3339；只借用来格式化，不碰时区数据库。
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# 直播源解析（M3U 属性、XMLTV 时间）在进程内做，sidecar 只留给第三方源脚本。
+# `quick-xml` 用 stream 模式：EPG 动辄几十 MB、覆盖 9 天，建树会白吃几十 MB 内存。
+regex = "1"
+quick-xml = { version = "0.37", features = ["escape-html"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 url = "2"

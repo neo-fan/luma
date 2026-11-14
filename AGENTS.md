@@ -18,7 +18,7 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 |---|---|
 | 版本 | `1.0.3`（`package.json` 唯一来源；同步清单见 `docs/RELEASING.md` §1） |
 | 交付物 | `src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe` |
-| 回归基线 | `python tools/check.py` 8/8；`pnpm test` 326；`cargo test --lib` 144 passed / 1 ignored |
+| 回归基线 | `python tools/check.py` 8/8；`pnpm test` 326；`cargo test --lib` 153 passed / 1 ignored |
 | 窗口探针 | `node tools/run_probes.mjs --list`（需要 debug 窗口 + CDP 9222） |
 | 发布状态 | **本地私有，暂不发布**：无 remote、未 push；`LICENSE` 是占位（All rights reserved），不要当成已开源 |
 
@@ -27,7 +27,7 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 - 前端：React 18 + TS + Vite、react-router（hash）、zustand、ArtPlayer + hls.js / mpegts.js、Radix / cmdk / sonner / lucide。
 - 宿主：Tauri v2 + Rust stable（`x86_64-pc-windows-msvc`）、`reqwest`(rustls)、`tokio`、`axum`(反代)、`rusqlite`(bundled)、`windows`(JobObjects)。
 - 适配层：Python 3.11 embeddable（stdio JSON-RPC，线程池 8）、`qjs-runner`（QuickJS）、`sidecars/jre` + `runner.jar`（仅维护态）。
-- 配置链全在 Rust：解密（`domain/config/decrypt.rs`）、归一化（`normalize.rs`）、导入（`import.rs`）都是进程内纯函数，**不再走 sidecar**；sidecar 只负责执行第三方源脚本。外部字节一律经 `infra/textio.rs` 洗成 UTF-8 再解析。
+- 配置链与解析链全在 Rust：解密（`domain/config/decrypt.rs`）、归一化（`normalize.rs`）、导入（`import.rs`）、CMS 采集解析（`domain/spider/cms_parse.rs`）、M3U/XMLTV（`domain/live/{m3u,epg}.rs`）都是进程内纯函数，**不再走 sidecar**；sidecar 只负责执行第三方源脚本。外部字节一律经 `infra/textio.rs` 洗成 UTF-8 再解析。
 
 ## 架构
 

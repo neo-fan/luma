@@ -1,11 +1,12 @@
-//! CMS runtime: build the request, fetch the raw body, let Python parse it.
+//! CMS runtime: build the request, fetch the raw body, parse it in-process.
 //!
 //! Supported: type 0 (XML), type 1 (JSON), type 4 (remote API passthrough).
-//! Field mapping stays in `sidecars/py/cms.py`; Rust never duplicates it.
+//! Field mapping lives in `spider/cms_parse.rs` (port of `sidecars/py/cms.py`);
+//! the reply is normalized here, never sent through the adapter.
 
-use crate::bridge;
 use crate::error::{code, AppError};
 use crate::http::{self, FetchRequest};
+use crate::spider::cms_parse;
 use crate::spider::SpiderMethod;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -46,13 +47,16 @@ pub async fn invoke(
     })
     .await?;
 
-    let mut payload = json!({ "site": site, "raw": response.body });
-    if let Value::Object(extra_fields) = extra {
-        for (key, value) in extra_fields {
-            payload[key] = value;
-        }
+    tracing::debug!(
+        parser = sidecar_method,
+        bytes = response.body.len(),
+        args = %extra,
+        "cms parsed in-process"
+    );
+    match method {
+        SpiderMethod::DetailContent => Ok(cms_parse::parse_detail(&response.body)),
+        _ => cms_parse::parse_page(&response.body),
     }
-    bridge::call(sidecar_method, payload).await
 }
 
 fn build(
