@@ -5,11 +5,8 @@ import SourcePicker from "../components/SourcePicker";
 import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
 import PlayerAbout from "../components/player/PlayerAbout";
-import LiveChannelBar from "../components/player/LiveChannelBar";
-import LiveChannelRail from "../components/player/LiveChannelRail";
 import EpisodePanel from "../components/player/EpisodePanel";
 import PlayerResolution from "../components/player/PlayerResolution";
-import LiveEpgPanel from "../components/LiveEpgPanel";
 import { parsePlayLines, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
@@ -36,13 +33,11 @@ import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
-import { setLiveLine } from "../lib/liveMemory";
 import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
-import type { LiveChannel } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
-import type { EpisodeNavControl, LiveLineControl } from "../hooks/usePlayerEngine";
+import type { EpisodeNavControl } from "../hooks/usePlayerEngine";
 
 interface PlayerPageProps {
   siteKey: string;
@@ -52,14 +47,6 @@ interface PlayerPageProps {
   playUrl: string;
   /** TVBox 线路名；有值时先走 playerContent 解析，再交给本地代理。 */
   playFrom?: string;
-  /** 直播源声明的 UA，直接用于播放请求（没有 playerContent 可问）。 */
-  liveUa?: string;
-  /** 直播频道在源里的全部可播放地址（线路）；多于 1 条时支持手动/自动切换。 */
-  liveLines?: string[];
-  /** 当前直播线路序号（LivePage 带过来的记住值或默认 0）。 */
-  liveLine?: number;
-  /** 直播线路记忆的源标识（与 LivePage 一致）。 */
-  liveSource?: string;
   /** 站点 `changeable: 0` 时禁止跨站自动换源；缺省允许。手动换源不受限。 */
   allowFailover?: boolean;
   /** 自动换线记账 key：自动跳转时透传；缺省用 vodName（跨站片名可能微变）。 */
@@ -85,10 +72,6 @@ export default function PlayerPage({
   episodeName,
   playUrl,
   playFrom,
-  liveUa,
-  liveLines,
-  liveLine,
-  liveSource,
   allowFailover = true,
   failoverKey,
   sites,
@@ -129,12 +112,6 @@ export default function PlayerPage({
   /** 同一轮播放只允许一次「找下一条线路」，防止多个失败信号并发触发。 */
   const lineSwitchStarted = useRef(false);
   /**
-   * 直播线路切换的「最新值」通道：控制栏按钮由播放内核一次性建好，
-   * 回调与线路数组通过 ref 传递，避免它们进 effect 依赖把播放器整个重建。
-   * 实际赋值在 pickLiveLine 定义之后（render 期间完成，effect 执行时已是新值）。
-   */
-  const liveLineRef = useRef<LiveLineControl | null>(null);
-  /**
    * 点播「下一集」控制栏按钮。用 ref 转发：剧集列表异步到达，若把它直接做进
    * 播放内核的 effect 依赖，就会为了一个按钮把正在播的实例整个重建（双声）。
    * 赋值放在 goEpisode 定义之后、render 期间完成，effect 执行时已是最新值。
@@ -162,24 +139,12 @@ export default function PlayerPage({
   const [favorite, setFavorite] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
 
-  // 直播多线路：从 props 派生「线路地址数组」与「当前线路序号（钳制越界）」。
-  const liveLinesArr = useMemo(() => liveLines ?? [], [liveLines]);
-  const liveIdx = useMemo(() => {
-    const total = liveLinesArr.length;
-    if (total === 0) {
-      return 0;
-    }
-    const i = liveLine ?? 0;
-    return ((i % total) + total) % total;
-  }, [liveLinesArr, liveLine]);
-
   // 地址解析编排：playUrl → PlayResolved（effect 体与依赖数组原样保留在 hook 内）。
   const { resolved, resolving, stage, reloading, resolveError, resolveRetryable, reload } =
     usePlayResolution({
       siteKey,
       playUrl,
       playFrom,
-      liveUa,
       vodId,
       setSwitchTip,
       setVideoError,
@@ -197,9 +162,6 @@ export default function PlayerPage({
    */
   const flushHistoryRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    if (siteKey === "live") {
-      return;
-    }
     let alive = true;
     void (async () => {
       try {
@@ -245,6 +207,57 @@ export default function PlayerPage({
     setVideoError("");
     reload();
   };
+
+  /**
+   * 从直播页回到点播：直播播放器创建实例时会硬停「非本容器」的 `<video>`
+   * （`lib/playerRegistry` 的全局唯一守卫，用来根治双声），点播这一路要么被
+   * 摘掉 src、要么连元素都没了，切回来就是黑屏。这里轮询确认情况：还活着就
+   * 不动；被清空就带上进度快照重新解析——用户看到的是「接着播」。
+   *
+   * 不能只在挂载后检查一次：`resolved` 比 video 元素先到，一次判定会把
+   * 「还没建出来」误当成「被杀了」；反过来元素被摘掉后才来不及救。
+   */
+  /** 上一次自动恢复的时间：reload 会让 `resolved` 换新对象，避免连环重试。 */
+  const lastReviveAt = useRef(0);
+  useEffect(() => {
+    if (!active || !resolved) {
+      return;
+    }
+    if (Date.now() - lastReviveAt.current < 4000) {
+      return;
+    }
+    let stopped = false;
+    let tries = 0;
+    let timer = 0;
+    const check = () => {
+      if (stopped) {
+        return;
+      }
+      const stage = containerRef.current;
+      const video = stage?.querySelector("video") ?? null;
+      // 正常在播（有自己的源）：什么都不做。
+      if (video && (video.getAttribute("src") || video.currentSrc)) {
+        stopped = true;
+        return;
+      }
+      // 元素还在但没有源 = 被直播层硬停过；元素都没了 = 实例已被清掉。
+      const killed = Boolean(video) || tries >= 3;
+      if (killed) {
+        stopped = true;
+        lastReviveAt.current = Date.now();
+        resumeMsRef.current = lastMediaRef.current.positionMs || resumeMsRef.current;
+        reload();
+        return;
+      }
+      tries += 1;
+      timer = window.setTimeout(check, 500);
+    };
+    timer = window.setTimeout(check, 500);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [active, resolved, reload]);
 
   // 剧集列表编排：拉详情 + 按 playUrl 定位 line/episode（effect 体原样保留在 hook 内）。
   const {
@@ -308,10 +321,6 @@ export default function PlayerPage({
   }, [favorite, vod, siteKey, siteName]);
 
   useEffect(() => {
-    if (siteKey === "live") {
-      setFavorite(false);
-      return;
-    }
     let alive = true;
     void (async () => {
       try {
@@ -356,7 +365,7 @@ export default function PlayerPage({
    * 从历史/收藏直接播放时这里补一次精确片名的后台检索，点换源图标不等待。
    */
   useEffect(() => {
-    if (siteKey === "live" || !vodName.trim()) {
+    if (!vodName.trim()) {
       return;
     }
     // 首帧解析优先：播放起来后再补换源候选，避免与 resolve_play 争用 sidecar。
@@ -540,11 +549,7 @@ export default function PlayerPage({
         }
       }
       setSwitchTip("");
-      setVideoError(
-        siteKey === "live"
-          ? `该频道暂时无法播放，${PLAY_FAILURE_HINT}。`
-          : `所有源都无法播放该影片，${PLAY_FAILURE_HINT}。`,
-      );
+      setVideoError(`所有源都无法播放该影片，${PLAY_FAILURE_HINT}。`);
     } catch (err) {
       setSwitchTip("");
       setVideoError(`换源失败：${errorMessage(err)}`);
@@ -562,39 +567,6 @@ export default function PlayerPage({
     }
     lineSwitchStarted.current = true;
     ledgerMarkUrl(ledgerKey, playUrl);
-
-    // 直播线路切换：同一频道在源里有多个可播放地址时，失败自动顺延到下一线路。
-    if (siteKey === "live") {
-      if (liveLinesArr.length > 1) {
-        const next = (liveIdx + 1) % liveLinesArr.length;
-        if (ledgerHasUrl(ledgerKey, liveLinesArr[next])) {
-          return false;
-        }
-        ledgerMarkUrl(ledgerKey, liveLinesArr[next]);
-        ledgerCountSwitch(ledgerKey);
-        markAutoNav();
-        setLiveLine(liveSource ?? "", vodId, next);
-        setSwitchTip(`已自动切换到线路 ${next + 1}/${liveLinesArr.length}`);
-        videoRef.current = null;
-        navigate(
-          {
-            name: "player",
-            siteKey,
-            vodId,
-            vodName,
-            episodeName,
-            playUrl: liveLinesArr[next],
-            liveLines: liveLinesArr,
-            liveLine: next,
-            liveSource,
-            ua: liveUa,
-          },
-          true,
-        );
-        return true;
-      }
-      return false;
-    }
 
     // 线路名必须跟着每条剧集一起走：`PAN1-…` / `zijianm3u8-…` 这类地址只有
     // 交给对应线路的 playerContent 才能变成直链，脱掉线路名就等于把私有 token
@@ -664,7 +636,7 @@ export default function PlayerPage({
       true,
     );
     return true;
-  }, [episodeName, lines, navigate, playUrl, siteKey, vodId, vodName, liveLinesArr, liveIdx, liveSource, liveUa, ledgerKey]);
+  }, [episodeName, lines, navigate, playUrl, siteKey, vodId, vodName, ledgerKey]);
 
   /** 线路切换失败后的兜底：整站找同名影片。 */
   const switchOrFailover = useCallback(async () => {
@@ -734,7 +706,6 @@ export default function PlayerPage({
     failoverStarted,
     lineSwitchStarted,
     switchOrFailoverRef,
-    liveLineRef,
     episodeNavRef,
     canNext,
     reloadRef,
@@ -854,7 +825,7 @@ export default function PlayerPage({
    */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || siteKey === "live") {
+    if (!video) {
       return;
     }
     const onEnded = () => {
@@ -992,89 +963,14 @@ export default function PlayerPage({
   /** 当前集名：剧集列表到达后用列表里的名字，否则用路由参数。 */
   const nowEpisode = currentLine?.episodes[episodeIndex]?.name || episodeName;
 
-  // 直播手动切换线路：记住选择并替换栈顶，整页干净重载到新线路。
-  const pickLiveLine = useCallback(
-    (index: number) => {
-      const total = liveLinesArr.length;
-      if (total <= 1) {
-        return;
-      }
-      const idx = ((index % total) + total) % total;
-      if (idx === liveIdx) {
-        return;
-      }
-      setLiveLine(liveSource ?? "", vodId, idx);
-      videoRef.current = null;
-      navigate(
-        {
-          name: "player",
-          siteKey,
-          vodId,
-          vodName,
-          episodeName,
-          playUrl: liveLinesArr[idx],
-          liveLines: liveLinesArr,
-          liveLine: idx,
-          liveSource,
-          ua: liveUa,
-        },
-        true,
-      );
-    },
-    [liveLinesArr, liveIdx, liveSource, vodId, vodName, episodeName, siteKey, liveUa, navigate],
-  );
+  // 「下一集」按钮：详情未到时 lines 为空，按钮先以禁用态存在——控件由内核
+  // 实例创建时一次性生成，不能等剧集列表到了再「补一个」，否则永远不会出现。
+  episodeNavRef.current = {
+    canNext: canNext && Boolean(currentLine),
+    onNext: () => goEpisode(1),
+  };
 
-  /**
-   * 左侧频道栏换台。
-   *
-   * 同频道只切线路（复用 pickLiveLine，不重建会话）；换频道则把整条线路数组
-   * 一起带过去，与 LivePage 点进来的导航形状完全一致——播放页只认这一种入参，
-   * 否则换台后会退化成「单线路」，左栏与线路 chip 全都没了。
-   */
-  const pickLiveChannel = useCallback(
-    (channel: LiveChannel, lineIndex: number) => {
-      const lines = channel.lines.length > 0 ? channel.lines : [channel.url];
-      const idx = Math.min(Math.max(lineIndex, 0), lines.length - 1);
-      if (channel.name === vodName) {
-        pickLiveLine(idx);
-        return;
-      }
-      setLiveLine(liveSource ?? "", channel.name, idx);
-      videoRef.current = null;
-      navigate({
-        name: "player",
-        siteKey: "live",
-        vodId: channel.name,
-        vodName: channel.name,
-        episodeName: channel.name,
-        playUrl: lines[idx],
-        liveLines: lines,
-        liveLine: idx,
-        liveSource,
-        ua: liveUa,
-      });
-    },
-    [pickLiveLine, liveSource, vodName, liveUa, navigate],
-  );
-
-  // 线路按钮只服务直播多线路；单线路不给控制栏添一个永远只有一项的菜单。
-  liveLineRef.current =
-    siteKey === "live" && liveLinesArr.length > 1
-      ? { lines: liveLinesArr, index: liveIdx, onPick: pickLiveLine }
-      : null;
-
-  // 点播才显示「下一集」：直播没有剧集，控制栏不留这个按钮。
-  // 详情未到时 lines 为空，按钮先以禁用态存在——控件由内核实例创建时一次性
-  // 生成，不能等剧集列表到了再「补一个」，否则永远不会出现。
-  episodeNavRef.current =
-    siteKey === "live"
-      ? null
-      : { canNext: canNext && Boolean(currentLine), onNext: () => goEpisode(1) };
-
-  const live = siteKey === "live";
-
-  /* 播放舞台：直播/点播共用同一份节点，避免两套布局各写一遍 Stage 参数。
-     分辨率角标是 portal（渲染进 ArtPlayer 根节点），放这里只是位置整齐。 */
+  /* 播放舞台：画面 + 分辨率角标（角标是 portal，渲染进 ArtPlayer 根节点）。 */
   const stageNode = (
     <>
       <PlayerStage
@@ -1097,12 +993,12 @@ export default function PlayerPage({
   );
 
   return (
-    <section className={live ? "page page--player page--live" : "page page--player"}>
+    <section className="page page--player">
       <PlayerHeader
         vodName={vodName}
         episodeName={episodeName}
         onBack={onBack}
-        favorite={live ? null : favorite}
+        favorite={favorite}
         favBusy={favBusy}
         onToggleFavorite={() => void toggleFavorite()}
       />
@@ -1113,59 +1009,32 @@ export default function PlayerPage({
         <ErrorBar message={`播放地址解析失败：${resolveError}`} />
       ) : null}
 
-      {live ? (
-        /* 直播两栏：左「换台」目录常驻可滚，右「看」——播放器收窄、节目单在下。
-           直播的核心动作是换台，把频道列表钉在播放器旁边，换台只差一次点击，
-           比「返回列表→滚动→再点进来」省两步；播放器也因此让出宽度。 */
-        <div className="live-layout">
-          <LiveChannelRail
-            currentName={vodName}
-            sourceKey={liveSource ?? ""}
-            onPick={pickLiveChannel}
-          />
-          <div className="live-main">
-            {stageNode}
-            <LiveChannelBar
-              channelName={vodName}
-              lineCount={liveLinesArr.length}
-              lineIndex={liveIdx}
-              onPickLine={pickLiveLine}
-              onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
-            />
-            {/* 直播态节目单：按频道名匹配当前频道的当日节目并高亮正在播放项。 */}
-            <LiveEpgPanel channelName={vodName} reloadKey={`${vodName}|${liveIdx}|${playUrl}`} />
-          </div>
-        </div>
-      ) : (
-        <>
-          {stageNode}
-          {/* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。 */}
-          <PlayerAbout
-            vod={vod}
-            fallbackName={vodName}
-            siteKey={siteKey}
-            siteName={siteName}
-            lineName={currentLine?.name}
-            episodeLabel={nowEpisode || undefined}
-            onSwitchSource={() => setShowSources(true)}
-            onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
-          />
+      {stageNode}
+      {/* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。 */}
+      <PlayerAbout
+        vod={vod}
+        fallbackName={vodName}
+        siteKey={siteKey}
+        siteName={siteName}
+        lineName={currentLine?.name}
+        episodeLabel={nowEpisode || undefined}
+        onSwitchSource={() => setShowSources(true)}
+        onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
+      />
 
-          {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
-          {lines.length > 0 ? (
-            <EpisodePanel
-              lines={lines}
-              panelLine={panelLine}
-              lineIndex={lineIndex}
-              episodeIndex={episodeIndex}
-              setPanelLine={setPanelLine}
-              goToEpisode={goToEpisode}
-            />
-          ) : null}
-        </>
-      )}
+      {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
+      {lines.length > 0 ? (
+        <EpisodePanel
+          lines={lines}
+          panelLine={panelLine}
+          lineIndex={lineIndex}
+          episodeIndex={episodeIndex}
+          setPanelLine={setPanelLine}
+          goToEpisode={goToEpisode}
+        />
+      ) : null}
 
-      {showSources && !live ? (
+      {showSources ? (
         <SourcePicker
           title={vodName}
           currentSiteKey={siteKey}

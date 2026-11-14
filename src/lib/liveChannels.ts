@@ -147,3 +147,51 @@ export function clearLiveGroups(): void {
   groups.clear();
   inflight.clear();
 }
+
+/* ---------- 上次看的频道 ---------- */
+
+/**
+ * 「上次看的是哪个台」按源记忆。
+ *
+ * 直播是打开就看的行为：进页面直接回到上次那个台，比每次落在第一个台
+ * （通常是「CCTV-1」或某个购物频道）更符合心智。按 sourceKey 分开记，
+ * 换源后不会拿着 A 源的台名去 B 源里找。
+ *
+ * 只记名字与线路序号：频道的 lines 地址每次拉列表都可能变，记住地址反而
+ * 会在源更新后指向死链。
+ */
+const CHANNEL_KEY = "luma:live:channel:v1";
+
+export interface LiveMemory {
+  /** 频道名。 */
+  name: string;
+  /** 线路序号（0 基），越界由调用方钳制。 */
+  line: number;
+}
+
+export function rememberLiveChannel(sourceKey: string, pick: LiveMemory): void {
+  if (!sourceKey || !pick.name) {
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(CHANNEL_KEY);
+    const all = raw ? (JSON.parse(raw) as Record<string, LiveMemory>) : {};
+    all[sourceKey] = { name: pick.name, line: Math.max(0, pick.line | 0) };
+    window.localStorage.setItem(CHANNEL_KEY, JSON.stringify(all));
+  } catch {
+    /* 记忆失败只影响下次进页面落在哪个台，不影响本次播放。 */
+  }
+}
+
+export function readLiveChannel(sourceKey: string): LiveMemory | null {
+  if (!sourceKey) {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(CHANNEL_KEY);
+    const hit = raw ? (JSON.parse(raw) as Record<string, LiveMemory>)[sourceKey] : null;
+    return hit && typeof hit.name === "string" && hit.name ? hit : null;
+  } catch {
+    return null;
+  }
+}

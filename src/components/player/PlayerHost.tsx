@@ -43,10 +43,6 @@ export default function PlayerHost({ session, active }: PlayerHostProps) {
           episodeName={session.episodeName}
           playUrl={session.playUrl}
           playFrom={session.playFrom}
-          liveUa={session.ua}
-          liveLines={session.liveLines}
-          liveLine={session.liveLine}
-          liveSource={session.liveSource}
           failoverKey={session.failoverKey}
           allowFailover={canFailover(site)}
           // 后台会话不再自动换线/换源：失败自愈只有用户停在播放页时才有意义。

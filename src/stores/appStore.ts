@@ -86,10 +86,6 @@ export interface PlaySession {
   playUrl: string;
   episodeName: string;
   playFrom?: string;
-  ua?: string;
-  liveLines?: string[];
-  liveLine?: number;
-  liveSource?: string;
   failoverKey?: string;
 }
 
@@ -113,8 +109,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       current &&
       current.siteKey === session.siteKey &&
       current.vodId === session.vodId &&
-      current.playUrl === session.playUrl &&
-      current.liveLine === session.liveLine
+      current.playUrl === session.playUrl
     ) {
       return;
     }

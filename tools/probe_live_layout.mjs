@@ -63,20 +63,23 @@ const picked = await evaluate(`(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { const v = fn(); if (v) return v; await sleep(300); } return null; };
   location.hash = '#/live';
-  // 直播列表来自 m3u 解析，冷启动可能要几秒：只等固定时间会误判 NO_CHIP。
-  const chips = await waitFor(() => {
-    const list = [...document.querySelectorAll('.chip-row .chip')];
+  // 直播页现在直接就是播放页：列表在左栏，频道项是 .live-rail__item。
+  const items = await waitFor(() => {
+    const list = [...document.querySelectorAll('.live-rail__item')];
     return list.length > 0 ? list : null;
-  }, 40000);
-  if (!chips) return { ok: false, reason: 'NO_CHIP', body: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 160) };
-  const chip = ${JSON.stringify(FIRST)}
-    ? chips.find((c) => c.textContent.includes(${JSON.stringify(FIRST)}))
-    : chips[0];
-  if (!chip) return { ok: false, reason: 'NO_MATCH', sample: chips.slice(0, 8).map((c) => c.textContent.trim()) };
-  const name = chip.textContent.replace(/\\d+$/, '').trim();
-  chip.click();
-  await sleep(1500);
-  return { ok: true, name };
+  }, 60000);
+  if (!items) return { ok: false, reason: 'NO_RAIL_ITEM', body: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 200) };
+  const wanted = ${JSON.stringify(FIRST)};
+  const item = wanted
+    ? items.find((i) => i.textContent.includes(wanted))
+    : items.find((i) => i.classList.contains('is-active')) || items[0];
+  if (!item) return { ok: false, reason: 'NO_MATCH', sample: items.slice(0, 8).map((i) => i.textContent.trim()) };
+  const name = item.querySelector('.live-rail__name')?.textContent || item.textContent.trim();
+  if (!item.classList.contains('is-active')) {
+    item.click();
+  }
+  await sleep(800);
+  return { ok: true, name, railItems: items.length, hash: location.hash };
 })()`);
 console.log("[pick]", JSON.stringify(picked));
 
@@ -139,7 +142,13 @@ const switched = await evaluate(`(async () => {
   const name = next.querySelector('.live-rail__name')?.textContent || next.textContent;
   next.click();
   await sleep(1200);
-  return { ok: true, name, active: document.querySelector('.live-rail__item.is-active')?.textContent?.trim() || null };
+  return {
+    ok: true,
+    name,
+    hash: location.hash,
+    active: document.querySelector('.live-rail__item.is-active')?.querySelector('.live-rail__name')?.textContent || null,
+    bar: document.querySelector('.live-bar__title')?.textContent || '',
+  };
 })()`);
 console.log("[switch]", JSON.stringify(switched));
 

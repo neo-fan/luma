@@ -8,6 +8,8 @@ interface LiveChannelBarProps {
   lineCount?: number;
   /** 当前线路序号（0 基）。 */
   lineIndex?: number;
+  /** 此刻正在播出的节目名（来自节目单，没有数据时为空串）。 */
+  program?: string;
   /** 点某条线路：立即换线；视频没加载出来时同样可用。 */
   onPickLine?: (index: number) => void;
   /** 外部播放开关关闭时由调用方传 undefined，按钮整体不渲染。 */
@@ -29,6 +31,7 @@ export default function LiveChannelBar({
   channelName,
   lineCount = 0,
   lineIndex = 0,
+  program = "",
   onPickLine,
   onPlayExternal,
 }: LiveChannelBarProps) {
@@ -44,6 +47,11 @@ export default function LiveChannelBar({
         </h2>
         <p className="live-bar__meta">
           <span className="live-bar__onair">正在直播</span>
+          {program ? (
+            <span className="live-bar__program" title={program}>
+              {program}
+            </span>
+          ) : null}
           {multi ? (
             <span className="live-bar__lines" role="group" aria-label="切换线路">
               {Array.from({ length: lineCount }, (_, index) => (

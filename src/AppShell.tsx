@@ -317,8 +317,15 @@ export default function AppShell() {
       : sectionPath === "/" || sectionPath === ""
         ? "home"
         : sectionPath.slice(1);
-  // 没有播放会话时不显示「播放」导航项。
-  const navItems = playSession ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.key !== "player");
+  /**
+   * 「播放」导航只服务点播会话。
+   *
+   * 直播有一次独立的播放页（`/live`），不进 playSession；旧版本留下的
+   * `siteKey="live"` 会话属于脏数据，不能再出现在这个入口里——点进去是
+   * 一个没有直播分支的点播页，只会黑屏。
+   */
+  const vodSession = playSession && playSession.siteKey !== "live" ? playSession : null;
+  const navItems = vodSession ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.key !== "player");
 
   return (
     <ConfigActionsContext.Provider
@@ -339,9 +346,9 @@ export default function AppShell() {
           {navItems.map((item) => {
             // 「播放」不是固定路径：它指向当前会话的播放页，随时切回来继续播。
             const loc =
-              item.key === "player" && playSession
+              item.key === "player" && vodSession
                 ? {
-                    pathname: `/player/${encodeURIComponent(playSession.siteKey)}/${encodeURIComponent(playSession.vodId)}`,
+                    pathname: `/player/${encodeURIComponent(vodSession.siteKey)}/${encodeURIComponent(vodSession.vodId)}`,
                     search: "",
                   }
                 : viewToLocation({ name: item.key as NavKey });
@@ -402,7 +409,7 @@ export default function AppShell() {
         </Suspense>
       </main>
       {/* 播放器常驻层：切页不卸载，视频继续播（需求：播放页独立导航 + 后台播放）。 */}
-      {playSession ? <PlayerHost session={playSession} active={isPlayerRoute} /> : null}
+      {vodSession ? <PlayerHost session={vodSession} active={isPlayerRoute} /> : null}
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}

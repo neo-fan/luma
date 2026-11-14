@@ -4,7 +4,7 @@
  * `View` 是页面之间沟通的业务词汇（页面 props 里的 navigate 只认它），
  * 真正的 history/URL/back-forward 由 react-router（createHashRouter）承担：
  * - detail/player 的路径参数走 URL（siteKey/vodId），
- * - playUrl/liveLines 这类又长又带查询串的参数走 history.state
+ * - playUrl 这类又长又带查询串的参数走 history.state
  *   （不进 URL，避免编码/长度问题）。
  *
  * 页面不直接 import react-router；桥由 AppShell 注册，页面通过
@@ -25,14 +25,6 @@ export type View =
       episodeName: string;
       /** TVBox 线路名（vod_play_from），playerContent 的第一个参数。 */
       playFrom?: string;
-      /** 直播源声明的 UA；`lives[].ua` 只在拉列表时用过，播放也要带。 */
-      ua?: string;
-      /** 直播频道在源里的全部可播放地址（线路）；多于 1 条时支持手动/自动切换。 */
-      liveLines?: string[];
-      /** 当前选中的直播线路序号（已记住的上次选择或默认 0）。 */
-      liveLine?: number;
-      /** 直播线路偏好记忆的源标识（与 LivePage 一致）。 */
-      liveSource?: string;
       /** 自动换线记账本的 key（首轮=原片名，跨站跳转透传），缺省用 vodName。 */
       failoverKey?: string;
     }
@@ -55,10 +47,6 @@ export interface PlayerNavState {
   playUrl: string;
   episodeName: string;
   playFrom?: string;
-  ua?: string;
-  liveLines?: string[];
-  liveLine?: number;
-  liveSource?: string;
   failoverKey?: string;
 }
 
@@ -101,10 +89,6 @@ export function viewToLocation(view: View): AppLocation {
         playUrl: view.playUrl,
         episodeName: view.episodeName,
         playFrom: view.playFrom,
-        ua: view.ua,
-        liveLines: view.liveLines,
-        liveLine: view.liveLine,
-        liveSource: view.liveSource,
         failoverKey: view.failoverKey,
       };
       return {

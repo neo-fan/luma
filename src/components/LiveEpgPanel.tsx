@@ -9,6 +9,13 @@ interface LiveEpgPanelProps {
   channelName: string;
   /** 线路 / 频道切换时变化，触发重新拉取。 */
   reloadKey?: string;
+  /**
+   * 「此刻正在播的节目名」上报（空串 = 没有数据）。
+   *
+   * 频道信息条已经显示台名，下面这条节目就是它最该有的第二行信息；节目单
+   * 面板自己也知道，但它在信息条下方，只能由这里把结论往上递。
+   */
+  onNow?: (title: string) => void;
 }
 
 /** 本地日期 `YYYY-MM-DD`：节目单只取当天，避免把整份 2000+ 条节目都渲染出来。 */
@@ -49,18 +56,27 @@ function isOnAir(program: EpgResult["programs"][number]): boolean {
 }
 
 /** 直播态节目单：按频道名拉取 XMLTV 并高亮当前正在播放的节目。 */
-export default function LiveEpgPanel({ channelName, reloadKey }: LiveEpgPanelProps) {
+export default function LiveEpgPanel({
+  channelName,
+  reloadKey,
+  onNow,
+}: LiveEpgPanelProps) {
   const [data, setData] = useState<EpgResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   /** 节目列表容器：加载完要把「正在播」那条滚到视野中间。 */
   const listRef = useRef<HTMLUListElement | null>(null);
+  /** 回调放 ref：它的身份每次渲染都变，不该让节目单 effect 重跑一次。 */
+  const onNowRef = useRef(onNow);
+  onNowRef.current = onNow;
 
   useEffect(() => {
     const name = channelName.trim();
     if (!name) {
       return;
     }
+    // 换台瞬间先清掉上一台的节目，别让信息条显示「新台在播旧台的节目」。
+    setData(null);
     let alive = true;
     const run = async () => {
       setLoading(true);
@@ -111,6 +127,12 @@ export default function LiveEpgPanel({ channelName, reloadKey }: LiveEpgPanelPro
     }
     list.scrollTop += item.top - box.top - box.height / 3;
   }, [data]);
+
+  const nowTitle = data?.programs.find(isOnAir)?.title ?? "";
+
+  useEffect(() => {
+    onNowRef.current?.(nowTitle);
+  }, [nowTitle]);
 
   if (!channelName.trim()) {
     return null;

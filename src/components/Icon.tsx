@@ -64,7 +64,18 @@ const ICONS: Record<IconName, LucideIcon> = {
   pencil: Pencil,
 };
 
-export default function Icon({ name }: { name: IconName }) {
+export default function Icon({
+  name,
+  size,
+  className,
+}: {
+  name: IconName;
+  /** 边长（px）。不传沿用 Lucide 默认 24，与既有调用保持一致。 */
+  size?: number;
+  className?: string;
+}) {
   const Glyph = ICONS[name];
-  return <Glyph {...ICON_PROPS} />;
+  return (
+    <Glyph {...ICON_PROPS} {...(size ? { size } : null)} className={className} />
+  );
 }

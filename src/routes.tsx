@@ -4,12 +4,18 @@ import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
 import HistoryPage from "./pages/HistoryPage";
 import HomePage from "./pages/HomePage";
-import LivePage from "./pages/LivePage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
-import { useEffect } from "react";
+import { lazy, useEffect } from "react";
 import { navBack, navNavigate, type DetailNavState, type PlayerNavState } from "./lib/nav";
 import { useAppStore, useSiteState } from "./stores/appStore";
+
+/**
+ * 直播页现在是**播放页**（自带 ArtPlayer + hls.js），不能再静态打进主包：
+ * 首页/搜索只需要 DOM，把 ~750 kB 的解码器挂在启动路径上不值得。
+ * AppShell 的 Suspense 会接住这次按需加载。
+ */
+const LivePage = lazy(() => import("./pages/LivePage"));
 
 /**
  * 播放页本体走按需加载（ArtPlayer + hls.js 约 750 kB），但**渲染位置挪到了
@@ -76,6 +82,11 @@ function PlayerPageRoute() {
   const openPlaySession = useAppStore((s) => s.openPlaySession);
   const nav = useNavigate();
   useEffect(() => {
+    // 旧会话 / 旧链接里的直播地址：直播有自己的播放页，这里不该接。
+    if (siteKey === "live") {
+      nav("/live", { replace: true });
+      return;
+    }
     if (state?.playUrl) {
       openPlaySession({
         siteKey,
@@ -84,10 +95,6 @@ function PlayerPageRoute() {
         playUrl: state.playUrl,
         episodeName: state.episodeName,
         playFrom: state.playFrom,
-        ua: state.ua,
-        liveLines: state.liveLines,
-        liveLine: state.liveLine,
-        liveSource: state.liveSource,
         failoverKey: state.failoverKey,
       });
       return;
@@ -101,9 +108,13 @@ function PlayerPageRoute() {
   return null;
 }
 
+/**
+ * 直播路由就是直播播放页本身（2026-11-14 用户要求：不再有「列表页 → 播放页」
+ * 两级）。页面自己管理选中频道，换台只改 state 不进路由。
+ */
 function LivePageRoute() {
   const lives = useAppStore((s) => s.cache?.lives ?? []);
-  return <LivePage lives={lives} navigate={navNavigate} />;
+  return <LivePage lives={lives} />;
 }
 
 function SettingsPageRoute() {

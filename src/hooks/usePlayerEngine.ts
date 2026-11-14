@@ -902,7 +902,9 @@ export function usePlayerEngine({
       }
       const waited = Math.round((Date.now() - loadStartedAt) / 1000);
       if (waited >= 8) {
-        showSlowNotice(`正在加载画面…已等待 ${waited}s`);
+        // 只补「等了多久」：标题由 PlayerStage 统一给「正在加载画面…」，
+        // 这里再说一遍会变成两行同义文案。
+        showSlowNotice(`源侧响应较慢，已等待 ${waited}s`);
       }
     }, 2_000);
     video.addEventListener("progress", onMediaAlive);

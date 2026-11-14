@@ -37,7 +37,9 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
       try {
         const list = await api.historyList();
         if (alive) {
-          setItems(list);
+          // 直播已改为独立播放页、不再写观看历史；但旧版本留过 siteKey="live"
+          // 的记录，点进去是 `/detail/live/xxx`（直播没有详情），会卡在空页。
+          setItems(list.filter((item) => item.siteKey !== "live"));
         }
       } catch (err) {
         if (alive) {
@@ -103,8 +105,14 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
     }
   };
 
+  /**
+   * 展示用的列表：pageState 里可能还留着上一次会话读到的直播记录
+   * （本次过滤只作用于新读的库结果），渲染前再滤一遍。
+   */
+  const shown = items.filter((item) => item.siteKey !== "live");
+
   const clearAll = () => {
-    if (items.length === 0) {
+    if (shown.length === 0) {
       return;
     }
     setConfirmClear(true);
@@ -127,9 +135,9 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
       <header className="page-head">
         <div className="page-head__main">
           <h1 className="page-title">历史</h1>
-          <span className="page-meta">共 {items.length} 条</span>
+          <span className="page-meta">共 {shown.length} 条</span>
         </div>
-        {items.length > 0 ? (
+        {shown.length > 0 ? (
           <IconButton
             name="trash"
             label="清空历史"
@@ -142,7 +150,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
       <AsyncBoundary
         loading={loading}
         error={error}
-        isEmpty={items.length === 0}
+        isEmpty={shown.length === 0}
         loadingLabel="正在加载观看历史…"
         emptyTitle="还没有观看记录"
         emptyDescription="播放任意影片后，这里会记录进度，方便下次接着看。"
@@ -158,7 +166,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
         }
       >
         <div className="vod-grid">
-          {items.map((item) => {
+          {shown.map((item) => {
             const key = `${item.siteKey}-${item.vodId}`;
             // 线路名与集数名来自播放页写入：换过源 / 换过线路后，
             // 用户能一眼看出上次是从哪条线看到第几集 —— 这些压在封面底部，
