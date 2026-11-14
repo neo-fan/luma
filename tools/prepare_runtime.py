@@ -435,6 +435,7 @@ def step_qjs_assets(verify_sha: bool = True) -> bool:
 
     bad: list[str] = []
     sha_checked = False
+    sha_count = 0
     if verify_sha and QJS_ASSETS_MANIFEST.is_file():
         try:
             entries = json.loads(QJS_ASSETS_MANIFEST.read_text(encoding="utf-8"))
@@ -448,7 +449,10 @@ def step_qjs_assets(verify_sha: bool = True) -> bool:
                 for item in entries
                 if isinstance(item, dict) and item.get("local")
             }
-        for name in QJS_ASSET_FILES:
+        # Verify every file the manifest knows about, not just the 8 required
+        # ESM deps: `drpy2.min.js` is an extra bundled engine and used to slip
+        # past this check, so a corrupted copy went unnoticed until the app ran.
+        for name in sorted(set(QJS_ASSET_FILES) | set(by_local)):
             item = by_local.get(name)
             path = QJS_ASSETS_LIB / name
             if not item or not path.is_file():
@@ -460,6 +464,7 @@ def step_qjs_assets(verify_sha: bool = True) -> bool:
             if isinstance(expected_sha, str) and expected_sha:
                 actual = hashlib.sha256(path.read_bytes()).hexdigest()
                 sha_checked = True
+                sha_count += 1
                 if actual != expected_sha.lower():
                     bad.append(f"{name} SHA256 不一致")
     elif verify_sha:
@@ -477,7 +482,10 @@ def step_qjs_assets(verify_sha: bool = True) -> bool:
         print("  [fail] 与 manifest.json 不一致：" + "; ".join(bad))
         qjs_assets_hint()
         return False
-    print("  [ok] 8 个 JS 依赖齐全" + ("，字节数/SHA256 校验通过" if sha_checked else ""))
+    print(
+        f"  [ok] {len(QJS_ASSET_FILES)} 个 JS 依赖齐全"
+        + (f"，{sha_count} 个资源字节数/SHA256 校验通过" if sha_checked else "")
+    )
     return True
 
 
