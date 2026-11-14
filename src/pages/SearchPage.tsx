@@ -1,4 +1,4 @@
-import { SearchX } from "lucide-react";
+import { FolderOpen, Search, SearchX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Navigate } from "../lib/nav";
@@ -699,10 +699,28 @@ export default function SearchPage({
         ) : null}
 
         {!loading && !searched && keyword.trim() === "" ? (
-          <p className="search-hint">
-            输入片名或关键词，<strong>跨全部站点</strong>
-            检索资源；也可在上方选择特定站点后搜索。
-          </p>
+          selectableSites.length > 0 ? (
+            <Empty
+              icon={Search}
+              title="输入片名或关键词开始搜索"
+              description="默认跨全部已启用站点检索；也可以在上方选一个站点，只搜这一个。"
+            />
+          ) : (
+            <Empty
+              icon={FolderOpen}
+              title="还没有可搜索的站点"
+              description="导入一份 TVBox 配置后，这里会跨站点检索片名与剧集。"
+              action={
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => navigate({ name: "settings" })}
+                >
+                  去导入配置
+                </button>
+              }
+            />
+          )
         ) : null}
 
         {error ? <ErrorBar message={error} /> : null}
