@@ -87,6 +87,14 @@ export default defineConfig({
     // `.workbuddy/` 是本地临时区（一次性探针脚本、参考实现克隆）。里面常出现
     // 别人的 `*.test.ts` 与自己的 tsconfig `extends`，vitest 默认会一路扫进去，
     // 表现为「我们的用例全绿，但 Test Files 有一堆 failed」。
-    exclude: ["**/node_modules/**", "**/dist/**", "**/target/**", ".workbuddy/**"],
+    // `.agents/` 是隔离用的 git worktree（同样被 ignore）：扫进去会把别的分支的
+    // 用例一起跑，用例数翻倍（实测 326 → 658），失败还分不清是谁的。
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/target/**",
+      ".workbuddy/**",
+      ".agents/**",
+    ],
   },
 });
