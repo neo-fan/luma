@@ -290,12 +290,17 @@ def step_python_deps(force: bool = False) -> bool:
 
 def stage(src: Path, name: str) -> bool:
     dest = BIN_DIR / (name + TARGET_SUFFIX)
+    if not src.exists():
+        # 源码树里的构建产物（如 sidecars/qjs-runner/target）可以被清理掉，
+        # 此时已有的 staging 二进制仍然有效，不能因为源缺失就崩在 src.stat()。
+        if dest.exists():
+            print(f"  源文件缺失，保留已有 {dest.relative_to(ROOT)}")
+            return True
+        print(f"  [skip] 源文件缺失：{src.relative_to(ROOT)}")
+        return False
     if dest.exists() and dest.stat().st_size == src.stat().st_size:
         print(f"  已存在，跳过 {dest.relative_to(ROOT)}")
         return True
-    if not src.exists():
-        print(f"  [skip] 源文件缺失：{src.relative_to(ROOT)}")
-        return False
     BIN_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dest)
     print(f"  [ok] {dest.relative_to(ROOT)}  {fmt(dest.stat().st_size)}")
