@@ -24,7 +24,7 @@
 - **回归**：`tools/check.py` 一键离线检查；`tools/run_probes.mjs` 窗口探针；版本探针改为从 `package.json` 动态读取，升版本不再假失败。
 - **文档**：新增 `CHANGELOG.md`、`docs/ARCHITECTURE.md`（架构 + ADR）、`docs/DEVELOPMENT.md`（调试）、`docs/MAINTENANCE.md`（维护/升级）、`docs/RELEASING.md`（发布）；`docs/project-layout.md` 目录树同步。历史资产（`SPEC_REVIEW.md`、`DESIGN-SPEC.md`、`docs/ui-preview.html`、`docs/site-compat-report.md`）已标注为归档快照。
 - **体积达标**：`release/Luma-1.0.0-portable.zip` **44.36 MB**（目标 ≤ 45 MB）。做法是移除 `qjs-runner.exe` 的运行期永不命中的第二份副本（-1.50 MB），而非删功能或放宽目标；`[profile.release] strip = "symbols"` 实测无额外收益，作为常规优化保留。详见 `docs/size-report.md`。
-- **构建产物**：`cargo build --release` 5m38s；zip 1001 条目，46,513,892 字节，SHA256 `2f7272f905fb88c708a1e19a0dfce6fb3d4e687d2888db3c197f9e0d6c88a07b`。本次仅做静态验收，GUI 启动冒烟与 `LUMA_SELFCHECK` 按 `docs/RELEASING.md` 留待本地确认。
+- **构建产物**：`cargo build --release` 5m38s；zip 1001 条目，46,513,892 字节，SHA256 `2f7272f905fb88c708a1e19a0dfce6fb3d4e687d2888db3c197f9e0d6c88a07b`。本次完成**无窗口静态验收**（`zipfile.testzip()` 无坏条目、7 个关键文件、包内 sidecar 版本、exe 版本字符串、SHA256），GUI 启动冒烟与 `LUMA_SELFCHECK` 按 `docs/RELEASING.md` 留待本地确认。
 - **可追溯性**：构建时工作区存在的 2 个既有改动（`src/pages/SearchPage.tsx`、`src/styles.css` —— 搜索框内嵌清除按钮，含清空结果/复位状态/作废在途代次）已在发版整理阶段单独提交。release 包、`v1.0.0` tag 与 HEAD 内容一致，无需重新打包。
 
 ### 明确不支持 / 已知限制

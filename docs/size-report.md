@@ -53,6 +53,6 @@ mpv（可选，默认不打进 zip）：`sidecars/mpv/mpv.exe` 单文件约 116.
 3. **`qjs-runner.exe` 只放包根一份**：exe 同目录是 `resolve_runner()` 在便携版上的唯一有效命中点；编译期 `source_root` 路径在分发到其它机器后天然失效，故不需要 sidecars 布局副本。
 4. **mpv 不打进 zip**：单文件 116.83 MB，会把分发包推到 ~85 MB；需要时放入 `sidecars/mpv/` 或用 `--with-mpv` 重新打包。
 5. **不产出 NSIS 安装包**（用户要求解压即用）：`bundle.targets` 置空，`tools/make_portable.py` 负责组装文件夹与 zip。
-6. 运行时路径按 `paths::sidecar_roots()` 多候选探测（resource 目录、exe 目录、其父目录、源码根）。历史版本曾用 `LUMA_SELFCHECK=1` 实测 `ping ok`；**1.0.0 本次仅做静态验收**（zip 结构 / 关键文件 / SHA256），GUI 启动冒烟与 `LUMA_SELFCHECK` 留待本地确认，按 `docs/RELEASING.md` 清单执行。
+6. 运行时路径按 `paths::sidecar_roots()` 多候选探测（resource 目录、exe 目录、其父目录、源码根）。历史版本曾用 `LUMA_SELFCHECK=1` 实测 `ping ok`。**1.0.0 仅做无窗口静态验收**：`zipfile.testzip()` 无坏条目、1001 条目齐全、7 个关键文件存在、包内 `sidecars/py/main.py` 的 `VERSION = "1.0.0"`、`Luma.exe` 内含 `1.0.0` 与 `dev.luma.desktop` 且不含 `1.0.0-alpha`、SHA256 已记录。**GUI 启动冒烟与 `LUMA_SELFCHECK` 仍未执行**（按用户要求不开窗口），按 `docs/RELEASING.md` 2.4 清单留待本地确认。
 7. 旧备份目录（`Luma.old-20261113`、`_prev-Luma-alpha`）与 `1.0.0-alpha` zip 已在整理阶段清除，`release/` 当前只保留 1.0.0 产物。
 8. 未签名 exe 会触发 SmartScreen，见 `README.md`。
