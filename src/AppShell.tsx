@@ -13,6 +13,7 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import Spinner from "./components/Spinner";
 import NavIcon from "./components/NavIcon";
 import CommandPalette from "./components/CommandPalette";
+import PlayerHost from "./components/player/PlayerHost";
 import { Toaster, toast } from "sonner";
 import { usableHomeSites } from "./lib/format";
 import { api, errorMessage } from "./lib/invoke";
@@ -23,7 +24,13 @@ import { forgetCards } from "./lib/cardIndex";
 import { clearPageStates } from "./lib/usePageState";
 import { clearCoverAttempts } from "./lib/coverBackfill";
 import { log } from "./lib/logger";
-import { APP_VERSION, BUILD_HASH } from "./lib/version";
+import {
+  APP_VERSION,
+  BUILD_STAMP,
+  BUILD_TIME,
+  formatVersion,
+  readableBuildTime,
+} from "./lib/version";
 import {
   navBack,
   registerNav,
@@ -33,17 +40,26 @@ import {
 import { useAppStore, useSiteState } from "./stores/appStore";
 import type { ConfigSnapshot, LiveSource } from "./types/tvbox";
 
+/** 侧栏展示用：`1.0.0-alpha` → `1.0.0.a`（数据源仍是合法 semver，只改显示）。 */
+const versionLabel = formatVersion(APP_VERSION);
+
 const NAV_ITEMS: {
-  key: "home" | "live" | "search" | "favorites" | "history" | "settings";
+  key: NavKey | "player";
   label: string;
 }[] = [
   { key: "home", label: "首页" },
   { key: "live", label: "直播" },
+  // 「播放」是独立导航项：播放页常驻，切到别的页面后仍在这里切回来继续看。
+  // 只有真的开播过（有会话）才显示，空态不给一个点了没反应的入口。
+  { key: "player", label: "播放" },
   { key: "search", label: "搜索" },
   { key: "favorites", label: "收藏" },
   { key: "history", label: "历史" },
   { key: "settings", label: "设置" },
 ];
+
+/** 有固定路由的导航项（`player` 指向当前会话，不在这里）。 */
+type NavKey = "home" | "live" | "search" | "favorites" | "history" | "settings";
 
 /**
  * 配置导入/删除动作：布局持有（要清会话缓存），设置页路由包装组件
@@ -79,6 +95,7 @@ export default function AppShell() {
   const setPreferredSite = useAppStore((s) => s.setPreferredSite);
   const setCache = useAppStore((s) => s.setCache);
   const preferredSite = useAppStore((s) => s.preferredSite);
+  const playSession = useAppStore((s) => s.playSession);
   const { sites } = useSiteState();
 
   /** 全局命令面板（Ctrl+K）。 */
@@ -292,12 +309,16 @@ export default function AppShell() {
   }, [setCache, setPreferredSite]);
 
   const sectionPath = `/${location.pathname.split("/")[1] ?? ""}`;
-  const section =
-    location.pathname.startsWith("/detail") || location.pathname.startsWith("/player")
-      ? "home"
+  const isPlayerRoute = location.pathname.startsWith("/player");
+  const section = location.pathname.startsWith("/detail")
+    ? "home"
+    : isPlayerRoute
+      ? "player"
       : sectionPath === "/" || sectionPath === ""
         ? "home"
         : sectionPath.slice(1);
+  // 没有播放会话时不显示「播放」导航项。
+  const navItems = playSession ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.key !== "player");
 
   return (
     <ConfigActionsContext.Provider
@@ -315,8 +336,15 @@ export default function AppShell() {
           </span>
         </div>
         <nav className="nav">
-          {NAV_ITEMS.map((item) => {
-            const loc = viewToLocation({ name: item.key });
+          {navItems.map((item) => {
+            // 「播放」不是固定路径：它指向当前会话的播放页，随时切回来继续播。
+            const loc =
+              item.key === "player" && playSession
+                ? {
+                    pathname: `/player/${encodeURIComponent(playSession.siteKey)}/${encodeURIComponent(playSession.vodId)}`,
+                    search: "",
+                  }
+                : viewToLocation({ name: item.key as NavKey });
             return (
               <button
                 key={item.key}
@@ -353,11 +381,15 @@ export default function AppShell() {
             <span className="nav__label">{sidebarCollapsed ? "展开" : "收起"}</span>
           </button>
           <div className="sidebar__foot">
-            <span>本地播放框架</span>
-            <span>Luma · v{APP_VERSION} · #{BUILD_HASH}</span>
+            <span>version: {versionLabel}</span>
+            <span className="sidebar__stamp" title={readableBuildTime(BUILD_TIME) || "构建时间戳"}>
+              build: {BUILD_STAMP || "unknown"}
+            </span>
           </div>
         </div>
       </aside>
+      {/* 路由内容：播放页常驻在下方独立层里，这里只渲染其它页面。停在播放
+          路由时也要保留 Outlet 挂载——它是首页/搜索等页面的滚动与状态容器。 */}
       <main className="content" ref={contentRef}>
         <Suspense
           fallback={
@@ -369,6 +401,8 @@ export default function AppShell() {
           <Outlet />
         </Suspense>
       </main>
+      {/* 播放器常驻层：切页不卸载，视频继续播（需求：播放页独立导航 + 后台播放）。 */}
+      {playSession ? <PlayerHost session={playSession} active={isPlayerRoute} /> : null}
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}

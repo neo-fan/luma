@@ -65,6 +65,12 @@ interface PlayerPageProps {
   /** 手动换源需要站点清单做名称映射与可用性过滤。 */
   sites: Site[];
   siteName?: string;
+  /**
+   * 当前是否停在播放路由（来自 PlayerHost）。false＝用户在别的页面、本会话
+   * 在后台播：此时**自动**换线/换源必须暂停——自愈跳转会把用户当前路由整个
+   * 拽回播放页；用户回来时自然会看到结果，届时再由可见的交互继续。
+   */
+  active?: boolean;
   navigate: Navigate;
   onBack: () => void;
 }
@@ -85,6 +91,7 @@ export default function PlayerPage({
   failoverKey,
   sites,
   siteName,
+  active = true,
   navigate,
   onBack,
 }: PlayerPageProps) {
@@ -238,7 +245,7 @@ export default function PlayerPage({
     currentLine,
     canNext,
     vod,
-  } = useEpisodeList(siteKey, vodId, playUrl);
+  } = useEpisodeList(siteKey, vodId, playUrl, episodeName, playFrom);
 
   /**
    * 历史写入需要「当前线路名 / 当前集名」，但两个值随异步剧集列表到达才确定。
@@ -669,14 +676,14 @@ export default function PlayerPage({
   switchOrFailoverRef.current = switchOrFailover;
 
   useEffect(() => {
-    if (resolving || resolveError || !resolved || resolved.kind !== "page") {
+    if (!active || resolving || resolveError || !resolved || resolved.kind !== "page") {
       return;
     }
     if (ledgerHasUrl(ledgerKey, playUrl)) {
       return;
     }
     void switchOrFailoverRef.current();
-  }, [resolved, resolving, resolveError, playUrl, ledgerKey]);
+  }, [active, resolved, resolving, resolveError, playUrl, ledgerKey]);
 
   /**
    * 解析失败也要自动换线路。
@@ -689,14 +696,14 @@ export default function PlayerPage({
    * 又回到同一条」的循环；跳转次数有上限，预算用完就停下报错交还用户。
    */
   useEffect(() => {
-    if (resolving || !resolveError || ledgerHasUrl(ledgerKey, playUrl)) {
+    if (!active || resolving || !resolveError || ledgerHasUrl(ledgerKey, playUrl)) {
       return;
     }
     ledgerMarkUrl(ledgerKey, playUrl);
     setRecovering(true);
     setSwitchTip("当前线路无法解析，正在尝试其它线路…");
     void switchOrFailoverRef.current().finally(() => setRecovering(false));
-  }, [resolving, resolveError, playUrl, ledgerKey]);
+  }, [active, resolving, resolveError, playUrl, ledgerKey]);
 
   /**
    * 播放内核：ArtPlayer + hls.js / mpegts.js + 偏好记忆 + stalled watchdog +
@@ -1053,9 +1060,9 @@ export default function PlayerPage({
       {siteKey === "live" ? (
         <LiveChannelBar
           channelName={vodName}
-          lineLabel={
-            liveLinesArr.length > 1 ? `线路 ${liveIdx + 1}/${liveLinesArr.length}` : undefined
-          }
+          lineCount={liveLinesArr.length}
+          lineIndex={liveIdx}
+          onPickLine={pickLiveLine}
           onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
         />
       ) : (

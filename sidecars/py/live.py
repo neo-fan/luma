@@ -6,6 +6,7 @@ Groups come from `group-title`; channels without a group fall into 未分组.
 
 from __future__ import annotations
 
+import html
 import io
 import re
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,17 @@ from typing import Any
 ATTR = re.compile(r'([\w-]+)="([^"]*)"')
 
 DEFAULT_GROUP = "未分组"
+
+
+def _clean_epg_text(value: str | None) -> str:
+    """EPG 文本清洗：XML 解析只解一层实体，源里常见双重转义
+    （`&amp;apos;` 解完还是 `&apos;`），直接上屏就是 `&apos;字`。
+    这里统一再做一次 HTML 实体反转义（含 `&#39;` / `&nbsp;` / `&hellip;`）。
+    """
+    text = (value or "").strip()
+    if not text or "&" not in text:
+        return text
+    return html.unescape(text).strip()
 
 
 def split_streams(text: str) -> list[str]:
@@ -266,9 +278,9 @@ def parse_epg(raw: str, channel: str, date: str | None = None) -> dict[str, Any]
                 desc = ""
                 for child in elem:
                     if child.tag == "title" and not title:
-                        title = (child.text or "").strip()
+                        title = _clean_epg_text(child.text)
                     elif child.tag == "desc" and not desc:
-                        desc = (child.text or "").strip()
+                        desc = _clean_epg_text(child.text)
                 programs.append(
                     {
                         "start": _epg_localize(start),

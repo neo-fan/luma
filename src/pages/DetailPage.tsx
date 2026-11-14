@@ -16,7 +16,6 @@ import { pageCache } from "../lib/pageCache";
 import { recallCard } from "../lib/cardIndex";
 import { noDetailSources } from "../lib/noDetailSource";
 import { usePageState } from "../lib/usePageState";
-import { countEpisodes } from "../lib/sources";
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
@@ -225,7 +224,6 @@ export default function DetailPage({
         setVod(first);
         setFallback("idle");
         setEmpty(false);
-        setLineIndex(0);
       } catch (err) {
         if (alive) {
           setVod(null);
@@ -267,8 +265,10 @@ export default function DetailPage({
   }, [prefetchTitle, sites]);
 
   // 收藏与观看进度都是「看一眼就走」的旁路数据，失败不阻断详情浏览。
+  const [resumeReady, setResumeReady] = useState(false);
   useEffect(() => {
     let alive = true;
+    setResumeReady(false);
     void (async () => {
       try {
         const list = await api.favoritesList();
@@ -298,12 +298,20 @@ export default function DetailPage({
         if (alive) {
           setResume(null);
         }
+      } finally {
+        if (alive) {
+          // resume 的加载完成时间必须显式上报：自动定位线路要看这个信号，
+          // 否则「lines 先到、历史后到」时定位会被只跑一次的守卫吞掉。
+          setResumeReady(true);
+        }
       }
     })();
     return () => {
       alive = false;
     };
-  }, [siteKey, vodId]);
+    // title 不在依赖里会让「按剧名接续别的源的进度」永远等不到 title 到位。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteKey, vodId, title]);
 
   const lines = useMemo(
     () => parsePlayLines(vod?.vod_play_from, vod?.vod_play_url),
@@ -323,6 +331,37 @@ export default function DetailPage({
       : list;
     return reverse ? filtered.slice().reverse() : filtered;
   }, [line, episodeQuery, reverse]);
+
+  /**
+   * 打开详情页就定位到「上次用的那条线路」：历史记录里存的是线路名
+   * （`playFrom`），源调整线路顺序后按名字仍找得准。定位只在**进入 / 换源**
+   * 时执行一次，之后用户手动点 chip 不会被拉回去。历史读取是本地 SQLite
+   * （几乎总比网络详情先到），不需要等 resume 迟到再补定位——那会把用户
+   * 刚点选的线路又拉回「上次线路」。
+   */
+  const autoLineRef = useRef("");
+  useEffect(() => {
+    // resumeReady 是关键闸门：pageCache 命中时 lines 几乎立刻就有，而历史是
+    // 另一次 IPC。不等它的话，第一次 effect 会在 resume 尚为 null 时就把
+    // 「已定位」标记写上，历史随后到达也再也不会定位（实测复现）。
+    if (lines.length === 0 || !resumeReady || autoLineRef.current === detailKey) {
+      return;
+    }
+    autoLineRef.current = detailKey;
+    const wanted = resume?.playFrom
+      ? lines.findIndex((item) => item.name === resume.playFrom)
+      : -1;
+    if (wanted >= 0) {
+      if (wanted !== lineIndex) {
+        setLineIndex(wanted);
+      }
+      return;
+    }
+    // 没历史、或那条线路已经下架：持久化的索引越界时才回到第一条。
+    if (lineIndex > lines.length - 1) {
+      setLineIndex(0);
+    }
+  }, [detailKey, lines, resume, resumeReady, lineIndex, setLineIndex]);
 
   /** 「继续播放」优先回到历史里的那一集，否则从第一集开始。 */
   const quickPlay = useMemo(() => {
@@ -631,19 +670,23 @@ export default function DetailPage({
         <div className="section-head">
           <h2 className="section-title">播放线路</h2>
           <span className="page-meta">
-            共 {lines.length} 条线路 · {countEpisodes(lines)} 集
+            {/* 与播放页选集面板同口径：各线路是独立剧集表，不做跨线路累加。 */}
+            {lines.length} 条线路 · 当前线路 {line?.episodes.length ?? 0} 集
           </span>
         </div>
         {lines.length === 0 ? (
           <Empty title="暂无可播放剧集" description="该影片没有提供播放地址，可试试手动换源。" />
         ) : (
           <>
-            <div className="chip-row">
+            {/* `chip-row--lines` 是给探针/脚本的稳定锚点：分类 chip 也在这页
+                用 `.chip-row .chip`，早先的探针因此把「2026」「大陆」当成线路点。 */}
+            <div className="chip-row chip-row--lines">
               {lines.map((item, index) => (
                 <button
                   key={`${item.name}-${index}`}
                   type="button"
                   className={index === lineIndex ? "chip is-active" : "chip"}
+                  data-line={item.name}
                   onClick={() => setLineIndex(index)}
                   title={
                     resume?.playFrom === item.name
@@ -676,6 +719,13 @@ export default function DetailPage({
                 onClick={() => setReverse((value) => !value)}
               />
               <span className="page-meta">显示 {episodes.length} 集</span>
+              {/* 线路与集名都落到「上次那集」时给出显式提示：剧集多时高亮
+                  那格通常在可视区外，光靠 `is-seen` 角标会让人以为没记住。 */}
+              {resume?.episodeName && resume.playFrom === line?.name ? (
+                <span className="page-meta detail-episode-tools__seen">
+                  上次看到：{resume.episodeName}
+                </span>
+              ) : null}
             </div>
 
             {line ? (

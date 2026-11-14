@@ -30,6 +30,15 @@ export interface EpisodeTarget {
    * `resolve_play` 换一句 `play url is invalid`。
    */
   unresolvable?: boolean;
+  /**
+   * `playerContent` 没在超时内返回，但**不能据此判定线路坏**。
+   *
+   * 2026-11-14 实测 py_bubuzhuiju 的 zijianm3u8：进程内首次调用 18.3s（源侧
+   * 解析接口冷启动 + 重试），第二次起 1.8~2.0s。按「超时就 markLineBad」处理
+   * 会把一条完全能播的线路封 30 分钟，用户看到的就是「点了没反应 / 一直停在
+   * 正在连接」。慢 ≠ 坏，只有源**明确回了一个不能用**的结果才算坏。
+   */
+  timedOut?: boolean;
 }
 
 interface PlayerContentResult {
@@ -53,6 +62,14 @@ export interface EpisodeResolveOptions {
    * 得到 `play url is invalid` 然后白白跳走（实测日志）。
    */
   playerContentTimeoutMs?: number;
+  /**
+   * 用户**主动**点播时忽略「坏线路」标记（2026-11-14 实测根因）：源偶发超时
+   * 会被 lineHealth 记 bad 并盖过几秒前的 good，此后 30 分钟内所有走本模块
+   * 的解析（包括用户重新点播）都直接 fail-fast 报「网盘 token」——布布追剧
+   * zijianm3u8 就是这样被误封的。探测/自动换线仍按默认 fail-fast（快是第一位）；
+   * 手动播放给一次重试机会，成功即 markLineGood 解封。
+   */
+  ignoreBadLineMark?: boolean;
 }
 
 /**
@@ -74,10 +91,13 @@ export async function resolveEpisodeTarget(
   }
   // 最近判过「解不开」的线路直接跳过 playerContent：源侧那种「token 原样回吐」
   // 的毛病不会自己好，等一次超时只会让用户以为卡住了。
-  if (isLineBad(siteKey, playFrom)) {
+  // 用户主动点播（ignoreBadLineMark）例外：给重试机会，成功即解封。
+  if (isLineBad(siteKey, playFrom) && !options.ignoreBadLineMark) {
     return { url: playUrl, unresolvable: !HTTP_URL.test(playUrl) };
   }
   let played: PlayerContentResult | null = null;
+  // 慢 ≠ 坏：耗时接近超时的失败是「源还没答完」，不能当成「源说不能播」。
+  const startedAt = Date.now();
   try {
     played = (await api.spiderInvoke({
       siteKey,
@@ -94,11 +114,17 @@ export async function resolveEpisodeTarget(
     // 但若原始地址本身不是 URL（私有 token / 自定义 scheme），源侧已经用超时
     // 或异常表明它解不开——直接判不可播并标记线路，让上层 fail-fast 抛出明确
     // 错误，而不是把死 token 丢给 resolvePlay 再去嗅探一个永远 404 的地址。
-    if (!HTTP_URL.test(playUrl)) {
+    const elapsed = Date.now() - startedAt;
+    const slow = elapsed >= playerContentTimeoutMs * 0.7;
+    if (!HTTP_URL.test(playUrl) && !slow) {
       markLineBad(siteKey, playFrom);
       return { url: playUrl, unresolvable: true };
     }
-    return { url: playUrl };
+    // 慢失败：不记坏线路（冷启动 18s / 忙时更久的源每次都会被误封），
+    // 让上层给「可重试」的提示而不是「网盘 token」。
+    return slow
+      ? { url: playUrl, unresolvable: !HTTP_URL.test(playUrl), timedOut: true }
+      : { url: playUrl };
   }
 
   const candidate = String(played?.playUrl || played?.url || "");

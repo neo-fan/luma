@@ -7,8 +7,149 @@
     <meta name="description" content="Luma — 简洁的 TVBox 配置兼容桌面播放器" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <title>Luma</title>
+    <!--
+      启动动画必须内联在这里，不能放进 styles.css：样式表是随 JS bundle 一起
+      到的，等它加载完用户已经盯着空白窗口好几秒（「看着跟卡住一样」）。这段
+      CSS 不依赖 bundle，HTML 一到就能画出第一帧。
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #0b0d12;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background:
+          radial-gradient(70% 55% at 50% 42%, rgba(94, 129, 244, 0.13), transparent 70%),
+          #0b0d12;
+        color: #e6e9f0;
+        font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        transition: opacity 260ms ease, visibility 260ms ease;
+        will-change: opacity;
+      }
+      #boot.is-done {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      #boot .boot__mark {
+        position: relative;
+        width: 56px;
+        height: 56px;
+        border-radius: 16px;
+        background: linear-gradient(150deg, #6f8dfb, #4459c9);
+        box-shadow: 0 12px 34px rgba(70, 95, 214, 0.34);
+        display: grid;
+        place-items: center;
+        animation: boot-pop 520ms cubic-bezier(0.2, 0.9, 0.25, 1.15) both;
+      }
+      #boot .boot__mark::after {
+        content: "";
+        width: 0;
+        height: 0;
+        margin-left: 4px;
+        border-left: 15px solid #fff;
+        border-top: 9px solid transparent;
+        border-bottom: 9px solid transparent;
+      }
+      #boot .boot__mark::before {
+        content: "";
+        position: absolute;
+        inset: -9px;
+        border-radius: 22px;
+        border: 1px solid rgba(126, 152, 255, 0.32);
+        animation: boot-ring 1800ms ease-out infinite;
+      }
+      #boot .boot__name {
+        font-size: 15px;
+        letter-spacing: 0.32em;
+        text-transform: uppercase;
+        color: #97a3bd;
+        animation: boot-fade 620ms 90ms both ease-out;
+      }
+      #boot .boot__bar {
+        width: 132px;
+        height: 3px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+      #boot .boot__bar::after {
+        content: "";
+        display: block;
+        width: 42%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, transparent, #7e98ff, transparent);
+        animation: boot-slide 1100ms ease-in-out infinite;
+      }
+      @keyframes boot-pop {
+        from {
+          opacity: 0;
+          transform: scale(0.86) translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes boot-fade {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes boot-ring {
+        0% {
+          opacity: 0.7;
+          transform: scale(0.94);
+        }
+        70% {
+          opacity: 0;
+          transform: scale(1.16);
+        }
+        100% {
+          opacity: 0;
+          transform: scale(1.16);
+        }
+      }
+      @keyframes boot-slide {
+        0% {
+          transform: translateX(-120%);
+        }
+        100% {
+          transform: translateX(320%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot .boot__mark,
+        #boot .boot__mark::before,
+        #boot .boot__name,
+        #boot .boot__bar::after {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot" role="status" aria-label="Luma 正在启动">
+      <div class="boot__mark"></div>
+      <div class="boot__name">Luma</div>
+      <div class="boot__bar"></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

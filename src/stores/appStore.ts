@@ -65,10 +65,32 @@ interface AppStore {
   /** 首页选中站点（空串 = 走默认站自动顺延）。 */
   preferredSite: string;
   sidebarCollapsed: boolean;
+  /**
+   * 播放会话：播放页从「路由页」升级为「常驻层」后，这里是唯一真源。
+   * 浏览器前进/后退、侧栏切页都不会销毁播放器实例，切回来还在播。
+   * null = 还没播过任何东西。
+   */
+  playSession: PlaySession | null;
   setCache: (cache: SiteCache | null) => void;
   setPreferredSite: (key: string) => void;
   setSidebarCollapsed: (value: boolean) => void;
   toggleSidebar: () => void;
+  openPlaySession: (session: PlaySession) => void;
+}
+
+/** 播放会话（与路由 state 同形，AppShell 常驻渲染播放页时用它当 props）。 */
+export interface PlaySession {
+  siteKey: string;
+  vodId: string;
+  vodName: string;
+  playUrl: string;
+  episodeName: string;
+  playFrom?: string;
+  ua?: string;
+  liveLines?: string[];
+  liveLine?: number;
+  liveSource?: string;
+  failoverKey?: string;
 }
 
 /**
@@ -82,6 +104,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
   cache: readSiteCache(),
   preferredSite: readHomeSite(),
   sidebarCollapsed: readSidebarCollapsed(),
+  playSession: null,
+  openPlaySession: (session) => {
+    // 同一个播放地址重复写入（路由 effect 重跑 / 探针多次点击）不该让常驻
+    // 播放器重建：key 里带 playUrl，引用一变就整页重挂载 = 黑屏重播。
+    const current = get().playSession;
+    if (
+      current &&
+      current.siteKey === session.siteKey &&
+      current.vodId === session.vodId &&
+      current.playUrl === session.playUrl &&
+      current.liveLine === session.liveLine
+    ) {
+      return;
+    }
+    set({ playSession: session });
+  },
   setCache: (cache) => {
     try {
       if (cache) {

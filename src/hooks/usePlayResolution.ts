@@ -50,11 +50,21 @@ export interface PlayResolution {
 }
 
 /**
- * 前端解析硬上限：后端单点超时是 playerContent 15s + level-4 sniff 15s = 30s，
+ * 前端解析硬上限：后端单点超时是 playerContent 30s + level-4 sniff 15s = 45s，
  * 这里再留 5s 余量。任何超出都是「源/网络真挂了」或偶发的无限挂起，必须给
  * 用户一个明确结论（而不是转圈到天荒地老）。刷新/换源都不会超过这个上限。
  */
-const RESOLVE_HARD_CAP_MS = 35_000;
+const RESOLVE_HARD_CAP_MS = 50_000;
+
+/**
+ * 用户主动点播时给 playerContent 的预算。
+ *
+ * 2026-11-14 实测 py_bubuzhuiju 的 zijianm3u8：进程内**首次**调用 18.3 s
+ * （源侧解析接口冷启动），第二次起 1.8~2.0 s。原来给 15 s 会在冷启动时判超时，
+ * 而超时又被误记成「坏线路」→ 这条完全能播的线路被封印 30 分钟，用户看到
+ * 「一直停在正在连接播放地址…」。慢不等于坏，预算必须覆盖冷启动。
+ */
+const FIRST_PLAY_PLAYER_CONTENT_MS = 30_000;
 
 export function usePlayResolution({
   siteKey,
@@ -78,12 +88,22 @@ export function usePlayResolution({
   const reload = useCallback(() => setReloadNonce((value) => value + 1), []);
   /** 上一次解析的地址组合：相同地址再次触发只可能是用户点了「刷新」。 */
   const lastSource = useRef("");
+  /** 最近一次已落地的结果，用来区分「软刷新」与「effect 被重跑」。 */
+  const resolvedRef = useRef<PlayResolved | null>(null);
+  resolvedRef.current = resolved;
 
   useEffect(() => {
     const source = `${siteKey}|${playUrl}|${playFrom ?? ""}|${liveUa ?? ""}`;
     // 软刷新：保留当前 resolved 与播放实例，控件全程可见可点；只有解析成功
     // 后才替换 resolved 重建解码器。首次进入 / 换集换源仍走硬解析。
-    const soft = lastSource.current === source;
+    //
+    // ⚠️ 必须加上「已有结果」这个条件。dev 的 StrictMode 会把挂载 effect 跑
+    // 两遍：第一遍写 lastSource 后立刻被 cleanup（alive=false，状态没落地），
+    // 第二遍看到 source 相同就误判成软刷新，于是既不走 setResolving(true)、
+    // finally 里也只清 reloading —— `resolving` 永远停在 true，播放内核因此
+    // 不建实例，界面永远卡在「正在连接播放地址…」（2026-11-14 实测：
+    // resolve_play 97 秒前就返回了，播放器还是空的）。
+    const soft = lastSource.current === source && resolvedRef.current !== null;
     lastSource.current = source;
 
     // 恢复出来的播放页（路由只有 siteKey+vodId，没有 playUrl）根本无法解析：
@@ -102,6 +122,9 @@ export function usePlayResolution({
     const run = async () => {
       if (soft) {
         setReloading(true);
+        // 软刷新意味着已有 resolved，绝不该停在「解析中」——多这一行是给
+        // 上面的 StrictMode 场景兜底，避免再出现「永远转圈」。
+        setResolving(false);
       } else {
         setResolving(true);
         setStage("parsing");
@@ -132,13 +155,22 @@ export function usePlayResolution({
         // 就被判死跳走；探测/换线链路保持 8s 不变。
         const target = await Promise.race([
           resolveEpisodeTarget(siteKey, playFrom, playUrl, {
-            playerContentTimeoutMs: 15_000,
+            playerContentTimeoutMs: FIRST_PLAY_PLAYER_CONTENT_MS,
+            // 首次解析是用户主动点播：坏线路标记只代表「源曾经忙时超时」，
+            // 不能拦住用户重新点播（否则被误封的线路 30 分钟内点不开）。
+            ignoreBadLineMark: true,
           }),
           hardCap,
         ]);
         if (alive) {
           // 直链已拿到，进入「交给反代 + 播放内核建连」阶段。
           setStage("connecting");
+        }
+        if (target.timedOut) {
+          // 慢失败必须先说清楚：这不是「网盘 token」，重试就能好。
+          throw new Error(
+            "源响应超时（首次加载源侧冷启动较慢），已保留当前线路，点刷新可重试",
+          );
         }
         if (target.unresolvable) {
           // 源给的 token 连它自己的 playerContent 都不认（网盘 / 专用插件线路）。

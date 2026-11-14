@@ -1,4 +1,4 @@
-import { createHashRouter, Navigate as Redirect, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { createHashRouter, Navigate as Redirect, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppShell, { useConfigActions } from "./AppShell";
 import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
@@ -7,17 +7,14 @@ import HomePage from "./pages/HomePage";
 import LivePage from "./pages/LivePage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
-import { lazy } from "react";
-import { canFailover } from "./lib/format";
+import { useEffect } from "react";
 import { navBack, navNavigate, type DetailNavState, type PlayerNavState } from "./lib/nav";
 import { useAppStore, useSiteState } from "./stores/appStore";
 
 /**
- * 只有播放页走按需加载：ArtPlayer + hls.js 约 750 kB 全在它里面，占首屏体积
- * 的八成以上。其余页面每个只有几 kB，静态导入让导航同步直出——既不会有
- * chunk 加载空窗，也不会破坏窗口探针「点完侧栏立即操作 DOM」的时序。
+ * 播放页本体走按需加载（ArtPlayer + hls.js 约 750 kB），但**渲染位置挪到了
+ * AppShell 的常驻层**：路由只同步会话，播放器不随路由卸载，切页后继续播。
  */
-const PlayerPage = lazy(() => import("./pages/PlayerPage"));
 
 /** 侧栏 / 命令面板的平级跳转（resetTo 语义）由 AppShell 直接处理。 */
 
@@ -67,43 +64,41 @@ function DetailPageRoute() {
   );
 }
 
+/**
+ * 播放页路由**不再自己渲染播放器**：播放器常驻在 AppShell（见 PlayerHost），
+ * 这里只负责把导航 state 同步进全局播放会话。这样切到首页/搜索/设置时播放
+ * 不会中断（后台继续播），侧栏「播放」随时能切回来。
+ */
 function PlayerPageRoute() {
   const { siteKey = "", vodId = "" } = useParams();
   const location = useLocation();
   const state = (location.state ?? null) as PlayerNavState | null;
-  const { sites } = useSiteState();
-  // 直接输 URL / history.state 丢失（如 WebView 恢复会话）时没有播放参数，
-  // 回首页兜底，绝不空转解析。
-  if (!state?.playUrl) {
-    return <Redirect to="/" replace />;
-  }
-  // `changeable: 0` 的源不允许跨站换源，别再对它发起搜索。
-  const site = sites.find((item) => item.key === siteKey);
-  return (
-    <PlayerPage
-      // 换源 / 切集 / 切线路都替换当前条目（不新增层级），但必须换 key：
-      // 否则 React 复用同一实例，旧的 ArtPlayer / hls.js / 计时器与
-      // 新地址解析交错，出现「只有声音没画面」或双流双声。key 变化让
-      // 整页干净卸载，所有播放内核按 effect cleanup 顺序彻底销毁。
-      key={`${siteKey}:${vodId}:${state.playUrl}`}
-      siteKey={siteKey}
-      vodId={vodId}
-      vodName={state.vodName}
-      episodeName={state.episodeName}
-      playUrl={state.playUrl}
-      playFrom={state.playFrom}
-      liveUa={state.ua}
-      liveLines={state.liveLines}
-      liveLine={state.liveLine}
-      liveSource={state.liveSource}
-      failoverKey={state.failoverKey}
-      allowFailover={canFailover(site)}
-      sites={sites}
-      siteName={site?.name}
-      navigate={navNavigate}
-      onBack={navBack}
-    />
-  );
+  const openPlaySession = useAppStore((s) => s.openPlaySession);
+  const nav = useNavigate();
+  useEffect(() => {
+    if (state?.playUrl) {
+      openPlaySession({
+        siteKey,
+        vodId,
+        vodName: state.vodName,
+        playUrl: state.playUrl,
+        episodeName: state.episodeName,
+        playFrom: state.playFrom,
+        ua: state.ua,
+        liveLines: state.liveLines,
+        liveLine: state.liveLine,
+        liveSource: state.liveSource,
+        failoverKey: state.failoverKey,
+      });
+      return;
+    }
+    // 直接输 URL / WebView 恢复会话导致 state 丢失：没有地址就没法解析，
+    // 有旧会话（内存里还在播）就让它继续，否则回首页兜底，绝不空转。
+    if (!useAppStore.getState().playSession) {
+      nav("/", { replace: true });
+    }
+  }, [siteKey, vodId, state, openPlaySession, nav]);
+  return null;
 }
 
 function LivePageRoute() {

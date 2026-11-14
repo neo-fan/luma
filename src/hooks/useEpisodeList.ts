@@ -24,7 +24,14 @@ export interface EpisodeList {
   vod: VodInfo | null;
 }
 
-export function useEpisodeList(siteKey: string, vodId: string, playUrl: string): EpisodeList {
+export function useEpisodeList(
+  siteKey: string,
+  vodId: string,
+  playUrl: string,
+  /** 路由里的集名 / 线路名：地址失配时用它们兜底定位。 */
+  episodeName = "",
+  playFrom = "",
+): EpisodeList {
   const [lines, setLines] = useState<PlayLine[]>([]);
   const [vod, setVod] = useState<VodInfo | null>(null);
   const [lineIndex, setLineIndex] = useState(0);
@@ -62,6 +69,9 @@ export function useEpisodeList(siteKey: string, vodId: string, playUrl: string):
     };
   }, [siteKey, vodId]);
 
+  // 定位当前线路/集：先按地址精确匹配；地址对不上（源轮换了 CDN，很常见）
+  // 再按「同线路名 + 同集名」兜底，否则播放页会显示成第 1 集第 1 条线路，
+  // 上/下一集也跟着错位。线路名优先取路由里的 playFrom（用户点的那条）。
   useEffect(() => {
     for (let line = 0; line < lines.length; line += 1) {
       const index = lines[line].episodes.findIndex((item) => item.url === playUrl);
@@ -72,10 +82,26 @@ export function useEpisodeList(siteKey: string, vodId: string, playUrl: string):
         return;
       }
     }
+    if (episodeName) {
+      const preferred = playFrom ? lines.findIndex((item) => item.name === playFrom) : -1;
+      const order =
+        preferred >= 0
+          ? [preferred, ...lines.map((_, i) => i).filter((i) => i !== preferred)]
+          : lines.map((_, i) => i);
+      for (const line of order) {
+        const index = lines[line].episodes.findIndex((item) => item.name === episodeName);
+        if (index >= 0) {
+          setLineIndex(line);
+          setPanelLine(line);
+          setEpisodeIndex(index);
+          return;
+        }
+      }
+    }
     setLineIndex(0);
     setPanelLine(0);
     setEpisodeIndex(0);
-  }, [lines, playUrl]);
+  }, [lines, playUrl, episodeName, playFrom]);
 
   const currentLine = lines[lineIndex] ?? null;
   const canPrev = currentLine !== null && episodeIndex > 0;

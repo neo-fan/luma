@@ -119,16 +119,21 @@ export default function LiveEpgPanel({ channelName, reloadKey }: LiveEpgPanelPro
           <p className="settings-line">未找到该频道的节目单数据。</p>
         ) : (
           <ul className="epg-list" ref={listRef}>
-            {data.programs.map((program, index) => (
-              <li
-                key={`${program.start}-${index}`}
-                className={isOnAir(program) ? "epg-item is-now" : "epg-item"}
-              >
-                <span className="epg-time">{formatTime(program.start)}</span>
-                <span className="epg-title">{program.title}</span>
-                {program.desc ? <span className="epg-desc">{program.desc}</span> : null}
-              </li>
-            ))}
+            {data.programs.map((program, index) => {
+              const now = isOnAir(program);
+              return (
+                <li key={`${program.start}-${index}`} className={now ? "epg-item is-now" : "epg-item"}>
+                  <span className="epg-time">{formatTime(program.start)}</span>
+                  <div className="epg-body">
+                    <span className="epg-title">
+                      {program.title}
+                      {now ? <span className="epg-now">正在播出</span> : null}
+                    </span>
+                    {program.desc ? <span className="epg-desc">{program.desc}</span> : null}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )
       ) : null}

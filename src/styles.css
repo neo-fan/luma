@@ -392,6 +392,14 @@ textarea {
   white-space: nowrap;
 }
 
+/* build 号：14 位时间戳（yyyyMMddHHmmss）单独一行等宽显示——等宽字体让每次
+   构建的位数对齐，扫一眼就能比对前后端是不是同一个包。 */
+.sidebar__stamp {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+
 /* 收缩态**不动任何 padding**：图标轴（左侧 26px）在收放全程一像素都不移，
    视觉上就是「右边的墙推过来」，没有横向抖动。轨道 68px 下图标中心 36，
    与轨道中心 34 只差 2px，肉眼不可辨；为对齐这 2px 去改 padding 反而会
@@ -403,17 +411,49 @@ textarea {
   overflow-y: auto;
 }
 
+/* 播放页常驻层：盖在内容区之上、侧栏（z-index 40）之下，自己负责滚动。
+   切到其它页面时只切 visibility 不卸载——display:none / 卸载都会让 hls.js
+   重新拉流，回到播放页等于重播（用户需求是「后台继续播、随时切回」）。 */
+.player-host {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--sidebar-w);
+  z-index: 30;
+  overflow-y: auto;
+  background: var(--bg);
+  overscroll-behavior: contain;
+}
+
+.app.is-sidebar-collapsed .player-host {
+  left: var(--sidebar-w-collapsed);
+}
+
+.player-host.is-idle {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .page {
   max-width: 1360px;
   margin: 0 auto;
   padding: 30px 36px 64px;
 }
 
-/* 播放器按 64vh 限高后宽度收成 16:9，下方信息卡 / 选集 / 节目单再铺满
-   `.page` 全宽就会左右不对齐（用户反馈「详情页布局有点丑」）。统一用同一个
-   变量收口，让整页内容跟播放器左右边界对齐。 */
+/* 播放器按视口高度限宽后，下方信息卡 / 选集 / 节目单再铺满 `.page` 全宽就会
+   左右不对齐。统一用 `--player-width` 收口，让整页内容跟播放器左右边界对齐。
+
+   2026-11 调整（用户反馈「播放页两边留白太多」）：原先是 64vh 高度上限 +
+   `.page` 的 1360 阅读上限，1280 宽的窗口下画面只有 910px，两侧白掉 80 多像素。
+   播放页不是长文页，不该套用阅读宽度：把上限放宽到 1600，视口高度占比提到
+   80vh，并收窄左右内边距，绝大多数窗口下画面会直接铺满内容区（宽度先满，
+   高度由 16:9 自适应；只有超宽屏才会触发 80vh 反推的宽度上限）。 */
 .page--player {
-  --player-width: min(100%, calc(64vh * 16 / 9));
+  --player-max-h: 80vh;
+  --player-width: min(100%, calc(var(--player-max-h) * 16 / 9));
+  max-width: 1600px;
+  padding-inline: 28px;
   padding-bottom: 36px;
 }
 
@@ -513,7 +553,12 @@ textarea {
 
 /* 直播态节目单面板：频道名标题 + 可滚动节目列表，当前节目高亮。 */
 .live-epg {
-  margin: 14px 0 4px;
+  margin-top: 14px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
 }
 
 /* 频道台标：来自 fanmingming/live 仓库的 PNG（多为透明底彩图）。
@@ -540,21 +585,27 @@ textarea {
   gap: 8px;
 }
 
+/* 节目单时间轴：左列时间（右对齐等宽数字）+ 右侧内容列，内容列左侧一条竖线
+   串起所有节目、每项一个节点圆点，「正在播出」的节点实心高亮。旧版是
+   flex-wrap 流式堆叠，时间/标题/简介混在一起，长简介把每行高度撑得参差。 */
 .epg-list {
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
-  max-height: 300px;
+  max-height: 320px;
   overflow: auto;
 }
 
 .epg-item {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  padding: 7px 8px;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  column-gap: 10px;
+  padding: 7px 10px 7px 4px;
   border-radius: var(--r-sm);
-  align-items: baseline;
+}
+
+.epg-item:hover {
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
 }
 
 .epg-item.is-now {
@@ -563,22 +614,71 @@ textarea {
 
 .epg-time {
   color: var(--muted);
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
-  min-width: 44px;
+  text-align: right;
+  padding-top: 2px;
+}
+
+/* 竖线 + 节点：线条画在内容列的左边框上，节点用绝对定位压在线上。 */
+.epg-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+
+.epg-body::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.epg-item.is-now .epg-body::before {
+  background: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
 }
 
 .epg-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
 }
 
+.epg-now {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+}
+
+/* 简介最多两行：整天的节目单里长简介会占掉半屏，把时间轴节奏打散。 */
 .epg-desc {
-  flex-basis: 100%;
   color: var(--muted);
   font-size: var(--fs-xs);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .epg-item.is-now .epg-title {
-  color: var(--accent, #3b82f6);
+  color: var(--accent-ink, #7aa2ff);
   font-weight: var(--fw-semibold);
 }
 
@@ -2060,8 +2160,8 @@ textarea {
   align-items: center;
   justify-content: center;
   /* 舞台与画面同宽，避免出现「黑框比视频还宽、左右各一大条空黑」的观感。
-     64vh 高度上限对应 64vh×16/9 的宽度上限，比例始终 16:9。 */
-  width: min(100%, calc(64vh * 16 / 9));
+     宽度上限由 `--player-width`（播放页按 80vh 反推）统一给出，比例始终 16:9。 */
+  width: var(--player-width, min(100%, calc(64vh * 16 / 9)));
   margin-inline: auto;
   min-height: 380px;
   border: 1px solid var(--border);
@@ -2086,9 +2186,9 @@ textarea {
   isolation: isolate;
   /* 宽度必须跟着视口高度限幅一起收，否则 100% 宽 + max-height 会把 16:9
      压成实测 2.42:1，画面左右各留一大条黑边（用户反馈「尺寸不对」）。
-     高度上限 64vh 对应宽度上限 64vh×16/9，二者同时生效才能保持比例。 */
-  width: min(100%, calc(64vh * 16 / 9));
-  max-height: 64vh;
+     宽度与高度上限都取自播放页统一变量，二者同时生效才能保持比例。 */
+  width: var(--player-width, 100%);
+  max-height: var(--player-max-h, 64vh);
   aspect-ratio: 16 / 9;
   background: #000;
   display: block;
@@ -2354,6 +2454,39 @@ textarea {
   color: var(--text-soft);
 }
 
+/* 直播线路切换：极小号 chip，放在频道名下面一行。播放器控制栏里的 selector
+   只有出画后才有，视频卡住时用户更需要这里能点。 */
+.live-bar__lines {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.live-line {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.live-line:hover {
+  background: var(--panel-2, rgba(255, 255, 255, 0.04));
+  color: var(--text);
+}
+
+.live-line.is-active {
+  border-color: var(--accent, #3b82f6);
+  background: var(--accent-soft, rgba(59, 130, 246, 0.16));
+  color: var(--accent-ink, #7aa2ff);
+  font-weight: var(--fw-semibold);
+}
+
 /* 「正在直播」用状态点 + 小字，别做成大红块——克制表达层级。 */
 .live-bar__onair {
   display: inline-flex;
@@ -2462,6 +2595,14 @@ textarea {
 
 .detail-episode-tools .input {
   max-width: 260px;
+}
+
+/* 「上次看到：第N集」比旁边的计数更重要，用正文色而不是 faint。 */
+.detail-episode-tools__seen {
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
 }
 
 .player-episodes {

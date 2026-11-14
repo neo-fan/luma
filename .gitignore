@@ -27,6 +27,10 @@ dist/
 #    注意：根 target/ 不会出现（非 workspace），无需忽略。
 src-tauri/target/
 src-tauri/gen/
+#    根 target/ 只在 Agent/CI 侧 cargo check/test 时出现（CARGO_TARGET_DIR 指向
+#    这里，避开 dev 进程持有的 src-tauri/target 锁），同样是可重建产物。
+/target/
+
 #    qjs-runner 是独立 crate，Cargo 会在自己目录产出 target/（prepare_runtime.py
 #    依赖该路径取 qjs-runner.exe，故只是忽略、不挪位置）。将来新增独立 crate 同理。
 sidecars/qjs-runner/target/
@@ -74,3 +78,4 @@ Thumbs.db
 # UI/UX 走查产物：CDP 实拍截图 + 量测报告（.workbuddy/memory 仍需入库）
 .workbuddy/ui-audit/
 .workbuddy/ui-audit-verify/
+.workbuddy/shots/

@@ -71,11 +71,23 @@ describe("player lifecycle contract", () => {
   });
 
   it("remounts the player page on source / episode / line changes", () => {
-    // react-router 迁移后，PlayerPage 的挂载点在路由包装组件里；
-    // key 必须由 siteKey:vodId:playUrl 派生，切源/切集/切线路时整页干净卸载。
-    const routes = read("src/routes.tsx");
-    expect(routes).toMatch(
-      /<PlayerPage[\s\S]{0,600}?key=\{`\$\{siteKey\}:\$\{vodId\}:\$\{state\.playUrl\}`\}/,
+    // 播放页独立导航后，PlayerPage 的挂载点移到常驻层 PlayerHost（路由只负责
+    // 开会话）；key 必须仍由 siteKey:vodId:playUrl 派生，切源/切集/切线路时
+    // 整页干净卸载，不会出现双流双声。
+    const host = read("src/components/player/PlayerHost.tsx");
+    expect(host).toMatch(
+      /key=\{`\$\{session\.siteKey\}:\$\{session\.vodId\}:\$\{session\.playUrl\}`\}/,
     );
+  });
+
+  it("idle host keeps the DOM (no unmount / display:none) so background play survives", () => {
+    const host = read("src/components/player/PlayerHost.tsx");
+    // 隐藏必须用 visibility（媒体继续解码），不能 display:none 或按条件卸载，
+    // 否则切回播放页时 hls.js 重新拉流、进度归零。
+    expect(host).toContain('active ? "player-host" : "player-host is-idle"');
+    const css = read("src/styles.css");
+    const idle = css.slice(css.indexOf(".player-host.is-idle"));
+    expect(idle.slice(0, 300)).toContain("visibility: hidden");
+    expect(idle.slice(0, 300)).not.toMatch(/display:\s*none/);
   });
 });

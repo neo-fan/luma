@@ -9,6 +9,7 @@ import {
   ChevronsLeft,
   History,
   House,
+  Play,
   Search,
   Settings,
   Star,
@@ -20,6 +21,7 @@ import { ICON_PROPS } from "./icons";
 export type NavIconName =
   | "home"
   | "live"
+  | "player"
   | "search"
   | "favorites"
   | "history"
@@ -30,6 +32,7 @@ export type NavIconName =
 const ICONS: Record<NavIconName, LucideIcon> = {
   home: House,
   live: Tv,
+  player: Play,
   search: Search,
   favorites: Star,
   history: History,

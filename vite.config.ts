@@ -7,25 +7,24 @@ import packageJson from "./package.json";
 // 前端通过 define 注入，避免侧栏 / 诊断页 / 日志里出现三个不同版本。
 const APP_VERSION = packageJson.version;
 
-// 构建号：取最近一次提交的 short hash 与提交时间，与后端 build.rs 用完全相同
-// 的方式注入，双击 exe 也能一眼比对前后端是否同源同构建（无 .git 时回退 unknown）。
+// 构建号：时间戳（构建时刻，epoch 秒）+ 提交 short hash。
+// 时间戳能直接回答「这个包是不是刚构建的」，hash 用来确认前后端同源。
+// 后端 build.rs 用同一套语义（见 `src-tauri/build.rs`），设置页两行可比对。
 // 优先读环境变量（重编脚本显式注入，避免子进程取不到 git 时回退 unknown）。
 // 注意必须用 spawnSync 数组参数直调 git：execSync 默认走 cmd.exe，
 // --format=%h|%cd 里的 | 会被 cmd 当管道符，hash 永远回退 unknown。
 function gitBuildInfo(): { hash: string; time: string } {
   const envHash = process.env.LUMA_BUILD_HASH;
   const envTime = process.env.LUMA_BUILD_TIME;
-  if (envHash && envTime) return { hash: envHash, time: envTime };
+  const time = envTime && envTime.trim() ? envTime.trim() : String(Math.floor(Date.now() / 1000));
+  if (envHash && envHash.trim()) return { hash: envHash.trim(), time };
   try {
-    const res = spawnSync(
-      "git",
-      ["log", "-1", "--format=%h|%cd", "--date=format:%Y-%m-%dT%H:%M:%S%z"],
-      { encoding: "utf-8" },
-    );
-    const [hash, time] = (res.stdout ?? "").trim().split("|");
-    return { hash: hash || "unknown", time: time || "unknown" };
+    const res = spawnSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf-8" });
+    const hash = (res.stdout ?? "").trim();
+    // 没有提交的仓库里 `rev-parse` 会成功打印 "HEAD"，只认十六进制。
+    return { hash: /^[0-9a-f]{4,}$/i.test(hash) ? hash : "unknown", time };
   } catch {
-    return { hash: "unknown", time: "unknown" };
+    return { hash: "unknown", time };
   }
 }
 const BUILD = gitBuildInfo();

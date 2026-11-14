@@ -301,10 +301,12 @@ pub struct LogFileInfo {
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostics {
     pub version: &'static str,
-    /// 构建号：最近一次提交的 short hash（与前端同一来源，便于前后端比对）。
+    /// 提交 short hash（与前端同一来源，便于确认前后端是否同源）。
     pub build_hash: &'static str,
-    /// 构建号：上述提交的提交时间（本地时区，ISO 风格）。
-    pub build_time: &'static str,
+    /// 构建时间戳：exe 的修改时间（epoch 秒），即本次编译完成时刻。
+    /// 不用 build.rs 里取的时间：cargo 缓存会让 build script 不重跑，
+    /// 那个值可能停留在很久以前，无法回答「这个 exe 是不是刚编的」。
+    pub build_time: String,
     pub os: &'static str,
     pub arch: &'static str,
     pub data_dir: String,
@@ -323,7 +325,7 @@ pub fn diagnostics(configs: tauri::State<'_, crate::config::ConfigStore>) -> Dia
     Diagnostics {
         version: env!("CARGO_PKG_VERSION"),
         build_hash: env!("BUILD_HASH"),
-        build_time: env!("BUILD_TIME"),
+        build_time: exe_build_time(),
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
         db_path: data_dir.join(crate::db::DB_FILE).display().to_string(),
@@ -333,6 +335,18 @@ pub fn diagnostics(configs: tauri::State<'_, crate::config::ConfigStore>) -> Dia
         log_files,
         log_bytes,
     }
+}
+
+/// 后端构建时间戳：exe 文件的修改时间（epoch 秒）。
+/// 读不到（如权限受限）时回退 build.rs 注入的编译时刻，保证字段永远有值。
+fn exe_build_time() -> String {
+    std::env::current_exe()
+        .and_then(|path| std::fs::metadata(path))
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|| env!("BUILD_TIME").to_string())
 }
 
 fn config_diagnostics(snapshot: Option<crate::config::ConfigSnapshot>) -> Option<ConfigDiagnostics> {

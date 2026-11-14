@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import Spinner from "../Spinner";
 import { EXTERNAL_PLAY_FALLBACK } from "../../lib/features";
@@ -37,6 +38,24 @@ export default function PlayerStage({
   resolveError,
   containerRef,
 }: PlayerStageProps) {
+  // 慢源冷启动实测能到 18s：光转圈会被当成卡死，超过 4s 就把已等待秒数报出来，
+  // 让用户知道「在动，只是慢」，而不是「点坏了」。解析结束自动归零。
+  const busy = resolving || reloading || recovering;
+  const [waited, setWaited] = useState(0);
+  const startedAt = useRef(0);
+  useEffect(() => {
+    if (!busy) {
+      startedAt.current = 0;
+      setWaited(0);
+      return;
+    }
+    if (!startedAt.current) startedAt.current = Date.now();
+    const timer = setInterval(() => {
+      setWaited(Math.floor((Date.now() - startedAt.current) / 1000));
+    }, 500);
+    return () => clearInterval(timer);
+  }, [busy]);
+
   // 有可播地址时即便在重新解析，也照常显示画面与控件，不给容器加 hidden。
   const status = resolving
     ? // 解析分两个阶段给不同文案：问源拿直链 vs 交给反代建连，避免「一直转」被误判卡死。
@@ -55,6 +74,14 @@ export default function PlayerStage({
             }
           : null;
 
+  // 等待提示只挂在「正在等源」的三种忙态上，错误面板不显示。
+  const slowHint =
+    status?.busy && waited >= 4
+      ? waited >= 12
+        ? `已等待 ${waited}s，源侧较慢，仍在重试…`
+        : `已等待 ${waited}s…`
+      : "";
+
   return (
     <div className="player-stage">
       <div ref={containerRef} className="player-art" />
@@ -65,6 +92,7 @@ export default function PlayerStage({
             {status.busy ? <Spinner label="" /> : null}
             <p className="player-status__title">{status.title}</p>
             {status.desc ? <p className="player-status__desc">{status.desc}</p> : null}
+            {slowHint ? <p className="player-status__desc">{slowHint}</p> : null}
           </div>
         </div>
       ) : null}
