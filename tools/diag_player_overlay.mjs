@@ -74,6 +74,27 @@ class Cdp {
     console.log(`[shot] ${path}`);
   }
 
+  /**
+   * 冻结一帧再截：提示层常常只存在几十毫秒，`captureScreenshot` 有几十毫秒
+   * 的抓取延迟，直接截会拍到「提示已消失、ArtPlayer loading 回来」的下一帧，
+   * 与同一次采样读出的事实相反（我第一版就被这张误导过）。
+   * 暂停虚拟时间后 React 状态与动画都停住，截到的就是采样那一刻。
+   */
+  async freezeShot(name) {
+    try {
+      await this.send("Emulation.setVirtualTimePolicy", { policy: "pause" });
+    } catch {
+      /* 不支持就退回普通截图 */
+    }
+    await new Promise((r) => setTimeout(r, 120));
+    await this.shot(name);
+    try {
+      await this.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: 200 });
+    } catch {
+      /* ignore */
+    }
+  }
+
   close() {
     this.ws.close();
   }
@@ -111,31 +132,43 @@ const SAMPLE = `(() => {
     return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height),
              cx: Math.round(r.x + r.width / 2), cy: Math.round(r.y + r.height / 2) };
   };
-  const visible = (el) => {
+  // 判「CSS 是否让它显示」用 checkVisibility：比手写 display/尺寸更贴近真值
+  // ——测量到过 display:flex 但矩形还是 0 的瞬间（ArtPlayer 刚重建），
+  // 按尺寸判会把它当成不可见，从而漏掉真实重合。
+  const shown = (el) => {
     if (!el) return false;
+    if (typeof el.checkVisibility === 'function') {
+      return el.checkVisibility({ visibilityProperty: true, opacityProperty: true });
+    }
     const cs = getComputedStyle(el);
-    if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity > 0;
   };
-  const loadingEl = document.querySelector('.player-art .art-loading');
-  const player = document.querySelector('.player-art .art-video-player');
-  const overlay = document.querySelector('.player-overlay');
-  const stage = document.querySelector('.player-stage');
-  const pulse = document.querySelector('.player-status__pulse');
-  const video = document.querySelector('video');
+  /**
+   * 页面里可能同时存在多个 .player-stage：PlayerHost 是常驻层（隐藏但留
+   * 在 DOM），直播页/播放页各渲染自己的舞台。全局 querySelector 会随机命中
+   * 隐藏那个，读出来的 display 与用户所见无关（踩过：看到 is-busy 但
+   * overlay「不可见」，其实取的是 is-idle 会话）。
+   */
+  const stages = [...document.querySelectorAll('.player-stage')];
+  const stage = stages.find((s) => shown(s)) || stages[0] || null;
+  const loadingEl = stage?.querySelector('.art-loading') || null;
+  const player = stage?.querySelector('.art-video-player') || null;
+  const overlay = stage?.querySelector('.player-overlay') || null;
+  const pulse = stage?.querySelector('.player-status__pulse') || null;
+  const video = stage?.querySelector('video') || null;
   return {
     stage: stage?.className || null,
-    overlay: !!overlay && visible(overlay),
-    title: document.querySelector('.player-status__title')?.textContent || '',
-    pulse: visible(pulse) ? rect(pulse) : null,
+    stageCount: stages.length,
+    overlay: shown(overlay),
+    title: stage?.querySelector('.player-status__title')?.textContent || '',
+    pulse: shown(pulse) ? rect(pulse) : null,
     loading: {
       exists: !!loadingEl,
       display: loadingEl ? getComputedStyle(loadingEl).display : null,
-      visible: visible(loadingEl),
+      visible: shown(loadingEl),
       inner: rect(loadingEl?.firstElementChild || null),
     },
-    mask: player && player.classList.contains('art-mask-show'),
+    mask: !!player && player.classList.contains('art-mask-show'),
     video: video ? { readyState: video.readyState, paused: video.paused, w: video.videoWidth } : null,
   };
 })()`;
@@ -167,6 +200,10 @@ const gotoPlayer = `(async () => {
   };
   // ⚠️ 播放页是常驻层（切走后仍留在 DOM，只是 visibility:hidden），
   // 判「是否在播放页」只能看 hash，不能用 document.querySelector。
+  // RELOAD 模式直接复用正在播的会话，不来回导航（首页首卡常常是频道而不是剧集）。
+  if (${JSON.stringify(!!process.env.RELOAD)} && location.hash.startsWith('#/player') && document.querySelector('.player-stage video')) {
+    return 'REUSE:' + location.hash;
+  }
   if (location.hash.startsWith('#/player')) {
     clickText('首页');
     await sleep(500);
@@ -230,8 +267,41 @@ const gotoPlayer = `(async () => {
 
 console.log("[step] goto player ->", await cdp.eval(gotoPlayer));
 
+/**
+ * RELOAD=1：先等到真实出画，再点控制栏的「刷新」。
+ *
+ * 这是「ArtPlayer 实例已挂载 + 我们显示提示层」的稳定造法——解析阶段
+ * ArtPlayer 还没创建（`.art-loading` 是 absent），只能靠重解析把两者凑到一起。
+ */
+if (process.env.RELOAD) {
+  const ready = await cdp.eval(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    // 上限 25s：CDP 单次 Runtime.evaluate 在 40s 就超时，别把等待放到超时之外。
+    const end = Date.now() + 25000;
+    while (Date.now() < end) {
+      const v = document.querySelector('video');
+      if (v && v.videoWidth > 0 && !v.paused) return 'READY:' + v.videoWidth + 'x' + v.videoHeight;
+      await sleep(300);
+    }
+    return 'NO_PLAY';
+  })()`);
+  console.log("[step] wait first frame ->", ready);
+  const clicked = await cdp.eval(`(() => {
+    const btn = document.querySelector('.player-art .art-control-reload');
+    if (!btn) return 'NO_RELOAD';
+    btn.click();
+    return 'CLICKED';
+  })()`);
+  console.log("[step] reload ->", clicked);
+}
+
 /** 追踪 60s：只在状态变化时打点，同时记录「提示层 + 内置 loading 同时可见」。 */
 const TRACE_MS = 60000;
+/**
+ * 采样间隔 120ms：命中缓存的线路「刷新」时提示层只活 60~100ms（实测一帧
+ * 还在「正在重新获取播放地址…」，下一帧就没了），250ms 会整段错过。
+ */
+const SAMPLE_INTERVAL = 120;
 const rows = [];
 let prev = "";
 let overlapShot = false;
@@ -253,7 +323,7 @@ while (Date.now() < end) {
     rows.push({ at: new Date().toISOString().slice(11, 19), both, ...s });
     console.log(
       `${new Date().toISOString().slice(11, 19)}  overlay=${s.overlay ? `"${s.title}"` : "—"}` +
-        `  stage=${(s.stage || "—").replace("player-stage", "stage")}` +
+        `  stage=${(s.stage || "—").replace("player-stage", "stage")}[${s.stageCount}]` +
         `  art-loading=${s.loading.exists ? (s.loading.visible ? "VISIBLE" : `hidden(${s.loading.display})`) : "absent"}` +
         `  mask=${s.mask ? "on" : "off"}  video=${s.video ? `${s.video.readyState}/${s.video.paused ? "paused" : "play"}` : "—"}` +
         (both ? "   << OVERLAP" : ""),
@@ -261,27 +331,33 @@ while (Date.now() < end) {
     // 每种提示文案各拍一张，用于肉眼确认「中间只剩一套指示器」。
     if (s.overlay && !shotTitles.has(s.title)) {
       shotTitles.add(s.title);
-      await cdp.shot(`player-overlay-${s.title.replace(/[^\u4e00-\u9fa5a-z0-9]+/gi, "_").slice(0, 18)}`);
+      await cdp.freezeShot(`player-overlay-${s.title.replace(/[^\u4e00-\u9fa5a-z0-9]+/gi, "_").slice(0, 18)}`);
     }
     if (both && !overlapShot) {
       overlapShot = true;
-      await cdp.shot("player-overlay-overlap");
+      await cdp.freezeShot("player-overlay-overlap");
     }
   }
-  await new Promise((r) => setTimeout(r, 250));
+  await new Promise((r) => setTimeout(r, SAMPLE_INTERVAL));
 }
 
 const overlaps = rows.filter((r) => r.both);
+const overlayFrames = rows.filter((r) => r.overlay);
 const loadingSeen = rows.some((r) => r.loading.visible);
 const playingSeen = rows.some((r) => (r.video?.w ?? 0) > 0);
 
 console.log("\n=== 结论 ===");
-console.log(`重合帧：${overlaps.length}（${new Set(overlaps.map((r) => r.title)).size} 种提示文案）`);
+console.log(`提示层采样帧：${overlayFrames.length}（${new Set(overlayFrames.map((r) => r.title)).size} 种文案）`);
+console.log(`重合帧：${overlaps.length}`);
 console.log(`内置 loading 曾可见：${loadingSeen ? "是" : "否"}`);
 console.log(`出画（videoWidth>0）：${playingSeen ? "是" : "否"}`);
 if (overlaps.length > 0) {
   console.log("样例：", JSON.stringify(overlaps[0], null, 2));
 }
-console.log(overlaps.length === 0 ? "PASS：提示层存在期间没有内置 loading 叠上来" : "FAIL：两者同时可见");
+if (overlayFrames.length === 0) {
+  console.log("INCONCLUSIVE：一次都没采到提示层，这次的 PASS 不成立（换慢源或加 RELOAD=1）");
+} else {
+  console.log(overlaps.length === 0 ? "PASS：提示层存在期间没有内置 loading 叠上来" : "FAIL：两者同时可见");
+}
 
 cdp.close();
