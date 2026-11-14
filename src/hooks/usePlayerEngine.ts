@@ -6,7 +6,7 @@
  * 不命中，m3u8 会被直接塞给 <video> 而失败。
  *
  * ⚠️ 本文件是高频缺陷区，抽出时只把「外部 state / ref / setter」改成参数，
- * 内部时序（倍速静默期、字段隔离、身份校验、stalled watchdog、mpv 兜底、
+ * 内部时序（倍速静默期、字段隔离、身份校验、stalled watchdog、解码失败换源、
  * cleanup 顺序）保持逐字一致。CDP 探针 probe_playback_ux 依赖两处源码特征
  * （videoRef 身份校验、倍速字段隔离写入）做 dev 模块新鲜度自检；改动这两处
  * 逻辑时须同步更新探针的 fetch 目标，且不要在注释里复刻同样的字面串，
@@ -26,7 +26,7 @@ import Hls from "hls.js";
 import { PLAYER_NEXT_ICON, PLAYER_RELOAD_ICON } from "../components/icons";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { registerPlayer, stopActivePlayer } from "../lib/playerRegistry";
-import { api, errorMessage } from "../lib/invoke";
+import { errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
@@ -106,8 +106,6 @@ export interface UsePlayerEngineArgs {
   videoRef: MutableRefObject<HTMLVideoElement | null>;
   /** 卸载时 ArtPlayer 会清掉 src，进度必须独立留一份快照。 */
   lastMediaRef: MutableRefObject<{ positionMs: number; durationMs?: number }>;
-  /** 解码失败只自动转 mpv 一次。 */
-  mpvTried: MutableRefObject<boolean>;
   /** 跨站换源与 stalled watchdog 的并发闸门。 */
   failoverStarted: MutableRefObject<boolean>;
   lineSwitchStarted: MutableRefObject<boolean>;
@@ -162,7 +160,6 @@ export function usePlayerEngine({
   containerRef,
   videoRef,
   lastMediaRef,
-  mpvTried,
   failoverStarted,
   lineSwitchStarted,
   switchOrFailoverRef,
@@ -212,7 +209,6 @@ export function usePlayerEngine({
       return;
     }
 
-    mpvTried.current = false;
     lastMediaRef.current = { positionMs: 0 };
     // 全局唯一实例：创建前先硬停上一个（含 HMR 后丢失 cleanup 的游离实例）。
     // 实测这一步是「两个声音」的根治点：React 自己卸载时也会漏掉已 detach
@@ -780,26 +776,13 @@ export function usePlayerEngine({
 
     const onError = () => {
       const mediaError = video.error;
-      // 3 = MEDIA_ERR_DECODE, 4 = MEDIA_ERR_SRC_NOT_SUPPORTED. WebView2 常见于
-      // HEVC：换源也救不了同一编码，原本交给随包 mpv（规格 T-30 自动兜底）。
-      // 外部播放临时屏蔽期间不再拉起外部进程，直接落到换源/换线路流程。
-      if (
-        EXTERNAL_PLAY_ENABLED &&
-        mediaError &&
-        (mediaError.code === 3 || mediaError.code === 4) &&
-        !mpvTried.current
-      ) {
-        mpvTried.current = true;
-        log.warn("mpv fallback", { siteKey, vodId, mediaCode: mediaError.code });
-        setVideoError("浏览器无法解码该视频，已自动交给 mpv 播放…");
-        void api
-          .mpvPlay(resolved.url, vodName, resolved.headers)
-          .catch((err) => {
-            setVideoError(`mpv 启动失败：${errorMessage(err)}`);
-            void switchOrFailoverRef.current();
-          });
-        return;
-      }
+      // 3 = MEDIA_ERR_DECODE, 4 = MEDIA_ERR_SRC_NOT_SUPPORTED。WebView2 常见于
+      // HEVC：同一编码换源也救不了，只能交给换线路 / 换源流程。
+      log.warn("media decode failed", {
+        siteKey,
+        vodId,
+        mediaCode: mediaError?.code ?? 0,
+      });
       setVideoError(`播放器加载失败，${PLAY_FAILURE_HINT}。`);
       void switchOrFailoverRef.current();
     };

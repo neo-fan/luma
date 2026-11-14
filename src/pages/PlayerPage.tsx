@@ -114,8 +114,6 @@ export default function PlayerPage({
   const ledgerKey = failoverKey || vodName.trim();
   const failoverStarted = useRef(false);
   /** 已经自动处理过的地址，避免切线路 / 换源之间来回跳转。 */
-  /** T-30：解码失败只自动转 mpv 一次，避免用户手动关掉后被反复拉起。 */
-  const mpvTried = useRef(false);
   /** 同一轮播放只允许一次「找下一条线路」，防止多个失败信号并发触发。 */
   const lineSwitchStarted = useRef(false);
   /**
@@ -800,15 +798,14 @@ export default function PlayerPage({
   }, [active, resolving, resolveError, resolveRetryable, playUrl, ledgerKey]);
 
   /**
-   * 播放内核：ArtPlayer + hls.js / mpegts.js + 偏好记忆 + stalled watchdog +
-   * mpv 兜底。effect 体逐字保留在 usePlayerEngine，声明顺序须先于 history
+   * 播放内核：ArtPlayer + hls.js / mpegts.js + 偏好记忆 + stalled watchdog。
+   * effect 体逐字保留在 usePlayerEngine，声明顺序须先于 history
    * 与 ended 两个 effect（它们直接读内核写入的 videoRef.current）。
    */
   usePlayerEngine({
     containerRef,
     videoRef,
     lastMediaRef,
-    mpvTried,
     failoverStarted,
     lineSwitchStarted,
     switchOrFailoverRef,

@@ -34,6 +34,7 @@
   - 适配层路径由宿主 spawn 时注入 `LUMA_ADAPTER_LOG`，诊断/反馈文件里的日志项带上 `channel` 字段。
 - **调试构建与正式版可区分**：`tauri dev` 起的窗口和同机安装的正式版版本号、图标完全一样，打包前不好认。后端用官方 `tauri::is_dev()`（未启用 `custom-protocol` 即 dev）把窗口标题改成「Luma <版本> (Dev)」；前端用 `import.meta.env.DEV` 在侧栏版本号后加一枚 DEV 胶囊。不用 `debug_assertions`，因为 `tauri build --debug` 也满足但那是产物包。
 - **测试目录按四层归口**：前端纯函数用例从 `tests/frontend/` 迁到被测模块旁（`src/lib/*.test.ts`，12 个文件、import 一次性改写），`tests/frontend/` 只留 6 个读源码文本的跨文件约定测试；`tests/e2e/` 拆成 `tests/offline/`（9 个确定性检查，全部接进 `tools/check.py`）与 `tests/acceptance/`（spec 12.2 阶段验收 `p0.py`~`p3.py`），`t05_config.py` 更名为 `config_shapes_check.py`。新增 `docs/TESTING.md` 说明四层各自放什么、跑什么命令。`python tools/check.py` 的语法检查范围随之覆盖整个 `tests/`。
+- **移除随包 mpv 与「解码失败自动转外部播放」**：这条兜底从来没真正可用 —— `domain/mpv.rs` 去 `<resource>/sidecars/mpv/mpv.exe` 找可执行文件，但 `tauri.conf.json` 从未把它打进安装包，安装版永远只会得到 `mpv.exe not found`，而前端文案却在说「已自动交给 mpv」。现在整条链路删掉：`mpv_play` command、`domain/mpv.rs`、前端 `api.mpvPlay` 与 `mpvTried` 状态机、`tools/probes/probe_mpv.mjs`、`sidecars/mpv/`（117 MB）、`prepare_runtime.py` 的 stage 步骤、以及 `PlayTarget.kind` 里的 `"mpv"`。`<video>` 报 `MEDIA_ERR_DECODE` / `SRC_NOT_SUPPORTED`（HEVC 常见）时只走换线路 → 换源；`EXTERNAL_PLAY_ENABLED` 继续只管 `open_external`，源码契约测试同步断言前端不再出现 `mpv`。
 
 ---
 

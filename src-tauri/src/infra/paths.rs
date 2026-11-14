@@ -1,4 +1,4 @@
-//! Sidecar path resolution shared by bridge / jvm / mpv.
+//! Sidecar path resolution shared by bridge / jvm.
 //!
 //! Tauri's `resource_dir()` differs between a dev run (target/debug), a portable
 //! folder (exe dir) and an installed build (exe/resources). Rather than assume

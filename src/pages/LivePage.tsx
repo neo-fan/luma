@@ -118,7 +118,6 @@ export default function LivePage({ lives }: LivePageProps) {
   const lastMediaRef = useRef<{ positionMs: number; durationMs?: number }>({
     positionMs: 0,
   });
-  const mpvTried = useRef(false);
   const failoverStarted = useRef(false);
   const lineSwitchStarted = useRef(false);
   const liveLineRef = useRef<LiveLineControl | null>(null);
@@ -275,7 +274,6 @@ export default function LivePage({ lives }: LivePageProps) {
     containerRef,
     videoRef,
     lastMediaRef,
-    mpvTried,
     failoverStarted,
     lineSwitchStarted,
     switchOrFailoverRef,

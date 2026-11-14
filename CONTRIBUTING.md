@@ -80,7 +80,7 @@ schema → `src/types/tvbox.ts` → Rust 序列化 / `sidecars/py/normalize.py` 
 - 提交信息用 `type(scope): 摘要`（`feat` / `fix` / `refactor` / `docs` / `test` / `chore` / `ci`），正文写**为什么**改，而不是复述 diff。
 - 一个 PR 只做一件事；顺手修的东西单独提交。
 - PR 描述里写：改动文件清单、跑过的命令与结果、未解决的问题。**没跑门禁的 PR 会被打回**，这比写得难看严重得多。
-- 不要提交：`dist/`、`src-tauri/target/`、`sidecars/{jre,python-embed,mpv}/`、`node_modules/`、真实配置样本、日志。`.gitignore` 已经覆盖，若 `git status` 冒出它们说明忽略规则被改坏。
+- 不要提交：`dist/`、`src-tauri/target/`、`sidecars/{jre,python-embed}/`、`node_modules/`、真实配置样本、日志。`.gitignore` 已经覆盖，若 `git status` 冒出它们说明忽略规则被改坏。
 
 ## 6. 明确不接受的改动
 

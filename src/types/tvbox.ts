@@ -100,7 +100,7 @@ export type SpiderMethod =
 
 /** 播放目标（6.2） */
 export interface PlayTarget {
-  kind: "webview" | "proxy" | "mpv" | "external";
+  kind: "webview" | "proxy" | "external";
   url: string;
   headers: Record<string, string>;
   parse?: "hls" | "mpegts" | "direct";

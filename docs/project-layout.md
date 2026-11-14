@@ -95,7 +95,7 @@ luma/
 │       └── domain/                        # 业务：config/play/parse/proxy/live/sniff/
 │                                          #   config/{mod,derive,naming,import,github,refresh}
 │                                          #   proxy/{mod,handlers,guard,playlist,tests}
-│                                          #   mpv/clipboard/ghproxy/spider/{mod,cms,jvm,python,quickjs}
+│                                          #   clipboard/ghproxy/spider/{mod,cms,jvm,python,quickjs}
 │
 ├── sidecars/                              # 随包分发的 sidecar
 │   ├── py/  java/  qjs-runner/            # 源码（入库）
@@ -103,7 +103,7 @@ luma/
 │   ├── python-embed/                      # [产物] 3.11 embeddable + site-packages 第三方依赖，gitignore
 │   │                                      #   dev/交付统一用它（bridge.rs::embedded_python 自动探测）
 │   │                                      #   依赖由 tools/python-requirements.txt + prepare_runtime.py 重建
-│   ├── jre/  mpv/                         # [产物] 二进制，gitignore，prepare_runtime.py 重建
+│   ├── jre/                               # [产物] 二进制，gitignore，prepare_runtime.py 重建
 │
 ├── tests/
 │   ├── frontend/                          # 跨模块契约单测（播放器生命周期、图标控件…）
@@ -182,7 +182,7 @@ luma/
 | `tests/fixtures/manual/`、`docs/verification-config.md` | 真实配置样本与抓取记录，含外部地址，规格书禁止内置 |
 | `dist/`、`src-tauri/target/`、`src-tauri/target/release/bundle/` | 三类编译/交付产物，均可重建（见 §1） |
 | `src-tauri/gen/` | Tauri 生成的 schema 与中间产物 |
-| `sidecars/{jre,python-embed,mpv}/`、`src-tauri/binaries/` | 随包运行时/二进制产物，由 `prepare_runtime.py` 重建 |
+| `sidecars/{jre,python-embed}/`、`src-tauri/binaries/` | 随包运行时/二进制产物，由 `prepare_runtime.py` 重建 |
 | `node_modules/` | 前端依赖，由 pnpm 锁文件重建 |
 | `*.log`、`pnpm-debug.log*` | 运行日志，可能含密钥/外部地址 |
 | `.DS_Store`、`Thumbs.db` | 系统元数据 |

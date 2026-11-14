@@ -129,7 +129,7 @@ def resolve_jdk17() -> Path | None:
     return None
 
 
-# 运行时产物目录（sidecars/jre、python-embed、mpv）整目录在 .gitignore 里，
+# 运行时产物目录（sidecars/jre、python-embed）整目录在 .gitignore 里，
 # 不跟踪任何占位文件：这里不再补 .gitkeep，产物目录保持干净。
 
 
@@ -396,13 +396,6 @@ def step_binaries() -> bool:
     qjs_src = qjs_release if qjs_release.exists() else qjs_debug
     if not stage(qjs_src, "qjs-runner"):
         print("  [info] 未找到 qjs-runner 产物，请先在 sidecars/qjs-runner 下 cargo build --release")
-
-    # mpv：规格中为可选项，缺失不阻塞。
-    mpv = ROOT / "sidecars" / "mpv" / "mpv.exe"
-    if mpv.exists():
-        stage(mpv, "mpv")
-    else:
-        print("  [skip] sidecars/mpv/mpv.exe 不存在（可选组件）")
 
     print("  当前 staging 目录：")
     for f in sorted(BIN_DIR.glob("*.exe")):

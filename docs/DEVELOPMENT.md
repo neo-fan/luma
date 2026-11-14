@@ -20,7 +20,7 @@ clone → 装依赖 → 准备运行时 → pnpm tauri dev → 改代码热更�
 | Rust | stable ≥ 1.77.2，`x86_64-pc-windows-msvc` |
 | 构建 | VS2022 Build Tools + Win11 SDK（MSVC） |
 | jar 源 | **运行期无需 JDK**（用随包 `sidecars/jre`）；仅重建 JRE / 编译 `runner.jar` 时需 JDK 17 |
-| 可选 | `mpv`（`sidecars/mpv/mpv.exe`）用于解码兜底 |
+| 可选 | 无（外部播放整体关闭，随包 mpv 已移除） |
 
 ```powershell
 corepack pnpm install                       # 前端依赖
@@ -30,7 +30,7 @@ python tools/prepare_runtime.py            # jlink JRE + python-embed + external
 
 # 不需要设 LUMA_JAVA：运行期优先用随包 sidecars/jre/bin/java.exe，dev 与交付同源
 
-# 可选：把 mpv.exe 放进 sidecars/mpv/ 即启用解码兜底
+# 外部播放 / mpv 兜底已移除；解码失败走换线路 → 换源。
 ```
 
 运行时产物（JRE / python-embed / binaries）**不入库**，统一由 `prepare_runtime.py` 重建。
@@ -72,7 +72,7 @@ cargo test   --manifest-path src-tauri/Cargo.toml --lib
 - `package.json` 里 `dev:app = tauri dev --config src-tauri/tauri.dev.conf.json`。**debug 一律用 `corepack pnpm dev:app`**；`tauri build` 不读这个文件，安装包的 identifier 仍是 `dev.luma.desktop`。
 - 验收：两个窗口同时开着不打架，且 `%LOCALAPPDATA%` 下同时存在 `dev.luma.desktop\EBWebView`（安装版）与 `dev.luma.desktop.debug\EBWebView`（dev）。
 
-> 顺带：`vite.config.ts` 的 `server.watch.ignored` 排除了 `src-tauri/`、`.agents/`、`.workbuddy/`、`.*.tmpdir/`、`.git/`。Node 24 把 `fs.watch` 的 EBUSY 当致命错误，而 `tauri dev` 正在写 `target\debug\luma.exe`、并行会话又在原子写源码，命中任一个都会让 vite 退出、连带 `beforeDevCommand` 失败把整个 dev 拖死。
+> 顺带：`vite.config.ts` 的 `server.watch.ignored` 排除了 `src-tauri/`、`.agents/`、`.*.tmpdir/`、`.git/`。Node 24 把 `fs.watch` 的 EBUSY 当致命错误，而 `tauri dev` 正在写 `target\debug\luma.exe`、并行会话又在原子写源码，命中任一个都会让 vite 退出、连带 `beforeDevCommand` 失败把整个 dev 拖死。
 
 
 ## 3. 四端调试
@@ -165,7 +165,7 @@ python tests/offline/contract_check.py         # 校验 contracts/tvbox.schema.j
 python tests/acceptance/p0.py     # P0 基线（需 stub + 运行中的应用，可用 --offline）
 python tests/acceptance/p1.py     # P1 子进程运行时
 python tests/acceptance/p2.py     # P2 jar / JVM 运行时
-python tests/acceptance/p3.py     # P3 嗅探 / mpv / 打包
+python tests/acceptance/p3.py     # P3 嗅探 / 打包
 node tools/run_probes.mjs                 # 一条命令跑全部窗口探针
 node tools/run_probes.mjs --with-ui       # 连 UI 冒烟（会切桩配置，放最后）
 node tools/run_probes.mjs --only=flv,history
@@ -185,7 +185,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 | `LUMA_PYTHON` | 覆盖 Python 解释器 | 临时切测试解释器 |
 | `LUMA_JAVA` | 覆盖 java 可执行文件 | 一般**不设**，缺省用随包 `sidecars/jre` |
 | `LUMA_JVM_RUNNER` | 覆盖 `runner.jar` | 自测用 |
-| `LUMA_MPV` | 覆盖 `mpv.exe` | — |
+
 | `LUMA_PROXY_PORT` | 本地反代端口 | 默认 9978 |
 | `LUMA_DATA_DIR` | 覆盖数据目录 | — |
 | `LUMA_PROXY_ALLOW_LOCAL` | 允许反代访问 `127.0.0.1` | `1`（仅本地联调） |

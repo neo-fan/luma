@@ -57,4 +57,4 @@ react-router（MIT）等。许可证以各包 `package.json` 的 `license` 字�
 
 - `sidecars/jre/`（jlink 裁剪的 OpenJDK 17）：按 GPL-2.0 + Classpath Exception 分发，
   由使用者本地重建，不入库。
-- `sidecars/mpv/`：mpv 为 GPL-2.0+，默认不打进安装包，由使用者自行放置。
+- 随包 mpv 已在 1.0.3 移除，本项目不再分发 GPL-2.0+ 的 mpv。

@@ -161,7 +161,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["webview", "proxy", "mpv", "external"]
+          "enum": ["webview", "proxy", "external"]
         },
         "url": { "type": "string" },
         "headers": {

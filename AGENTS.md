@@ -42,7 +42,7 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 - **Rust 分层是物理分层**：`infra/`、`domain/` 用 `#[path]` 映射，逻辑模块名仍是 `crate::config` 等，因此 37 个 command 路径零改动；`db↔store`、`proxy↔spider` 各自同层以规避环。
 - **配置双快照**：`imported_json` 是导入原件，**永不被运行策略改写**；`runtime_json` 由 `derive_runtime()` 单向派生（含 `enabled`/`disabledReason`）。fan-out / 播放 / 前端缓存只读 runtime；`find_site` 查 imported 以兼容旧收藏，`spider_invoke` 单点补策略检查防绕过。
 - **数据层**：`<data>/luma.db` 单库，WAL + 事务写，先提交再刷内存缓存；无迁移逻辑。便携模式 = exe 同级有 `data/`。
-- **播放链路**：`playerContent` 取 playUrl + header → 反代重写 m3u8 → ArtPlayer/hls.js/mpegts.js → 失败依次：同片换线 → 跨站换源 → 第 4 级嗅探（隐藏 WebView2）→ mpv 兜底。
+- **播放链路**：`playerContent` 取 playUrl + header → 反代重写 m3u8 → ArtPlayer/hls.js/mpegts.js → 失败依次：同片换线 → 跨站换源 → 第 4 级嗅探（隐藏 WebView2）；没有外部播放兜底。
 
 ## 支持范围
 

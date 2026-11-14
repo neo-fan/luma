@@ -1,9 +1,12 @@
 /**
  * 「暂时屏蔽外部播放」的源码契约。
  *
- * 这类开关最容易退化成「只把按钮藏了」：入口没了，但解码失败仍会弹 mpv，
- * 或者错误提示还让用户去点一个不存在的图标。这里锁住四条路径都走同一个
- * `EXTERNAL_PLAY_ENABLED`，并确认后端 command 仍在（改一个布尔值即可恢复）。
+ * 这类开关最容易退化成「只把按钮藏了」：入口没了，但错误提示还让用户去点
+ * 一个不存在的图标。这里锁住三条路径都走同一个 `EXTERNAL_PLAY_ENABLED`，
+ * 并确认后端 command 仍在（改一个布尔值即可恢复）。
+ *
+ * 随包 mpv 兜底已按产品决策移除（2026-11-14）：解码失败只走换线路 / 换源，
+ * 因此额外断言前端不再出现 `mpv` 相关调用，避免有人把死代码加回来。
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -28,15 +31,11 @@ describe("external play is temporarily disabled", () => {
     expect(page).toContain("EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined");
   });
 
-  it("guards both IPC paths: open_external and mpv_play", () => {
+  it("guards the open_external IPC path", () => {
     const page = read("src/pages/PlayerPage.tsx");
     expect(page).toContain("if (!EXTERNAL_PLAY_ENABLED)");
     // 早退必须写在 openExternal 调用之前。
     expect(page.indexOf("if (!EXTERNAL_PLAY_ENABLED)")).toBeLessThan(page.indexOf("await api.openExternal"));
-
-    const engine = read("src/hooks/usePlayerEngine.ts");
-    expect(engine).toContain("EXTERNAL_PLAY_ENABLED &&");
-    expect(engine.indexOf("EXTERNAL_PLAY_ENABLED &&")).toBeLessThan(engine.indexOf(".mpvPlay("));
   });
 
   it("keeps failure hints consistent with the switch", () => {
@@ -51,9 +50,15 @@ describe("external play is temporarily disabled", () => {
     expect(engine).not.toContain("请使用外部播放。");
   });
 
-  it("keeps the backend commands so restoring is a one-line change", () => {
+  it("keeps the backend command so restoring is a one-line change", () => {
     const invoke = read("src/lib/invoke.ts");
     expect(invoke).toContain('call("open_external"');
-    expect(invoke).toContain('call("mpv_play"');
+  });
+
+  it("no longer ships the mpv fallback", () => {
+    const invoke = read("src/lib/invoke.ts");
+    expect(invoke).not.toContain("mpv_play");
+    const engine = read("src/hooks/usePlayerEngine.ts");
+    expect(engine.toLowerCase()).not.toContain("mpv");
   });
 });

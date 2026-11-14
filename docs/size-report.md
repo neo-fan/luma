@@ -20,7 +20,7 @@
 
 > 1.0.2 只改了 Rust 源码（导入超时修复）与版本号，运行时产物与 1.0.1 完全一致；唯一变化的行是 `Luma.exe` 18.10 → 7.83 MB（−10.27 MB）。原因是 `d9a4994` 把 Cargo release profile 对齐 Tauri 官方 [App Size](https://v2.tauri.app/concept/size/) 建议（`lto = true` + `codegen-units = 1` + `opt-level = "s"` + `panic = "abort"` + `strip = true`）：1.0.1 的安装器是在该提交（22:12）之前（21:52）构建的，因此还带着旧 profile 的体积；1.0.2 是第一个真正吃到这套 profile 的发行包。
 
-mpv（可选，默认不打进安装包）：`sidecars/mpv/mpv.exe` 单文件约 116.83 MB。
+外部播放 / 随包 mpv 已在 1.0.3 移除，安装包不再包含 `sidecars/mpv/`。
 
 ## 分发包（压缩后）
 
@@ -29,7 +29,7 @@ mpv（可选，默认不打进安装包）：`sidecars/mpv/mpv.exe` 单文件约
 | NSIS 安装器 | `src-tauri/target/release/bundle/nsis/Luma_1.0.2_x64-setup.exe` | **38.75 MiB**（40,629,359 字节，磁盘约 40.63 MB） |
 
 - NSIS 用 LZMA 把解包后约 86.10 MB 的运行时压缩进单一安装器；安装器内还含 `luma.exe`（前端已嵌入）。
-- 随包运行时（JRE/Python/mpv/binaries）**不入库**，由 `tools/prepare_runtime.py` 重建；安装器只负责把它们落到安装目录。
+- 随包运行时（JRE/Python/binaries）**不入库**，由 `tools/prepare_runtime.py` 重建；安装器只负责把它们落到安装目录。
 - 构建即验收：`tauri build` 退出码 0、产物存在、`luma.exe` 内含 `1.0.2` 与 `dev.luma.desktop`、且能命中应用专属 JS chunk（`usePlayerEngine`）；GUI 启动冒烟与 `LUMA_SELFCHECK` 按计划本地确认。
 
 ## 判定
@@ -52,6 +52,6 @@ mpv（可选，默认不打进安装包）：`sidecars/mpv/mpv.exe` 单文件约
 1. **jlink JRE 26.24 MB**，低于规格预计的 40~60 MB。模块集 `java.base,java.net.http,java.logging,jdk.unsupported` + `--strip-debug --no-man-pages --no-header-files --compress=2`，JDK 17.0.12。运行期由 `paths::sidecar_roots()` 优先命中随包 JRE，**用户无需安装 JDK 17**。
 2. **Python embeddable 从 74.27 MB 降到 47.81 MB**：打包时排除 `Scripts/`、`__pycache__/`、`pip`、`setuptools`、`wheel` 及其 `*.dist-info`（只服务构建期）；源目录未改动。8 个运行期依赖（requests / urllib3 / lxml / pyquery / cssselect / pycryptodome / cryptography / beautifulsoup4）全部保留，`prepare_runtime.py --check` 校验通过。
 3. **`qjs-runner.exe` 只随包一份**：exe 同目录是 `resolve_runner()` 的有效命中点；编译期 `source_root` 路径在分发到别的机器后天然失效，故不需要 sidecars 布局副本。
-4. **mpv 不打进安装包**：单文件 116.83 MB，会把分发包推大；需要时放入安装目录的 `sidecars/mpv/`。
+4. **不再有 mpv 兜底**：外部播放整体关闭、随包 mpv 已移除，解码失败只走换线路 / 换源。
 5. **交付形态变更**：1.0.0 起不再出便携 zip，改为官方 `tauri build` 的 NSIS 安装器（`bundle.targets: ["nsis"]`）。安装后数据默认落 `%APPDATA%\Luma`；把安装目录整体放到可写位置并建 `data/` 即切换为便携模式。
 6. 未签名 exe 会触发 SmartScreen，见 `README.md`。

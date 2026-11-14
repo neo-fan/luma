@@ -101,13 +101,11 @@ def t28_phase() -> None:
     run_script("T-28 dialects", "config_compat.py", [sys.executable, "tests/offline/config_compat.py"])
 
 
-def t29_t30_phase() -> None:
+def t29_phase() -> None:
     if not cdp_available():
         record("T-29 sniff", "hidden webview sniff", "FAIL", "dev window (9222) is not running")
-        record("T-30 mpv", "mpv fallback", "FAIL", "dev window (9222) is not running")
         return
     run_script("T-29 sniff", "hidden webview sniff", ["node", "tools/probes/probe_sniff.mjs"], timeout=180)
-    run_script("T-30 mpv", "mpv fallback", ["node", "tools/probes/probe_mpv.mjs"], timeout=120)
 
 
 def t32_phase() -> None:
@@ -156,7 +154,7 @@ def main() -> int:
     stub = ensure_stub()
     try:
         t28_phase()
-        t29_t30_phase()
+        t29_phase()
         t32_phase()
         t33_phase()
         # Spec T-31 is explicitly manual acceptance (protocol handler, JumpList,

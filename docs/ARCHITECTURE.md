@@ -16,7 +16,7 @@
 │   infra/  底座: error/env/paths/process/netrules/http/        │
 │            bridge/db/migrate/store/logging/window             │
 │   domain/ 业务: config/play/parse/proxy/live/sniff/           │
-│            mpv/clipboard + spider/{cms,jvm,python,quickjs}    │
+│            clipboard + spider/{cms,jvm,python,quickjs}        │
 │   本地反代 :9978  (m3u8 重写 / parses / headers / /image)     │
 └───┬───────────┬───────────────────────────┬──────────────────┘
     │ stdio JSON-RPC (spawn_stdio/call_on)  │
@@ -39,7 +39,7 @@
 用户操作 → 前端 (pages/hooks) → invoke → Rust command
   → 配置/聚合: spider_invoke(siteKey) → 各 sidecar 取数据 → 归一化 → 返回
   → 播放:       resolve_play → 本地反代 :9978 → <video>/hls.js/mpegts.js
-  → 换源:       同片其它线路 → 其它站点 → 第4级嗅探(sniff) → mpv 兜底
+  → 换源:       同片其它线路 → 其它站点 → 第4级嗅探(sniff)
 ```
 
 ## 3. 四类源路由决策树
@@ -70,11 +70,11 @@ PlayerPage.resolve_play
   → 本地反代 :9978 重写 m3u8 相对分片、透传 headers
   → <video> + hls.js (m3u8) / mpegts.js (flv, MSE)
   → 失败顺序: HLS fatal/12s watchdog → 同片其它线路 → 其它站点
-            → 第4级嗅探(sniff, 隐藏 WebView2 抓 .m3u8/.mp4/...) → mpv 兜底
+            → 第4级嗅探(sniff, 隐藏 WebView2 抓 .m3u8/.mp4/...)
 ```
 
 - 反代 `:9978`：scheme 走 `resolve_scheme_link`；源返回的 `127.0.0.1:<port>/proxy?do=...` 本地地址**一律跳过**（该路由未实现，套一层会变 403）。
-- 内置播放器 **ArtPlayer**；FLV 走 mpegts.js（WebView2 无内置 FLV 解码）；`<video>` 报 `MEDIA_ERR_DECODE/ SRC_NOT_SUPPORTED` 时前端自动转 mpv 一次。
+- 内置播放器 **ArtPlayer**；FLV 走 mpegts.js（WebView2 无内置 FLV 解码）；`<video>` 报 `MEDIA_ERR_DECODE/ SRC_NOT_SUPPORTED`（常见于 HEVC）时直接落到换线路 / 换源，不再有外部播放兜底。
 - 自动换源铁律：**「慢 ≠ 死」**——没有明确失败（4xx/5xx、非 `#EXTM3U`、首分片是图片/HTML）不换；超时算 `unknown`，连续 3 次才换。
 
 ## 6. 本地反代与嗅探

@@ -47,7 +47,7 @@ const invoke = (cmd, args) =>
 
 // 每个 command 用「无副作用」的参数调用：只读项直接取结果；写入/外部调用项
 // 传空参数，预期得到参数校验错误——但只要不是 "command not found" 就证明已注册。
-// 覆盖全部 11 个含 command 的源文件、跨 infra/ 与 domain/ 两个分层。
+// 覆盖全部 10 个含 command 的源文件、跨 infra/ 与 domain/ 两个分层。
 const COMMANDS = [
   ["config_list", {}],        // domain::config（只读）
   ["config_active", {}],      // domain::config（只读）
@@ -56,7 +56,6 @@ const COMMANDS = [
   ["parse_resolve", {}],      // domain::parse（空参数预期 err）
   ["resolve_play", {}],       // domain::play（空参数预期 err）
   ["live_parse", {}],         // domain::live（空参数预期 err）
-  ["mpv_play", {}],           // domain::mpv（空参数预期 err，不会真起 mpv）
   ["http_fetch", {}],         // infra::http（空参数预期 err）
   ["history_list", {}],       // infra::store（只读）
   ["favorites_list", {}],     // infra::store（只读）

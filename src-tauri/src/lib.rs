@@ -9,7 +9,7 @@
 //! - `infra/`：底座能力（错误、环境、路径、进程、HTTP、bridge、DB、迁移、
 //!   存储、日志、窗口）——出边少、被大量依赖。`db` 与 `store` 有双向引用，
 //!   刻意同放一层，避免跨越层边界成环。
-//! - `domain/`：业务语义（配置、播放、解析、代理、直播、嗅探、mpv、剪贴板、
+//! - `domain/`：业务语义（配置、播放、解析、代理、直播、嗅探、剪贴板、
 //!   spider 派发）。`proxy` 与 `spider` 有双向引用，同样同放一层。
 //!
 //! 这是**物理分层**：依赖方向的硬约束（把 `crate::infra::*` 前缀化、抽
@@ -50,8 +50,6 @@ pub mod config;
 pub mod ghproxy;
 #[path = "domain/live.rs"]
 pub mod live;
-#[path = "domain/mpv.rs"]
-pub mod mpv;
 #[path = "domain/parse.rs"]
 pub mod parse;
 #[path = "domain/play.rs"]
@@ -156,7 +154,7 @@ pub fn run() {
             }
             // T-32: in an installed build the sidecars live under the resource
             // dir, not next to the source tree. Publish that root once so
-            // bridge / jvm / mpv resolve the same layout in dev and prod.
+            // bridge / jvm resolve the same layout in dev and prod.
             if let Ok(resource) = app.path().resource_dir() {
                 env::set("RESOURCE_DIR", &resource);
                 tracing::info!(dir = %resource.display(), "resource dir");
@@ -254,7 +252,6 @@ pub fn run() {
             play::resolve_play,
             parse::parse_resolve,
             play::open_external,
-            mpv::mpv_play,
             store::favorites_list,
             store::favorites_toggle,
             store::favorites_patch_meta,

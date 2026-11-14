@@ -23,7 +23,7 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容播放器**（空壳播放框架
 - **多配置**：命名、切换、删除，各自独立的收藏 / 历史 / 页面缓存作用域；可设定时刷新间隔。
 - **三类源**：CMS（`api.php/provide/vod`）、Python（`.py`，`base.spider` 框架）、JavaScript（`.js`，独立 `qjs-runner` sidecar）。
 - **聚合搜索**：一次关键词覆盖当前配置全部站点，按站分组流式上屏、可中断；失败源按原因分组并支持单站重试。
-- **播放**：ArtPlayer + hls.js / mpegts.js（FLV），本地反代重写 m3u8 相对分片、透传 UA/Referer/Cookie；同片换线 → 跨站换源 → 隐藏 WebView2 嗅探 → mpv 兜底四级降级；12 秒卡死看门狗；播放偏好记忆与自动下一集。
+- **播放**：ArtPlayer + hls.js / mpegts.js（FLV），本地反代重写 m3u8 相对分片、透传 UA/Referer/Cookie；同片换线 → 跨站换源 → 隐藏 WebView2 嗅探三级降级；12 秒卡死看门狗；播放偏好记忆与自动下一集。
 - **直播**：m3u/m3u8 解析与代理重写、多线路切换、XMLTV EPG 与台标。
 - **数据**：SQLite 单库（配置快照 / active / 收藏 / 历史）；便携模式数据随文件夹移动。
 - **诊断**：结构化日志（7 天轮转、URL 脱敏）、设置页一键复制诊断信息 / 打开日志目录 / 导出反馈文件。
@@ -56,7 +56,7 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容播放器**（空壳播放框架
 |---|---|
 | 运行 | Windows 11 x64；WebView2 常青版（系统自带，不随包分发） |
 | 开发 | Node 20+ / pnpm 9；Rust stable ≥ 1.77.2（`x86_64-pc-windows-msvc`）；VS2022 Build Tools + Windows SDK |
-| 可选 | mpv（`sidecars/mpv/mpv.exe`），仅用于解码兜底 |
+
 | jar 通道 | **运行期无需 JDK**：用随包 `sidecars/jre`（jlink 裁剪的 17）；只有重建 JRE / 编译 `runner.jar` 才需要本机 JDK 17 |
 
 ## 安装（使用者）
@@ -92,7 +92,7 @@ Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会�
 | release | `pnpm tauri build` | `src-tauri/target/release/luma.exe`，安装器在 `src-tauri/target/release/bundle/nsis/` |
 | 前端 | `pnpm build` | `dist/`（`tauri.conf.json` 的 `frontendDist` 指向它） |
 
-`src-tauri/target/`、`dist/`、`sidecars/{jre,python-embed,mpv}/` 均为可重建产物，已 gitignore。Release profile 与 `Cargo.toml` 的 `[profile.dev]` / `[profile.release]` 按 Tauri 官方 [App Size](https://v2.tauri.app/concept/size/) 建议设置。
+`src-tauri/target/`、`dist/`、`sidecars/{jre,python-embed}/` 均为可重建产物，已 gitignore。Release profile 与 `Cargo.toml` 的 `[profile.dev]` / `[profile.release]` 按 Tauri 官方 [App Size](https://v2.tauri.app/concept/size/) 建议设置。
 
 > 注意：裸 `cargo build --release` **不会**把前端嵌入 exe，启动会回退到 `devUrl` 并报连接被拒。发版一律走 `tauri build`。
 
@@ -106,7 +106,7 @@ Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会�
 | `LUMA_JAVA` | 覆盖 java 可执行文件（缺省优先随包 `sidecars/jre`，再兜底 `JAVA_HOME` / `java`） |
 | `LUMA_JVM_RUNNER` | 覆盖 `runner.jar` 路径 |
 | `LUMA_QJS_RUNNER` | 覆盖 `qjs-runner.exe` 路径 |
-| `LUMA_MPV` | 覆盖 `mpv.exe` 路径 |
+
 | `LUMA_PROXY_PORT` | 本地反代端口，默认 `9978` |
 | `LUMA_DATA_DIR` | 覆盖数据目录（默认 `%APPDATA%\Luma`；exe 同级有 `data/` 时自动便携） |
 | `LUMA_RESOURCE_DIR` | 宿主发布给 sidecar 的资源目录，通常无需手工设置 |
@@ -183,7 +183,7 @@ docs/               架构 · 开发 · 维护 · 发布 · 目录约定 · JS �
 - 公开的 jx 解析接口存活期普遍很短，解析池失败是常态；失败会保留原地址，由内置嗅探兜底。
 - JS 源尚未覆盖 drpy2 `initEnv` 完整 polyfill 与 FongMi 新版 class-based `Spider`。
 - T-31（`tvbox://` 协议关联、JumpList、全屏勿扰）未实现。
-- `mpv` 默认不随包分发（单文件约 117 MB），需要时放入 `sidecars/mpv/`。
+- 外部播放与随包 mpv 已移除（2026-11-14）：解码失败只走换线路 / 换源。
 - 公开源失效频繁，属正常现象；自动换源与源级原因提示是必需能力。
 
 ## 许可证
