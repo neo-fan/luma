@@ -41,6 +41,22 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // 只监听「前端自己会变」的东西。Node 24 把 fs.watch 的 EBUSY 当致命错误抛出，
+    // 而这些目录里全是原子写（临时目录 + rename）和链接器占用的二进制：
+    //   src-tauri/    cargo 产物（`tauri dev` 期间反复写 luma.exe）与 Rust 源码
+    //   .agents/      并行会话的 git worktree（整棵前端副本）
+    //   .workbuddy/   本地一次性脚本与截图
+    //   任意 .*.tmpdir/  DSH 等工具原子写的临时目录（写期间被独占）
+    // 命中任何一条都会让 vite 直接退出，连带 beforeDevCommand 失败把整个 dev 拖死。
+    watch: {
+      ignored: [
+        "**/src-tauri/**",
+        "**/.agents/**",
+        "**/.workbuddy/**",
+        "**/.*.tmpdir/**",
+        "**/.git/**",
+      ],
+    },
   },
   build: {
     target: "chrome110",

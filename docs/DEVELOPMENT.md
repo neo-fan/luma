@@ -46,7 +46,32 @@ cargo check  --manifest-path src-tauri/Cargo.toml
 cargo test   --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-**交付节奏**（用户约定）：改完**停在 debug 模式**（`pnpm tauri dev`）确认即可，**不要每次都 `tauri build` 打包**；`tauri build` 编译 + 打包约 3~4 分钟、反馈回路过长，只在用户明确要求或发版时打。发版统一用官方 `tauri build`，不手搓打包脚本。
+**交付节奏**（用户约定）：改完**停在 debug 模式**（`pnpm dev:app`）确认即可，**不要每次都 `tauri build` 打包**；`tauri build` 编译 + 打包约 3~4 分钟、反馈回路过长，只在用户明确要求或发版时打。发版统一用官方 `tauri build`，不手搓打包脚本。
+
+### 2.1 debug 与正式版必须能同时跑
+
+开发时**已安装的正式版常常还开着**（用户在用它看片）。两者不隔离会互相打死，而且报错很难懂：
+
+| 资源 | release | debug | 冲突后果 |
+|---|---|---|---|
+| 数据目录（库/日志/收藏） | `%APPDATA%\Luma` | `%APPDATA%\Luma-debug`（`store::data_dir` 按 `cfg!(debug_assertions)` 分叉） | 已隔离，dev 折腾不影响真实数据 |
+| WebView2 用户数据目录 | `%LOCALAPPDATA%\dev.luma.desktop` | `%LOCALAPPDATA%\dev.luma.desktop.debug` | **必须隔离**，见下 |
+| 本地反代 | `127.0.0.1:9978` | 同左，后启动的自动退到临时端口（`proxy::bind_listener`） | 各自可用，只是 debug 的端口不固定 |
+| CDP | 不开 | `127.0.0.1:9222` | release 不占，无冲突 |
+
+**WebView2 那条是硬约束**：Tauri 在 Windows 上把 webview 的 data dir 钉成 `app_local_data_dir()`（= `%LOCALAPPDATA%\<identifier>`），而 wry 明确要求「**browser args 不同的 webview 必须用不同的 data dir**」。debug 构建会额外注入 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`，于是：
+
+- 先开 release、再 `tauri dev` → debug 侧 `Failed to setup app: … WebView2 error: HRESULT(0x8007139F) "组或资源的状态不是执行请求操作的正确状态"`，窗口起不来；
+- 反过来先 dev 再开安装版，**用户的安装版起不来**——这就是「开发影响本地使用」的真实机制。
+
+隔离办法（纯配置 + 脚本，不改 Rust）：
+
+- `src-tauri/tauri.dev.conf.json` 只覆盖一个键：`identifier` → `dev.luma.desktop.debug`。Tauri CLI 的 `--config` 会把它合并到 `tauri.conf.json` 之上，identifier 变了，`app_local_data_dir()` 跟着变，WebView2 用户数据目录自然分开。
+- `package.json` 里 `dev:app = tauri dev --config src-tauri/tauri.dev.conf.json`。**debug 一律用 `corepack pnpm dev:app`**；`tauri build` 不读这个文件，安装包的 identifier 仍是 `dev.luma.desktop`。
+- 验收：两个窗口同时开着不打架，且 `%LOCALAPPDATA%` 下同时存在 `dev.luma.desktop\EBWebView`（安装版）与 `dev.luma.desktop.debug\EBWebView`（dev）。
+
+> 顺带：`vite.config.ts` 的 `server.watch.ignored` 排除了 `src-tauri/`、`.agents/`、`.workbuddy/`、`.*.tmpdir/`、`.git/`。Node 24 把 `fs.watch` 的 EBUSY 当致命错误，而 `tauri dev` 正在写 `target\debug\luma.exe`、并行会话又在原子写源码，命中任一个都会让 vite 退出、连带 `beforeDevCommand` 失败把整个 dev 拖死。
+
 
 ## 3. 四端调试
 

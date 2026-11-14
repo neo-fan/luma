@@ -106,8 +106,8 @@ def t29_t30_phase() -> None:
         record("T-29 sniff", "hidden webview sniff", "FAIL", "dev window (9222) is not running")
         record("T-30 mpv", "mpv fallback", "FAIL", "dev window (9222) is not running")
         return
-    run_script("T-29 sniff", "hidden webview sniff", ["node", "tools/probe_sniff.mjs"], timeout=180)
-    run_script("T-30 mpv", "mpv fallback", ["node", "tools/probe_mpv.mjs"], timeout=120)
+    run_script("T-29 sniff", "hidden webview sniff", ["node", "tools/probes/probe_sniff.mjs"], timeout=180)
+    run_script("T-30 mpv", "mpv fallback", ["node", "tools/probes/probe_mpv.mjs"], timeout=120)
 
 
 def t32_phase() -> None:

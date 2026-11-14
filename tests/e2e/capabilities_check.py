@@ -6,7 +6,7 @@ the main window is granted anything beyond the v1.1 whitelist, or if dangerous
 shell/process permissions are present.
 
 Runtime half (calling an unauthorised plugin command and expecting a denial) is
-covered by `tools/probe_capabilities.mjs` against WebView2's CDP endpoint.
+covered by `tools/probes/probe_capabilities.mjs` against WebView2's CDP endpoint.
 """
 
 from __future__ import annotations
