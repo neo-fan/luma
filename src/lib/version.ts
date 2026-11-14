@@ -54,6 +54,14 @@ export function readableBuildTime(raw?: string | null): string {
 export const BUILD_STAMP = formatBuildTime(BUILD_TIME);
 
 /**
+ * 是否调试窗口：`tauri dev` 由 Vite dev server 供页面，`import.meta.env.DEV`
+ * 恒为 true；`tauri build` 后的安装包跑的是产物，恒为 false。
+ * 与后端判定同一场景（`tauri::is_dev()`，即未启用 `custom-protocol`），
+ * 用来把调试窗口跟同机安装的正式版区分开（见 AppShell 侧栏与窗口标题）。
+ */
+export const IS_DEV_BUILD = import.meta.env.DEV;
+
+/**
  * 版本展示：prerelease 缩写为业界常见形式（如 `1.2.0-beta` → `1.2.0.b`）。
  * 数据源仍保持 package.json 的合法 semver，只在 UI 层做映射：
  * -alpha→.a、-beta→.b、-rc→.rc；没有后缀的原样返回。

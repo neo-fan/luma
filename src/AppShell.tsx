@@ -31,6 +31,7 @@ import {
   BUILD_STAMP,
   BUILD_TIME,
   formatVersion,
+  IS_DEV_BUILD,
   readableBuildTime,
 } from "./lib/version";
 import { navBack, registerNav, viewToLocation, type View } from "./lib/nav";
@@ -410,7 +411,19 @@ export default function AppShell() {
               </span>
             </button>
             <div className="sidebar__foot">
-              <span>version: {versionLabel}</span>
+              <span className="sidebar__version">
+                version: {versionLabel}
+                {/* 调试窗口与已安装的正式版同机并存，版本号一样但数据目录
+                    不同（Luma-debug vs Luma），必须一眼可辨。 */}
+                {IS_DEV_BUILD ? (
+                  <span
+                    className="sidebar__dev"
+                    title="调试构建（tauri dev）：数据目录、窗口标题都与正式版分开"
+                  >
+                    dev
+                  </span>
+                ) : null}
+              </span>
               <span
                 className="sidebar__stamp"
                 title={readableBuildTime(BUILD_TIME) || "构建时间戳"}

@@ -207,6 +207,28 @@ textarea {
   will-change: width;
 }
 
+/* 调试标记：`tauri dev` 起的窗口与同机安装的正式版版本号完全一样（数据目录
+   不同：Luma-debug / Luma），靠这个胶囊 + 窗口标题的 "(Dev)" 后缀区分。 */
+.sidebar__version {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar__dev {
+  padding: 0 6px;
+  border: 1px solid rgba(91, 124, 250, 0.45);
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+
 /* 收缩态：只留 68px 图标轨道；文字统一由 .nav__label 系列控制显隐 */
 .sidebar.is-collapsed {
   width: var(--sidebar-w-collapsed);

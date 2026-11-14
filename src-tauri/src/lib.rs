@@ -144,6 +144,15 @@ pub fn run() {
             // 标题栏跟随主界面深色，避免 Windows 默认浅色/系统深灰与画布色差。
             if let Some(window) = app.get_webview_window("main") {
                 window::apply_dark_caption(&window);
+                // 调试窗口与已安装的正式版同机并存（数据目录 Luma-debug / Luma），
+                // 版本号一模一样，任务栏与标题栏必须一眼可辨。判定用 Tauri 官方
+                // `tauri::is_dev()`（未启用 custom-protocol，即 `tauri dev`），
+                // 不用 debug_assertions：`tauri build --debug` 也是 debug 断言，
+                // 但它是产物包，不该冒充调试窗口。
+                if tauri::is_dev() {
+                    let title = format!("Luma {} (Dev)", env!("CARGO_PKG_VERSION"));
+                    let _ = window.set_title(&title);
+                }
             }
             // T-32: in an installed build the sidecars live under the resource
             // dir, not next to the source tree. Publish that root once so
