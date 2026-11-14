@@ -55,8 +55,7 @@
    本清单按任务书要求使用了 `/cms/json`、`/cms/remote`、`/parse`、`/probe`、`/site.py`、`/site.js`、
    `/spider.jar`、`/spider.jpg`，**需要 stub_server 扩展这些路径**（建议 `/cms/json` 复用 `/cms/vod` 响应体，
    `/site.py`/`/site.js` 复用 `/spider/template.*`），否则样本无法端到端消费。本文不改规格书，仅记录差异。
-2. **图种不在 8.1 明文范围**：8.1 只写「配置解密链」，未点名 JPEG 图种 + `;md5;` 形态（`docs/archive/verification-report.md`
-   第 6 节已记）。本样本用于推动 T-05 覆盖该形态，不代表规格书已定义。
+2. **图种不在 8.1 明文范围**：8.1 只写「配置解密链」，未点名 JPEG 图种 + `;md5;` 形态（内部验证报告第 6 节已记，不随仓库分发）。本样本用于推动 T-05 覆盖该形态，不代表规格书已定义。
 3. **`image-seed.txt` 整体非 UTF-8**：JPEG 二进制外壳使其无法整体按 UTF-8 解码；标记之后的 base64 段为
    ASCII + LF。这是图种形态的固有属性，不是编码违例；其余 5 个文本文件均为 UTF-8 无 BOM、LF。
 4. **`type=4` 远程 API 未定义请求契约**：8.3 只说「远程 API，透传参数」，未定义参数名与请求方法。

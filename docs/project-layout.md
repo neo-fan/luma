@@ -60,7 +60,7 @@ luma/
 │   ├── js-support.md                      # JS 源机制、ESM 加载与随包资源清单（含 SHA256）
 │   ├── size-report.md                     # 体积实测报告
 │   ├── verification-config.md             # [本地] 抓取记录（含真实地址，gitignore）
-│   └── spec-v1.0/  spec-v1.1/            # 需求文档归档与本地基线
+│   └── spec-v1.1/                        # 需求文档基线（v1.0 已归档至私有目录）
 │
 ├── contracts/
 │   └── tvbox.schema.json                  # 归一化契约唯一真源（R8）
@@ -130,7 +130,7 @@ luma/
 
 | 类别 | 放置位置 | 说明 |
 |---|---|---|
-| 需求文档与修订稿 | `docs/spec-v1.0/`、`docs/spec-v1.1/` | 按版本号分目录；文件名用 ASCII |
+| 需求文档与修订稿 | `docs/spec-v1.1/` | 按版本号分目录；文件名用 ASCII |
 | 项目协作说明 | 根目录 `AGENTS.md` | 给 AI 协作者/维护者的当前规范（≤ 20 KB） |
 | 真实配置样本 | `tests/fixtures/manual/` | 含外部地址，**不入库、不被代码引用** |
 | 构造 fixture | `tests/fixtures/configs/` | 必须脱敏，网络目标只指向 `127.0.0.1` |
@@ -147,7 +147,7 @@ luma/
 ## 5. 编码约定
 
 1. **所有文本文件一律 UTF-8 无 BOM**（含 `.md`/`.ts`/`.tsx`/`.rs`/`.py`/`.json`/`.toml`/`.gitignore`）。BOM 会破坏 shebang、JSON 解析与部分 Rust/TS 工具链。
-2. **换行统一 LF**：已配置 `core.autocrlf=false`、`core.safecrlf=true`；唯一例外是 `docs/spec-v1.0/spec-v1.0-raw.md` 逐字节归档里源文件自带的 CRLF。
+2. **换行统一 LF**：已配置 `core.autocrlf=false`、`core.safecrlf=true`；二进制 fixture 与随包 JS 资源按 `.gitattributes` 保留原字节。
 3. **禁止用 Windows 记事本「另存为」选 ANSI/GBK**：会写成带 BOM 或非 UTF-8，中文乱码。
 4. **JSON 保存中文用 `ensure_ascii=False`**：中文以原字符写入，不写成 `\uXXXX`。
 5. **Python 源码不写 coding 声明**：Python 3 默认 UTF-8。
@@ -159,7 +159,7 @@ luma/
 
 - 源码与配置文件：ASCII，小写蛇形 `snake_case`（`.rs`/`.py`）或小写 kebab `kebab-case`（目录、`.json`/`.toml`、前端文件名）。
 - 禁止中文文件名、空格、大写开头与盘符/绝对路径写进源码。
-- 文档文件名用 ASCII，标题与正文用简体中文；版本目录用 `spec-v1.0`/`spec-v1.1`。
+- 文档文件名用 ASCII，标题与正文用简体中文；需求文档按版本号分目录（当前只有 `spec-v1.1`）。
 
 ## 7. 不入库（.gitignore）范围
 

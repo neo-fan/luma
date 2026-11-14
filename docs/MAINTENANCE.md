@@ -83,7 +83,7 @@
 
 ## 8. Git 维护
 
-- **换行**：`.gitattributes` 已定 `* text=auto eol=lf`，本地 `core.autocrlf=false` / `core.safecrlf=true`。三类文件**故意保留原字节**、禁止规范化：`docs/spec-v1.0/spec-v1.0-raw.md`（逐字节归档）、`tests/fixtures/media/**`（二进制）、`sidecars/qjs-assets/**`（SHA256 必须与 manifest 一致）。
+- **换行**：`.gitattributes` 已定 `* text=auto eol=lf`，本地 `core.autocrlf=false` / `core.safecrlf=true`。两类文件**故意保留原字节**、禁止规范化：`tests/fixtures/media/**`（二进制）、`sidecars/qjs-assets/**`（SHA256 必须与 manifest 一致）。
 - **不要用 `-c core.safecrlf=false` 绕过提交失败**：报 `CRLF would be replaced by LF` 说明有脚本用 `open(...,'w')` 未指定 `newline` 在 Windows 写出了 CRLF。正确做法是把工作区文件转回 LF，再 `git add --renormalize .`。写文件统一用 `Path.write_text(..., newline="\n")`。
 - **提交前**：`python tools/check.py` 全绿；`git status --short` 应干净（发版后不留散落改动）。每轮自己写 commit、**不 push**；版本发布打本地 annotated tag `vX.Y.Z`。
 - **工作区整洁**：`release/`、`dist/`、`target/`、`*.log`、`__pycache__`、`*.tsbuildinfo` 均由 `.gitignore` 覆盖，无需手工清理；若 `git status` 冒出这些，说明忽略规则被改坏。
