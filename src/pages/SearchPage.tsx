@@ -121,6 +121,8 @@ export default function SearchPage({
    * 用户不用先点取消、也不用干等 20 秒。
    */
   const searchGenRef = useRef(0);
+  /** 搜索输入框 ref：清除后把焦点拉回，方便立刻重输。 */
+  const inputRef = useRef<HTMLInputElement>(null);
   /** 用户实际搜过的词，跨重启保留；与页面快照分开存。 */
   const [recent, setRecent] = useState<string[]>(() => readSearchHistory());
 
@@ -489,6 +491,29 @@ export default function SearchPage({
     void runSearch(word);
   };
 
+  /**
+   * 输入框内嵌的 ×：有内容时才出现。点击清空关键词，并复位搜索结果/状态——
+   * 否则「空关键词 + 残留结果」会停在页面上，用户不知道算搜了还是没搜。
+   * 同时递增代次让可能的在途搜索作废，避免旧结果随后又冒出来。
+   */
+  const onClear = () => {
+    searchGenRef.current += 1;
+    setLoading(false);
+    setProgress("");
+    setKeyword("");
+    setHits([]);
+    setMatchCount(0);
+    setOnlyMatches(false);
+    setFailures(0);
+    setSkipped(0);
+    setFailureReasons([]);
+    setFailureRows([]);
+    setShowFailures(false);
+    setSearched(false);
+    setError("");
+    inputRef.current?.focus();
+  };
+
   const onRecentClear = () => setRecent(clearSearchHistory());
   const onRecentRemove = (word: string) => setRecent(removeSearchHistory(word));
 
@@ -599,13 +624,29 @@ export default function SearchPage({
       </header>
 
       <form className="search-bar" onSubmit={onSubmit}>
-        <input
-          className="input"
-          type="text"
-          value={keyword}
-          placeholder="输入片名关键词"
-          onChange={(event) => setKeyword(event.target.value)}
-        />
+        <div
+          className={`search-input-wrap${keyword.trim() !== "" ? " has-clear" : ""}`}
+        >
+          <input
+            ref={inputRef}
+            className="input"
+            type="text"
+            value={keyword}
+            placeholder="输入片名关键词"
+            onChange={(event) => setKeyword(event.target.value)}
+          />
+          {keyword.trim() !== "" ? (
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="清除搜索"
+              title="清除搜索"
+              onClick={onClear}
+            >
+              <Icon name="close" />
+            </button>
+          ) : null}
+        </div>
         <SiteSelect
           sites={selectableSites}
           value={target}

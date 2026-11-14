@@ -1721,6 +1721,52 @@ textarea {
   margin-bottom: 20px;
 }
 
+/* 输入框外壳：承接 .search-bar 的 flex 槽位（原来由 .input 的 flex:1 承担），
+   让内嵌的清除按钮用绝对定位贴右缘，不挤占输入框自身宽度。 */
+.search-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+}
+
+/* 输入框在 wrap 内撑满宽度（wrap 不是 flex 父，.input 的 flex:1 在此不生效）。 */
+.search-input-wrap .input {
+  width: 100%;
+}
+
+/* 有清除按钮时为右侧留出空间，避免文字被图标压住。 */
+.search-input-wrap.has-clear .input {
+  padding-right: 34px;
+}
+
+/* 输入框内嵌的清除按钮：仅在有关键词时出现，圆点热区、贴右缘垂直居中。 */
+.search-clear {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.search-clear:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+.search-clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* 搜索页站点选择：globe 图标触发 + 下拉菜单，贴合图标语言，替代原生 select */
 /* ---------- 通用下拉（AppSelect/SiteSelect 共用视觉） ---------- */
 /* 触发器宽度随文案自适应、320px 封顶（超长省略号）；菜单项选中高亮、禁用置灰。
