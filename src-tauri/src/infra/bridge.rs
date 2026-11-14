@@ -289,12 +289,55 @@ pub(crate) async fn call_on(
         Ok(Err(_)) => Err(AppError::new(code::SPIDER_CRASH, "sidecar channel closed")),
         Err(_) => {
             conn.pending.lock().unwrap().remove(&id);
+            // 宿主已经放弃这次调用，但 sidecar 里的 worker 还在跑（`spider.py` 可以
+            // 一直占到子进程结束）。不发取消帧的话，用户的下一次重试就排在一个没
+            // 人等的调用后面，看到的还是同一条超时。fire-and-forget：调用方已经拿
+            // 到错误，绝不能再让它等 stdin。
+            tracing::warn!(
+                method,
+                timeout_ms = timeout.as_millis() as u64,
+                sidecar = conn.label,
+                "adapter call timed out, cancel frame queued"
+            );
+            spawn_cancel(conn, id);
             Err(AppError::new(
                 code::SITE_TIMEOUT,
                 format!("{} {method} exceeded {}ms", conn.label, timeout.as_millis()),
             ))
         }
     }
+}
+
+/// Fire-and-forget `__cancel__` for a request the host already gave up on.
+///
+/// The sidecar only checks the flag between steps, so this cannot free a worker
+/// that is blocked inside a child process — but it keeps queued work from piling
+/// up behind a call nobody is waiting for any more.
+fn spawn_cancel(conn: &std::sync::Arc<Conn>, target_id: u64) {
+    let conn = conn.clone();
+    tauri::async_runtime::spawn(async move {
+        let id = conn.next_id();
+        let mut line = match serde_json::to_string(&json!({
+            "id": id,
+            "method": "__cancel__",
+            "params": { "targetId": target_id },
+        })) {
+            Ok(text) => text,
+            Err(err) => {
+                tracing::debug!(error = %err, "cancel frame serialization failed");
+                return;
+            }
+        };
+        line.push('\n');
+        let mut stdin = conn.stdin.lock().await;
+        if let Err(err) = stdin.write_all(line.as_bytes()).await {
+            tracing::debug!(error = %err, target_id, "cancel frame write failed");
+            return;
+        }
+        if let Err(err) = stdin.flush().await {
+            tracing::debug!(error = %err, target_id, "cancel frame flush failed");
+        }
+    });
 }
 
 pub(crate) fn conn_alive(conn: &std::sync::Arc<Conn>) -> bool {

@@ -2,15 +2,21 @@
 """Python adapter layer: stdio JSON-RPC (spec 7.2 / 7.2.1).
 
 One JSON frame per line on stdin/stdout. stdout carries protocol frames only;
-logs go to stderr. Requests run on a thread pool of 8. Python spiders
+logs go to stderr. Spider requests run on a thread pool of 8; Python spiders
 (`spider.py`) are dispatched to a short-lived child process by `pyspider.run`,
 so a broken third-party script cannot take down this bridge.
+
+`config.*` (and `ping`) get a **separate** lane. A spider call can hold a worker
+for its whole child timeout, and the host's per-call wall clock is the same
+15 s, so keeping imports in the same FIFO queue made "the worker was busy"
+indistinguishable from "decrypting took 15 s" — see the 1.0.1 import timeout.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -22,11 +28,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from decrypt import DecryptError, decrypt  # noqa: E402
 from normalize import merge_repos, normalize_config  # noqa: E402
 
-VERSION = "1.0.1"
+try:
+    from adapterlog import log_event as _log_event
+except ImportError:  # diagnostics must never break the bridge
+    def _log_event(_event: dict) -> None:
+        return None
+
+VERSION = "1.0.2"
 _write_lock = threading.Lock()
 _cancel_lock = threading.Lock()
 _cancelled: set[str] = set()
-_executor = ThreadPoolExecutor(max_workers=8)
+# 爬虫车道：一次调用能占住 worker 到子进程结束（最长 15s）。
+_spider_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="spider")
+# 导入车道：永不排在爬虫后面，导入/体检的耗时才是真实耗时。
+_config_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="config")
+# 超过这个耗时就记一条 adapter_latency，慢调用不必再靠猜。
+SLOW_CALL_MS = 3000
+# 帧解析失败时用来抢救 request id：有 id 才能回一帧，否则宿主只能干等。
+_ID_HINT = re.compile(r'"id"\s*:\s*(\d{1,20})')
 
 
 def log(message: str) -> None:
@@ -43,6 +62,57 @@ def write_frame(frame: dict) -> None:
 def is_cancelled(request_id: object) -> bool:
     with _cancel_lock:
         return str(request_id) in _cancelled
+
+
+def lane_for(method: str) -> ThreadPoolExecutor:
+    """`config.*` / `ping` 走导入车道，其余（`spider.py` / `site.parse*` / `live.*`）走爬虫车道。"""
+    if method == "ping" or method.startswith("config."):
+        return _config_executor
+    return _spider_executor
+
+
+def note_latency(method: str, started: float, params: dict, failed: bool) -> None:
+    """`config.*` 每次记耗时/字节数；其它方法只在慢到可疑时记一条。
+
+    1.0.1 那次「导入失败：config.decrypt exceeded 15000ms」查不动，就是因为适
+    配层对耗时零记录：宿主只能看到「我放弃了」，看不到「它排了多久队」。
+    """
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    if not method.startswith("config.") and elapsed_ms < SLOW_CALL_MS:
+        return
+    raw = params.get("raw")
+    _log_event(
+        {
+            "level": "WARN" if elapsed_ms >= SLOW_CALL_MS else "INFO",
+            "kind": "adapter_latency",
+            "method": method,
+            "elapsedMs": elapsed_ms,
+            "bytes": len(raw) if isinstance(raw, str) else 0,
+            "failed": failed,
+        }
+    )
+
+
+def reply_bad_frame(line: str, reason: str) -> None:
+    """帧解析失败也要回一帧（能从残帧里捞出 id 时）。
+
+    静默 `continue` 会让宿主等满自己的墙钟预算（15s）才报「config.decrypt
+    exceeded 15000ms」，把「帧坏了」伪装成「调用很慢」，现场无从复盘。
+    """
+    hint = _ID_HINT.search(line[:4096])
+    if hint is None:
+        log(f"bad frame without id, dropped: {reason}")
+        return
+    _log_event(
+        {"level": "WARN", "kind": "bad_frame", "message": reason, "bytes": len(line)}
+    )
+    write_frame(
+        {
+            "id": int(hint.group(1)),
+            "ok": False,
+            "error": {"code": "INTERNAL", "message": f"malformed frame: {reason}"},
+        }
+    )
 
 
 def dispatch(method: str, params: dict) -> dict:
@@ -167,9 +237,11 @@ def run_request(request_id: object, method: str, params: dict) -> None:
     if is_cancelled(request_id):
         log(f"skip cancelled request {request_id}")
         return
+    started = time.perf_counter()
     try:
         result = dispatch(method, params)
     except Exception as exc:  # noqa: BLE001 - protocol boundary
+        note_latency(method, started, params, failed=True)
         write_frame(
             {
                 "id": request_id,
@@ -178,6 +250,7 @@ def run_request(request_id: object, method: str, params: dict) -> None:
             }
         )
         return
+    note_latency(method, started, params, failed=False)
     if is_cancelled(request_id):
         log(f"drop late result for cancelled request {request_id}")
         return
@@ -192,7 +265,7 @@ def serve() -> int:
         try:
             request = json.loads(line)
         except json.JSONDecodeError as exc:
-            log(f"bad frame: {exc}")
+            reply_bad_frame(line, str(exc))
             continue
 
         request_id = request.get("id")
@@ -208,9 +281,10 @@ def serve() -> int:
             write_frame({"id": request_id, "ok": True, "result": {"cancelled": target}})
             continue
 
-        _executor.submit(run_request, request_id, method, params)
+        lane_for(method).submit(run_request, request_id, method, params)
 
-    _executor.shutdown(wait=False)
+    _spider_executor.shutdown(wait=False)
+    _config_executor.shutdown(wait=False)
     return 0
 
 

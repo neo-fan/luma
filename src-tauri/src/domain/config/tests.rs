@@ -596,6 +596,14 @@ use super::naming::*;
         );
     }
 
+    /// 导入预算必须比爬虫的默认预算宽：1.0.2 之前两者都是 15s，导入刚好排在
+    /// 一个占满 worker 的爬虫调用后面时，用户只会看到「config.decrypt exceeded
+    /// 15000ms」，一点余量都没有。
+    #[test]
+    fn config_budget_is_wider_than_the_spider_default() {
+        assert!(super::import::CONFIG_CALL_TIMEOUT > crate::process::DEFAULT_CALL_TIMEOUT);
+    }
+
     #[test]
     fn due_only_for_active_url_config_that_reached_interval() {
         let (_guard, dir) = isolate_data_dir();

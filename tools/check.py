@@ -80,6 +80,7 @@ def checks(full: bool, quick: bool, ci: bool = False) -> list[tuple[str, list[st
         items += [
             ("py compatibility", [py, "tests/e2e/py_compat_check.py"]),
             ("py base spider", [py, "tests/e2e/py_base_spider_check.py"]),
+            ("adapter isolation", [py, "tests/e2e/adapter_isolation.py"]),
             ("runtime artifacts", [py, "tools/prepare_runtime.py", "--check"]),
         ]
     items += [

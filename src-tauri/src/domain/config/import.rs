@@ -4,6 +4,11 @@ use super::naming::{clean_name, default_name};
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPOS: usize = 20;
 
+/// 导入链路单次 sidecar 调用的预算。比爬虫的 15s 宽：一次导入是用户在屏幕前
+/// 等的一个明确结果（解密 + 归一化 + 多仓合并），不该和单站请求共用同一条线；
+/// 但仍要有上限，适配层真卡死时不能让导入永久转圈。
+pub(crate) const CONFIG_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
 async fn fetch_text(url: &str) -> Result<String, AppError> {
     // Reuse the process-wide client so config imports share the same redirect
     // policy and connection pool as every other outbound request.
@@ -70,7 +75,7 @@ pub async fn import_from_raw(
     origin: &str,
     prefix: &str,
 ) -> Result<ConfigSnapshot, AppError> {
-    let decrypted = bridge::call("config.decrypt", json!({ "raw": raw })).await?;
+    let decrypted = decrypt_config(raw).await?;
     let plain = decrypted
         .get("plain")
         .and_then(Value::as_str)
@@ -86,6 +91,28 @@ pub async fn import_from_raw(
         return import_repos(items, prefix).await;
     }
     normalize_plain(&plain, origin).await
+}
+
+/// 调 `config.decrypt` 并留一条可复盘的耗时记录。
+///
+/// 1.0.1 那次「导入失败：config.decrypt exceeded 15000ms」查不动，是因为宿主侧
+/// 只留下「超时」四个字：既没有 payload 大小，也没有实际耗时，无法区分「解密
+/// 慢」和「排队 15 秒」。这条 INFO 在 `luma-*.log` 里，失败也照记。
+async fn decrypt_config(raw: &str) -> Result<Value, AppError> {
+    let started = std::time::Instant::now();
+    let outcome = bridge::call_with_timeout(
+        "config.decrypt",
+        json!({ "raw": raw }),
+        CONFIG_CALL_TIMEOUT,
+    )
+    .await;
+    tracing::info!(
+        bytes = raw.len(),
+        took_ms = started.elapsed().as_millis() as u64,
+        ok = outcome.is_ok(),
+        "config decrypt"
+    );
+    outcome
 }
 
 async fn import_repos(items: &[Value], prefix: &str) -> Result<ConfigSnapshot, AppError> {
@@ -110,7 +137,12 @@ async fn import_repos(items: &[Value], prefix: &str) -> Result<ConfigSnapshot, A
         return Err(AppError::new(code::CONFIG_FETCH_FAIL, "all repos failed"));
     }
 
-    let merged = bridge::call("config.mergeRepos", json!({ "snapshots": snapshots })).await?;
+    let merged = bridge::call_with_timeout(
+        "config.mergeRepos",
+        json!({ "snapshots": snapshots }),
+        CONFIG_CALL_TIMEOUT,
+    )
+    .await?;
     serde_json::from_value(merged).map_err(|err| {
         AppError::new(code::DIALECT_UNKNOWN, "merged snapshot shape mismatch")
             .with_cause(err.to_string())
@@ -121,16 +153,26 @@ async fn import_url_snapshot(url: String, prefix: String) -> Result<Value, AppEr
     // 取用加速地址，但 origin 记原始 URL：配置 id 由 origin 派生，跟着代理
     // 走会让「换个代理再导一次」变成两份配置。
     let raw = fetch_text(ghproxy::apply(&url, &prefix).as_ref()).await?;
-    let decrypted = bridge::call("config.decrypt", json!({ "raw": raw })).await?;
+    let decrypted = decrypt_config(&raw).await?;
     let plain = decrypted
         .get("plain")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::new(code::CONFIG_DECRYPT_FAIL, format!("repo {url} decrypt failed")))?;
-    bridge::call("config.normalize", json!({ "raw": plain, "origin": url })).await
+    bridge::call_with_timeout(
+        "config.normalize",
+        json!({ "raw": plain, "origin": url }),
+        CONFIG_CALL_TIMEOUT,
+    )
+    .await
 }
 
 async fn normalize_plain(plain: &str, origin: &str) -> Result<ConfigSnapshot, AppError> {
-    let value = bridge::call("config.normalize", json!({ "raw": plain, "origin": origin })).await?;
+    let value = bridge::call_with_timeout(
+        "config.normalize",
+        json!({ "raw": plain, "origin": origin }),
+        CONFIG_CALL_TIMEOUT,
+    )
+    .await?;
     serde_json::from_value(value).map_err(|err| {
         AppError::new(code::DIALECT_UNKNOWN, "snapshot shape mismatch").with_cause(err.to_string())
     })
