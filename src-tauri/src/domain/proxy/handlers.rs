@@ -1,4 +1,33 @@
 use super::*;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
+/// 记住已经记过 warn 的图床域名，返回「这是本机第一次失败」。
+///
+/// 一次聚合搜索能同时拉 200+ 张封面，逐条 `warn` 会把日志窗口冲干净，真正
+/// 需要的信号（哪个图床连不上、原因是什么）反而看不见。同一 host 只记一条
+/// warn，后续降级成 debug。
+fn first_image_failure(host: &str) -> bool {
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let mut seen = match SEEN.get_or_init(|| Mutex::new(HashSet::new())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if host.is_empty() {
+        return false;
+    }
+    seen.insert(host.to_string())
+}
+
+/// 封面代理的所有失败出口都从这里过：带 host 与原因落一条日志。
+fn log_image_failure(target: &Url, reason: &str) {
+    let host = target.host_str().unwrap_or("");
+    if first_image_failure(host) {
+        tracing::warn!(host, url = %target, reason, "poster fetch failed");
+    } else {
+        tracing::debug!(host, url = %target, reason, "poster fetch failed again");
+    }
+}
 
 pub(super) async fn handle_health(State(state): State<Arc<ProxyState>>) -> Response {
     let body = format!(r#"{{"ok":true,"port":{}}}"#, state.port());
@@ -403,6 +432,7 @@ pub(super) async fn handle_image(
         Ok(response) => response,
         Err(err) => {
             let status = if err.is_timeout() { StatusCode::GATEWAY_TIMEOUT } else { StatusCode::BAD_GATEWAY };
+            log_image_failure(&target, &format!("upstream failed: {err}"));
             return deny(status, &format!("upstream failed: {err}"));
         }
     };
@@ -416,6 +446,7 @@ pub(super) async fn handle_image(
     // Only serve real images; refuse to turn the proxy into a generic file
     // fetcher (and stop a mislabeled playlist/script from reaching <img>).
     if !status.is_success() || !content_type.to_ascii_lowercase().starts_with("image/") {
+        log_image_failure(&target, &format!("not an image (status {status}, type {content_type})"));
         return deny(StatusCode::BAD_GATEWAY, &format!("not an image (status {status}, type {content_type})"));
     }
 
