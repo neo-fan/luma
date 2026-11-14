@@ -77,7 +77,7 @@
 ## 7. 日志与诊断
 
 - 安装模式 `%APPDATA%\Luma\logs\luma-YYYY-MM-DD.log`，dev `%APPDATA%\Luma-debug\logs\`；便携模式（exe 同级 `data/`）为 `data/logs\`。保留 7 天。
-- `LUMA_LOG=debug` 看 sidecar / 聚合细节；`logs/spider.log` 记录第三方 py 脚本异常（每行 JSON，含 traceback）。
+- `LUMA_LOG=debug` 看 sidecar / 聚合细节；`logs/spider/spider.<日期>.log` 记录第三方 py 脚本异常（每行 JSON，含 traceback），宿主与前端各有 `logs/app`、`logs/ui`。
 - URL 只记 `scheme + host + path`，token / 签名 / 播放直链不落盘。
 - 设置页「复制诊断信息 / 打开日志目录 / 导出反馈文件」是用户侧取证入口。
 

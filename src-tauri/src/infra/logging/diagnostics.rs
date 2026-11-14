@@ -18,6 +18,9 @@ pub struct ConfigDiagnostics {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogFileInfo {
+    /// 所属通道：`app` / `ui` / `spider`。
+    pub channel: &'static str,
+    /// 相对日志根目录的路径，例如 `app/luma.2026-11-15.log`。
     pub name: String,
     pub bytes: u64,
 }
@@ -117,19 +120,31 @@ pub(super) fn config_diagnostics(snapshot: Option<crate::config::ConfigSnapshot>
 }
 
 fn log_files() -> (Vec<LogFileInfo>, u64) {
-    let dir = log_dir();
     let mut files = Vec::new();
-    if let Ok(entries) = fs::read_dir(&dir) {
+    for channel in Channel::ALL {
+        let dir = channel_dir(channel);
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
             let Some(name) = path.file_name().and_then(|item| item.to_str()) else {
                 continue;
             };
-            if !(name.starts_with("luma-") && name.ends_with(".log")) {
+            let keep = match channel {
+                Channel::App => is_app_log(name),
+                Channel::Ui => name.starts_with("ui.") && name.ends_with(".log"),
+                Channel::Spider => is_spider_log(name),
+            };
+            if !keep {
                 continue;
             }
             files.push(LogFileInfo {
-                name: name.to_string(),
+                channel: channel.dir_name(),
+                name: format!("{}/{}", channel.dir_name(), name),
                 bytes: entry.metadata().map(|meta| meta.len()).unwrap_or(0),
             });
         }

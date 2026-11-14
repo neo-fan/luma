@@ -85,7 +85,7 @@ corepack pnpm tauri build
 1. **嵌入校验**：`tauri build` 已把前端嵌入 exe；验收可在解压后的安装目录用 `grep -a "usePlayerEngine" Luma.exe` 确认（应有命中），或直接跑安装器看 UI 是否正常出画。
 2. **安装器冒烟**：安装到任意目录 → 启动 → 导入配置 → 搜索 → 详情 → 播放出画（`videoWidth/Height > 0`）。
 3. **自检**：`LUMA_SELFCHECK=1` 启动，检查日志里 `ping ok`，且子进程指向安装目录内的 `sidecars/python-embed`、`sidecars/jre`。
-4. **日志**：确认 `data/logs/luma-YYYY-MM-DD.log` 生成、URL 无查询参数落盘。
+4. **日志**：确认 `data/logs/app|luma.<UTC 日期>.log`、`ui/ui.<UTC 日期>.log`、`spider/spider.<UTC 日期>.log` 三个通道都有生成，且 URL 无查询参数落盘。
 
 ### 2.6 记录与提交
 

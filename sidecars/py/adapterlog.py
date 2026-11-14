@@ -7,11 +7,15 @@ crash and every normalize failure is appended here as one JSON line. The Rust
 host does not need to know about this file; it is purely a diagnostic aid the
 user can open.
 
+The host keeps three log channels in separate directories
+(`<data>/logs/{app,ui,spider}/`); this file is the `spider` channel and is
+capped at 10 MiB with one `.1` backup, matching the host's per-channel cap.
+
 Resolution order for the log path (first writable wins):
-  LUMA_ADAPTER_LOG  -> explicit override (Rust may set this)
-  LUMA_DATA_DIR     -> <data>/logs/spider.log
-  APPDATA           -> <APPDATA>/Luma/logs/spider.log   (Windows default)
-  XDG_DATA_HOME     -> <xdg>/luma/logs/spider.log
+  LUMA_ADAPTER_LOG  -> explicit override (the Rust host always sets it)
+  LUMA_DATA_DIR     -> <data>/logs/spider/spider.log
+  APPDATA           -> <APPDATA>/Luma/logs/spider/spider.log  (Windows default)
+  XDG_DATA_HOME     -> <xdg>/luma/logs/spider/spider.log
   fallback          -> <sidecars/py>/logs/spider.log
 """
 
@@ -25,7 +29,8 @@ import time
 from pathlib import Path
 
 _lock = threading.Lock()
-_MAX_BYTES = 2_000_000  # rotate after ~2 MiB
+# 与宿主 `MAX_CHANNEL_BYTES` 一致：10 MiB。超过就滚成 `.1`，只留一份备份。
+_MAX_BYTES = 10 * 1024 * 1024
 
 
 def _resolve_log_path() -> Path:
@@ -34,11 +39,11 @@ def _resolve_log_path() -> Path:
     if env("LUMA_ADAPTER_LOG"):
         candidates.append(Path(env("LUMA_ADAPTER_LOG")))
     if env("LUMA_DATA_DIR"):
-        candidates.append(Path(env("LUMA_DATA_DIR")) / "logs" / "spider.log")
+        candidates.append(Path(env("LUMA_DATA_DIR")) / "logs" / "spider" / "spider.log")
     if env("APPDATA"):
-        candidates.append(Path(env("APPDATA")) / "Luma" / "logs" / "spider.log")
+        candidates.append(Path(env("APPDATA")) / "Luma" / "logs" / "spider" / "spider.log")
     if env("XDG_DATA_HOME"):
-        candidates.append(Path(env("XDG_DATA_HOME")) / "luma" / "logs" / "spider.log")
+        candidates.append(Path(env("XDG_DATA_HOME")) / "luma" / "logs" / "spider" / "spider.log")
     candidates.append(Path(__file__).resolve().parent / "logs" / "spider.log")
     for path in candidates:
         try:

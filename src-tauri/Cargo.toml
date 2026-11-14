@@ -22,15 +22,18 @@ serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 tracing = "0.1"
 # File + stdout logging for the trial run. `fmt` + `registry` let us tee the
-# same event stream to two layers; `env-filter` is deliberately omitted so the
-# dependency tree stays small (level comes from LUMA_LOG instead).
+# same event stream to two layers and `env-filter` gives `LUMA_LOG` the usual
+# `target=level,...` syntax; the rolling file writer itself comes from
+# `tracing-appender` (daily rotation, pruned to the last 7 files by us).
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt",
     "registry",
     "ansi",
     "std",
     "smallvec",
+    "env-filter",
 ] }
+tracing-appender = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 # 外部字节不保证 UTF-8（中文圈配置大量是 GBK/GB18030，论坛复制的片段常带
 # BOM 或 UTF-16）。`charset` 特性会把解码塞进 reqwest 内部且只认 Content-Type，

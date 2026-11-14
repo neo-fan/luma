@@ -371,6 +371,9 @@ export interface DiagnosticsConfig {
 }
 
 export interface DiagnosticsLogFile {
+  /** 所属通道：`app`（宿主）/ `ui`（前端）/ `spider`（适配层）。 */
+  channel: string;
+  /** 相对日志根目录的路径，例如 `app/luma.2026-11-15.log`。 */
   name: string;
   bytes: number;
 }

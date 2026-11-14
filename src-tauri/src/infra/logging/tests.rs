@@ -1,3 +1,4 @@
+use super::report::civil_from_days;
 use super::*;
 
 #[test]
@@ -10,11 +11,20 @@ fn civil_dates_round_trip_known_days() {
 }
 
 #[test]
-fn level_filter_accepts_common_names() {
-    assert_eq!(level_filter("debug"), LevelFilter::DEBUG);
-    assert_eq!(level_filter("WARN"), LevelFilter::WARN);
-    assert_eq!(level_filter("off"), LevelFilter::OFF);
-    assert_eq!(level_filter("nonsense"), LevelFilter::INFO);
+fn env_filter_accepts_levels_and_module_directives() {
+    let assert_level = |raw: &str, expected: LevelFilter| {
+        let filter = EnvFilter::builder()
+            .with_default_directive(LevelFilter::INFO.into())
+            .parse_lossy(raw);
+        assert_eq!(filter.max_level_hint(), Some(expected), "raw = {raw}");
+    };
+    assert_level("debug", LevelFilter::DEBUG);
+    assert_level("WARN", LevelFilter::WARN);
+    assert_level("off", LevelFilter::OFF);
+    // 空的 `LUMA_LOG` 不该把过滤关掉，也不该报错，落到默认 INFO。
+    assert_level("", LevelFilter::INFO);
+    // 模块级指令只放宽了指定模块，全局仍是 INFO。
+    assert_level("luma_lib::spider=debug", LevelFilter::DEBUG);
 }
 
 #[test]

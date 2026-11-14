@@ -95,11 +95,20 @@ pub(crate) fn spawn_stdio(
     // otherwise inherit the OS code page (Python on a Chinese Windows: cp936,
     // which decoded our UTF-8 frames as GBK and broke `config.decrypt`).
     // Runtimes that do not know these variables ignore them.
+    //
+    // `LUMA_ADAPTER_LOG` pins the adapter's own log file into
+    // `<data>/logs/spider/spider.<utc-date>.log`, so the three log channels
+    // (host / UI / adapter) live in separate directories.
+    let adapter_log = crate::logging::spider_log_path().display().to_string();
     let mut guarded = Guarded::spawn_with_env(
         program,
         args,
         cwd,
-        &[("PYTHONUTF8", "1"), ("PYTHONIOENCODING", "utf-8")],
+        &[
+            ("PYTHONUTF8", "1"),
+            ("PYTHONIOENCODING", "utf-8"),
+            ("LUMA_ADAPTER_LOG", adapter_log.as_str()),
+        ],
     )?;
     let pid = guarded.id().unwrap_or(0);
     let stdin = guarded
