@@ -18,6 +18,9 @@ export interface SiteCache {
 /** 稳定空数组：让下游 useEffect 的 sites 引用不会每次渲染都变化。 */
 export const EMPTY_SITES: Site[] = [];
 
+/** 稳定空数组：直播源同理，见 `selectLives` 的注释。 */
+export const EMPTY_LIVES: LiveSource[] = [];
+
 function readSidebarCollapsed(): boolean {
   try {
     return window.localStorage.getItem(SIDEBAR_KEY) === "1";
@@ -151,6 +154,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     get().setSidebarCollapsed(!get().sidebarCollapsed);
   },
 }));
+
+/**
+ * 直播源选择器。
+ *
+ * 必须在「没有配置」时返回**同一个**空数组引用：zustand 用 Object.is 比较
+ * 快照，`s.cache?.lives ?? []` 每次渲染都造新数组，会被判定为「快照一直在变」
+ * 而无限重渲染——2026-11-14 实测，没导入配置时打开直播页直接
+ * `Maximum update depth exceeded` 白屏（React 的 getSnapshot 警告就是这条）。
+ */
+export const selectLives = (state: AppStore): LiveSource[] =>
+  state.cache?.lives ?? EMPTY_LIVES;
 
 /**
  * 站点派生量：usableSites 过滤口径与首页「空站自动顺延」共用

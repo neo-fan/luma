@@ -8,7 +8,7 @@ import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
 import { lazy, useEffect } from "react";
 import { navBack, navNavigate, type DetailNavState, type PlayerNavState } from "./lib/nav";
-import { useAppStore, useSiteState } from "./stores/appStore";
+import { selectLives, useAppStore, useSiteState } from "./stores/appStore";
 
 /**
  * 直播页现在是**播放页**（自带 ArtPlayer + hls.js），不能再静态打进主包：
@@ -113,7 +113,9 @@ function PlayerPageRoute() {
  * 两级）。页面自己管理选中频道，换台只改 state 不进路由。
  */
 function LivePageRoute() {
-  const lives = useAppStore((s) => s.cache?.lives ?? []);
+  // 选择器必须返回稳定引用：没导入配置时若返回新造的空数组，zustand 会
+  // 认为快照每次都在变，进直播页直接 `Maximum update depth exceeded`。
+  const lives = useAppStore(selectLives);
   return <LivePage lives={lives} />;
 }
 
