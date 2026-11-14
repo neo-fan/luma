@@ -29,6 +29,33 @@ fn log_image_failure(target: &Url, reason: &str) {
     }
 }
 
+/// 从文件头认图片格式。
+///
+/// 不少图床对 `.jpg` 回 `application/octet-stream` / `binary/octet-stream`
+/// （实测 `pic.drleao.cn`、`pic.cdn.drama.9ddm.com`、`xjimg.cdn-xj.cc`）。
+/// 只看 `content-type` 会把真图当「不是图片」拒掉，聚合搜索一屏十几张黑卡。
+pub(super) fn image_format(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some("image/png");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" && matches!(&bytes[8..12], b"avif" | b"avis") {
+        return Some("image/avif");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some("image/bmp");
+    }
+    None
+}
+
 pub(super) async fn handle_health(State(state): State<Arc<ProxyState>>) -> Response {
     let body = format!(r#"{{"ok":true,"port":{}}}"#, state.port());
     Response::builder()
@@ -445,20 +472,51 @@ pub(super) async fn handle_image(
         .to_string();
     // Only serve real images; refuse to turn the proxy into a generic file
     // fetcher (and stop a mislabeled playlist/script from reaching <img>).
-    if !status.is_success() || !content_type.to_ascii_lowercase().starts_with("image/") {
-        log_image_failure(&target, &format!("not an image (status {status}, type {content_type})"));
-        return deny(StatusCode::BAD_GATEWAY, &format!("not an image (status {status}, type {content_type})"));
+    if !status.is_success() {
+        log_image_failure(&target, &format!("upstream status {status}"));
+        return deny(StatusCode::BAD_GATEWAY, &format!("upstream status {status}"));
     }
 
-    let stream = upstream.bytes_stream();
+    // 上游自己声明了 image/*：直接流式转发（不攒内存）。
+    if content_type.to_ascii_lowercase().starts_with("image/") {
+        let stream = upstream.bytes_stream();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", content_type)
+            .header("cache-control", "public, max-age=604800")
+            .header("access-control-allow-origin", "*")
+            .header("access-control-expose-headers", "*")
+            .header("x-tvbox-proxy", "image")
+            .body(Body::from_stream(stream))
+            .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"));
+    }
+
+    // 没声明成图片（常见 `application/octet-stream` / `binary/octet-stream`）：
+    // 读回来按文件头嗅探，认出是图片就补对 content-type 再回给 <img>。
+    const MAX_SNIFF_BYTES: usize = 8 * 1024 * 1024;
+    let body = match upstream.bytes().await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            log_image_failure(&target, &format!("body read failed: {err}"));
+            return deny(StatusCode::BAD_GATEWAY, &format!("body read failed: {err}"));
+        }
+    };
+    if body.len() > MAX_SNIFF_BYTES {
+        log_image_failure(&target, &format!("not an image (too large: {} bytes, type {content_type})", body.len()));
+        return deny(StatusCode::BAD_GATEWAY, "image too large");
+    }
+    let Some(kind) = image_format(&body) else {
+        log_image_failure(&target, &format!("not an image (status {status}, type {content_type})"));
+        return deny(StatusCode::BAD_GATEWAY, &format!("not an image (status {status}, type {content_type})"));
+    };
     Response::builder()
         .status(StatusCode::OK)
-        .header("content-type", content_type)
+        .header("content-type", kind)
         .header("cache-control", "public, max-age=604800")
         .header("access-control-allow-origin", "*")
         .header("access-control-expose-headers", "*")
         .header("x-tvbox-proxy", "image")
-        .body(Body::from_stream(stream))
+        .body(Body::from(body))
         .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"))
 }
 

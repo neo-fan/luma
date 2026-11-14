@@ -169,3 +169,21 @@ fn disguised_ts_offset_ignores_real_png_and_plain_ts() {
     }
     assert!(disguised_ts_offset(&ts).is_none());
 }
+
+#[test]
+fn image_format_sniffs_common_headers() {
+    // 上游对 .jpg 回 application/octet-stream 时靠文件头认图（实测 3 个图床）。
+    assert_eq!(image_format(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+    assert_eq!(image_format(b"\x89PNG\r\n\x1a\n0000"), Some("image/png"));
+    assert_eq!(image_format(b"GIF89a000000"), Some("image/gif"));
+    assert_eq!(image_format(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("image/webp"));
+    assert_eq!(image_format(b"\x00\x00\x00\x20ftypavif0000"), Some("image/avif"));
+    assert_eq!(image_format(b"BM000000"), Some("image/bmp"));
+}
+
+#[test]
+fn image_format_rejects_non_images() {
+    assert_eq!(image_format(b"<html>404 not found</html>"), None);
+    assert_eq!(image_format(b"#EXTM3U\n#EXTINF:4,\nseg.ts\n"), None);
+    assert_eq!(image_format(b""), None);
+}
