@@ -112,7 +112,7 @@
   height: 100%;
   color: var(--faint);
   font-size: var(--fs-xs);
-  background: linear-gradient(160deg, #1a202c, #12161e);
+  background: linear-gradient(160deg, var(--panel-raised), var(--panel-sunken));
 }
 
 /* 加载失败：用片名首字做锚点，明确区分「有片名但没图」与「源就没给图」。 */
@@ -121,7 +121,7 @@
   font-size: var(--fs-display);
   font-weight: var(--fw-medium);
   letter-spacing: 0.02em;
-  background: linear-gradient(160deg, #1a202c, #12161e);
+  background: linear-gradient(160deg, var(--panel-raised), var(--panel-sunken));
 }
 
 .vod-card__badge {

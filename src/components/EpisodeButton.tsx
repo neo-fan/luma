@@ -1,0 +1,69 @@
+import { useCallback, useRef } from "react";
+
+interface EpisodeButtonProps {
+  name: string;
+  /** 上次看到的这一集：右上角绿点，完整文案在 title 里。 */
+  seen?: boolean;
+  /** 播放页里「正在播放」的那一集：右上角状态点。 */
+  active?: boolean;
+  onClick: () => void;
+}
+
+/**
+ * 选集格子。
+ *
+ * 竖屏短剧 / 综艺的集名经常是「20260515特别企划」这种 10+ 字，格子宽度固定，
+ * 单行必然裁切、折两行又会让整行网格高低不齐。所以：默认单行裁切，指针悬停
+ * 或键盘聚焦时把内容横向滚到末尾，让整个集名露出来；移开 / 失焦再回位。
+ */
+export default function EpisodeButton({
+  name,
+  seen = false,
+  active = false,
+  onClick,
+}: EpisodeButtonProps) {
+  const ref = useRef<HTMLButtonElement>(null);
+
+  const scrollToEnd = useCallback(() => {
+    const el = ref.current;
+    if (!el) {
+      return;
+    }
+    const overflow = el.scrollWidth - el.clientWidth;
+    if (overflow > 1) {
+      el.scrollTo({ left: overflow, behavior: "smooth" });
+    }
+  }, []);
+
+  const reset = useCallback(() => {
+    const el = ref.current;
+    if (el && el.scrollLeft > 0) {
+      el.scrollTo({ left: 0, behavior: "smooth" });
+    }
+  }, []);
+
+  const className = ["episode", seen ? "is-seen" : "", active ? "is-active" : ""]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className={className}
+      onClick={onClick}
+      onPointerEnter={scrollToEnd}
+      onPointerLeave={reset}
+      onFocus={scrollToEnd}
+      onBlur={reset}
+      title={seen ? `${name}（上次看到）` : name}
+    >
+      {name}
+      {active ? (
+        <span className="episode__now">
+          <span className="sr-only">正在播放</span>
+        </span>
+      ) : null}
+    </button>
+  );
+}

@@ -78,8 +78,8 @@ describe("icon-first controls", () => {
     const panel = read("src/components/player/EpisodePanel.tsx");
     expect(panel).toContain('name="sort"');
     expect(panel).toContain("pressed={reverse}");
-    // 正在播放：视觉上是一枚点，文字只留给读屏
-    expect(panel).toContain("sr-only");
+    // 正在播放：视觉上是一枚点，文字只留给读屏（格子渲染统一在 EpisodeButton）
+    expect(read("src/components/EpisodeButton.tsx")).toContain("sr-only");
   });
 
   it("destructive and retry actions are icons with danger/busy states", () => {

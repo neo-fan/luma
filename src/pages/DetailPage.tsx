@@ -9,6 +9,7 @@ import {
 import type { Navigate } from "../lib/nav";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import Empty from "../components/Empty";
+import EpisodeButton from "../components/EpisodeButton";
 import ErrorBar from "../components/ErrorBar";
 import FavStar from "../components/FavStar";
 import Icon from "../components/Icon";
@@ -863,15 +864,12 @@ export default function DetailPage({
                           resume.episodeName === episode.name)
                       : false;
                     return (
-                      <button
+                      <EpisodeButton
                         key={`${episode.url}-${index}`}
-                        type="button"
-                        className={seen ? "episode is-seen" : "episode"}
+                        name={episode.name}
+                        seen={seen}
                         onClick={() => playEpisode(line, episode)}
-                        title={seen ? `${episode.name}（上次看到）` : episode.name}
-                      >
-                        {episode.name}
-                      </button>
+                      />
                     );
                   })}
                 </div>

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import EpisodeButton from "../EpisodeButton";
 import IconButton from "../IconButton";
 import type { PlayLine } from "../../lib/format";
 
@@ -102,20 +103,12 @@ export default function EpisodePanel({
         {visible.map(({ episode, index }) => {
           const active = panelLine === lineIndex && index === episodeIndex;
           return (
-            <button
+            <EpisodeButton
               key={`${episode.url}-${index}`}
-              type="button"
-              className={active ? "episode is-active" : "episode"}
+              name={episode.name}
+              active={active}
               onClick={() => goToEpisode(panelLine, index)}
-              title={episode.name}
-            >
-              {episode.name}
-              {active ? (
-                <span className="episode__now">
-                  <span className="sr-only">正在播放</span>
-                </span>
-              ) : null}
-            </button>
+            />
           );
         })}
       </div>

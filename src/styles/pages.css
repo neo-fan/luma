@@ -237,11 +237,17 @@
   font-weight: var(--fw-regular);
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 .settings-nav__item:hover {
   background: var(--icon-hover);
   color: var(--text);
+}
+
+.settings-nav__item:active {
+  background: var(--panel-hover);
 }
 
 /* 与侧栏当前页同一套表达：淡色底 + 左侧 2px 竖标，位置感一致。 */

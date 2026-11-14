@@ -309,6 +309,10 @@
   background: var(--panel-hover);
 }
 
+.source-item:active {
+  background: var(--panel-raised);
+}
+
 /* 站点首字方块：给每行一个稳定的视觉锚点，替代「右对齐的切换按钮 + 空白」 */
 .source-item__avatar {
   display: flex;

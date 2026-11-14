@@ -314,7 +314,7 @@
   align-self: flex-start;
   overflow: hidden;
   border-radius: var(--r-md);
-  background: #12161e;
+  background: var(--panel-sunken);
 }
 
 .player-about__poster img {

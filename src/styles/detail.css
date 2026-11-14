@@ -17,7 +17,7 @@
   align-self: flex-start;
   overflow: hidden;
   border-radius: var(--r-md);
-  background: #12161e;
+  background: var(--panel-sunken);
 }
 
 .detail-poster img {
@@ -127,21 +127,25 @@
 }
 
 .episode {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   min-height: var(--h-control);
+  /* 竖屏短剧/综艺常见的集名是「20260515特别企划」这类 10+ 字，格子宽度固定。
+   * 不折行（折行会把整行网格撑得高低不齐），默认单行左对齐裁切；悬停 / 键盘
+   * 聚焦时由 EpisodeButton 把内容横向滚到末尾露全，移开回位。 */
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--panel);
   color: var(--text-soft);
   font-size: var(--fs-sm);
-  text-align: center;
-  cursor: pointer;
-  overflow: hidden;
+  line-height: calc(var(--h-control) - 2px);
+  text-align: left;
   white-space: nowrap;
-  text-overflow: ellipsis;
+  cursor: pointer;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
     color var(--dur) var(--ease);
 }
@@ -150,5 +154,9 @@
   background: var(--accent-soft);
   border-color: rgba(110, 139, 255, 0.42);
   color: var(--accent-ink);
+}
+
+.episode:active {
+  background: var(--panel-raised);
 }
 

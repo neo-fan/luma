@@ -232,6 +232,10 @@
   color: var(--text);
 }
 
+.live-rail__item:active {
+  background: var(--panel-raised);
+}
+
 .live-rail__item.is-active {
   background: var(--accent-softer);
   color: var(--accent-ink);
