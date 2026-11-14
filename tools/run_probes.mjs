@@ -13,6 +13,10 @@
  *     `probe_py_framework` 另有豆瓣 frodo 外网正向观察项，偶发超时不影响本地断言；
  *   - `probe_cover` 只 reload、不切配置，验证封面经 Rust `/image` 代理出真图（豆瓣图床外网，
  *     偶发不可达时单跑复测；JPEG magic + 安全边界断言聚焦代理逻辑）。
+ *   - `probe_episode_switch` / `probe_live_audio` 走真实点播与直播（网络依赖）：前者用
+ *     `LUMA_KEYWORD`（默认「庆余年」）搜片再点「下一集」逐拍采样信息卡；后者依赖 active
+ *     配置的 `lives[]`，没有直播源时记 SKIP 不算失败。`probe_log_channels` 只往
+ *     `logs/ui/` 写一条带随机标记的日志，再核对三通道是否各归各位。
  *   - `probe_search_history` 只改 localStorage 的搜索词历史并在收尾恢复；点历史词会触发一次
  *     后台聚合搜索，探针随即 reload 打断、不等待 20s 结果。
  *
@@ -45,6 +49,8 @@ const PROBES = [
   { key: "page_cache", script: "tools/probes/probe_page_cache.mjs", label: "页面缓存与滚动恢复" },
   { key: "artplayer", script: "tools/probes/probe_artplayer.mjs", label: "ArtPlayer HLS 出画" },
   { key: "playback_ux", script: "tools/probes/probe_playback_ux.mjs", label: "连看体验（偏好记忆/自动下一集/Esc/复制错误）" },
+  { key: "episode_switch", script: "tools/probes/probe_episode_switch.mjs", label: "换集只重挂播放器（信息卡/选集不闪空）" },
+  { key: "live_audio", script: "tools/probes/probe_live_audio.mjs", label: "直播播放器独占（切台/离开不残留出声）" },
   { key: "flv", script: "tools/probes/probe_flv.mjs", label: "FLV 经 mpegts.js 出画", needsStub: true },
   { key: "search_failures", script: "tools/probes/probe_search_failures.mjs", label: "搜索失败源明细与重试", needsStub: true },
   { key: "search_history", script: "tools/probes/probe_search_history.mjs", label: "最近搜索词（10 条上限 / 点击重搜 / 删除清空）" },
@@ -52,6 +58,7 @@ const PROBES = [
   { key: "player_fav", script: "tools/probes/probe_player_fav.mjs", label: "播放页收藏按钮（加/减后恢复初始集合）" },
   { key: "player_nav", script: "tools/probes/probe_player_nav.mjs", label: "播放页新布局（器内上/下一集 → 信息卡 → 常驻选集）" },
   { key: "settings_logs", script: "tools/probes/probe_settings_logs.mjs", label: "版本 / 诊断 / 复制诊断" },
+  { key: "log_channels", script: "tools/probes/probe_log_channels.mjs", label: "日志三通道（ui 不污染 app）" },
   { key: "settings_health", script: "tools/probes/probe_settings_health.mjs", label: "站点体检（并发测活 / 禁用持久化）", needsStub: true },
   { key: "sidebar", script: "tools/probes/probe_sidebar.mjs", label: "侧边栏收缩 / 展开" },
   // 会把 active 切成桩配置，必须最后；默认不跑。

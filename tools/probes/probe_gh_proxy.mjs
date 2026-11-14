@@ -214,7 +214,7 @@ if (!target0) {
 }
 
 const shot = await send("Page.captureScreenshot", { format: "png" });
-writeFileSync(".workbuddy/gh-proxy.png", Buffer.from(shot.result.data, "base64"));
-console.log(`\n截图 .workbuddy/gh-proxy.png · ${results.filter(Boolean).length}/${results.length} PASS`);
+writeFileSync("tools/.out/gh-proxy.png", Buffer.from(shot.result.data, "base64"));
+console.log(`\n截图 tools/.out/gh-proxy.png · ${results.filter(Boolean).length}/${results.length} PASS`);
 ws.close();
 process.exit(failed === 0 ? 0 : 1);

@@ -12,7 +12,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 
 const FIRST = process.argv[2] || "";
 const SECOND = process.argv[3] || "";
-const OUT = ".workbuddy";
+const OUT = "tools/.out";
 mkdirSync(OUT, { recursive: true });
 
 const target = (await (await fetch("http://127.0.0.1:9222/json/list")).json()).find((t) => {

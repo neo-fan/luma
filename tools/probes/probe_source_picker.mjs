@@ -7,7 +7,7 @@
  * 不重新导入、不重启服务；开头会 Page.reload 以加载最新前端 bundle。
  *   node tools/probes/probe_source_picker.mjs
  *
- * 截图写入 .workbuddy/source-picker.png 与 .workbuddy/player-episodes.png。
+ * 截图写入 tools/.out/source-picker.png 与 tools/.out/player-episodes.png。
  * 每一步 assert；任一失败或出现未捕获页面异常即以退出码 1 结束。
  */
 import { writeFileSync } from "node:fs";
@@ -69,7 +69,7 @@ class Cdp {
   async shot(name) {
     // png 在本机 WebView2 上偶发超时（已踩多次），jpeg 稳定且足够看清布局。
     const res = await this.send("Page.captureScreenshot", { format: "jpeg", quality: 85 });
-    const path = `.workbuddy/${name}.jpg`;
+    const path = `tools/.out/${name}.jpg`;
     writeFileSync(path, Buffer.from(res.data, "base64"));
     console.log(`[shot] ${path}`);
   }

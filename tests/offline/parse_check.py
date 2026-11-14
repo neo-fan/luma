@@ -5,7 +5,7 @@
 2. 站点字段透传：`playerType`/`changeable`/`order_num` 不再被归一化层吞掉；
 3. 分组分隔条（`--- 1 ---`）不再被当成 jvm 站点。
 
-真实配置（`.workbuddy/upstream/box.json`）存在时会额外做一次分运行时统计；
+真实配置（`tests/fixtures/upstream/box.json`）存在时会额外做一次分运行时统计；
 该文件不入库，缺失时记 N/A。
 """
 
@@ -128,7 +128,7 @@ def test_site_passthrough() -> None:
 
 
 def test_real_config() -> None:
-    raw = ROOT / ".workbuddy" / "upstream" / "box.json"
+    raw = ROOT / "tests" / "fixtures" / "upstream" / "box.json"
     if not raw.is_file():
         skip("real", "box.json runtime census", "local sample not checked in")
         return

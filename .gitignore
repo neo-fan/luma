@@ -2,11 +2,11 @@
 tests/fixtures/manual/
 docs/verification-config.md
 
-# 本地工作目录：探针截图 / 一次性诊断脚本 / 上游源码镜像（整个目录都不入库）
-.workbuddy/
-
 # 隔离用的 git worktree 与临时目录（junction 复用主树 node_modules / 运行时，不入库）
 .agents/
+
+# 窗口探针 / 诊断脚本的截图与临时产物：统一落在 tools/.out/，可随时整目录删除
+tools/.out/
 
 # ---- 编译产物（三类，各自唯一位置，均可重建）----
 # ① 前端：Vite 产出，tauri.conf.json 的 frontendDist 指向 ../dist
@@ -65,11 +65,6 @@ pnpm-debug.log*
 *.log
 .DS_Store
 Thumbs.db
-
-# UI/UX 走查产物：CDP 实拍截图 + 量测报告（.workbuddy/memory 仍需入库）
-.workbuddy/ui-audit/
-.workbuddy/ui-audit-verify/
-.workbuddy/shots/
 
 # CodeGraph 本地索引：`.codegraph/`（SQLite 库 + 日志）由 `codegraph init/index`
 # 按当前工作树重建，本机实测 25.7 MB，属可重建产物，绝不入库。

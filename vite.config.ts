@@ -45,14 +45,12 @@ export default defineConfig({
     // 而这些目录里全是原子写（临时目录 + rename）和链接器占用的二进制：
     //   src-tauri/    cargo 产物（`tauri dev` 期间反复写 luma.exe）与 Rust 源码
     //   .agents/      并行会话的 git worktree（整棵前端副本）
-    //   .workbuddy/   本地一次性脚本与截图
     //   任意 .*.tmpdir/  DSH 等工具原子写的临时目录（写期间被独占）
     // 命中任何一条都会让 vite 直接退出，连带 beforeDevCommand 失败把整个 dev 拖死。
     watch: {
       ignored: [
         "**/src-tauri/**",
         "**/.agents/**",
-        "**/.workbuddy/**",
         "**/.*.tmpdir/**",
         "**/.git/**",
       ],
@@ -84,16 +82,12 @@ export default defineConfig({
   // 导致第二个测试文件收集失败。纯函数用例 < 1s，串行收集即可。
   test: {
     fileParallelism: false,
-    // `.workbuddy/` 是本地临时区（一次性探针脚本、参考实现克隆）。里面常出现
-    // 别人的 `*.test.ts` 与自己的 tsconfig `extends`，vitest 默认会一路扫进去，
-    // 表现为「我们的用例全绿，但 Test Files 有一堆 failed」。
     // `.agents/` 是隔离用的 git worktree（同样被 ignore）：扫进去会把别的分支的
     // 用例一起跑，用例数翻倍（实测 326 → 658），失败还分不清是谁的。
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
       "**/target/**",
-      ".workbuddy/**",
       ".agents/**",
     ],
   },

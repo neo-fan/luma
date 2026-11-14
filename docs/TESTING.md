@@ -40,7 +40,15 @@ tests/
     config_shapes_check.py #   T-05：六种配置形状端到端
   acceptance/              # spec 12.2 阶段验收，累积断言，未交付能力标 N/A
     p0.py p1.py p2.py p3.py
+
+tools/
+  probes/                  # 窗口回归探针（每个文件自己断言，失败 exit 1）
+    lib/cdp.mjs            #   新探针共用的最小 CDP 客户端（连接/求值/真实点击/截图）
+  verify/  diag/  audit/   # 一次性验收 / 证据打印 / 静态走查（diag 不断言）
 ```
+
+窗口探针的两种写法：早期 49 个探针各自内联一份 `Cdp` 类（自包含、复制粘贴）；
+**新探针一律 `import { connect, finish } from "./lib/cdp.mjs"`**，断言留在探针里。
 
 ## 3. 判断该放哪
 
@@ -57,7 +65,7 @@ tests/
 3. **阶段验收不进 CI**：它依赖运行中的应用与 stub，留在发版手工清单。
 4. **探针会切后端 active 配置的，cleanup 必须 `location.reload()`**（见 `AGENTS.md` 工程铁律 7）。
 5. 跑 `cargo test` 前先结束残留的 `qjs-runner` 进程：`tauri-build` 每次构建都要覆盖 `target/debug/qjs-runner.exe`，被占用会报 `os error 5 拒绝访问`。
-6. 若本会话的 `TEMP` 指向仓库内目录，Rust 单测里建子目录会因 ACL 失败（`create data dir failed`），用 `TEMP=F:\projects\tech\tvbox\.workbuddy\tmp` 或系统临时目录。
+6. 若本会话的 `TEMP` 指向仓库内目录，Rust 单测里建子目录会因 ACL 失败（`create data dir failed`），改用系统临时目录（`$env:TEMP`）或仓库外的可写目录；**不要把临时目录建进仓库**。
 
 ## 5. 现状基线
 

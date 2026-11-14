@@ -19,7 +19,7 @@
  *   LUMA_CONCURRENCY=4 LUMA_KEYWORD=走马上任 node tools/audit/scan_site_compat.mjs
  *
  * 前置：dev 窗口带 CDP 9222、LUMA_PROXY_ALLOW_LOCAL=1、NO_PROXY 含 127.0.0.1。
- * 输出：.workbuddy/site-compat-raw.json（不入库）+ docs/site-compat-report.md
+ * 输出：tools/.out/site-compat-raw.json（不入库）+ docs/site-compat-report.md
  */
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -565,7 +565,7 @@ try {
 }
 
 const durationMs = Date.now() - started;
-const rawPath = resolve(ROOT, ".workbuddy/site-compat-raw.json");
+const rawPath = resolve(ROOT, "tools/.out/site-compat-raw.json");
 writeFileSync(rawPath, JSON.stringify({ startedAt, durationMs, keyword: KEYWORD, sites, seed, rows }, null, 2), "utf8");
 if (sites.length) {
   const report = buildReport({ sites, rows, seed, startedAt, durationMs, keyword: KEYWORD });

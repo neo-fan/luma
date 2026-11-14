@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const CDP = "http://127.0.0.1:9222/json/list";
-const outDir = resolve(".workbuddy/ui-audit");
+const outDir = resolve("tools/.out/ui-audit");
 mkdirSync(outDir, { recursive: true });
 
 const list = await (await fetch(CDP)).json();

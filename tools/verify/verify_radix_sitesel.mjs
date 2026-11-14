@@ -111,7 +111,7 @@ await ev(`document.querySelector(".site-select__trigger")?.click()`);
 await sleep(500);
 const shot = await cmd("Page.captureScreenshot", { format: "png" });
 if (shot?.data) {
-  writeFileSync(".workbuddy/ui-audit/radix-sitesel.png", Buffer.from(shot.data, "base64"));
+  writeFileSync("tools/.out/ui-audit/radix-sitesel.png", Buffer.from(shot.data, "base64"));
   console.log("shot saved");
 }
 await cmd("Emulation.clearDeviceMetricsOverride");

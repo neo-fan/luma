@@ -6,7 +6,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-const outDir = ".workbuddy/ui-audit";
+const outDir = "tools/.out/ui-audit";
 mkdirSync(outDir, { recursive: true });
 const list = await (await fetch("http://127.0.0.1:9222/json/list")).json();
 const page = list.find(

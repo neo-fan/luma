@@ -15,7 +15,7 @@
  *
  *   node tools/probes/probe_page_cache.mjs
  *
- * 截图写入 .workbuddy/page-cache.png；退出码 0 仅当全部断言通过且无未捕获页面异常。
+ * 截图写入 tools/.out/page-cache.png；退出码 0 仅当全部断言通过且无未捕获页面异常。
  */
 import { writeFileSync } from "node:fs";
 
@@ -76,7 +76,7 @@ class Cdp {
 
   async shot(name) {
     const res = await this.send("Page.captureScreenshot", { format: "png" });
-    const path = `.workbuddy/${name}.png`;
+    const path = `tools/.out/${name}.png`;
     writeFileSync(path, Buffer.from(res.data, "base64"));
     console.log(`[shot] ${path}`);
   }
@@ -440,7 +440,7 @@ try {
   failures += 1;
 }
 
-// 7. Runtime.exceptionThrown 为 0 + 截图 .workbuddy/page-cache.png（即使中途出错也尽量截）。
+// 7. Runtime.exceptionThrown 为 0 + 截图 tools/.out/page-cache.png（即使中途出错也尽量截）。
 if (cdp) {
   assert(cdp.errors.length === 0, "no uncaught page exceptions (Runtime.exceptionThrown)", cdp.errors.slice(0, 3).join(" | ").slice(0, 600));
   try {

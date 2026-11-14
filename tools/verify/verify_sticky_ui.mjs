@@ -10,7 +10,7 @@
  */
 import { mkdirSync } from "node:fs";
 
-mkdirSync(".workbuddy/shots", { recursive: true });
+mkdirSync("tools/.out/shots", { recursive: true });
 
 const target = (
   await (await fetch("http://127.0.0.1:9222/json/list")).json()
@@ -77,7 +77,7 @@ async function shot(name) {
   const r = await send("Page.captureScreenshot", { format: "png" });
   const { writeFileSync } = await import("node:fs");
   writeFileSync(
-    `.workbuddy/shots/${name}.png`,
+    `tools/.out/shots/${name}.png`,
     Buffer.from(r.result.data, "base64"),
   );
 }

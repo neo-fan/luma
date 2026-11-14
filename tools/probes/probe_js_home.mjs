@@ -30,7 +30,7 @@ const KNOWN_DEAD = {
 };
 
 const SETTLE_MS = 25_000;
-const SHOT_DIR = ".workbuddy";
+const SHOT_DIR = "tools/.out";
 
 function pickTarget(list) {
   return list.find((item) => {

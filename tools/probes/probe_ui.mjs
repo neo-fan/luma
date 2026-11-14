@@ -10,7 +10,7 @@
 import { writeFileSync } from "node:fs";
 
 const CDP = "http://127.0.0.1:9222/json/list";
-const SHOT_DIR = ".workbuddy";
+const SHOT_DIR = "tools/.out";
 
 class Cdp {
   constructor(wsUrl) {

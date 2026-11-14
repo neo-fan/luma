@@ -17,7 +17,7 @@ template-dex.jar 形态说明：
     因此 probe 判定为 dex。这是自编 fixture 专用兼容路径，第三方 dex 不在承诺范围。
 
   JDK 路径：优先读环境变量 LUMA_JDK17_BIN，缺省为项目约定的 JDK17 安装目录。
-  全部日志写 stderr；中间产物在 .workbuddy/upstream/java-p2/（已 gitignore）。
+  全部日志写 stderr；中间产物在 tests/fixtures/upstream/java-p2/（已 gitignore）。
   不依赖系统默认 java，可重复运行。
 """
 import glob
@@ -42,7 +42,7 @@ FIXTURE_SRC = os.path.join(FIXTURE_DIR, "src", "TemplateSpider.java")
 TEMPLATE_CLASS_JAR = os.path.join(FIXTURE_DIR, "template-class.jar")
 TEMPLATE_DEX_JAR = os.path.join(FIXTURE_DIR, "template-dex.jar")
 
-UPSTREAM = os.path.join(ROOT, ".workbuddy", "upstream", "java-p2")
+UPSTREAM = os.path.join(ROOT, "tests", "fixtures", "upstream", "java-p2")
 BUILD = os.path.join(UPSTREAM, "build")
 R8_JAR = os.path.join(UPSTREAM, "r8.jar")
 R8_URLS = [

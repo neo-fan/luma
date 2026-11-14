@@ -68,9 +68,9 @@ class Cdp {
   }
   async shot(name) {
     const res = await this.send("Page.captureScreenshot", { format: "jpeg", quality: 86 });
-    mkdirSync(".workbuddy/shots", { recursive: true });
-    writeFileSync(`.workbuddy/shots/${name}.jpg`, Buffer.from(res.data, "base64"));
-    console.log(`[shot] .workbuddy/shots/${name}.jpg`);
+    mkdirSync("tools/.out/shots", { recursive: true });
+    writeFileSync(`tools/.out/shots/${name}.jpg`, Buffer.from(res.data, "base64"));
+    console.log(`[shot] tools/.out/shots/${name}.jpg`);
   }
 }
 

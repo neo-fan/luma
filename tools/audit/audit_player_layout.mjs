@@ -13,7 +13,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 
 const CDP = "http://127.0.0.1:9222/json/list";
-const SHOT_DIR = ".workbuddy/shots";
+const SHOT_DIR = "tools/.out/shots";
 const OUT = process.argv[2] || "player-layout";
 
 class Cdp {

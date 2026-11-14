@@ -159,7 +159,7 @@ async function main() {
 
   const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
   const fs = await import("node:fs");
-  fs.writeFileSync(".workbuddy/py-play.png", Buffer.from(shot.data, "base64"));
+  fs.writeFileSync("tools/.out/py-play.png", Buffer.from(shot.data, "base64"));
 
   cdp.close();
   console.log(`\npy play summary: ${passed} pass / ${failed} fail`);

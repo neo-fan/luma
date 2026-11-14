@@ -26,7 +26,7 @@ const SITE_KEY = process.argv[6] || "";
 const VOD_ID = process.argv[7] || "";
 /** 可选：点第几条线路（1 起算）。 */
 const LINE_IDX = Number(process.argv[8] || 1);
-const OUT = ".workbuddy";
+const OUT = "tools/.out";
 mkdirSync(OUT, { recursive: true });
 
 const target = (await (await fetch("http://127.0.0.1:9222/json/list")).json()).find((t) => {

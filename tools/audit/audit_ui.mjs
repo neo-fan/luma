@@ -6,7 +6,7 @@
  * 哪里看不见、能不能点得到」——输出既给人看，也给量测数据。
  *
  * 前置：dev 窗口在跑（CDP 127.0.0.1:9222）、Vite 在 1420。
- * 用法：node tools/audit/audit_ui.mjs [--out=.workbuddy/ui-audit]
+ * 用法：node tools/audit/audit_ui.mjs [--out=tools/.out/ui-audit]
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -14,7 +14,7 @@ import { resolve } from "node:path";
 const CDP = "http://127.0.0.1:9222/json/list";
 const args = process.argv.slice(2);
 const outDir = resolve(
-  args.find((a) => a.startsWith("--out="))?.slice(6) || ".workbuddy/ui-audit",
+  args.find((a) => a.startsWith("--out="))?.slice(6) || "tools/.out/ui-audit",
 );
 mkdirSync(outDir, { recursive: true });
 

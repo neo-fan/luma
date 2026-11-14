@@ -74,7 +74,7 @@ class Cdp {
   }
   async shot(name) {
     const res = await this.send("Page.captureScreenshot", { format: "png" });
-    writeFileSync(path.join(ROOT, ".workbuddy", `${name}.png`), Buffer.from(res.data, "base64"));
+    writeFileSync(path.join(ROOT, "tools/.out", `${name}.png`), Buffer.from(res.data, "base64"));
   }
   close() {
     this.ws.close();

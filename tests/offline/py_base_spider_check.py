@@ -151,7 +151,7 @@ def test_native_helpers() -> None:
 
 def test_douban_real_source() -> None:
     """豆瓣是 header 覆盖 bug 的最直接受害者；顺带验证外网 frodo 链路。"""
-    src_path = ROOT / ".workbuddy" / "upstream" / "py-src" / "py_douban.py"
+    src_path = ROOT / "tests" / "fixtures" / "upstream" / "py-src" / "py_douban.py"
     if not src_path.is_file():
         na("douban", "豆瓣真实脚本回归", "参考副本不存在（不入库）")
         return

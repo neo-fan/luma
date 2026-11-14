@@ -4,7 +4,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const CDP = "http://127.0.0.1:9222/json/list";
-const outDir = resolve(".workbuddy/ui-audit");
+const outDir = resolve("tools/.out/ui-audit");
 const list = await (await fetch(CDP)).json();
 const page = list.find((t) => {
   try { const u = new URL(t.url); return u.port === "1420" && (u.pathname === "/" || u.pathname === ""); }

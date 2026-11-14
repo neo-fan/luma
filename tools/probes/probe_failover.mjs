@@ -43,7 +43,7 @@ await sleep(4000);
 console.log("video2:", await ev(`(() => { const v=document.querySelector('video'); return v? JSON.stringify({paused:v.paused,t:+v.currentTime.toFixed(2),rs:v.readyState,w:v.videoWidth}) : 'NO_VIDEO'; })()`));
 console.log("now site:", await ev(`document.querySelector('.page-meta')?.innerText || ''`));
 const shot = await send("Page.captureScreenshot", { format: "png" });
-writeFileSync(".workbuddy/ui-failover.png", Buffer.from(shot.data, "base64"));
+writeFileSync("tools/.out/ui-failover.png", Buffer.from(shot.data, "base64"));
 
 const state = await ev(`(() => { const v=document.querySelector('video'); return v ? JSON.stringify({t:v.currentTime,paused:v.paused,w:v.videoWidth,rs:v.readyState}) : 'NO_VIDEO'; })()`);
 const finalTip = await ev(`document.querySelector('.tip')?.innerText || ''`);

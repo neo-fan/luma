@@ -13,7 +13,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 
 const TRACE_MS = (Number(process.argv[2]) || 90) * 1000;
-mkdirSync(".workbuddy/shots", { recursive: true });
+mkdirSync("tools/.out/shots", { recursive: true });
 
 const target = (await (await fetch("http://127.0.0.1:9222/json/list")).json()).find((t) => {
   try {
@@ -137,10 +137,10 @@ while (Date.now() - start < TRACE_MS) {
       shotTaken = true;
       const shot = await send("Page.captureScreenshot", { format: "jpeg", quality: 85 });
       writeFileSync(
-        ".workbuddy/shots/live-alert-overlap.jpg",
+        "tools/.out/shots/live-alert-overlap.jpg",
         Buffer.from(shot.result.data, "base64"),
       );
-      console.log("[shot] .workbuddy/shots/live-alert-overlap.jpg");
+      console.log("[shot] tools/.out/shots/live-alert-overlap.jpg");
     }
   }
   await sleep(250);
