@@ -1,3 +1,4 @@
+import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import Empty from "./Empty";
 import ErrorBar from "./ErrorBar";
@@ -26,6 +27,8 @@ interface AsyncBoundaryProps {
   emptyTitle?: string;
   emptyDescription?: string;
   emptyAction?: ReactNode;
+  /** 空态插图（默认收件箱）；列表页传语义更贴的图标，如 Star / Tv。 */
+  emptyIcon?: LucideIcon;
   /** 错误重试回调；传了才显示重试按钮。 */
   onRetry?: () => void;
   /** 错误附带动作（如「换个站点」）。 */
@@ -59,6 +62,7 @@ export default function AsyncBoundary({
   emptyTitle = "暂无内容",
   emptyDescription,
   emptyAction,
+  emptyIcon,
   onRetry,
   errorAction,
   errorCopyable = true,
@@ -85,6 +89,7 @@ export default function AsyncBoundary({
           title={emptyTitle}
           description={emptyDescription}
           action={emptyAction}
+          icon={emptyIcon}
         />
       ) : null}
       {!isEmpty ? children : null}

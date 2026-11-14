@@ -1,3 +1,4 @@
+import { SearchX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Navigate } from "../lib/nav";
@@ -810,6 +811,7 @@ export default function SearchPage({
                 ? "换个关键词，或选择其它站点再试。"
                 : "关闭「只看片名匹配」可查看其它站点返回的结果。"
             }
+            icon={SearchX}
           />
         ) : null}
 

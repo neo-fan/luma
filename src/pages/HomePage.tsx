@@ -1,3 +1,4 @@
+import { FolderOpen, Puzzle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Navigate } from "../lib/nav";
 import AsyncBoundary from "../components/AsyncBoundary";
@@ -507,15 +508,16 @@ export default function HomePage({
           <h1 className="page-title">首页</h1>
         </header>
         <Empty
-          title="请先在设置导入配置"
-          description="导入 TVBox 配置后，这里会列出可用的站点与推荐内容。"
+          title="还没有导入配置"
+          description="导入一份 TVBox 配置后，这里会列出可用的站点与推荐内容。"
+          icon={FolderOpen}
           action={
             <button
               type="button"
               className="btn btn--primary"
               onClick={() => navigate({ name: "settings" })}
             >
-              前往设置
+              去导入配置
             </button>
           }
         />
@@ -532,6 +534,7 @@ export default function HomePage({
         <Empty
           title={`当前配置的 ${sites.length} 个站点都需要 jar 运行时`}
           description="这些是 csp_/jar 源，依赖 Android 运行时（P2）。可以先用「直播」页，或导入含 CMS / py / js 站点的配置。"
+          icon={Puzzle}
         />
       </section>
     );

@@ -1,3 +1,4 @@
+import { Tv } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Empty from "../components/Empty";
 import Spinner from "../components/Spinner";
@@ -399,6 +400,7 @@ export default function LivePage({ lives }: LivePageProps) {
         <Empty
           title="当前配置没有直播源"
           description="导入带 lives[] 的配置后，这里会列出直播分组与频道。"
+          icon={Tv}
         />
       </section>
     );
@@ -512,6 +514,7 @@ export default function LivePage({ lives }: LivePageProps) {
                 <Empty
                   title="没有可播放的频道"
                   description="换一个直播源，或点左侧的刷新重新拉取列表。"
+                  icon={Tv}
                 />
               </div>
             )}

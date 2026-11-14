@@ -1,3 +1,4 @@
+import { Star } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Navigate } from "../lib/nav";
 import AsyncBoundary from "../components/AsyncBoundary";
@@ -147,6 +148,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
           loadingLabel="正在加载收藏…"
           emptyTitle="还没有收藏任何影片"
           emptyDescription="在影片详情页点右上角的星标即可加入收藏。"
+          emptyIcon={Star}
           onRetry={() => setReload((value) => value + 1)}
           emptyAction={
             <button

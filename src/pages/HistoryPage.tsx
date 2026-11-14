@@ -1,3 +1,4 @@
+import { History } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Navigate } from "../lib/nav";
 import AsyncBoundary from "../components/AsyncBoundary";
@@ -156,6 +157,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
           loadingLabel="正在加载观看历史…"
           emptyTitle="还没有观看记录"
           emptyDescription="播放任意影片后，这里会记录进度，方便下次接着看。"
+          emptyIcon={History}
           onRetry={() => setReload((value) => value + 1)}
           emptyAction={
             <button
