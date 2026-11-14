@@ -5,6 +5,7 @@ import ConfigImportSection from "../components/settings/ConfigImportSection";
 import ConfigListSection from "../components/settings/ConfigListSection";
 import DiagnosticSection from "../components/settings/DiagnosticSection";
 import EpgsSection from "../components/settings/EpgsSection";
+import GhProxySection from "../components/settings/GhProxySection";
 import HealthCheckSection from "../components/settings/HealthCheckSection";
 import HistorySection from "../components/settings/HistorySection";
 import ProxySection from "../components/settings/ProxySection";
@@ -21,6 +22,7 @@ interface SettingsPageProps {
 /** 左侧目录项：id 同时是滚动锚点。 */
 const SECTIONS: { id: string; label: string }[] = [
   { id: "s-import", label: "导入配置" },
+  { id: "s-ghproxy", label: "GitHub 加速" },
   { id: "s-configs", label: "配置管理" },
   { id: "s-epgs", label: "直播节目单" },
   { id: "s-proxy", label: "本地反代" },
@@ -59,6 +61,17 @@ export default function SettingsPage({
           onNotice={setNotice}
           onError={setError}
           onReload={bumpReload}
+        />
+      ),
+    },
+    {
+      id: "s-ghproxy",
+      node: (
+        <GhProxySection
+          reload={reload}
+          onImported={onImported}
+          onNotice={setNotice}
+          onError={setError}
         />
       ),
     },

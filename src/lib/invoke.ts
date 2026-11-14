@@ -24,6 +24,8 @@ import type {
   FavoriteItem,
   FetchRequest,
   FetchResponse,
+  GhProbeResult,
+  GhProxyState,
   HistoryItem,
   HomeResult,
   ParseRequest,
@@ -210,6 +212,24 @@ export const api = {
   /** 手动检查订阅（id 省略 = active）；`changed` 为假时 snapshot 缺省。 */
   configRefresh(id?: string): Promise<RefreshOutcome> {
     return call("config_refresh", { id });
+  },
+
+  /** GitHub 加速：当前前缀 + 内置候选。 */
+  ghProxyState(): Promise<GhProxyState> {
+    return call("gh_proxy_state");
+  },
+
+  /**
+   * 切换加速代理。会重写全部已存配置里的 GitHub 链接，返回带 active 运行
+   * 快照的状态——前端必须用它替换站点缓存（旧缓存里的 ext 还挂着旧前缀）。
+   */
+  ghProxySet(prefix: string): Promise<GhProxyState> {
+    return call("gh_proxy_set", { prefix });
+  },
+
+  /** 并发探测全部候选（返回顺序与 choices 一致）。 */
+  ghProxyTest(): Promise<GhProbeResult[]> {
+    return call("gh_proxy_test");
   },
 
   /**

@@ -411,3 +411,37 @@ export interface SiteHealthResult {
   /** 整次体检墙钟 ms。 */
   tookMs: number;
 }
+
+/** GitHub 加速代理候选（内置，顺序即推荐顺序）。 */
+export interface GhProxyChoice {
+  id: string;
+  label: string;
+  /** 加速前缀；空串 = 直连。 */
+  prefix: string;
+  note: string;
+}
+
+/** 单次测速结果。`status` 为 0 表示网络层失败（见 error）。 */
+export interface GhProbeResult {
+  id: string;
+  prefix: string;
+  ok: boolean;
+  status: number;
+  ms: number;
+  error?: string;
+}
+
+/** 设置页「GitHub 加速」状态。 */
+export interface GhProxyState {
+  /** 当前生效前缀；空串 = 直连。 */
+  prefix: string;
+  choices: GhProxyChoice[];
+  /** 全部配置里不重复的 GitHub 链接条数。 */
+  links: number;
+  /** 已有配置总数。 */
+  configs: number;
+  /** 本次切换实际改写的配置数（只读查询时为 0）。 */
+  changed: number;
+  /** active 运行快照：URL 改写过，前端缓存必须整份替换。 */
+  snapshot?: ConfigSnapshot | null;
+}

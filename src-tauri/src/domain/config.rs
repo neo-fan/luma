@@ -6,6 +6,7 @@
 use crate::bridge;
 use crate::db::{ConfigWrite, Db};
 use crate::error::{code, AppError};
+use crate::ghproxy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
@@ -530,6 +531,113 @@ impl ConfigStore {
         Ok(runtime)
     }
 
+    /// 当前生效的 GitHub 加速前缀（空串 = 直连）。
+    ///
+    /// meta 里没有这条记录 = 用户从未选过 → 用内置默认。必须区分「没设置」
+    /// 与「设置为直连」：后者明确存了空串，不能再被默认值覆盖。
+    pub fn github_proxy(&self) -> String {
+        match self.db.meta_read(ghproxy::META_KEY) {
+            Ok(Some(saved)) => ghproxy::normalize_prefix(&saved).unwrap_or_default(),
+            // 读库失败按「没设置」处理，用默认代理——总比让用户面对一堆
+            // 超时的 GitHub 链接强。
+            _ => ghproxy::DEFAULT_PROXY.to_string(),
+        }
+    }
+
+    /// 切换加速前缀，并把**所有已存配置**（不只是 active）重写一遍。
+    ///
+    /// 已导入的配置里 URL 是写死的前缀，只改 meta 不会让老配置动起来；
+    /// 反过来，如果不重写就切换，旧配置会继续打旧代理。`rewrite_snapshot`
+    /// 是「先剥后套」，所以反复调用同向前缀不会累积成多层嵌套。
+    ///
+    /// 返回 `(改写链接数, 受影响配置数)`；返回值给 UI 显示，避免「切换了
+    /// 但不知道有没有生效」。
+    pub fn set_github_proxy(&self, raw_prefix: &str) -> Result<(usize, usize), AppError> {
+        let prefix = ghproxy::normalize_prefix(raw_prefix)?;
+        self.db.meta_write(ghproxy::META_KEY, &prefix)?;
+
+        // 两阶段：先离锁算出要写什么、逐行落库，再一次性换内存。持 entries
+        // 写锁去写 SQLite 会让「读列表」被一次全量重写卡住。
+        let planned: Vec<(ConfigSnapshot, ConfigSnapshot, ConfigSource)> = {
+            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard
+                .iter()
+                .filter_map(|entry| {
+                    let mut imported = entry.imported.clone();
+                    let mut runtime = runtime_of(entry).clone();
+                    // runtime 不能从 imported 重新派生：手动禁用只写在 runtime
+                    // 上，重派生会把它们复活。两边各自改写即可。
+                    let changed = ghproxy::rewrite_snapshot(&mut imported, &prefix)
+                        + ghproxy::rewrite_snapshot(&mut runtime, &prefix);
+                    (changed > 0).then(|| (imported, runtime, entry.source.clone()))
+                })
+                .collect()
+        };
+
+        let mut links = 0;
+        for (imported, runtime, source) in &planned {
+            let imported_json = serde_json::to_string(imported)?;
+            let runtime_json = serde_json::to_string(runtime)?;
+            let source_json = serde_json::to_string(source)?;
+            self.db.update_config(ConfigWrite {
+                id: &imported.id,
+                name: &imported.name,
+                imported_at: &imported.imported_at,
+                imported_json: &imported_json,
+                runtime_json: &runtime_json,
+                source_json: &source_json,
+            })?;
+            links += ghproxy::count_github(imported);
+        }
+
+        let configs = planned.len();
+        let mut active_headers = None;
+        if configs > 0 {
+            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            for (imported, runtime, source) in planned {
+                if let Some(entry) = guard.iter_mut().find(|e| e.imported.id == imported.id) {
+                    entry.imported = imported;
+                    entry.runtime = Some(runtime);
+                    entry.source = source;
+                }
+            }
+            // 别在这里调 `active_snapshot()`：它内部要 entries 读锁，而本线程
+            // 正握着写锁 —— std RwLock 不可重入，会直接把自己锁死（踩过：
+            // 进程启动后日志停在 netrules loaded，窗口永远不出来）。
+            let active_id = self
+                .active
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            active_headers = guard
+                .iter()
+                .find(|entry| active_id.as_deref() == Some(entry.imported.id.as_str()))
+                .map(|entry| runtime_of(entry).headers.clone());
+        }
+        // 反代表是 active 配置派生出来的，域名头随配置内容走。
+        if let Some(headers) = active_headers {
+            crate::netrules::replace(&headers);
+        }
+        Ok((links, configs))
+    }
+
+    /// 启动时对齐一次：老配置（上次运行导入、当时还是直连）也要跟上当前
+    /// 前缀。幂等，正常情况什么都不写。
+    pub fn sync_github_proxy(&self) -> Result<(usize, usize), AppError> {
+        let prefix = self.github_proxy();
+        self.set_github_proxy(&prefix)
+    }
+
+    /// 全部已存配置里的 GitHub 链接数（去重后按配置累加，供设置页展示）。
+    pub fn github_link_count(&self) -> usize {
+        self.entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .map(|entry| ghproxy::count_github(&entry.imported))
+            .sum()
+    }
+
     pub fn list(&self) -> Vec<ConfigMeta> {
         // 一次扫出全部刷新状态，避免配置列表逐行查库；读库失败只意味着
         // 状态列显示「未检查过」，不影响列表本身。
@@ -779,7 +887,7 @@ impl ConfigStore {
         ensure_refreshable(&source)?;
 
         let now = crate::store::now_ms();
-        let fetched = match import_from_source(source.clone()).await {
+        let fetched = match import_from_source(source.clone(), &self.github_proxy()).await {
             Ok(snapshot) => snapshot,
             Err(err) => {
                 // 失败也要留痕：设置页显示「上次检查失败：…」，用户才知道
@@ -1129,9 +1237,23 @@ async fn fetch_text(url: &str) -> Result<String, AppError> {
     })
 }
 
-pub async fn import_from_source(source: ConfigSource) -> Result<ConfigSnapshot, AppError> {
+/// 读一份配置（url / file / text），归一化后**统一套上 GitHub 加速前缀**。
+///
+/// 前缀在这里一次性生效，而不是散落在各个调用点：`config_import`、订阅
+/// 定时刷新、多仓库合并都走同一条路，不会出现「手动导入加速了、自动刷新
+/// 又变回直连」的不一致。`prefix` 为空串表示用户选了直连，此时只是把可能
+/// 残留的旧代理前缀剥掉。
+pub async fn import_from_source(
+    source: ConfigSource,
+    prefix: &str,
+) -> Result<ConfigSnapshot, AppError> {
     let (raw, origin) = match source.kind.as_str() {
-        "url" => (fetch_text(&source.value).await?, source.value.clone()),
+        // 配置地址本身常常就是 raw.githubusercontent.com，同样要加速，
+        // 否则「配置都拉不下来」这一步就先失败了。
+        "url" => (
+            fetch_text(ghproxy::apply(&source.value, prefix).as_ref()).await?,
+            source.value.clone(),
+        ),
         "file" => (
             std::fs::read_to_string(&source.value).map_err(|err| {
                 AppError::new(code::CONFIG_FETCH_FAIL, "read config file failed")
@@ -1147,10 +1269,16 @@ pub async fn import_from_source(source: ConfigSource) -> Result<ConfigSnapshot, 
             ))
         }
     };
-    import_from_raw(&raw, &origin).await
+    let mut snapshot = import_from_raw(&raw, &origin, prefix).await?;
+    ghproxy::rewrite_snapshot(&mut snapshot, prefix);
+    Ok(snapshot)
 }
 
-pub async fn import_from_raw(raw: &str, origin: &str) -> Result<ConfigSnapshot, AppError> {
+pub async fn import_from_raw(
+    raw: &str,
+    origin: &str,
+    prefix: &str,
+) -> Result<ConfigSnapshot, AppError> {
     let decrypted = bridge::call("config.decrypt", json!({ "raw": raw })).await?;
     let plain = decrypted
         .get("plain")
@@ -1164,12 +1292,12 @@ pub async fn import_from_raw(raw: &str, origin: &str) -> Result<ConfigSnapshot, 
     })?;
 
     if let Some(items) = parsed.get("urls").and_then(Value::as_array) {
-        return import_repos(items).await;
+        return import_repos(items, prefix).await;
     }
     normalize_plain(&plain, origin).await
 }
 
-async fn import_repos(items: &[Value]) -> Result<ConfigSnapshot, AppError> {
+async fn import_repos(items: &[Value], prefix: &str) -> Result<ConfigSnapshot, AppError> {
     let mut set = tokio::task::JoinSet::new();
     for item in items.iter().take(MAX_REPOS) {
         let url = item
@@ -1177,7 +1305,8 @@ async fn import_repos(items: &[Value]) -> Result<ConfigSnapshot, AppError> {
             .map(str::to_string)
             .or_else(|| item.get("url").and_then(Value::as_str).map(str::to_string));
         let Some(url) = url else { continue };
-        set.spawn(async move { import_url_snapshot(url).await });
+        let prefix = prefix.to_string();
+        set.spawn(async move { import_url_snapshot(url, prefix).await });
     }
 
     let mut snapshots = Vec::new();
@@ -1197,8 +1326,10 @@ async fn import_repos(items: &[Value]) -> Result<ConfigSnapshot, AppError> {
     })
 }
 
-async fn import_url_snapshot(url: String) -> Result<Value, AppError> {
-    let raw = fetch_text(&url).await?;
+async fn import_url_snapshot(url: String, prefix: String) -> Result<Value, AppError> {
+    // 取用加速地址，但 origin 记原始 URL：配置 id 由 origin 派生，跟着代理
+    // 走会让「换个代理再导一次」变成两份配置。
+    let raw = fetch_text(ghproxy::apply(&url, &prefix).as_ref()).await?;
     let decrypted = bridge::call("config.decrypt", json!({ "raw": raw })).await?;
     let plain = decrypted
         .get("plain")
@@ -1227,10 +1358,13 @@ pub async fn config_import(
         .as_deref()
         .map(clean_name)
         .filter(|name| !name.is_empty());
-    let mut imported = import_from_source(ConfigSource {
-        name: None,
-        ..source.clone()
-    })
+    let mut imported = import_from_source(
+        ConfigSource {
+            name: None,
+            ..source.clone()
+        },
+        &state.github_proxy(),
+    )
     .await?;
     // Priority: what the user typed → the name this config already has (a
     // re-import must not throw away a custom name) → the domain / config name.
@@ -1247,6 +1381,67 @@ pub async fn config_import(
             ..source
         },
     )
+}
+
+/// 设置页「GitHub 加速」的完整状态。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhProxyState {
+    /// 当前生效前缀；空串 = 直连。
+    pub prefix: String,
+    pub choices: Vec<ghproxy::ProxyChoice>,
+    /// 全部配置里不重复的 GitHub 链接数。
+    pub links: usize,
+    /// 已有配置总数。
+    pub configs: usize,
+    /// 本次切换实际改写的配置数（只读查询时为 0）。
+    pub changed: usize,
+    /// active 配置的运行快照。URL 被改写后前端缓存里的 ext/parse 地址已经
+    /// 过期，必须整份替换，不能只提示「已切换」。
+    pub snapshot: Option<ConfigSnapshot>,
+}
+
+fn read_gh_state(state: &ConfigStore, changed: usize) -> GhProxyState {
+    GhProxyState {
+        prefix: state.github_proxy(),
+        choices: ghproxy::choices(),
+        links: state.github_link_count(),
+        configs: state.list().len(),
+        changed,
+        snapshot: state.active_snapshot(),
+    }
+}
+
+#[tauri::command]
+pub fn gh_proxy_state(state: tauri::State<'_, ConfigStore>) -> GhProxyState {
+    read_gh_state(&state, 0)
+}
+
+/// 切换加速代理。会重写**所有**已存配置里的 GitHub 链接（不只是 active），
+/// 否则老配置会继续打旧代理。
+#[tauri::command]
+pub fn gh_proxy_set(
+    state: tauri::State<'_, ConfigStore>,
+    prefix: String,
+) -> Result<GhProxyState, AppError> {
+    let (_, changed) = state.set_github_proxy(&prefix)?;
+    Ok(read_gh_state(&state, changed))
+}
+
+/// 并发探测全部候选：返回顺序与 `choices()` 一致，UI 直接按下标渲染。
+#[tauri::command]
+pub async fn gh_proxy_test() -> Vec<ghproxy::ProbeResult> {
+    let handles: Vec<_> = ghproxy::choices()
+        .into_iter()
+        .map(|choice| tokio::spawn(async move { ghproxy::probe(&choice).await }))
+        .collect();
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        if let Ok(result) = handle.await {
+            results.push(result);
+        }
+    }
+    results
 }
 
 #[tauri::command]

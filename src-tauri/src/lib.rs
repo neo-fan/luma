@@ -44,6 +44,8 @@ pub mod window;
 pub mod clipboard;
 #[path = "domain/config.rs"]
 pub mod config;
+#[path = "domain/ghproxy.rs"]
+pub mod ghproxy;
 #[path = "domain/live.rs"]
 pub mod live;
 #[path = "domain/mpv.rs"]
@@ -122,9 +124,19 @@ pub fn run() {
     // marker, favourites and history all live in `<data dir>/luma.db`.
     let database = Arc::new(db::Db::open().expect("open sqlite database"));
     tracing::info!(path = %database.path().display(), "sqlite persistence ready");
+    let config_store = ConfigStore::load(database.clone()).expect("load config store");
+    // 让已导入的配置跟上当前 GitHub 加速前缀。首次带这段代码启动时，老配置
+    // 里还是裸 GitHub 地址，这里一次性改写；之后幂等，什么都没变就不写库。
+    match config_store.sync_github_proxy() {
+        Ok((links, configs)) if configs > 0 => {
+            tracing::info!(links, configs, "github proxy applied to stored configs");
+        }
+        Ok(_) => {}
+        Err(err) => tracing::warn!(code = %err.code, error = %err.message, "github proxy sync failed"),
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .manage(ConfigStore::load(database.clone()).expect("load config store"))
+        .manage(config_store)
         .manage(LibraryStore::load(database.clone()).expect("load library store"))
         .setup(|app| {
             // 标题栏跟随主界面深色，避免 Windows 默认浅色/系统深灰与画布色差。
@@ -217,6 +229,9 @@ pub fn run() {
             config::config_refresh_settings,
             config::config_set_refresh_interval,
             config::config_refresh,
+            config::gh_proxy_state,
+            config::gh_proxy_set,
+            config::gh_proxy_test,
             config::site_set_enabled,
             http::http_fetch,
             spider::spider_invoke,

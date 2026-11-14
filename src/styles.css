@@ -4075,6 +4075,124 @@ textarea {
   font-size: var(--fs-sm);
 }
 
+/* ---------- GitHub 加速 ---------- */
+
+/* 一整张 sheet + 行间发丝线：四个候选是同一组选项，不该各自一张卡 */
+.gh-proxy-list {
+  margin: 14px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.gh-proxy__row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto 76px;
+  align-items: center;
+  gap: 12px;
+  /* 固定行高：note 单行省略已保证内容不超，行高不能再随文字多少浮动 */
+  height: 60px;
+  padding: 0 14px;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+
+.gh-proxy__row + .gh-proxy__row {
+  border-top: 1px solid var(--border);
+}
+
+.gh-proxy__row:hover {
+  background: var(--panel-hover);
+}
+
+/* 当前生效项：左侧一道 accent 竖线，比整行高亮更克制 */
+.gh-proxy__row.is-active {
+  background: var(--accent-softer);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.gh-proxy__row input[type="radio"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.gh-proxy__main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.gh-proxy__label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.gh-proxy__note {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+}
+
+.gh-proxy__prefix {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
+.gh-proxy__probe {
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.gh-proxy__probe.is-ok {
+  color: var(--ok);
+}
+
+.gh-proxy__probe.is-bad {
+  color: var(--danger);
+}
+
+.gh-proxy-custom {
+  display: flex;
+  gap: 8px;
+}
+
+.gh-proxy-custom .input,
+.gh-proxy-custom .btn {
+  height: 36px;
+}
+
+.gh-proxy-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.gh-proxy-foot .btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: var(--fs-xs);
+}
+
+.gh-proxy-foot__stat {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
 /* 诊断键值表：左侧标签固定宽，右侧路径可换行，避免长 APPDATA 路径撑破卡片 */
 .settings-kv {
   display: grid;
