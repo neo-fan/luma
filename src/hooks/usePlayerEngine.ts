@@ -517,7 +517,9 @@ export function usePlayerEngine({
               // 记成生命信号会让反复超时的死线永远逃过看门狗。
               return;
             }
-            setVideoError(`HLS 播放失败：${reason}，正在换源`);
+            // 实际链路是「先换同源线路，再跨源」，文案不能写成直接换源，
+            // 否则用户看到跳到别的源会以为是逻辑错了。
+            setVideoError(`HLS 播放失败：${reason}，正在切换线路`);
             void switchOrFailoverRef.current();
           });
         },
@@ -552,7 +554,7 @@ export function usePlayerEngine({
                 setVideoError(
                   EXTERNAL_PLAY_ENABLED
                     ? "当前环境不支持 FLV 内置播放，已改用外部播放。"
-                    : "当前环境不支持 FLV 内置播放，请换源或稍后重试。",
+                    : "当前环境不支持 FLV 内置播放，请换一条线路或换个源后重试。",
                 );
                 return;
               }

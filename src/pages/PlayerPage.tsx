@@ -7,7 +7,7 @@ import PlayerStage from "../components/player/PlayerStage";
 import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
 import PlayerResolution from "../components/player/PlayerResolution";
-import { parsePlayLines, sameTitle, toVodRef } from "../lib/format";
+import { parsePlayLines, sameEpisodeName, sameTitle, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
@@ -114,8 +114,13 @@ export default function PlayerPage({
   const ledgerKey = failoverKey || vodName.trim();
   const failoverStarted = useRef(false);
   /** 已经自动处理过的地址，避免切线路 / 换源之间来回跳转。 */
-  /** 同一轮播放只允许一次「找下一条线路」，防止多个失败信号并发触发。 */
+  /**
+   * 同一轮播放只允许一次「找下一条线路」；后到的失败信号**等**这一次的结果。
+   * `lineSwitchStarted` 是给播放内核看的「有切换在进行」闸门（它只认布尔），
+   * `lineAttempt` 负责去重并把同一次结论返回给所有并发调用方。
+   */
   const lineSwitchStarted = useRef(false);
+  const lineAttempt = useRef<Promise<boolean> | null>(null);
   /**
    * 点播「下一集」控制栏按钮。用 ref 转发：剧集列表异步到达，若把它直接做进
    * 播放内核的 effect 依赖，就会为了一个按钮把正在播的实例整个重建（双声）。
@@ -435,6 +440,7 @@ export default function PlayerPage({
     }
     failoverStarted.current = false;
     lineSwitchStarted.current = false;
+    lineAttempt.current = null;
     // 换源/换集跳转会重建本页，提示通过 sessionStorage 带过来一次。
     // dev 的 React.StrictMode 会把挂载 effect 连跑两次：第一次读走并删掉
     // 提示，第二次就会读到 null。若此时无条件清空，用户永远看不到提示，
@@ -631,93 +637,121 @@ export default function PlayerPage({
    * 真实配置里同一部剧常有多条线路：第一条是「分享页」，第二条才是直链
    * m3u8；也有线路 HTTP 探活 200 但 manifest 永远拉不出来。两条路径
    * （kind=page、HLS 长时间 stalled）都先切同片线路，找不到再跨站换源。
+   *
+   * 顺序是产品口径：**当前源的同一集 → 当前源的其它集 → 跨站换源**。
+   * 同一轮里的失败信号经常前后脚到（HLS fatal 之后紧跟 kind=page），所以
+   * 重复进入时要**等**正在进行的那一次结论，而不是当它「失败」直接跨源。
    */
   const tryNextLine = useCallback(async (): Promise<boolean> => {
-    if (lineSwitchStarted.current) {
-      return false;
+    const inflight = lineAttempt.current;
+    if (inflight) {
+      return inflight;
     }
     lineSwitchStarted.current = true;
-    ledgerMarkUrl(ledgerKey, playUrl);
+    const attempt = (async (): Promise<boolean> => {
+      ledgerMarkUrl(ledgerKey, playUrl);
 
-    // 线路名必须跟着每条剧集一起走：`PAN1-…` / `zijianm3u8-…` 这类地址只有
-    // 交给对应线路的 playerContent 才能变成直链，脱掉线路名就等于把私有 token
-    // 当 URL 解析（实测一次换线路能刷出 11 条 "play url is invalid"，且真正
-    // 可播的线路被整条跳过）。
-    type Candidate = { line: string; episode: { name: string; url: string } };
-    let episodes: Candidate[] = lines.flatMap((line) =>
-      line.episodes.map((episode) => ({ line: line.name, episode })),
-    );
-    if (episodes.length === 0) {
-      try {
-        const detail = await api.detail(siteKey, vodId);
-        const vod = detail[0];
-        if (vod) {
-          episodes = parsePlayLines(
-            vod.vod_play_from,
-            vod.vod_play_url,
-          ).flatMap((line) =>
-            line.episodes.map((episode) => ({ line: line.name, episode })),
-          );
+      // 线路名必须跟着每条剧集一起走：`PAN1-…` / `zijianm3u8-…` 这类地址只有
+      // 交给对应线路的 playerContent 才能变成直链，脱掉线路名就等于把私有 token
+      // 当 URL 解析（实测一次换线路能刷出 11 条 "play url is invalid"，且真正
+      // 可播的线路被整条跳过）。
+      type Candidate = { line: string; episode: { name: string; url: string } };
+      let episodes: Candidate[] = lines.flatMap((line) =>
+        line.episodes.map((episode) => ({ line: line.name, episode })),
+      );
+      if (episodes.length === 0) {
+        try {
+          const detail = await api.detail(siteKey, vodId);
+          const vod = detail[0];
+          if (vod) {
+            episodes = parsePlayLines(
+              vod.vod_play_from,
+              vod.vod_play_url,
+            ).flatMap((line) =>
+              line.episodes.map((episode) => ({ line: line.name, episode })),
+            );
+          }
+        } catch {
+          // 详情拿不到就直接走跨站换源。
         }
-      } catch {
-        // 详情拿不到就直接走跨站换源。
+      }
+
+      // 集名要按「同一集」归一后比较：`第04集` / `第4集` / `EP01` 是同一集，
+      // 只做字符串相等会把它们判成「别的集」，排序退化后竞速就可能切到别的集。
+      const usable = episodes
+        .filter(
+          ({ episode }) =>
+            Boolean(episode.url) && !ledgerHasUrl(ledgerKey, episode.url),
+        )
+        .map(({ line, episode }) => ({
+          line,
+          name: episode.name,
+          url: episode.url,
+          sameEpisode: sameEpisodeName(episode.name, episodeName),
+        }))
+        .sort((a, b) => {
+          if (a.sameEpisode !== b.sameEpisode) {
+            return Number(b.sameEpisode) - Number(a.sameEpisode);
+          }
+          // 同集的不同线路：把最近解码成功的排前面，判过死 token 的排最后。
+          return lineRank(siteKey, a.line) - lineRank(siteKey, b.line);
+        });
+
+      // 阶段一：当前源、当前这一集的不同线路（真正意义上的「换线路」）。
+      // 阶段二：当前源的其它集（源把剧集表切错时也能救回来）。
+      const sameEpisode = usable
+        .filter((item) => item.sameEpisode)
+        .slice(0, 12);
+      const otherEpisodes = usable
+        .filter((item) => !item.sameEpisode)
+        .slice(0, 8);
+      const probe = (item: { line: string; url: string }, signal: AbortSignal) =>
+        probeCandidate(siteKey, item, signal);
+
+      // 并发探活（首个成功即中止其余）：串行时「布布追剧 → 走马上任」第 3 集要
+      // 16 秒才出画，用户以为坏了；现在是最快那条线路的耗时。
+      setSwitchTip("正在尝试同源的其它线路…");
+      let picked = sameEpisode.length
+        ? await firstPlayable(sameEpisode, probe, { concurrency: 4 })
+        : null;
+      if (!picked && otherEpisodes.length) {
+        setSwitchTip("当前源没有同集可播线路，正在尝试其它集…");
+        picked = await firstPlayable(otherEpisodes, probe, { concurrency: 4 });
+      }
+      if (!picked) {
+        return false;
+      }
+      ledgerMarkUrl(ledgerKey, picked.url);
+      ledgerCountSwitch(ledgerKey);
+      markAutoNav();
+      setSwitchTip(`已自动切换到可播放线路「${picked.name}」`);
+      videoRef.current = null;
+      navigate(
+        {
+          name: "player",
+          siteKey,
+          vodId,
+          vodName,
+          episodeName: picked.name,
+          playUrl: picked.url,
+          // 切换后必须保留线路名，否则下一次解析又拿不到 playerContent。
+          playFrom: picked.line,
+          // 同站换线也透传 key：跳转目标页据此知道不是手动点播，不清账。
+          failoverKey: ledgerKey,
+        },
+        true,
+      );
+      return true;
+    })();
+    lineAttempt.current = attempt;
+    try {
+      return await attempt;
+    } finally {
+      lineSwitchStarted.current = false;
+      if (lineAttempt.current === attempt) {
+        lineAttempt.current = null;
       }
     }
-
-    // 先试同名剧集（同一集的不同线路），再退而求其次试其它集。
-    const ordered = [...episodes]
-      .filter(
-        ({ episode }) =>
-          Boolean(episode.url) && !ledgerHasUrl(ledgerKey, episode.url),
-      )
-      .sort((a, b) => {
-        const sameEpisode =
-          Number(b.episode.name === episodeName) -
-          Number(a.episode.name === episodeName);
-        if (sameEpisode !== 0) {
-          return sameEpisode;
-        }
-        // 同集的不同线路：把最近解码成功的排前面，判过死 token 的排最后。
-        return lineRank(siteKey, a.line) - lineRank(siteKey, b.line);
-      })
-      .slice(0, 12)
-      .map(({ line, episode }) => ({
-        line,
-        name: episode.name,
-        url: episode.url,
-      }));
-
-    // 并发探活（首个成功即中止其余）：串行时「布布追剧 → 走马上任」第 3 集要
-    // 16 秒才出画，用户以为坏了；现在是最快那条线路的耗时。
-    const picked = await firstPlayable(
-      ordered,
-      (item, signal) => probeCandidate(siteKey, item, signal),
-      { concurrency: 4 },
-    );
-    if (!picked) {
-      return false;
-    }
-    ledgerMarkUrl(ledgerKey, picked.url);
-    ledgerCountSwitch(ledgerKey);
-    markAutoNav();
-    setSwitchTip(`已自动切换到可播放线路「${picked.name}」`);
-    videoRef.current = null;
-    navigate(
-      {
-        name: "player",
-        siteKey,
-        vodId,
-        vodName,
-        episodeName: picked.name,
-        playUrl: picked.url,
-        // 切换后必须保留线路名，否则下一次解析又拿不到 playerContent。
-        playFrom: picked.line,
-        // 同站换线也透传 key：跳转目标页据此知道不是手动点播，不清账。
-        failoverKey: ledgerKey,
-      },
-      true,
-    );
-    return true;
   }, [
     episodeName,
     lines,
@@ -742,6 +776,8 @@ export default function PlayerPage({
     }
     const switched = await tryNextLine();
     if (!switched) {
+      // 阶段文案要跟上实际行为：先穷尽同源线路，才轮到跨站换源。
+      setSwitchTip("当前源没有可播线路，正在尝试其它源…");
       await tryFailover();
     }
   }, [tryNextLine, tryFailover, ledgerKey]);

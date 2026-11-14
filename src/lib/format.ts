@@ -223,6 +223,33 @@ export function titleMatchScore(
 }
 
 /**
+ * 集名归一：全角转半角、去空白/括号分隔、数字去前导 0、统一小写。
+ *
+ * 同一部剧的同一集在不同线路里写法常常不一样（`第04集` / `第4集` / `EP01` /
+ * `EP1`）。换线时「同集优先」若只做字符串相等，这些线路全被归成「别的集」，
+ * 排序退化后连不是同一集的候选都会一起参与竞速，结果就是切到了别的集。
+ */
+export function normalizeEpisodeName(value: string | null | undefined): string {
+  return String(value ?? "")
+    .replace(/[\uFF01-\uFF5E]/g, (ch) =>
+      String.fromCharCode(ch.charCodeAt(0) - 0xfee0),
+    )
+    .replace(/[\s:：·・\-—_.,，。!！?？\[\]【】()（）]/g, "")
+    .replace(/\d+/g, (digits) => String(Number(digits)))
+    .toLowerCase();
+}
+
+/** 两个集名是否指同一集（正则化后相等）；空集名不认任何一集。 */
+export function sameEpisodeName(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const left = normalizeEpisodeName(a);
+  const right = normalizeEpisodeName(b);
+  return left !== "" && left === right;
+}
+
+/**
  * 按片名相关度稳定排序，返回新数组（不修改入参）。同分保持后端返回顺序，
  * 因此同一站点内部的结果次序不会被打乱。
  */

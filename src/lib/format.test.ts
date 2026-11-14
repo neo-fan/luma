@@ -221,3 +221,21 @@ describe("sameTitle", () => {
     expect(sameTitle(undefined, "今天是太阳雨")).toBe(false);
   });
 });
+
+describe("sameEpisodeName", () => {
+  it("同一集的不同写法视为同一集", async () => {
+    const { sameEpisodeName } = await import("./format");
+    expect(sameEpisodeName("第04集", "第4集")).toBe(true);
+    expect(sameEpisodeName("EP01", "ep1")).toBe(true);
+    expect(sameEpisodeName("第 4 集", "第4集")).toBe(true);
+    expect(sameEpisodeName("第４集", "第4集")).toBe(true);
+    expect(sameEpisodeName("04", "4")).toBe(true);
+  });
+
+  it("不同集 / 空集名不认同一集", async () => {
+    const { sameEpisodeName } = await import("./format");
+    expect(sameEpisodeName("第4集", "第5集")).toBe(false);
+    expect(sameEpisodeName("", "")).toBe(false);
+    expect(sameEpisodeName(undefined, "第4集")).toBe(false);
+  });
+});
