@@ -16,9 +16,9 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 
 | 项 | 值 |
 |---|---|
-| 版本 | `1.0.1`（`package.json` 唯一来源；同步清单见 `docs/RELEASING.md` §1） |
+| 版本 | `1.0.2`（`package.json` 唯一来源；同步清单见 `docs/RELEASING.md` §1） |
 | 交付物 | `src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe` |
-| 回归基线 | `python tools/check.py` 7/7；`pnpm test` 326；`cargo test --lib` 116 passed / 1 ignored |
+| 回归基线 | `python tools/check.py` 8/8；`pnpm test` 326；`cargo test --lib` 117 passed / 1 ignored |
 | 窗口探针 | `node tools/run_probes.mjs --list`（需要 debug 窗口 + CDP 9222） |
 | 发布状态 | **本地私有，暂不发布**：无 remote、未 push；`LICENSE` 是占位（All rights reserved），不要当成已开源 |
 
@@ -81,7 +81,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 
 ```powershell
 # 离线回归（无窗口、无外网；改动的最低门槛）
-python tools/check.py                 # 7 项：契约 / py 兼容 / py 框架 / py 语法 / 前端单测 / cargo test / 运行时候检
+python tools/check.py                 # 8 项：契约 / py 兼容 / py 框架 / 适配层车道 / py 语法 / 前端单测 / cargo test / 运行时候检
 python tools/check.py --quick         # 跳过 cargo test
 python tools/check.py --full          # 追加 pnpm build
 python tools/check.py --ci            # 干净机器可跑的便携子集（CI job "checks"）

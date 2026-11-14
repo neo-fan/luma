@@ -4,6 +4,26 @@
 
 ---
 
+## [1.0.2] — 2026-11-14
+
+补丁版。修掉「导入配置偶发 15 秒超时」，并让这类故障以后能被复盘。
+
+### 修复
+
+- **导入报 `python adapter config.decrypt exceeded 15000ms`**：这行字是宿主对 sidecar 的单次墙钟（15s）到期，不是解密失败 —— 同一份 `box.json` 实测解密 7ms、归一化 3ms。根因是 Python 适配层只有一条 8 线程 FIFO 队列，`config.*` 与 `spider.py` 共用：一次 `spider.py` 能占住 worker 到子进程结束（最长 15s），导入就排在它后面一路等满 15s，字面却像「解密花了 15 秒」。现在 `config.*` / `ping` 走独立车道（2 线程），导入不再排在爬虫调用后面。
+- **导入预算与爬虫预算分离**：`config.decrypt` / `config.normalize` / `config.mergeRepos` 使用独立的 30s 预算（`CONFIG_CALL_TIMEOUT`），不再与单站请求共用 15s。
+- **超时不再留下继续跑的调用**：宿主放弃某次调用时补发 `__cancel__`，避免 sidecar worker 白跑、用户重试排在它后面。
+- **坏帧不再静默丢弃**：帧解析失败时，只要还能从残帧里捞出 `id`，适配层就回一帧 `malformed frame` 错误帧，而不是让宿主干等 15s（静默丢正是「超时」伪装成「慢」的另一条路径）。
+
+### 工程
+
+- 新增 `tests/e2e/adapter_isolation.py` 并接入 `tools/check.py`（回归基线 7/7 → **8/8**）：占满 8 个爬虫 worker 后 `config.decrypt` / `ping` 必须立即返回；坏帧必须回错误帧；每次 `config.*` 必须落一条 `adapter_latency`。
+- 诊断补齐：`config.decrypt` 在 `luma-*.log` 记 `bytes` / `took_ms` / `ok`；适配层日志记 `adapter_latency`（耗时 + 字节数）与 `bad_frame` —— 1.0.1 那种「只有一句超时、没有耗时」的现场以后可复盘。
+- 版本号五处同步至 `1.0.2`（`package.json` 为唯一来源）。
+- 构建产物：官方 `tauri build` 产出 `src-tauri/target/release/bundle/nsis/Luma_1.0.2_x64-setup.exe`（**38.75 MiB** / 40,629,359 字节；`luma.exe` 7.83 MB，内含 `1.0.2` / `dev.luma.desktop` 与应用 chunk `usePlayerEngine`）。比 1.0.1 的 40.48 MiB 小 1.73 MiB，主因是 `Luma.exe` 18.10 → 7.83 MB：1.0.1 的安装器构建于 `d9a4994`（release profile 对齐官方 App Size 建议）之前，1.0.2 是首个吃到 `lto = true` / `opt-level = "s"` / `panic = "abort"` 的发行包。体积口径见 `docs/size-report.md`。
+
+---
+
 ## [1.0.1] — 2026-11-14
 
 补丁版。修复正式版发布当日发现的一个 GUI 体验缺陷。
