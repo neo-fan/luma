@@ -45,14 +45,13 @@
        1. flex 行里的封面必须 `align-self: flex-start`——默认 stretch 会把高度
           拉到同列最高，aspect-ratio 直接失效，海报就被拉成长条；
        2. 容器写 aspect-ratio，不写死 height；宽高由同一个变量推导；
-       3. 网格卡片只在 220~260 之间变化（浏览密度），绝不无限拉伸。
-     场景：详情页主视觉 210 / 播放页信息卡 132 / 空态识别 150 / 网格 220~260。 */
+       3. 网格卡片宽度只设下限，列数随可用宽度自动增加，不会无限拉伸。
+     场景：详情页主视觉 210 / 播放页信息卡 132 / 空态识别 150 / 网格 ≥200。 */
   --cover-ratio: 2 / 3;
   --cover-w-hero: 210px;
   --cover-w-player: 132px;
   --cover-w-empty: 150px;
-  --cover-w-grid-min: 220px;
-  --cover-w-grid-max: 260px;
+  --cover-w-grid-min: 200px;
 
   --border: #232326;
   --border-strong: #35353a;
@@ -2069,11 +2068,11 @@ textarea {
 
 .vod-grid {
   display: grid;
-  /* 封面不是弹性素材：列宽在 220~260 之间，宽屏只增加列数、不拉伸海报。 */
-  grid-template-columns: repeat(
-    auto-fill,
-    minmax(var(--cover-w-grid-min), var(--cover-w-grid-max))
-  );
+  /* 列宽只设下限、上限交给可用宽度均分（1fr）：列数按 `min + 列距` 自动增加，
+   * 所以卡片始终落在 200~215px 之间，不会无限拉伸；行尾也不会再剩几十像素死角。
+   * 之前写死 max 260px 时，1440 窗口扣掉滚动条后只放得下 4 列，
+   * 右侧白白空出约 80px（2026-11-14 用户截图指出的空隙）。 */
+  grid-template-columns: repeat(auto-fill, minmax(var(--cover-w-grid-min), 1fr));
   /* 宽屏提密度：列距收窄到 14px，行距保持 24px 与纵向呼吸一致 */
   gap: 24px 14px;
 }
@@ -2085,13 +2084,14 @@ textarea {
  * `loading="lazy"` 的图片会按错误位置判定「是否已进入视口」——视口内的图被判为
  * 「还没到」而不加载，用户看到的就是滚动时大片灰块；同时滚动条长度随真实高度
  * 二次渲染而跳动（实测 scrollH 波动 129px）。
- * 真实卡高 = 海报 2:3 比例（240px 宽时 360px）+ 标题行 ≈ 418px。
- * 用 `auto 418px`：418px 是首次占位，`auto` 让浏览器记住上次渲染的真实尺寸，
+ * 真实卡高 = 海报 2:3 比例（列宽约 222px 时 333px）+ 标题行 ≈ 363px。
+ * 用 `auto 364px`：364px 是首次占位，`auto` 让浏览器记住上次渲染的真实尺寸，
  * 标题换行/副标题出现时高度不同也能自适应。
- * 修正后实测：4 屏视口 pending 合计 29 → 0，scrollH 波动 129px → 0px。 */
+ * 修正后实测：4 屏视口 pending 合计 29 → 0，scrollH 波动 129px → 0px。
+ * 列宽随窗口变化时卡高也变，这个值只是首帧占位，`auto` 会立刻接管。 */
 .vod-grid > * {
   content-visibility: auto;
-  contain-intrinsic-size: auto 418px;
+  contain-intrinsic-size: auto 364px;
 }
 
 .vod-card {
@@ -2450,10 +2450,7 @@ textarea {
  * 扫光复用 vod-skeleton 关键帧（封面加载中那套）。 */
 .sk-grid {
   display: grid;
-  grid-template-columns: repeat(
-    auto-fill,
-    minmax(var(--cover-w-grid-min), var(--cover-w-grid-max))
-  );
+  grid-template-columns: repeat(auto-fill, minmax(var(--cover-w-grid-min), 1fr));
   gap: 24px 14px;
 }
 
