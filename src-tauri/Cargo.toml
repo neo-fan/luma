@@ -56,7 +56,16 @@ windows = { version = "0.58", features = [
 webview2-com = "0.39"
 windows062 = { package = "windows", version = "0.62", features = ["Win32_Foundation"] }
 
+# Official Tauri profile guidance (https://v2.tauri.app/concept/size/#cargo-configuration).
+# Keep these in sync with upstream: `tauri dev` builds the dev profile, `tauri build`
+# builds the release profile. Do not add project-specific tweaks here — anything we
+# need beyond this belongs in tauri.conf.json.
+[profile.dev]
+incremental = true          # Compile the binary in smaller steps.
+
 [profile.release]
-# Portable zip target is <= 45 MB. Strip debug symbols from the release exe;
-# debug builds are unaffected. Disable if you need symbolized release stacks.
-strip = "symbols"
+codegen-units = 1           # Better LLVM optimization.
+lto = true                  # Link-time optimization.
+opt-level = "s"             # Size first; use 3 if runtime speed ever regresses.
+panic = "abort"             # Drop panic unwinding.
+strip = true                # Strip symbols.
