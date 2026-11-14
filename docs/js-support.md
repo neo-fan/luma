@@ -2,7 +2,7 @@
 
 > 适用对象：Luma（TVBox 桌面端）的 QuickJS ESM 模块加载链路。
 > 资源基线：上游仓库 `cluntop/tvbox` 固定提交 `a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8`。
-> 文档状态：本轮按约定**停在 debug 联调、不打包**；便携包实机验证尚未执行，详见第 6 节。
+> 文档状态：本轮按约定**停在 debug 联调、不打包**；交付包实机验证尚未执行，详见第 6 节。
 > 编码约定：本文件 UTF-8 无 BOM、LF 换行。
 
 ---
@@ -28,7 +28,7 @@ FongMi/TV 的 JS 爬虫引擎使用 **QuickJS**，源码不是当普通 classic 
 服务器目录。它映射到客户端随包携带的本地目录：
 
 ```
-sidecars/qjs-assets/js/lib/     （发布到便携包后为 <APP_DIR>/sidecars/qjs-assets/js/lib/）
+sidecars/qjs-assets/js/lib/     （经 `bundle.resources` 打包后为 <APP_DIR>/sidecars/qjs-assets/js/lib/）
 ```
 
 也就是说 `import $ from "assets://js/lib/cheerio.min.js"` 取的是**客户端内置的 JS 依赖文件**，
@@ -212,15 +212,14 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 刻意保留为“薄适配”的部分：`HOST_JS` 垫片、导出发现、长短名映射 —— 它们只做 TVBox 语义翻译，
 没有通用库可替代；但一旦涉及协议/编码/解析，就交给上面的库。
 
-### 4.4 便携包落点（与 `tools/make_portable.py` 对应）
+### 4.4 随包落点（与 `tauri build` 的 `bundle.resources` / `bundle.externalBin` 对应）
 
 `src-tauri` 侧 `resolve_runner()` 的查找顺序为：`QJS_RUNNER` 环境变量 → **exe 同目录** →
-编译期 `source_root` 下 `sidecars/qjs-runner/target/{release,debug}`。便携包分发到别的机器后
-编译期绝对路径失效，故 `make_portable.py` 把可执行文件复制到两处：
+编译期 `source_root` 下 `sidecars/qjs-runner/target/{release,debug}`。安装版分发到别的机器后
+编译期绝对路径失效，故 `tauri build` 经 `bundle.externalBin` 把可执行文件落到 exe 同目录（首选命中点）：
 
 ```
-<APP_DIR>/qjs-runner.exe                         # exe 同目录，运行时首选命中点
-<APP_DIR>/sidecars/qjs-runner/qjs-runner.exe     # resource_dir 布局副本
+<APP_DIR>/qjs-runner.exe                         # exe 同目录，运行时首选命中点（bundle.externalBin 落地）
 ```
 
 候选源优先级：`src-tauri/binaries/qjs-runner-x86_64-pc-windows-msvc.exe`（由
@@ -276,7 +275,7 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 
 结论：模块加载 / ESM 求值 / 导出发现 / 短名派发 / 返回归一化这条链路在离线与真实窗口下都
 已打通；drpy2 的「空 class」来自上游规则文件缺失与 `initEnv` polyfill 不完整，不是加载器
-缺陷。**没有**声称全量 JS 站点可用，也**没有**做便携包实机验证。
+缺陷。**没有**声称全量 JS 站点可用，也**没有**做交付包实机验证。
 
 ### 5.4 `/proxy?do=js` 接通（2026-11-12，D1）
 
@@ -383,8 +382,8 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 验收：`p1.py --adapter` **23/23**（新增 `bundled engine + dead api`）；`cargo test --lib`
 **87 passed / 1 ignored**（新增 3 条单测 + 1 条 `#[ignore]` 联网手工验证）；`pnpm test` 145/145。
 
-**没做**：便携包实机验证（按约定停在 debug）。`make_portable.py` 是整目录复制
-`sidecars/qjs-assets`，新文件自动随包，但未实际组装 zip 验证。
+**没做**：交付包实机验证（按约定停在 debug）。`tauri build` 经 `bundle.resources` 整目录打包
+`sidecars/qjs-assets`，新文件自动随包，但未实际安装验证。
 
 
 ---
@@ -398,9 +397,7 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
    边界**不硬编码规则**，报告里如实标注即可。
 3. **当前 FongMi class-based `Spider` 规范**：现只做 `new Spider(ext)` 的粗粒度兼容，新版
    class-based 规范（构造参数、`init` 时机、方法签名）尚未逐条对齐。
-4. **便携包实机验证**：本轮按约定**停在 debug、不打包**；`make_portable.py` 的新复制项
-   （`qjs-assets` 整目录 + `qjs-runner.exe` 两处落点）只做了脚本级检查，需下一轮实际组装
-   便携 zip 并在干净机器上跑一遍 JS 源。
+4. **交付包实机验证**：本轮按约定**停在 debug、不打包**；随包资源（`qjs-assets` 整目录 + `qjs-runner.exe` 经 `bundle.resources` / `bundle.externalBin` 落地）只做了脚本级检查，需下一轮实际 `tauri build` 安装并在干净机器上跑一遍 JS 源。
 
 ---
 
@@ -420,7 +417,7 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 
 | 文件 | 改动 |
 |------|------|
-| `tools/make_portable.py` | `prepare_app_dir()` 复制 `sidecars/qjs-assets` 整目录；新增 `copy_qjs_runner()` 按优先级复制可执行文件到 exe 同目录与 `sidecars/qjs-runner/qjs-runner.exe`；源缺失只 warn；`report()` 目录清单加入这两项；文件头 Layout 注释补充落点说明 |
+| `src-tauri/tauri.conf.json` | `bundle.resources` 打包 `sidecars/qjs-assets` 整目录；`bundle.externalBin` 登记 `binaries/qjs-runner`（构建期落 `qjs-runner-<triple>.exe` 到安装根）；落点说明见 §4.4 |
 | `tools/prepare_runtime.py` | 新增 `step_qjs_assets()`（校验 8 文件齐全 + 可选按 `manifest.json` 校验字节数/SHA256，缺文件给「重新运行资源下载脚本」提示，纯离线）；挂进 `main()` 的 `--check` 与全量调用链、体积汇总；新增 `--skip-qjs-sha`；步骤编号 3→4 |
 | `.gitignore` | 新增「随包 JS 依赖资源（入库源码资源）」段落，与「随包运行时产物」段落明确区分，并显式声明 `sidecars/qjs-assets/` 不得排除（已用 `git check-ignore` 复核未被忽略） |
 | `docs/js-support.md` | 本文件 |

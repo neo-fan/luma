@@ -11,3 +11,6 @@ tests/fixtures/media/** binary
 # 随包 JS 依赖是上游原样文件：SHA256 必须与 manifest.json 一致，
 # 因此禁止换行规范化（crypto-js.js 等本身就是 CRLF）。
 sidecars/qjs-assets/** -text
+
+# NSIS 安装器品牌位图是二进制，禁止任何换行/编码规范化。
+src-tauri/icons/*.bmp binary

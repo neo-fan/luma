@@ -304,7 +304,7 @@ def step_python_deps(force: bool = False) -> bool:
     官方 embeddable zip 不含任何第三方库，且 `step_python --force` 会清空
     整个 PY_DIR 重新解压；若不在这里装回，瓜子/苹果/枫叶等源就会报
     `No module named 'Crypto'`。依赖清单固定在 tools/python-requirements.txt，
-    保证 dev 与便携版跑同一份解释器、同一批库。
+    保证 dev 与安装交付版跑同一份解释器、同一批库。
     """
     py_exe = PY_DIR / "python.exe"
     if not py_exe.is_file():

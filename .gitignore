@@ -36,7 +36,8 @@ src-tauri/gen/
 #    qjs-runner 是独立 crate，Cargo 会在自己目录产出 target/（prepare_runtime.py
 #    依赖该路径取 qjs-runner.exe，故只是忽略、不挪位置）。将来新增独立 crate 同理。
 sidecars/qjs-runner/target/
-# ③ 交付包：tools/make_portable.py 组装的便携版目录与 zip（有意偏离标准 bundle/）
+# ③ 交付包：官方 `tauri build` 产出到 src-tauri/target/release/bundle/（已被
+#    src-tauri/target/ 规则覆盖）；release/ 为旧便携版历史产物目录，已废弃。
 release/
 
 # ---- 依赖 / 本地环境 / 缓存 ----
@@ -81,3 +82,7 @@ Thumbs.db
 .workbuddy/ui-audit/
 .workbuddy/ui-audit-verify/
 .workbuddy/shots/
+
+# CodeGraph 本地索引：`.codegraph/`（SQLite 库 + 日志）由 `codegraph init/index`
+# 按当前工作树重建，本机实测 25.7 MB，属可重建产物，绝不入库。
+.codegraph/

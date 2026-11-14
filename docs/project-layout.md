@@ -20,17 +20,15 @@ project-root/
     └── target/                ② Rust 产物（Cargo 默认；debug/ release/ bundle/）
 ```
 
-本项目**完全对齐**上述骨架，仅一处有意偏离：
-
-- 交付形态是**解压即用的便携版 zip**（用户明确不要安装包），由 `tools/make_portable.py` 把 exe + 随包 sidecars + data 模板组装到根目录 `release/portable/Luma/` 并打包 `release/Luma-<ver>-portable.zip`。标准 Tauri 的 `src-tauri/target/release/bundle/` 面向安装包，不适用本场景。故**第 ③ 类产物 = 根目录 `release/`**，与 ①② 一样整目录 gitignore。
+本项目**完全对齐**标准 Tauri v2 骨架：前端 `dist/`、Rust `src-tauri/target/`、交付包走 Tauri 官方 `src-tauri/target/release/bundle/`。构建与打包**全部用官方 `tauri build`**，不手搓。交付形态为 **NSIS 安装器**（用户决定先出安装版、跟随官方），由 `tauri.conf.json` 的 `bundle.targets` 控制；随包运行时（JRE / python-embed / qjs-runner 二进制）经 `bundle.resources` / `bundle.externalBin` 打包，源文件由 `tools/prepare_runtime.py` 准备好（这一步是项目特有，不是轮子）。
 
 三类产物统一归口（`AGENTS.md`「常用命令」给重建命令）：
 
 | 产物 | 唯一位置 | 生成命令 | 是否入库 |
 |---|---|---|---|
-| ① 前端 | `dist/` | `corepack pnpm build` | 否 |
-| ② Rust | `src-tauri/target/` | `cargo build` / `pnpm tauri dev` | 否 |
-| ③ 交付包 | `release/` | `python tools/make_portable.py` | 否 |
+| ① 前端 | `dist/` | `corepack pnpm build`（经 `tauri build` 自动调用） | 否 |
+| ② Rust | `src-tauri/target/` | `cargo build` / `pnpm tauri dev` / `pnpm tauri build` | 否 |
+| ③ 交付包 | `src-tauri/target/release/bundle/nsis/*.exe` | `corepack pnpm tauri build`（官方） | 否 |
 
 **注意**：根 `target/` 不会出现（本项目非 Cargo workspace，crate 根在 `src-tauri/`）。此外 `sidecars/qjs-runner/` 是**独立 Cargo crate**，Cargo 会在它自己目录产出 `target/`（`prepare_runtime.py` 依赖 `sidecars/qjs-runner/target/release/qjs-runner.exe`，故只是忽略、不挪位置）；将来新增独立 crate 同理，把其 `target/` 加入 `.gitignore`。所有 Cargo 产物统一原则 = **一律 gitignore，不入库**。
 
@@ -46,7 +44,7 @@ tvbox/
 ├── tsconfig.json / vite.config.ts         # 构建配置（dev 端口 1420）
 ├── index.html  public/                    # 前端入口与静态资源（含 icon.svg）
 ├── dist/                                  # [产物] ① 前端，gitignore
-├── release/                               # [产物] ③ 便携版目录与 zip，gitignore
+├── src-tauri/target/release/bundle/        # [产物] ③ NSIS 安装器，gitignore
 ├── .workbuddy/                            # 工具侧本地上下文（memory/ 入库，其余按规则忽略）
 │
 ├── docs/
@@ -85,10 +83,10 @@ tvbox/
 │
 ├── src-tauri/
 │   ├── Cargo.toml / Cargo.lock  build.rs
-│   ├── tauri.conf.json                    # frontendDist=../dist、window、bundle.targets 置空
+│   ├── tauri.conf.json                    # frontendDist=../dist、window、bundle.targets=["nsis"]
 │   ├── capabilities/default.json          # 权限白名单（只授 main 窗口）
 │   ├── icons/                             # 各尺寸 ICO/PNG
-│   ├── binaries/                          # [产物] externalBin 暂存，gitignore（当前未在 conf 登记）
+│   ├── binaries/                          # [产物] externalBin 暂存（qjs-runner-<triple>.exe），gitignore
 │   └── src/
 │       ├── main.rs                        # 只调 luma_lib::run()
 │       ├── lib.rs                         # #[path] 分层映射 + run() + 37 个 command 注册
@@ -118,8 +116,6 @@ tvbox/
 └── tools/                                 # 离线辅助脚本（不参与构建）
     ├── prepare_runtime.py                 # 重建 jre/python-embed 等产物；含 Python 依赖安装 + .pth 修正
     ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
-    ├── make_portable.py                   # 组装便携版 → release/
-    ├── build_icons.py                     # 生成图标
     ├── javap_conserve.py                  # jar 符号守恒检查（T-20）
     └── probe_*.mjs / diag_*.mjs / audit_*.mjs / verify_*.mjs / run_probes.mjs   # CDP 窗口探针与一键回归
 ```
@@ -148,7 +144,7 @@ tvbox/
 | sidecar 源码 | `sidecars/{py,java,qjs-runner}/` | 入库；二进制产物目录见 §1 |
 | 验收脚本与 stub | `tests/e2e/`、`tools/probe_*.mjs` | 分阶段断言 + CDP 窗口探针 |
 | 前端单测 | 纯函数放被测模块同目录 `*.test.ts`；跨模块契约放 `tests/frontend/` | 两种位置各司其职，跨模块契约不塞回 `src/` |
-| 离线工具 | `tools/` | 不参与构建、不发网络请求的开发辅助脚本（`prepare_runtime.py` / `make_portable.py` 例外，参与打包） |
+| 离线工具 | `tools/` | 不参与构建、不发网络请求的开发辅助脚本（`prepare_runtime.py` 例外，参与随包运行时准备） |
 | 机制说明与专项报告 | `docs/`，文件名 ASCII kebab | 如 `js-support.md`、`site-compat-report.md`；结论性长文不写进 `AGENTS.md`，只在其中留摘要与指针 |
 
 ## 5. 编码约定
@@ -173,7 +169,7 @@ tvbox/
 | 目录 / 文件 | 原因 |
 |---|---|
 | `tests/fixtures/manual/`、`docs/verification-config.md` | 真实配置样本与抓取记录，含外部地址，规格书禁止内置 |
-| `dist/`、`src-tauri/target/`、`release/` | 三类编译/交付产物，均可重建（见 §1） |
+| `dist/`、`src-tauri/target/`、`src-tauri/target/release/bundle/` | 三类编译/交付产物，均可重建（见 §1） |
 | `src-tauri/gen/` | Tauri 生成的 schema 与中间产物 |
 | `sidecars/{jre,python-embed,mpv}/`、`src-tauri/binaries/` | 随包运行时/二进制产物，由 `prepare_runtime.py` 重建 |
 | `node_modules/` | 前端依赖，由 pnpm 锁文件重建 |

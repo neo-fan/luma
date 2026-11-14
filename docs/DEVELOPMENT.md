@@ -34,7 +34,7 @@ python tools/prepare_runtime.py            # jlink JRE + python-embed + external
 ```
 
 运行时产物（JRE / python-embed / binaries）**不入库**，统一由 `prepare_runtime.py` 重建。
-dev 与便携版统一用随包 `sidecars/python-embed/python.exe`（`bridge.rs::embedded_python` 自动探测，无需设环境变量）。
+dev 与安装交付版统一用随包 `sidecars/python-embed/python.exe`（`bridge.rs::embedded_python` 自动探测，无需设环境变量）。
 
 ## 2. 日常开发
 
@@ -46,7 +46,7 @@ cargo check  --manifest-path src-tauri/Cargo.toml
 cargo test   --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-**交付节奏**（用户约定）：改完**停在 debug 模式**确认即可，**不要每次 `cargo build --release` + `make_portable.py` 打包**；release 编译 + 打包约 3~4 分钟、反馈回路过长，只在用户明确要求或发版时打。
+**交付节奏**（用户约定）：改完**停在 debug 模式**（`pnpm tauri dev`）确认即可，**不要每次都 `tauri build` 打包**；`tauri build` 编译 + 打包约 3~4 分钟、反馈回路过长，只在用户明确要求或发版时打。发版统一用官方 `tauri build`，不手搓打包脚本。
 
 ## 3. 四端调试
 
@@ -106,10 +106,10 @@ $env:PATH    = "$vc\bin\Hostx64\x64;$sdk\bin\10.0.26100.0\x64;$env:PATH"   # 必
 
 ```powershell
 $env:LUMA_LOG = "debug"     # 重启后生效；排查 sidecar / 聚合细节用
-$env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（便携版实测 ping ok）
+$env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（安装版实测 ping ok）
 ```
 
-- 位置：便携版 `data/logs/luma-YYYY-MM-DD.log`；dev/安装模式 `%APPDATA%\Luma\logs\`，每天一个文件保留 7 天。
+- 位置：dev/安装模式 `%APPDATA%\Luma\logs\luma-YYYY-MM-DD.log`；便携模式（exe 同级 `data/`）为 `data/logs\`。每天一个文件保留 7 天。
 - 内容：启动摘要、前端关键操作、IPC 错误、未捕获异常；URL 只记 `scheme+host+path`，查询参数与播放直链不落盘。
 - 反馈：设置页「复制诊断信息」（含版本/平台/目录/配置规模/日志列表 JSON）+「打开日志目录」。
 
@@ -171,7 +171,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 
 ## 8. 相关文档
 
-- `README.md` —— 构建 / 测试 / 环境变量 / 日志与诊断 / 运行（便携版）
+- `README.md` —— 构建 / 测试 / 环境变量 / 日志与诊断 / 运行（安装版 + 便携模式）
 - `AGENTS.md` —— 规范与决策（「常用命令」「开发约定」两节）；逐轮记录已迁 `docs/log/`
 - `docs/ARCHITECTURE.md` —— 进程模型 / 四类源 / 数据流 / 分层 / ADR
 - `docs/MAINTENANCE.md` —— 契约变更、依赖升级、回归分层、工程债

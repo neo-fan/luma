@@ -115,10 +115,10 @@ src/types/tvbox.ts  归一化契约 TS 侧
 |---|---|---|---|
 | ① 前端 | `dist/` | `corepack pnpm build` | 否 |
 | ② Rust | `src-tauri/target/` | `cargo build` / `pnpm tauri dev` | 否 |
-| ③ 交付包 | `release/portable/Luma/` + zip | `python tools/make_portable.py` | 否 |
+| ③ 交付包 | `src-tauri/target/release/bundle/nsis/*.exe` | `corepack pnpm tauri build`（官方） | 否 |
 
-- 运行时产物（JRE / python-embed / qjs-runner / mpv）**不入库**，由 `tools/prepare_runtime.py` 重建。
-- 交付形态：**解压即用便携版 zip**（不做安装包），`exe` 同级 `data/` 优先、`sidecars/`。
+- 运行时产物（JRE / python-embed / qjs-runner 二进制）**不入库**，由 `tools/prepare_runtime.py` 重建后由 `tauri build` 经 `bundle.resources` / `bundle.externalBin` 打包。
+- 交付形态：**官方 NSIS 安装器**（`tauri build` 产出），`data/` 优先 `exe` 同级、`sidecars/` 来自资源目录。
 
 ## 11. 硬边界（不可逾越）
 

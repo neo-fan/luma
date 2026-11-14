@@ -31,6 +31,7 @@
   },
   "bundle": {
     "active": true,
+    "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -38,6 +39,29 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "targets": []
+    "shortDescription": "TVBox 配置兼容桌面客户端",
+    "longDescription": "Luma 是 TVBox 配置的桌面播放客户端，支持 CMS / Python / JS 源、直播与本地 ArtPlayer 播放。",
+    "publisher": "Luma",
+    "category": "Utility",
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false
+      }
+    },
+    "resources": {
+      "../sidecars/py": "sidecars/py",
+      "../sidecars/python-embed": "sidecars/python-embed",
+      "../sidecars/jre": "sidecars/jre",
+      "../sidecars/java": "sidecars/java",
+      "../sidecars/qjs-assets": "sidecars/qjs-assets"
+    },
+    "externalBin": [
+      "binaries/qjs-runner"
+    ]
   }
 }

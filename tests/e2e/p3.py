@@ -15,12 +15,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
 import urllib.request
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,8 +35,7 @@ def conf_version() -> str:
         return "0.0.0"
 
 
-PORTABLE_ZIP = ROOT / "release" / f"Luma-{conf_version()}-portable.zip"
-PORTABLE_DIR = ROOT / "release" / "portable" / "Luma"
+NSIS_INSTALLER = ROOT / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"Luma_{conf_version()}_x64-setup.exe"
 SIZE_REPORT = ROOT / "docs" / "size-report.md"
 README = ROOT / "README.md"
 
@@ -116,38 +113,19 @@ def t29_t30_phase() -> None:
 def t32_phase() -> None:
     conf = json.loads(TAURI_CONF.read_text(encoding="utf-8"))
     bundle = conf.get("bundle", {})
-    # The deliverable is a portable folder/zip, so no installer target is built.
-    check(bundle.get("targets") == [], "T-32 portable", "installer targets disabled")
-    check(SIZE_REPORT.is_file(), "T-32 portable", "docs/size-report.md exists")
+    # The deliverable is the official NSIS installer built by `tauri build`.
+    check(bundle.get("targets") == ["nsis"], "T-32 installer", "bundle.targets == [nsis]")
+    check(SIZE_REPORT.is_file(), "T-32 installer", "docs/size-report.md exists")
 
-    if not PORTABLE_ZIP.is_file():
-        check(False, "T-32 portable", "portable zip built",
-              "run `python tools/make_portable.py`")
+    if not NSIS_INSTALLER.is_file():
+        check(False, "T-32 installer", "NSIS installer built",
+              "run `corepack pnpm tauri build`")
         return
 
-    size_mb = PORTABLE_ZIP.stat().st_size / (1024 * 1024)
-    check(size_mb <= 45, "T-32 portable", "zip <= 45MB", f"{size_mb:.2f}MB")
-    with zipfile.ZipFile(PORTABLE_ZIP) as archive:
-        names = archive.namelist()
-    for required in (
-        "Luma.exe",
-        "sidecars/py/main.py",
-        "sidecars/java/runner.jar",
-        "sidecars/jre/bin/java.exe",
-        "sidecars/python-embed/python.exe",
-    ):
-        check(any(name.endswith(required) for name in names), "T-32 portable",
-              f"zip contains {required}")
-    check(any(name.endswith("data/.keep") for name in names), "T-32 portable",
-          "zip contains portable data dir")
-    # The self-check proves the packaged layout actually resolves its sidecars.
-    selfcheck = PORTABLE_DIR / "data" / "selfcheck.log"
-    if selfcheck.is_file():
-        text = selfcheck.read_text(encoding="utf-8", errors="replace")
-        check("ping ok" in text, "T-32 portable", "portable self-check ping", text.strip()[:80])
-    else:
-        record("T-32 portable", "portable self-check ping", "N/A",
-               "run the folder once with LUMA_SELFCHECK=1")
+    size_mb = NSIS_INSTALLER.stat().st_size / (1024 * 1024)
+    check(30 <= size_mb <= 130, "T-32 installer", "installer 30~130MB", f"{size_mb:.2f}MB")
+    record("T-32 installer", "frontend embedded", "N/A",
+           "proven by `tauri build` log + GUI smoke (LZMA-compressed payload)")
 
 
 def t33_phase() -> None:

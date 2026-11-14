@@ -33,7 +33,7 @@ src-tauri/src/           Rust 宿主（infra/ 底座与 domain/ 业务，用 #[p
 sidecars/                Python 适配层 · Java SpiderRunner · qjs-runner（JS）· 随包 python-embed/jre
 contracts/               归一化契约唯一真源（TS / Rust / Python 三端由 tests/e2e/contract_check.py 校验）
 tests/                   e2e 阶段断言（p0~p3）· 离线兼容检查 · 前端单测
-tools/                   构建脚本（prepare_runtime / make_portable）+ CDP 探针
+tools/                   运行时准备（prepare_runtime）+ 离线回归（check.py）+ CDP 探针
 docs/                    需求基线、目录约定、JSON 源支持与兼容性报告、任务记录
 ```
 
@@ -52,32 +52,28 @@ docs/                    需求基线、目录约定、JSON 源支持与兼容�
 
 ```powershell
 corepack pnpm install
-corepack pnpm tauri dev                     # 开发
-python tools/make_portable.py               # 绿色版：release/portable + zip
-python tools/make_portable.py --with-mpv    # 连 mpv 一起打（体积 +40MB）
-python tools/build_icons.py                 # 重生成全套应用图标（需 Pillow）
-node tools/bundle_report.mjs               # 构建产物体积 / gzip 报告
+corepack pnpm tauri dev                     # 开发（官方热重载 + CDP 9222）
+python tools/prepare_runtime.py             # 首次构建前：重建随包运行时（JRE / python-embed / qjs-runner 二进制）
+corepack pnpm tauri build                   # 发版：自动 pnpm build + cargo build + 嵌入前端 + 打包 NSIS 安装器
 ```
+
+> 打包与构建**只用官方 `tauri build`**，不手搓。Tauri 只负责嵌入前端与打包，随包运行时（JRE / Python embeddable / qjs-runner）需先用 `prepare_runtime.py` 准备好——这是项目特有的，不是重新造轮子。图标用官方 `corepack pnpm tauri icon` 重生成。
 
 ## 品牌资源
 
-产品名 **Luma**，图标是深墨圆角底 + 细圆环 + 蓝紫渐变播放三角。`tools/build_icons.py` 从同一套几何常量生成 `src-tauri/icons/` 下的 ICO（16~256）与各尺寸 PNG、以及前端用的 `public/icon.svg`；修改品牌色时同步 `src/styles.css` 的 `--accent` / `--accent-2`。`tauri.conf.json` 的 `identifier` 为 `dev.luma.desktop`。本产品尚未发布过旧版本，首次启动直接创建空数据库，无需任何数据迁移。
+产品名 **Luma**，图标是深墨圆角底 + 细圆环 + 蓝紫渐变播放三角。图标用官方 `corepack pnpm tauri icon icon.svg` 重生成 `src-tauri/icons/` 下全套 ICO/PNG；修改品牌色时同步 `src/styles.css` 的 `--accent` / `--accent-2`。`tauri.conf.json` 的 `identifier` 为 `dev.luma.desktop`。本产品尚未发布过旧版本，首次启动直接创建空数据库，无需任何数据迁移。
 
 产物：
 
-- `release/portable/Luma/` —— 解压即用的文件夹；
-- `release/Luma-1.0.0-portable.zip` —— 分发包（体积实测见 `docs/size-report.md`）。
+- `src-tauri/target/release/bundle/nsis/Luma_1.0.0_x64-setup.exe` —— 官方 NSIS 安装器（双击安装，写入开始菜单 / 卸载项）。
 
-不需要安装程序；整个文件夹可以放在任意目录、U 盘或移动硬盘。
-
-首次构建前如需重建运行时（JRE / Python embeddable / sidecar 暂存）：
+首次构建前如需重建随包运行时（JRE / Python embeddable / qjs-runner 二进制）：
 
 ```powershell
-python sidecars/java/build.py      # 桩类 + SpiderRunner + 模板 jar（需 JDK 17）
 python tools/prepare_runtime.py    # jlink JRE + Python embeddable + externalBin staging
 ```
 
-> **不需要安装或配置 JDK 17**。运行期 JVM 通道优先用随包 `sidecars/jre/bin/java.exe`（dev 与便携版同源）；`LUMA_JAVA` 仅用于临时改用其它虚拟机调试。只有 `--force` 重建 JRE 或重新编译 `runner.jar` 才需要本机 JDK 17（构建期一次性）。
+> **不需要安装或配置 JDK 17**。运行期 JVM 通道优先用随包 `sidecars/jre/bin/java.exe`（dev 与安装交付版同源）；`LUMA_JAVA` 仅用于临时改用其它虚拟机调试。只有 `--force` 重建 JRE 或重新编译 `runner.jar` 才需要本机 JDK 17（构建期一次性）。
 
 ### 运行期环境变量
 
@@ -90,7 +86,7 @@ python tools/prepare_runtime.py    # jlink JRE + Python embeddable + externalBin
 | `LUMA_JVM_RUNNER` | 覆盖 `runner.jar` 路径 |
 | `LUMA_MPV` | 覆盖 `mpv.exe` 路径 |
 | `LUMA_PROXY_PORT` | 本地反代端口，默认 9978 |
-| `LUMA_DATA_DIR` | 覆盖数据目录（默认便携 `data/`，否则 `%APPDATA%\Luma`） |
+| `LUMA_DATA_DIR` | 覆盖数据目录（默认安装模式 `%APPDATA%\Luma`；exe 同级存在 `data/` 时自动进入便携模式） |
 | `LUMA_RESOURCE_DIR` | 宿主发布给 sidecar 的资源目录，通常无需手工设置 |
 | `LUMA_PROXY_ALLOW_LOCAL` | `1` 时允许反代访问 `127.0.0.1`（仅本地联调） |
 | `LUMA_SELFCHECK` | `1` 时启动自检并写 `data/selfcheck.log` |
@@ -105,40 +101,36 @@ python tools/prepare_runtime.py    # jlink JRE + Python embeddable + externalBin
 
 ## 日志与诊断
 
-- **版本**：`1.0.0`。侧栏、设置页、便携包文件名与 `tauri.conf.json` 使用同一版本号。
-- **位置**：便携版 `data/logs/luma-YYYY-MM-DD.log`；开发 / 安装模式 `%APPDATA%\Luma\logs\`。每天一个文件，保留最近 7 天。
+- **版本**：`1.0.0`。侧栏、设置页与 `tauri.conf.json` 使用同一版本号。
+- **位置**：开发 / 安装模式 `%APPDATA%\Luma\logs\luma-YYYY-MM-DD.log`；便携模式为 exe 同级 `data/logs\`。每天一个文件，保留最近 7 天。
 - **级别**：默认 `info`；需要排查 sidecar / 聚合细节时设 `LUMA_LOG=debug` 后重启。日志同时写文件与控制台（release 包无控制台，只看文件）。
 - **内容**：启动摘要（版本、平台、数据目录、配置 id）、前端关键操作（搜索完成、手动/自动换源、播放解析失败、配置导入导出）、IPC 错误、未捕获异常与 Promise rejection。
 - **隐私**：URL 只记录 `scheme + host + path`，查询参数（token / 签名）与片段不会落盘；播放直链不记录；日志只写本机，不上传。
 - **反馈**：设置页「复制诊断信息」生成包含版本 / 平台 / 目录 / 当前配置规模 / 日志文件列表的 JSON；需要细节时点「打开日志目录」附上当天的 `luma-*.log`。
 
-## 运行（便携版）
+## 运行
 
-1. 解压 `Luma-1.0.0-portable.zip` 到任意目录；
-2. 双击 `Luma.exe`。
+- 安装版：双击 `Luma_1.0.0_x64-setup.exe` 按向导安装，从开始菜单启动；卸载走系统「添加/删除程序」。
+- 未签名安装器首次运行可能触发 SmartScreen：点击「更多信息」→「仍要运行」。正式分发需要 OV/EV 代码签名证书。
 
-配置、收藏、历史都写在 **exe 同级 `data/luma.db`**（单个 SQLite 文件，运行时另有 `-wal` / `-shm` 辅助文件）；`data/` 存在即自动进入便携模式，不会写 `%APPDATA%`。删除整个文件夹即完成卸载。
+数据目录：安装模式下位于 `%APPDATA%\Luma\luma.db`（单个 SQLite，含 `-wal` / `-shm` 辅助文件）；若把安装目录整体放到可写位置且存在 `data/` 子目录，则自动进入便携模式、数据随文件夹移动。删除数据目录即清空配置/收藏/历史。
 
-未签名的 exe 首次运行可能触发 SmartScreen：点击「更多信息」→「仍要运行」。正式分发需要 OV/EV 代码签名证书。
-
-便携版布局：
+安装后布局（运行期由 `tauri.conf.json` 的 `bundle.resources` / `externalBin` 决定）：
 
 ```text
-Luma/
+安装目录/
   Luma.exe
   qjs-runner.exe      JS 源侧载进程（exe 同目录，运行时首选命中点）
-  sidecars/
-    py/               适配层源码
-    python-embed/     嵌入式 Python 3.11 + 第三方包
-    jre/              jlink 裁剪的 JDK 17
-    java/runner.jar   JVM spider 桥
-    qjs-assets/       JS 源内置依赖（8 个模块 + manifest）
-    mpv/              可选，自行放入
-  data/
-    luma.db           配置 / 收藏 / 历史（SQLite）
+  resources/
+    sidecars/
+      py/               适配层源码
+      python-embed/     嵌入式 Python 3.11 + 第三方包
+      jre/              jlink 裁剪的 JDK 17
+      java/runner.jar   JVM spider 桥
+      qjs-assets/       JS 源内置依赖（8 个模块 + manifest）
 ```
 
-数据层说明：配置快照（导入原件 + 运行派生）、active 配置、收藏与历史都在同一个事务型数据库里；写操作先提交事务再刷新界面缓存。首次启动创建空的 `luma.db`，之后所有数据都由应用自身写入。开发模式下数据库位于 `%APPDATA%\Luma\luma.db`，便携版位于包内 `data/`。
+数据层说明：配置快照（导入原件 + 运行派生）、active 配置、收藏与历史都在同一个事务型数据库里；写操作先提交事务再刷新界面缓存。首次启动创建空的 `luma.db`，之后所有数据都由应用自身写入。
 
 ## 测试
 
