@@ -93,7 +93,7 @@
 
 1. **CI 首次远端运行待验证**：`.github/workflows/check.yml` 已落地（`checks` / `rust` / `py-adapter` 三个 job），但本机没有远端仓库，尚未在 GitHub runner 上实跑过；首次推送后要按实际报错调（重点看 `rust` job 的 `pnpm build` + 资源桩是否够用）。
 2. Rust `#[path]` 是物理分层，逻辑模块名仍是 `crate::config`，依赖方向不受编译器约束（刻意取舍，第二阶段再做前缀化）。
-3. 超长文件：`domain/spider/mod.rs`、`infra/db.rs`、`PlayerPage.tsx` + `usePlayerEngine.ts`（`domain/config`、`domain/proxy` 已按职责拆分，见 §10）。
+3. 超长文件：`domain/spider/mod.rs`、`domain/spider/quickjs.rs`、`PlayerPage.tsx` + `usePlayerEngine.ts`（`domain/config`、`domain/proxy`、`infra/db` 已按职责拆分，见 §10）。
 4. 四端协议靠约定 + 5 类结构校验，未做代码生成。
 
 ## 10. 已还的债（留档，避免重复讨论）
@@ -101,3 +101,4 @@
 - `tools/` 71 个脚本平铺 → 已按用途分 `probes/` / `diag/` / `verify/` / `audit/` 四个子目录，`tools/run_probes.mjs` 仍是唯一入口。
 - `domain/config.rs`（2,154 行 god module）→ 已拆为 `config/{mod,derive,naming,import,github,refresh}.rs`，命令层与实现分离。
 - `domain/proxy.rs`（1,105 行）→ 已拆为 `proxy/{mod,handlers,guard,playlist}.rs` + `proxy/tests.rs`；`mod.rs` 留状态/路由/命令层，handler、目标校验、播放列表改写各自成文件。
+- `infra/db.rs`（1,026 行）→ 已拆为 `db/{mod,schema,meta,configs,favorites,history}.rs` + `db/tests.rs`；行结构体留 `mod.rs`，每个子模块一个 `impl Db`，schema 迁移与四类仓储互不牵连。

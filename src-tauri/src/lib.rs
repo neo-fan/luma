@@ -18,7 +18,7 @@
 // ---- infra/：底座能力 ----
 #[path = "infra/bridge.rs"]
 pub mod bridge;
-#[path = "infra/db.rs"]
+#[path = "infra/db/mod.rs"]
 pub mod db;
 #[path = "infra/env.rs"]
 pub mod env;

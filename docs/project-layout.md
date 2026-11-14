@@ -89,7 +89,8 @@ luma/
 │       ├── main.rs                        # 只调 luma_lib::run()
 │       ├── lib.rs                         # #[path] 分层映射 + run() + 37 个 command 注册
 │       ├── infra/                         # 底座：error/env/paths/process/netrules/http/
-│       │                                  #   bridge/db/store/logging/window
+│       │                                  #   db/{mod,schema,meta,configs,favorites,history}
+│       │                                  #   bridge/store/logging/window
 │       └── domain/                        # 业务：config/play/parse/proxy/live/sniff/
 │                                          #   config/{mod,derive,naming,import,github,refresh}
 │                                          #   proxy/{mod,handlers,guard,playlist,tests}
