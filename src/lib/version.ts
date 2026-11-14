@@ -54,7 +54,7 @@ export function readableBuildTime(raw?: string | null): string {
 export const BUILD_STAMP = formatBuildTime(BUILD_TIME);
 
 /**
- * 版本展示：`1.0.0-alpha` → `1.0.0.a`（业界常见的 prerelease 缩写）。
+ * 版本展示：prerelease 缩写为业界常见形式（如 `1.2.0-beta` → `1.2.0.b`）。
  * 数据源仍保持 package.json 的合法 semver，只在 UI 层做映射：
  * -alpha→.a、-beta→.b、-rc→.rc；没有后缀的原样返回。
  */

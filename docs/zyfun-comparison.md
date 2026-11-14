@@ -23,14 +23,14 @@
 
 ## 2. 硬指标对照
 
-| 项 | zyfun 3.4.8-rc2 | Luma 1.0.0-alpha |
+| 项 | zyfun 3.4.8-rc2 | Luma（对比时为 1.0.0-alpha，现已发布 1.0.0） |
 |---|---|---|
 | 桌面壳 | Electron 41.8.0（Node ≥24.11） | Tauri v2 + 系统 WebView2 |
 | 前端 | Vue 3.5 + TDesign + Pinia + monaco + i18next（20+ 语言） | React 18 + zustand + 手写 CSS（无 i18n） |
 | 代码规模 | 498 个 ts/tsx/vue，**75,874 行**，94 个 `.vue` | 54 个 ts/tsx **9,710 行** + 26 个 rs **8,679 行** ≈ 18.4k 行 |
 | 测试 | `src` 下仅 **5 个** `__tests__` 文件 | 145 前端 + 78 Rust + 32 py 兼容 + 6 套探针脚本 |
 | 数据层 | drizzle-orm + `@libsql/client`，8 张表 CRUD + 版本迁移（`migrate-3_3_x`） | 手写 SQLite(WAL)，`configs` 双快照 + `meta.active_config_id` |
-| 分发 | electron-builder（win/mac/linux，x64/arm64）+ electron-updater 夜间版 | 便携 zip **41.36MB**，无安装器、无自动更新 |
+| 分发 | electron-builder（win/mac/linux，x64/arm64）+ electron-updater 夜间版 | 便携 zip（对比时为 41.36MB；1.0.0 实测 44.36MB），无安装器、无自动更新 |
 | 许可 | **AGPL-3.0** | 自建（不受传染） |
 
 体量差 4 倍，但**测试密度差 30 倍以上**——这是两套工程文化的差异，不是能力差异。

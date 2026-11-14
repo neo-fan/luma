@@ -69,10 +69,12 @@ QJS_RUNNER_SOURCES = (
     ROOT / "sidecars" / "qjs-runner" / "target" / "release" / "qjs-runner.exe",
     ROOT / "sidecars" / "qjs-runner" / "target" / "debug" / "qjs-runner.exe",
 )
-# 便携包内两个落点：exe 同目录（resolve_runner 首选命中点）+ sidecars 布局。
+# 便携包内唯一落点：exe 同目录。`quickjs.rs::resolve_runner()` 的查找顺序是
+# LUMA_QJS_RUNNER -> exe 同目录 -> 编译期 source_root 下 target/{release,debug}；
+# 它从不查 `sidecars/qjs-runner/qjs-runner.exe`。之前多放的那份 resource_dir
+# 副本运行期永远不命中，只是白白给 zip 加约 1.5 MB，故 1.0.0 移除。
 QJS_RUNNER_TARGETS = (
     APP_DIR / "qjs-runner.exe",
-    APP_DIR / "sidecars" / "qjs-runner" / "qjs-runner.exe",
 )
 
 
@@ -118,10 +120,10 @@ def build_release() -> None:
 def copy_qjs_runner() -> None:
     """把 qjs-runner.exe 复制到便携包内运行时能解析到的位置。
 
-    src-tauri 侧 resolve_runner() 的查找顺序为：QJS_RUNNER 环境变量 → exe
+    src-tauri 侧 resolve_runner() 的查找顺序为：LUMA_QJS_RUNNER → exe
     同目录 → 编译期 source_root 下 sidecars/qjs-runner/target/{release,debug}。
-    便携包分发到别的机器后编译期绝对路径失效，故主副本落在 exe 同目录；
-    同时在 sidecars/qjs-runner/ 放一份，便于按 resource_dir 布局解析。
+    便携包分发到别的机器后编译期绝对路径失效，故唯一有效落点是 exe 同目录；
+    `sidecars/qjs-runner/` 不在解析链上，多放一份只会增大 zip（1.0.0 已移除）。
     源文件一个都找不到时只 warn，不中断打包（保持 --check 类宽松行为）。
     """
     source = next((p for p in QJS_RUNNER_SOURCES if p.is_file()), None)

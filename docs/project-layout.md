@@ -39,7 +39,8 @@ project-root/
 ```text
 tvbox/
 ├── AGENTS.md                              # 项目协作说明与架构索引
-├── SPEC_REVIEW.md                         # 规格书 v1.0 修订建议（历史）
+├── CHANGELOG.md                           # 版本变更日志（每次发版更新）
+├── SPEC_REVIEW.md                         # 规格书 v1.0 修订建议（归档，非实现依据）
 ├── .gitignore                             # 三类产物 + 运行时产物 + 敏感数据忽略规则
 ├── package.json / pnpm-lock.yaml          # 前端依赖与锁文件（pnpm 9.15.4）
 ├── tsconfig.json / vite.config.ts         # 构建配置（dev 端口 1420）
@@ -50,7 +51,11 @@ tvbox/
 │
 ├── docs/
 │   ├── project-layout.md                  # 本文档（目录/产物/编码权威）
+│   ├── ARCHITECTURE.md                    # 架构说明 + ADR（进程/四类源/数据流/分层）
 │   ├── DEVELOPMENT.md                     # 开发调试指南（环境/四端调试/日志/回归/常见坑）
+│   ├── MAINTENANCE.md                     # 维护与升级（契约/依赖/回归分层/工程债）
+│   ├── RELEASING.md                       # 发布流程（版本同步清单/检查/打包/验收）
+│   ├── log/                               # 逐轮开发日志（从 AGENTS.md 迁出，按月份）
 │   ├── verification-config.md             # 抓取记录（含真实地址，不入库）
 │   ├── verification-report.md             # 真实配置形态验证报告
 │   ├── site-compat-report.md              # 全站兼容性扫描结论（101 站点逐站）

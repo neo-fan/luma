@@ -66,7 +66,7 @@ node tools/bundle_report.mjs               # 构建产物体积 / gzip 报告
 产物：
 
 - `release/portable/Luma/` —— 解压即用的文件夹；
-- `release/Luma-1.0.0-alpha-portable.zip` —— 分发包（最近一次实测 **45.80 MB**，见 `docs/size-report.md`）。
+- `release/Luma-1.0.0-portable.zip` —— 分发包（体积实测见 `docs/size-report.md`）。
 
 不需要安装程序；整个文件夹可以放在任意目录、U 盘或移动硬盘。
 
@@ -103,9 +103,9 @@ python tools/prepare_runtime.py    # jlink JRE + Python embeddable + externalBin
 3. 播放失败时的顺序：同片其它线路 → 其它站点 → 第 4 级嗅探 → mpv / 外部播放器。搜索页会列出未响应源的原因。
 4. 直播页可导入 m3u 源观看。
 
-## 日志与诊断（试运行）
+## 日志与诊断
 
-- **版本**：`1.0.0-alpha`。侧栏、设置页、便携包文件名与 `tauri.conf.json` 使用同一版本号。
+- **版本**：`1.0.0`。侧栏、设置页、便携包文件名与 `tauri.conf.json` 使用同一版本号。
 - **位置**：便携版 `data/logs/luma-YYYY-MM-DD.log`；开发 / 安装模式 `%APPDATA%\Luma\logs\`。每天一个文件，保留最近 7 天。
 - **级别**：默认 `info`；需要排查 sidecar / 聚合细节时设 `LUMA_LOG=debug` 后重启。日志同时写文件与控制台（release 包无控制台，只看文件）。
 - **内容**：启动摘要（版本、平台、数据目录、配置 id）、前端关键操作（搜索完成、手动/自动换源、播放解析失败、配置导入导出）、IPC 错误、未捕获异常与 Promise rejection。
@@ -114,7 +114,7 @@ python tools/prepare_runtime.py    # jlink JRE + Python embeddable + externalBin
 
 ## 运行（便携版）
 
-1. 解压 `Luma-1.0.0-alpha-portable.zip` 到任意目录；
+1. 解压 `Luma-1.0.0-portable.zip` 到任意目录；
 2. 双击 `Luma.exe`。
 
 配置、收藏、历史都写在 **exe 同级 `data/luma.db`**（单个 SQLite 文件，运行时另有 `-wal` / `-shm` 辅助文件）；`data/` 存在即自动进入便携模式，不会写 `%APPDATA%`。删除整个文件夹即完成卸载。
@@ -143,6 +143,7 @@ Luma/
 ## 测试
 
 ```powershell
+python tools/check.py          # 一键离线回归（推荐，无需窗口）
 python tests/e2e/p0.py     # P0 基线
 python tests/e2e/p1.py     # P1 子进程运行时
 python tests/e2e/p2.py     # P2 jar / JVM 运行时
@@ -196,3 +197,15 @@ JS 源的支持范围与限制：支持经典 `var spider` 脚本、drpy2 风格
 - T-31（`tvbox://` 协议关联、JumpList、全屏勿扰）未实现。
 - `mpv` 默认不随 zip 分发（单文件约 117MB），需要时放入 `sidecars/mpv/`，或用 `--with-mpv` 重新打包。
 - 公开源失效频繁，属正常现象；自动换源与源级原因提示是必需能力。
+
+## 工程流程
+
+| 事项 | 入口 |
+|---|---|
+| 改动后判断是否破坏基线 | `python tools/check.py`（离线一键回归） |
+| 本地开发 / 调试 / 排障 | `docs/DEVELOPMENT.md` |
+| 架构与决策记录（ADR） | `docs/ARCHITECTURE.md` |
+| 维护、契约变更、依赖升级 | `docs/MAINTENANCE.md` |
+| 升版本、打包、发布验收 | `docs/RELEASING.md` |
+| 目录与产物约定 | `docs/project-layout.md` |
+| 版本变更记录 | `CHANGELOG.md` |

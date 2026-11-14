@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "1.0.0-alpha"
+version = "1.0.0"
 description = "Luma - TVBox-compatible desktop player framework"
 edition = "2021"
 rust-version = "1.77.2"
@@ -55,3 +55,8 @@ windows = { version = "0.58", features = [
 # of forcing the Job Object code (windows 0.58) to migrate.
 webview2-com = "0.39"
 windows062 = { package = "windows", version = "0.62", features = ["Win32_Foundation"] }
+
+[profile.release]
+# Portable zip target is <= 45 MB. Strip debug symbols from the release exe;
+# debug builds are unaffected. Disable if you need symbolized release stacks.
+strip = "symbols"

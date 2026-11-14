@@ -69,6 +69,10 @@
           "additionalProperties": { "type": "string" }
         },
         "searchable": { "type": "boolean" },
+        "searchableDeclared": {
+          "type": "boolean",
+          "description": "Only present when the config explicitly declared `searchable`; the normalized `searchable` defaults vary across TVBox forks, so skipping a site must consult this flag."
+        },
         "quickSearch": { "type": "boolean" },
         "filterable": { "type": "boolean" },
         "categories": {
@@ -188,7 +192,15 @@
         "siteKey": { "type": "string" },
         "method": { "$ref": "#/$defs/SpiderMethod" },
         "args": { "type": "array" },
-        "timeoutMs": { "type": "integer", "minimum": 1, "default": 15000 }
+        "timeoutMs": { "type": "integer", "minimum": 1, "default": 15000 },
+        "stream": {
+          "type": "boolean",
+          "description": "Aggregate search emits `search-chunk` per finished site (only siteKey=all + searchContent); the final IPC result remains the full aggregate."
+        },
+        "streamId": {
+          "type": "string",
+          "description": "Search generation id echoed back in every `search-chunk`; the frontend drops chunks from an older generation when the query changes mid-flight."
+        }
       },
       "additionalProperties": false
     },

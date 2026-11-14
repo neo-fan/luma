@@ -172,7 +172,11 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 ## 8. 相关文档
 
 - `README.md` —— 构建 / 测试 / 环境变量 / 日志与诊断 / 运行（便携版）
-- `AGENTS.md` —— 常用命令（388 行）、开发约定（432 行）、逐轮开发记录
+- `AGENTS.md` —— 规范与决策（「常用命令」「开发约定」两节）；逐轮记录已迁 `docs/log/`
+- `docs/ARCHITECTURE.md` —— 进程模型 / 四类源 / 数据流 / 分层 / ADR
+- `docs/MAINTENANCE.md` —— 契约变更、依赖升级、回归分层、工程债
+- `docs/RELEASING.md` —— 版本同步清单、发版检查、打包与验收
 - `docs/project-layout.md` —— 目录 / 产物 / 编码权威
 - `docs/js-support.md` —— JS 源支持现状与限制
-- `docs/site-compat-report.md` —— 站点兼容性实测（含时效说明）
+- `docs/site-compat-report.md` —— 站点兼容性**冻结快照**（不代表当前支持范围）
+- `CHANGELOG.md` —— 版本变更记录

@@ -37,7 +37,7 @@ import { navBack, registerNav, viewToLocation, type View } from "./lib/nav";
 import { useAppStore, useSiteState } from "./stores/appStore";
 import type { ConfigSnapshot, LiveSource } from "./types/tvbox";
 
-/** 侧栏展示用：`1.0.0-alpha` → `1.0.0.a`（数据源仍是合法 semver，只改显示）。 */
+/** 侧栏展示用：prerelease 缩写（如 `1.2.0-beta` → `1.2.0.b`），数据源仍是合法 semver。 */
 const versionLabel = formatVersion(APP_VERSION);
 
 const NAV_ITEMS: {

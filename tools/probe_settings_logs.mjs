@@ -4,7 +4,7 @@ import { readFileSync, statSync } from "node:fs";
  * 试运行诊断回归：版本号、日志目录、一键复制与后端 diagnostics。
  *
  * 断言：
- *   1. 侧栏与设置页都显示 1.0.0-alpha（同一来源：package.json → Vite define）；
+ *   1. 侧栏与设置页都显示当前版本（期望值从 package.json 动态读取，升版本无需改探针）；
  *   2. 「版本与日志」块列出数据目录 / 日志目录 / 日志文件数量 / 当前配置；
  *   3. `diagnostics` command 返回 version / logDir / config / logFiles；
  *   4. 「打开日志目录」「复制诊断信息」「导出反馈文件」按钮存在，复制有 tip 反馈；
@@ -14,6 +14,15 @@ import { readFileSync, statSync } from "node:fs";
  * 依赖 dev 窗口（CDP 9222）与至少一份 active 配置。
  *   node tools/probe_settings_logs.mjs
  */
+const PKG = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const EXPECTED_VERSION = PKG.version;
+// Mirror src/lib/version.ts::formatVersion() for the sidebar display form.
+const DISPLAY_VERSION = EXPECTED_VERSION
+  .replace(/-alpha$/i, ".a")
+  .replace(/-beta$/i, ".b")
+  .replace(/-rc$/i, ".rc");
+console.log(`[info] expected version=${EXPECTED_VERSION} display=v${DISPLAY_VERSION}`);
+
 class Cdp {
   constructor(wsUrl) {
     this.ws = new WebSocket(wsUrl);
@@ -133,7 +142,7 @@ try {
   const footer = await cdp.eval(
     `(() => { const el = document.querySelector('.sidebar__foot'); return el ? el.innerText.trim() : null; })()`,
   );
-  assert(!!footer && footer.includes("v1.0.0-alpha"), "sidebar shows v1.0.0-alpha", String(footer));
+  assert(!!footer && footer.includes(`v${DISPLAY_VERSION}`), `sidebar shows v${DISPLAY_VERSION}`, String(footer));
 
   const opened = await cdp.eval(CLICK("设置", ".nav__item"));
   assert(opened === "CLICKED", "open settings page", opened);
@@ -153,14 +162,14 @@ try {
       kv: kv ? kv.innerText.trim() : null,
       buttons,
       hasSection: body.includes('版本与日志'),
-      hasVersion: body.includes('v1.0.0-alpha'),
+      hasVersion: body.includes('v${DISPLAY_VERSION}'),
       hasDataDir: body.includes('数据目录'),
       hasLogDir: body.includes('日志目录'),
     });
   })()`);
   const snap = snapRaw ? JSON.parse(snapRaw) : null;
   console.log(`[info] settings snapshot: ${snapRaw}`);
-  assert(!!snap?.hasSection && !!snap?.hasVersion, "settings shows 版本与日志 + v1.0.0-alpha", snapRaw);
+  assert(!!snap?.hasSection && !!snap?.hasVersion, `settings shows 版本与日志 + v${DISPLAY_VERSION}`, snapRaw);
   assert(!!snap?.hasDataDir && !!snap?.hasLogDir, "data/log dir rows present", snapRaw);
   assert(
     Array.isArray(snap?.buttons) && snap.buttons.some((t) => t.includes("打开日志目录")),
@@ -178,7 +187,7 @@ try {
   );
   const diag = typeof diagRaw === "string" && diagRaw.startsWith("{") ? JSON.parse(diagRaw) : null;
   console.log(`[info] diagnostics: ${String(diagRaw).slice(0, 600)}`);
-  assert(diag?.version === "1.0.0-alpha", "diagnostics version is 1.0.0-alpha", String(diag?.version));
+  assert(diag?.version === EXPECTED_VERSION, `diagnostics version is ${EXPECTED_VERSION}`, String(diag?.version));
   assert(!!diag?.logDir && diag.logDir.endsWith("logs"), "diagnostics reports log dir", String(diag?.logDir));
   assert(Array.isArray(diag?.logFiles) && diag.logFiles.length >= 1, "at least one log file on disk", JSON.stringify(diag?.logFiles));
   assert(

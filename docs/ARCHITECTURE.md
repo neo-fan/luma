@@ -129,7 +129,9 @@ src/types/tvbox.ts  归一化契约 TS 侧
 
 ## 12. 调试入口
 
-见 `docs/DEVELOPMENT.md`：环境准备、四端调试（前端 CDP 9222、Rust cargo check、Python spider.log、JVM 随包 JRE、qjs-runner 重编）、日志（`LUMA_LOG=debug`）、回归（离线 `cargo test --lib` / `pnpm test` / `parse_check` 与窗口 `run_probes.mjs`）、环境变量速查、常见坑 6 条。
+- **调试**：`docs/DEVELOPMENT.md` —— 环境准备、四端调试（前端 CDP 9222、Rust cargo check、Python spider.log、JVM 随包 JRE、qjs-runner 重编）、日志（`LUMA_LOG=debug`）、环境变量速查、常见坑 6 条。
+- **回归**：`python tools/check.py`（离线一键）/ `node tools/run_probes.mjs`（窗口探针）。
+- **维护与升级**：`docs/MAINTENANCE.md`；**发布**：`docs/RELEASING.md`；**变更记录**：`CHANGELOG.md`。
 
 ## 13. ADR：随包运行时优先于宿主环境（2026-11-14）
 
