@@ -2863,7 +2863,13 @@ textarea {
   }
 }
 
-[data-sonner-toast].notice-toast::after {
+/* 类名写两遍是**故意的**：sonner 的样式是运行时用 <style> 追加到 head 的，
+   产物里排在打包好的 <link> 之后；它自己有一条
+   `[data-sonner-toast][data-expanded=true]::after`（gap+1 高的悬停间隙桥，
+   贴在 toast 上方、整宽、无背景）与下面这条**特异性相同 (0,2,1)**，
+   顺序在后就赢，于是进度线被顶成「toast 上方 11px 灰条」（1.0.3 正式包实测）。
+   重复类名把特异性提到 (0,3,1)，从此与样式表先后无关。 */
+[data-sonner-toast].notice-toast.notice-toast::after {
   content: "";
   position: absolute;
   left: 1px;
