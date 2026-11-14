@@ -220,7 +220,9 @@ def to_args(method: str, raw: list) -> list:
 
 
 def main() -> int:
-    raw = json.load(sys.stdin)
+    # Read bytes and let json detect UTF-8/16/32: text mode would decode with the
+    # OS code page (cp936 on a Chinese Windows) and mangle non-ASCII names.
+    raw = json.load(sys.stdin.buffer)
     payload = raw if isinstance(raw, dict) else {}
     # Initialized before the try block so the crash handler can always compute
     # a fingerprint / source api even when loading or compiling failed.
@@ -335,8 +337,9 @@ def main() -> int:
             "error": {"code": "SPIDER_CRASH", "message": f"result not serializable: {exc}"},
         }
         line = json.dumps(frame, ensure_ascii=False)
-    sys.stdout.write(line + "\n")
-    sys.stdout.flush()
+    # Write UTF-8 bytes directly: text mode would encode with the OS code page.
+    sys.stdout.buffer.write((line + "\n").encode("utf-8"))
+    sys.stdout.buffer.flush()
     return 0 if frame.get("ok") else 1
 
 

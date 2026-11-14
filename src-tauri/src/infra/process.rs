@@ -45,6 +45,21 @@ impl Guarded {
         args: &[String],
         cwd: Option<&std::path::Path>,
     ) -> Result<Self, AppError> {
+        Self::spawn_with_env(program, args, cwd, &[])
+    }
+
+    /// Same as [`Guarded::spawn`], plus extra environment variables.
+    ///
+    /// Needed because the JSON-RPC wire format is always UTF-8, while a child
+    /// runtime may pick its stdio encoding from the OS locale: a Chinese
+    /// Windows (cp936) decoded our frames as GBK, which corrupted every
+    /// non-ASCII site name and made `config.decrypt` fail at ~8 KiB.
+    pub fn spawn_with_env(
+        program: &str,
+        args: &[String],
+        cwd: Option<&std::path::Path>,
+        envs: &[(&str, &str)],
+    ) -> Result<Self, AppError> {
         let mut command = Command::new(program);
         command
             .args(args)
@@ -52,6 +67,9 @@ impl Guarded {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
+        for (key, value) in envs {
+            command.env(key, value);
+        }
         // GUI host -> console sidecar: suppress the child's console window.
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);

@@ -13,7 +13,9 @@
 1. 爬虫车道被占满时，`config.decrypt` / `ping` 仍然立即返回（两者走独立车道）；
 2. 帧解析失败要回错误帧，不能静默丢弃（静默丢 = 宿主干等满 15s 才报超时）；
 3. 每次 `config.*` 都在适配层日志里留一条 `adapter_latency`（耗时 + 字节数），
-   下次再出问题不必靠猜。
+   下次再出问题不必靠猜；
+4. stdio 恒为 UTF-8：即便环境把 `PYTHONIOENCODING` 设成 `gbk` / `cp936`
+   （中文 Windows 的默认代码页），含中文的配置帧也必须原样送达并解出中文。
 
 运行： `python tests/e2e/adapter_isolation.py`（`tools/check.py` 已接入）。
 """
@@ -66,12 +68,15 @@ def interpreter() -> str:
 class Adapter:
     """Minimal stdio client: background reader so a slow reply never blocks a send."""
 
-    def __init__(self) -> None:
-        self.log_path = Path(tempfile.gettempdir()) / f"luma-adapter-isolation-{os.getpid()}.log"
+    def __init__(self, suffix: str = "", env_extra: dict[str, str] | None = None) -> None:
+        self.log_path = (
+            Path(tempfile.gettempdir()) / f"luma-adapter-isolation-{os.getpid()}{suffix}.log"
+        )
         self.log_path.unlink(missing_ok=True)
         env = dict(os.environ)
         env["LUMA_ADAPTER_DEBUG"] = "1"
         env["LUMA_ADAPTER_LOG"] = str(self.log_path)
+        env.update(env_extra or {})
         self.proc = subprocess.Popen(
             [interpreter(), str(ADAPTER)],
             stdin=subprocess.PIPE,
@@ -221,6 +226,33 @@ def main() -> int:
             "malformed frame is recorded in the adapter log",
             str(records[-3:]),
         )
+
+        # 7) 中文 Windows（cp936）：stdio 不能按 ANSI 代码页解码。
+        # 1.0.2 的真实故障：UTF-8 帧被按 GBK 解码，中文站名处字节错位，
+        # `config.decrypt` 在 ~8 KiB 处报 malformed frame（1.0.1 则静默丢帧→超时）。
+        # 载荷要够大（>8 KiB），否则只会出现乱码而不会暴露拆帧错位。
+        payload = json.dumps(
+            {
+                "sites": [
+                    {"key": f"s{i:03d}", "name": f"站点{i:03d}·港澳台直播"}
+                    for i in range(360)
+                ]
+            },
+            ensure_ascii=False,
+        )
+        for encoding in ("gbk", "cp936"):
+            localized = Adapter(suffix=f"-{encoding}", env_extra={"PYTHONIOENCODING": encoding})
+            try:
+                frame, took = localized.timed("config.decrypt", {"raw": payload}, timeout=20.0)
+            finally:
+                localized.close()
+            ok = frame is not None and frame.get("ok") is True
+            text = json.dumps(frame, ensure_ascii=False) if frame else ""
+            check(
+                ok and "站点000" in text and "站点359" in text,
+                f"utf-8 frames survive a {encoding} stdio code page",
+                f"{len(payload)}B {took * 1000:.0f}ms {str(frame)[:160]}",
+            )
     finally:
         adapter.close()
 

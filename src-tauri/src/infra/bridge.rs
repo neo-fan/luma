@@ -91,7 +91,16 @@ pub(crate) fn spawn_stdio(
     cwd: Option<&std::path::Path>,
     label: &'static str,
 ) -> Result<std::sync::Arc<Conn>, AppError> {
-    let mut guarded = Guarded::spawn(program, args, cwd)?;
+    // The wire format is UTF-8 on every platform; tell runtimes that would
+    // otherwise inherit the OS code page (Python on a Chinese Windows: cp936,
+    // which decoded our UTF-8 frames as GBK and broke `config.decrypt`).
+    // Runtimes that do not know these variables ignore them.
+    let mut guarded = Guarded::spawn_with_env(
+        program,
+        args,
+        cwd,
+        &[("PYTHONUTF8", "1"), ("PYTHONIOENCODING", "utf-8")],
+    )?;
     let pid = guarded.id().unwrap_or(0);
     let stdin = guarded
         .take_stdin()

@@ -34,6 +34,31 @@ except ImportError:  # diagnostics must never break the bridge
     def _log_event(_event: dict) -> None:
         return None
 
+def force_utf8_stdio() -> None:
+    """stdin/stdout 固定 UTF-8：Windows 默认按 ANSI 代码页解码。
+
+    中文 Windows（cp936）上，宿主送来的 UTF-8 帧被按 GBK 解码，中文站名处
+    字节错位，`json.loads` 在 ~8 KiB 处报 `Expecting property name`。1.0.1 表现为
+    15 s 超时（坏帧被静默丢弃），1.0.2 表现为 `malformed frame`。宿主也会注入
+    `PYTHONUTF8` / `PYTHONIOENCODING`；这里兜底，兼容用户自带的解释器，并让
+    `pyspider` 派生的子进程继承同样的编码。
+    """
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # 被替换成 StringIO 之类，无需处理
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+    # 子进程（`pyspider` → `pyrun.py`）继承同样的编码，否则中文站名会在子进程里
+    # 用系统代码页解码而乱码。
+    os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+
+
+force_utf8_stdio()
+
 VERSION = "1.0.2"
 _write_lock = threading.Lock()
 _cancel_lock = threading.Lock()
