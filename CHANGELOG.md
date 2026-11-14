@@ -4,7 +4,7 @@
 
 ---
 
-## [1.0.3] — 2026-11-14
+## [1.0.3] — 2026-11-15
 
 补丁版。修掉中文 Windows 上的导入失败（`malformed frame: Expecting property name enclosed in double quotes`）。
 
@@ -43,6 +43,7 @@
 - **测试目录按四层归口**：前端纯函数用例从 `tests/frontend/` 迁到被测模块旁（`src/lib/*.test.ts`，12 个文件、import 一次性改写），`tests/frontend/` 只留 6 个读源码文本的跨文件约定测试；`tests/e2e/` 拆成 `tests/offline/`（9 个确定性检查，全部接进 `tools/check.py`）与 `tests/acceptance/`（spec 12.2 阶段验收 `p0.py`~`p3.py`），`t05_config.py` 更名为 `config_shapes_check.py`。新增 `docs/TESTING.md` 说明四层各自放什么、跑什么命令。`python tools/check.py` 的语法检查范围随之覆盖整个 `tests/`。
 - **移除随包 mpv 与「解码失败自动转外部播放」**：这条兜底从来没真正可用 —— `domain/mpv.rs` 去 `<resource>/sidecars/mpv/mpv.exe` 找可执行文件，但 `tauri.conf.json` 从未把它打进安装包，安装版永远只会得到 `mpv.exe not found`，而前端文案却在说「已自动交给 mpv」。现在整条链路删掉：`mpv_play` command、`domain/mpv.rs`、前端 `api.mpvPlay` 与 `mpvTried` 状态机、`tools/probes/probe_mpv.mjs`、`sidecars/mpv/`（117 MB）、`prepare_runtime.py` 的 stage 步骤、以及 `PlayTarget.kind` 里的 `"mpv"`。`<video>` 报 `MEDIA_ERR_DECODE` / `SRC_NOT_SUPPORTED`（HEVC 常见）时只走换线路 → 换源；`EXTERNAL_PLAY_ENABLED` 继续只管 `open_external`，源码契约测试同步断言前端不再出现 `mpv`。
 - **移除 jar/JVM 运行时**：社区配置里的 jar 是 Android dex，Win x64 跑不起来（父类 `com.github.catvod.crawler.Spider` 不在 jar 内 + 缺 Android 运行时），`sidecars/java` + `sidecars/jre`（27.5 MB）此前只服务维护态回归。现在整条链路删掉：`domain/spider/jvm.rs`、`spider/mod.rs` 的 `Jvm` 运行时与 `JVM_RUNTIME`、`sidecars/java/`、`sidecars/jre/`、`tauri.conf.json` 的打包 resources、`prepare_runtime.py` 的 jlink 步骤、`tests/acceptance/p2.py`、`tools/javap_conserve.py`、`tools/probes/probe_jvm_ui.mjs`、`tests/fixtures/jars/`。**契约里的 `"jvm"` 分类保留**：`contracts/tvbox.schema.json`、`normalize.rs` / `normalize.py` 的 route、`derive.rs` 的 `disabledReason` 都不动，jar 站点仍被识别为 `jvm` 并在导入时屏蔽（「jar 源为 Android dex，Windows 端暂不支持」），只是不再有任何 JVM 通道。`cargo test --lib` 159 → 151（`jvm.rs` 的 8 条回归随运行时删除）。
+- **构建产物**：官方 `tauri build` 产出 `src-tauri/target/release/bundle/nsis/Luma_1.0.3_x64-setup.exe`（**25.44 MiB** / 26,670,865 字节，SHA256 `73201B96CCE7CCBF07167CA18715924EAC47A1CEEB6FA80607CDCB6333824954`）。静默安装实测解包 **87.64 MB**：`Luma.exe` 8.44 MB、`qjs-runner.exe` 3.59 MB、`python-embed` 74.27 MB、`qjs-assets` 0.95 MB、`py` 0.27 MB。比 1.0.2 同口径（≈113.3 MB）少约 25.7 MB，安装器比 1.0.2 的 38.75 MiB 小 13.31 MiB，主因是移除 JRE。体积口径见 `docs/size-report.md`。
 
 ---
 
