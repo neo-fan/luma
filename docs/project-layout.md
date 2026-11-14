@@ -1,7 +1,6 @@
 # 项目目录结构与编码约定
 
-> 适用路径：`<repo>`
-> 本文只约定「文件放哪、怎么写、产物归哪」，不替代规格书；工程实现以本地 `docs/spec-v1.1/` 为唯一依据。
+> 本文只约定「文件放哪、怎么写、产物归哪」。架构见 `docs/ARCHITECTURE.md`，调试见 `docs/DEVELOPMENT.md`，发布见 `docs/RELEASING.md`。
 > 当前状态（2026-11-14）：P0~P3 完成，真实配置「导入 → 搜索 → 详情 → 播放」跑通；前端 React + react-router + zustand，Rust 后端已按 `infra/` + `domain/` 物理分层。
 
 ## 1. 标准 Tauri v2 结构与本项目对齐
@@ -35,20 +34,24 @@ project-root/
 ## 2. 完整目录树
 
 ```text
-tvbox/
-├── AGENTS.md                              # 项目协作说明与架构索引（≤ 20 KB）
-├── CHANGELOG.md                           # 版本变更日志（每次发版更新）
+luma/
+├── AGENTS.md                              # 给 AI 协作者/维护者的当前规范（≤ 20 KB）
 ├── README.md                              # 对外说明（免责声明/功能/构建/使用/已知限制）
-├── .gitignore                             # 三类产物 + 运行时产物 + 敏感数据忽略规则
+├── CHANGELOG.md                           # 版本变更日志（每次发版更新）
+├── LICENSE                                # 许可证（当前为占位符，见文件内说明）
+├── CONTRIBUTING.md                        # 贡献流程与代码约定
+├── SECURITY.md                            # 安全模型与漏洞报告
+├── THIRD-PARTY-NOTICES.md                 # 随仓库分发的第三方组件与许可
+├── .gitignore                             # 产物 / 运行时 / 敏感数据忽略规则
 ├── .github/workflows/check.yml            # CI：离线回归三 job（checks / rust / py-adapter），不跑窗口探针
 ├── package.json / pnpm-lock.yaml          # 前端依赖与锁文件（pnpm 9.15.4）
 ├── tsconfig.json / vite.config.ts         # 构建配置（dev 端口 1420）
 ├── index.html  public/                    # 前端入口与静态资源（含 icon.svg）
-├── dist/                                  # [产物] ① 前端，gitignore
-├── src-tauri/target/release/bundle/        # [产物] ③ NSIS 安装器，gitignore
-├── .workbuddy/                            # 工具侧本地上下文（memory/ 入库，其余按规则忽略）
+├── dist/                                  # [产物] 前端，gitignore
+├── src-tauri/target/release/bundle/        # [产物] NSIS 安装器，gitignore
 │
-├── docs/
+├── docs/                                  # 只放活文档（冻结快照不随仓库分发）
+│   ├── README.md                          # 本文档目录的索引（谁读、何时改）
 │   ├── project-layout.md                  # 本文档（目录/产物/编码权威）
 │   ├── ARCHITECTURE.md                    # 架构说明 + ADR（进程/四类源/数据流/分层）
 │   ├── DEVELOPMENT.md                     # 开发调试指南（环境/四端调试/日志/回归/常见坑）
@@ -56,15 +59,8 @@ tvbox/
 │   ├── RELEASING.md                       # 发布流程（版本同步清单/检查/打包/验收）
 │   ├── js-support.md                      # JS 源机制、ESM 加载与随包资源清单（含 SHA256）
 │   ├── size-report.md                     # 体积实测报告
-│   ├── verification-config.md             # 抓取记录（含真实地址，不入库）
-│   ├── log/                               # 逐轮开发日志（从 AGENTS.md 迁出，按月份）
-│   │                                      #   2026-11-decisions.md = AGENTS.md 2026-11 决策段逐字存档
-│   ├── archive/                           # 冻结快照，非实现依据（索引见 archive/README.md）
-│   │                                      #   SPEC_REVIEW / DESIGN-SPEC / ui-preview.html /
-│   │                                      #   site-compat-report / zyfun-comparison /
-│   │                                      #   avbox-sync-assessment / verification-report
-│   ├── spec-v1.0/  spec-v1.1/            # 需求文档归档与本地基线
-│   └── tasks/                             # T-xx 交付记录
+│   ├── verification-config.md             # [本地] 抓取记录（含真实地址，gitignore）
+│   └── spec-v1.0/  spec-v1.1/            # 需求文档归档与本地基线
 │
 ├── contracts/
 │   └── tvbox.schema.json                  # 归一化契约唯一真源（R8）
@@ -128,16 +124,14 @@ tvbox/
 
 - **逻辑模块名不变**：仍是 `crate::error`、`crate::config`……所有 `use crate::foo` 与 `generate_handler!` 的 37 个 command 路径零改动 → 不会引发运行时 "command not found"（这是 Rust 分层最大的隐性雷区，编译期抓不到）。
 - **分层规避双向依赖环**：`db ↔ store` 同放 `infra/`，`proxy ↔ spider` 同放 `domain/`，两组真实双向引用都不跨层。
-- **这是物理分层，非依赖方向硬约束**。后续阶段再把 `crate::` 路径前缀化为 `crate::infra::*` / `crate::domain::*`，并把 command 与私有 helper 分离到 `commands/`（需逐个提升 helper 为 `pub(crate)`）。详见 `AGENTS.md`「PlayerPage 拆分重构」同期的架构说明。
+- **这是物理分层，非依赖方向硬约束**。后续阶段再把 `crate::` 路径前缀化为 `crate::infra::*` / `crate::domain::*`，并把 command 与私有 helper 分离到 `commands/`（需逐个提升 helper 为 `pub(crate)`）。详见 `docs/ARCHITECTURE.md` 与 git history。
 
 ## 4. 各类文件放哪
 
 | 类别 | 放置位置 | 说明 |
 |---|---|---|
 | 需求文档与修订稿 | `docs/spec-v1.0/`、`docs/spec-v1.1/` | 按版本号分目录；文件名用 ASCII |
-| 修订建议与历史评估 | `docs/archive/` | 冻结快照，只溯源、不改写；索引见 `docs/archive/README.md` |
-| 项目协作说明 | 根目录 `AGENTS.md` | 索引与协作约定 |
-| T-xx 交付记录 | `docs/tasks/` | 每个任务一份 |
+| 项目协作说明 | 根目录 `AGENTS.md` | 给 AI 协作者/维护者的当前规范（≤ 20 KB） |
 | 真实配置样本 | `tests/fixtures/manual/` | 含外部地址，**不入库、不被代码引用** |
 | 构造 fixture | `tests/fixtures/configs/` | 必须脱敏，网络目标只指向 `127.0.0.1` |
 | 契约 | `contracts/` | 归一化契约唯一真源；TS/Rust/Python 三端一致 |
@@ -148,7 +142,7 @@ tvbox/
 | 前端单测 | 纯函数放被测模块同目录 `*.test.ts`；跨模块契约放 `tests/frontend/` | 两种位置各司其职，跨模块契约不塞回 `src/` |
 | 离线工具 | `tools/` | 不参与构建、不发网络请求的开发辅助脚本（`prepare_runtime.py` 例外，参与随包运行时准备） |
 | 机制说明与专项报告 | `docs/`，文件名 ASCII kebab | 如 `js-support.md`、`size-report.md`；结论性长文不写进 `AGENTS.md`，只在其中留摘要与指针 |
-| 冻结快照（竞品/走查/实测） | `docs/archive/` | 带日期与「非实现依据」横幅；只进不出，不在这里新增结论 |
+| 对外说明与贡献流程 | 仓库根 `README.md` / `CONTRIBUTING.md` / `SECURITY.md` / `THIRD-PARTY-NOTICES.md` | 面向使用者与贡献者，不写内部过程 |
 
 ## 5. 编码约定
 

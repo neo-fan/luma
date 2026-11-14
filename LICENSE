@@ -1,0 +1,20 @@
+Copyright (c) 2026 Luma contributors
+All rights reserved.
+
+================================================================================
+本文件是**占位符**：本仓库尚未选定开源许可证。
+This file is a PLACEHOLDER: no open-source license has been chosen for this
+repository yet.
+================================================================================
+
+在正式许可证（如 MIT / Apache-2.0 / GPL-3.0）写入并替换本文件之前：
+
+- 不授予任何复制、分发、修改、再许可或商业使用的权利（All rights reserved）；
+- 本仓库以「源码可见」形式公开，**不等于**开源许可；
+- 已发布的历史版本同样受此约束。
+
+第三方组件（`sidecars/qjs-assets/` 下的 JS 库、Cargo / npm / Python 依赖）
+不适用本文件，其授权与已知风险见 `THIRD-PARTY-NOTICES.md`。
+
+选定许可证后，将正式文本整体替换本文件，并在 `README.md` 的「许可证」一节
+与 `CHANGELOG.md` 中记录。

@@ -9,7 +9,7 @@ clone → 装依赖 → 准备运行时 → pnpm tauri dev → 改代码热更�
       → 调试（CDP / 日志 / 各 sidecar）→ 按需 verify → 确认后打包
 ```
 
-构建与测试命令全集在 `README.md` 与 `AGENTS.md` 第 388 行，本文不再重复，只列调试必需项。
+构建与测试命令全集在 `README.md`「构建」与 `AGENTS.md`「常用命令」，本文不再重复，只列调试必需项。
 
 ## 1. 首次环境准备
 
@@ -143,6 +143,8 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 探针脚本分类（tools/ 下）：`probe_*` 约 50 个、`verify_*` 8 个、`diag_*` 7 个、`scan_*` 2 个、`audit_*` 若干；多数依赖 `run_probes.mjs` 拉起的应用 + Vite，仅 `run_probes.mjs` 及各 `verify_*` 有 usage 头注释，其余看脚本顶部 docstring。
 
 > 探针依赖桩服务 fixture（`strict_home` / `header_probe` 等）与临时内联配置，会自清理、不污染真实配置；`probe_ui` 会切到桩配置，默认不跑。
+>
+> 少数「真实源」探针（`probe_search_ui` / `probe_playability` / `probe_coverage` 等）默认指向一个**公开示例配置**；要测自己的配置，把它们顶部的 `CONFIG` 换成你的地址，或设 `LUMA_CONFIG`（支持的探针会优先读它）。仓库不内置任何配置地址。
 
 ## 6. 环境变量速查（`LUMA_*` 为文档拼写，`TVBOX_*` 仍被读取，仅供旧脚本沿用）
 
@@ -172,11 +174,12 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 ## 8. 相关文档
 
 - `README.md` —— 构建 / 测试 / 环境变量 / 日志与诊断 / 运行（安装版 + 便携模式）
-- `AGENTS.md` —— 规范与决策（「常用命令」「开发约定」两节）；逐轮记录已迁 `docs/log/`
+- `AGENTS.md` —— 当前规范与决策（「工程铁律」「常用命令」「开发约定」）
+- `CONTRIBUTING.md` —— 贡献流程、代码约定、PR 要求
 - `docs/ARCHITECTURE.md` —— 进程模型 / 四类源 / 数据流 / 分层 / ADR
 - `docs/MAINTENANCE.md` —— 契约变更、依赖升级、回归分层、工程债
 - `docs/RELEASING.md` —— 版本同步清单、发版检查、打包与验收
 - `docs/project-layout.md` —— 目录 / 产物 / 编码权威
 - `docs/js-support.md` —— JS 源支持现状与限制
-- `docs/archive/` —— 冻结快照（竞品/走查/实测），**不代表当前支持范围**；索引见 `docs/archive/README.md`
+- `SECURITY.md` / `THIRD-PARTY-NOTICES.md` —— 安全模型、第三方组件与许可
 - `CHANGELOG.md` —— 版本变更记录

@@ -11,7 +11,7 @@
 | 升版本 / 打包 / 验收 | `docs/RELEASING.md` |
 | 改动后判断有没有破坏基线 | `python tools/check.py` |
 | 找某类文件放哪、是否入库 | `docs/project-layout.md` |
-| 查历史决策与逐轮记录 | `docs/log/2026-11.md`、`docs/tasks/` |
+| 查历史决策与逐轮记录 | git history、`CHANGELOG.md` |
 
 ## 2. 回归分层
 
@@ -68,12 +68,10 @@
 
 ## 6. 文档维护
 
-- **规范与决策**写 `AGENTS.md`；**逐轮过程**写 `docs/log/YYYY-MM.md`；**阶段交付**写 `docs/tasks/`；**已归档的历史决策段**在 `docs/log/2026-11-decisions.md`。
-- **`AGENTS.md` 有硬预算：≤ 20 KB**。它是给 AI 协作者的指令文件，超过 65 KB 的指令预算就会被截断 —— 2026-11-14 实测 95,925 字节时第 298 行之后（含「常用命令 / 开发约定 / 编码约定」）全部读不到。写新内容前先问「这是当前规范，还是一条决策记录？」：决策记录进 `docs/log/`，`AGENTS.md` 只在末尾台账加一行。
-- `AGENTS.md` 里各交付段落的测试数字是**当时快照**，当前基线以 `docs/RELEASING.md` 与 `tools/check.py` 输出为准，不要拿旧数字改代码。
-- 归档资产统一在 **`docs/archive/`**（`SPEC_REVIEW.md`、`DESIGN-SPEC.md`、`ui-preview.html`、`site-compat-report.md`、`zyfun-comparison.md`、`avbox-sync-assessment.md`、`verification-report.md`），索引与理由见 `docs/archive/README.md`，**不是实现依据**；实现依据只有 `docs/spec-v1.1/CHANGELOG.md` + `replacements.md`。
-- 归档目录**只进不出**：不在其中新增结论，也不按它改代码。`docs/spec-v1.1/cloud-actions.json` 同样是抓取快照。
-- `docs/archive/site-compat-report.md` 是 2026-11-12 冻结快照，表内「暂不支持」不代表当前支持范围；重新扫描会生成新的活报告到 `docs/site-compat-report.md`。
+- 分工：**当前规范**写 `AGENTS.md`；**对外说明**写 `README.md`；**贡献流程**写 `CONTRIBUTING.md`；**逐轮过程**留在 git history 与 `CHANGELOG.md`（本仓库不设内部日志目录）。
+- **`AGENTS.md` 有硬预算：≤ 20 KB**。它是给 AI 协作者的指令文件，超过 65 KB 的指令预算就会被截断（旧版曾膨胀到 95,925 字节，实测第 298 行之后全部读不到）。写新内容前先问「这是当前规范，还是一条决策记录？」：决策记录写进 `CHANGELOG.md` 或提交信息，`AGENTS.md` 只留一句结论。
+- `AGENTS.md` 里的测试数字是**当时快照**，当前基线以 `docs/RELEASING.md` 与 `tools/check.py` 输出为准，不要拿旧数字改代码。
+- 本仓库**只保留活文档**（`docs/` 下 7 份）；冻结快照（竞品评估、UI 走查、逐站实测等）不再随仓库分发，需要的读者看 git 历史。
 - 每次发版更新 `CHANGELOG.md` 与 `docs/size-report.md`。
 
 ## 7. 日志与诊断
