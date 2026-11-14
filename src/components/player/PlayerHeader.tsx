@@ -37,7 +37,11 @@ export default function PlayerHeader({
           {favorite === null || !onToggleFavorite ? null : (
             <FavStar on={favorite === true} busy={favBusy} onToggle={onToggleFavorite} />
           )}
-          <span className="page-title__sub">{episodeName}</span>
+          {/* 直播会把频道名同时带在 episodeName 里，与主标题重复；集名与剧名
+              相同（或为空）时子标题不渲染，VOD 集名（第 N 集）不受影响。 */}
+          {episodeName && episodeName !== vodName ? (
+            <span className="page-title__sub">{episodeName}</span>
+          ) : null}
         </h1>
       </div>
     </header>

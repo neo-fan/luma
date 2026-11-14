@@ -5,6 +5,7 @@ import SourcePicker from "../components/SourcePicker";
 import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
 import PlayerAbout from "../components/player/PlayerAbout";
+import LiveChannelBar from "../components/player/LiveChannelBar";
 import EpisodePanel from "../components/player/EpisodePanel";
 import PlayerResolution from "../components/player/PlayerResolution";
 import LiveEpgPanel from "../components/LiveEpgPanel";
@@ -1047,18 +1048,30 @@ export default function PlayerPage({
         detail={resolutionDetail(videoMeta.width, videoMeta.height)}
       />
 
-      {/* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。
-          外部播放按钮由 EXTERNAL_PLAY_ENABLED 控制，关闭时整个入口不渲染。 */}
-      <PlayerAbout
-        vod={vod}
-        fallbackName={vodName}
-        siteKey={siteKey}
-        siteName={siteName}
-        lineName={currentLine?.name}
-        episodeLabel={nowEpisode || undefined}
-        onSwitchSource={siteKey === "live" ? undefined : () => setShowSources(true)}
-        onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
-      />
+      {/* 直播用频道信息条：没有海报/简介/换源概念，复用影片卡只会渲染
+          「无封面」死占位；节目单紧跟其下（见下方 LiveEpgPanel）。 */}
+      {siteKey === "live" ? (
+        <LiveChannelBar
+          channelName={vodName}
+          lineLabel={
+            liveLinesArr.length > 1 ? `线路 ${liveIdx + 1}/${liveLinesArr.length}` : undefined
+          }
+          onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
+        />
+      ) : (
+        /* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。
+           外部播放按钮由 EXTERNAL_PLAY_ENABLED 控制，关闭时整个入口不渲染。 */
+        <PlayerAbout
+          vod={vod}
+          fallbackName={vodName}
+          siteKey={siteKey}
+          siteName={siteName}
+          lineName={currentLine?.name}
+          episodeLabel={nowEpisode || undefined}
+          onSwitchSource={siteKey === "live" ? undefined : () => setShowSources(true)}
+          onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
+        />
+      )}
 
       {/* 直播线路切换在播放器控制栏里（PlayerStage → ArtPlayer controls），
           不再在下方单独占一行 chip；节目单紧跟在信息卡下面。 */}
