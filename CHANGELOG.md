@@ -25,7 +25,7 @@
 - **文档**：新增 `CHANGELOG.md`、`docs/ARCHITECTURE.md`（架构 + ADR）、`docs/DEVELOPMENT.md`（调试）、`docs/MAINTENANCE.md`（维护/升级）、`docs/RELEASING.md`（发布）；`docs/project-layout.md` 目录树同步。历史资产（`SPEC_REVIEW.md`、`DESIGN-SPEC.md`、`docs/ui-preview.html`、`docs/site-compat-report.md`）已标注为归档快照。
 - **体积达标**：`release/Luma-1.0.0-portable.zip` **44.36 MB**（目标 ≤ 45 MB）。做法是移除 `qjs-runner.exe` 的运行期永不命中的第二份副本（-1.50 MB），而非删功能或放宽目标；`[profile.release] strip = "symbols"` 实测无额外收益，作为常规优化保留。详见 `docs/size-report.md`。
 - **构建产物**：`cargo build --release` 5m38s；zip 1001 条目，46,513,892 字节，SHA256 `2f7272f905fb88c708a1e19a0dfce6fb3d4e687d2888db3c197f9e0d6c88a07b`。本次仅做静态验收，GUI 启动冒烟与 `LUMA_SELFCHECK` 按 `docs/RELEASING.md` 留待本地确认。
-- **可追溯性说明**：构建时工作区存在 2 个**非本次产生的既有未提交改动**（`src/pages/SearchPage.tsx`、`src/styles.css`），release 包包含它们，但本次 commit 不含。后续若要让产物与 HEAD 严格一致，需先决定这两个改动的归属再重新打包。
+- **可追溯性**：构建时工作区存在的 2 个既有改动（`src/pages/SearchPage.tsx`、`src/styles.css` —— 搜索框内嵌清除按钮，含清空结果/复位状态/作废在途代次）已在发版整理阶段单独提交。release 包、`v1.0.0` tag 与 HEAD 内容一致，无需重新打包。
 
 ### 明确不支持 / 已知限制
 

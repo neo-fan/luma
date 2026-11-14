@@ -75,7 +75,7 @@ python tools/make_portable.py       # cargo build --release + 组装 release/por
 
 - 更新 `CHANGELOG.md`（能力变更 / 已知限制 / 工程改动）、`docs/size-report.md`（实测）。
 - `git add` 只本次改动的文件；`git commit` 由开发者自己写，**不 push**。
-- 需要 tag 时由发布者手工执行，本流程不自动打 tag、不上传任何云端资源。
+- **tag**：`1.0.0` 已打本地 annotated tag `v1.0.0`（指向最终发布 commit）。后续版本用 `git tag -a vX.Y.Z -m "release X.Y.Z"`。**tag 与 commit 都不 push，不上传任何云端资源**；需要发布到远端时由发布者手工决定。
 
 ## 3. 回滚
 
