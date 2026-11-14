@@ -4,6 +4,24 @@
 
 ---
 
+## [1.0.4] — 2026-11-15
+
+补丁版。修掉「进度条走形」，并把自动换线改成真正「先同源同集线路 → 同源其它集 → 跨源」。
+
+### 修复
+
+- **toast 的进度线偶发走形（一条压在 toast 上方的灰条）**：`sonner` 2.0.8 会在运行时往 `<head>` 追加一段 `<style>`，里面有 `[data-sonner-toast][data-expanded=true]::after`（悬停时连接两条 toast 的透明桥：`height: calc(var(--gap) + 1px); bottom: 100%; width: 100%`）。它和我们自绘的进度线伪元素 `[data-sonner-toast].notice-toast::after` 特异性同为 (0, 2, 1)，谁生效只取决于样式表先后：dev 下 Vite 把我们的样式也插成 `<style>` 且在后，所以看不出来；正式包里我们的样式是打包好的 `<link>`（靠前），sonner 的 `<style>` 启动后追加（靠后）→ 进度线的 `height` / `bottom` / `left` 被顶成 sonner 的几何，而背景色与 `scaleX` 动画仍是我们的，看起来就是 toast 上方一条 11px 灰条（正好是 `gap: 10` + 1）。选择器改成 `[data-sonner-toast].notice-toast.notice-toast::after`（**类名写两遍是故意的**，把特异性抬到 (0, 3, 1)），从此与样式表先后无关。新增 `tests/frontend/noticeToast.test.ts` 锁住「更高特异性 + 进度线贴在 toast 底部 2px」。
+- **点播自动换线的顺序不严格**：`tryNextLine` 把「同集其它线路」和「同源其它集」混在一个候选列表里交给 `firstPlayable` 竞速，谁先探活成功就用谁，播放器报错时可能直接跳到下一集；另外重复触发靠一个布尔闸门早退，第二次调用直接返回 false 就掉进跨源分支。现在分两阶段：先探同源同集的其它线路（最多 12 条、并发 4），没有再探同源的其它集（最多 8 条），最后才换源；同一次换线用 in-flight Promise 去重并复用结论；集名比较改用 `sameEpisodeName`（全角转半角、去前导 0、忽略分隔符，`第04集` / `第4集` / `EP1` 视为同一集）。阶段提示依次是「正在尝试同源的其它线路…」→「当前源没有同集可播线路，正在尝试其它集…」→「当前源没有可播线路，正在尝试其它源…」，HLS 失败提示从「正在换源」改成「正在切换线路」。新增 `tests/frontend/failoverOrder.test.ts` 锁住三个阶段与顺序。
+- **直播频道级 UA / Referer 被丢掉**：M3U 的 `#EXTINF` 里可以带 `http-user-agent` / `http-referer`（suxuang 这类源有 42 条声明），Rust 侧以前只读 `tvg-*` 与 `group-title`，广播出去没有这两个字段；咪咕系的央视/卫视不带 UA 一律 404。现在解析进 `LiveChannel.ua` / `referer`（同名频道以先声明的为准；没声明时不出现空字段），`resolvePlay` 按「频道级 → 直播源级」兜底。
+- **直播地址被判成网页、白等 15 秒嗅探**：`http://…/live.php?id=CCTV1` 这种路径里没有 `.m3u8`，`classify` 判成 `page`，直接进第 4 级隐藏 WebView2 嗅探；服务器对默认 UA 返回 404 HTML，于是等满 15 秒后报「该地址无法在内置播放器中播放」。现在 `resolve_play` 在嗅探前先用「配置级 headers + 默认值」发一次 4 秒 GET，只读前 8 KiB，首行是 `#EXTM3U` 就按 HLS 处理，并采用**重定向后的最终地址**（分片多为相对路径）。同一地址实测：带 `aliplayer` UA 时 194 ms 拿到 `#EXTM3U`（302 到咪咕 CDN），不带 UA 仍是 15.4 秒 + 404。
+
+### 工程
+
+- 直播频道 header 透传补齐 `src-tauri/src/domain/live/m3u.rs` 的 3 条单测（频道级 ua/referer 保留、无声明不写空字段、同名台先声明者优先）；`src-tauri/src/domain/play.rs` 补 `looks_like_playlist` 的单测（BOM / 前导空白 / 小写 `#extm3u` 认，HTML 与空串不认）。
+- `src/lib/format.ts` 新增 `normalizeEpisodeName` / `sameEpisodeName` 与 `src/lib/format.test.ts` 的对应断言（全角、前导 0、`EP01` 等写法归一）。
+
+---
+
 ## [1.0.3] — 2026-11-15
 
 补丁版。修掉中文 Windows 上的导入失败（`malformed frame: Expecting property name enclosed in double quotes`）。

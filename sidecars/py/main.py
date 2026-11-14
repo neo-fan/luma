@@ -59,7 +59,7 @@ def force_utf8_stdio() -> None:
 
 force_utf8_stdio()
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 _write_lock = threading.Lock()
 _cancel_lock = threading.Lock()
 _cancelled: set[str] = set()
