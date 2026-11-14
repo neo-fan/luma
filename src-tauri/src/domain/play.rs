@@ -18,6 +18,14 @@ use url::Url;
 const SNIFF_TIMEOUT: Duration = Duration::from_secs(15);
 const SNIFF_TTL: Duration = Duration::from_secs(600);
 
+/// 「页面式」直链探测：直播里大量频道地址形如 `live.php?id=CCTV1`，路径里
+/// 没有 `.m3u8`，`classify` 只能判成 page；但它带对了 UA 其实就是一份播放
+/// 列表（咪咕系央视/卫视整批如此）。进 level-4（隐藏 WebView2 嗅探，15s）
+/// 之前先用带 headers 的普通 GET 试掉，命中就省下一次开窗与十几秒等待。
+const PLAYLIST_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+/// 只读开头这么多字节判 `#EXTM3U`；不读大流量，避免探测本身把直播流吃掉。
+const PLAYLIST_PROBE_BYTES: usize = 8 * 1024;
+
 struct SniffHit {
     media: String,
     found_at: Instant,
@@ -52,6 +60,55 @@ fn remember_sniff(page: &str, media: &str) {
             found_at: Instant::now(),
         },
     );
+}
+
+/// 带 headers 请求一次，看返回体是不是 M3U 播放列表。
+///
+/// 命中返回**重定向后的最终地址**：m3u8 里的分片多是相对路径，反代要按最终
+/// 地址解析才拼得对。读不到 / 不是列表都返回 `None`，交给原有链路继续。
+async fn probe_playlist(url: &str, headers: &[(String, String)]) -> Option<String> {
+    let client = crate::http::shared_client().ok()?;
+    let mut request = client.get(url).timeout(PLAYLIST_PROBE_TIMEOUT);
+    for (name, value) in headers {
+        if let (Ok(name), Ok(value)) = (
+            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+            reqwest::header::HeaderValue::from_str(value),
+        ) {
+            request = request.header(name, value);
+        }
+    }
+    let mut response = request.send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let final_url = response.url().to_string();
+    let mut body: Vec<u8> = Vec::new();
+    while body.len() < PLAYLIST_PROBE_BYTES {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if chunk.is_empty() {
+                    break;
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(_) => break,
+        }
+    }
+    if looks_like_playlist(&body) {
+        Some(final_url)
+    } else {
+        None
+    }
+}
+
+/// 首行是 `#EXTM3U` 才算列表：很多页面式直播地址其实返回的是 HTML 播放器。
+fn looks_like_playlist(body: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(body);
+    // BOM 不在 `trim_start` 的空白集合里，先单独剥掉；列表首行也可能有缩进。
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    let head: String = text.chars().take(7).collect();
+    head.eq_ignore_ascii_case("#EXTM3U")
 }
 
 fn kind_of(url: &str) -> String {
@@ -200,7 +257,7 @@ pub async fn resolve_play(
         ));
     }
 
-    let parsed = Url::parse(&effective_url)
+    let mut parsed = Url::parse(&effective_url)
         .map_err(|err| AppError::new(code::INVALID_ARGUMENT, "play url is invalid").with_cause(err.to_string()))?;
 
     // Some sources hand back TVBox's own local proxy URL already
@@ -226,6 +283,28 @@ pub async fn resolve_play(
     // direct stream or a play page). A `page` URL means all of them failed, so
     // this is where level 4 kicks in.
     let mut kind = classify(&parsed).to_string();
+    // 页面式直链：`live.php?id=CCTV1` 这种地址带对 headers 其实返回的是播放
+    // 列表（直播没有 spider 的 playerContent 可问，频道级 UA 只能在这里用上）。
+    // 先做一次 4s 的普通 GET；命中既省掉开隐藏窗口的十几秒，也让「需要特定
+    // UA 才回 m3u8」的源站终于能播。
+    if kind == "page" {
+        let probe_headers = crate::netrules::with_defaults(
+            &parsed,
+            crate::netrules::merged_for(&effective_url, &explicit),
+        );
+        if let Some(final_url) = probe_playlist(&effective_url, &probe_headers).await {
+            tracing::info!(
+                site = %request.site_key,
+                url = %final_url,
+                "page url answered with a playlist"
+            );
+            effective_url = final_url;
+            if let Ok(again) = Url::parse(&effective_url) {
+                parsed = again;
+            }
+            kind = "hls".to_string();
+        }
+    }
     if kind == "page" {
         let cached = cached_sniff(&effective_url);
         let media = match cached {
@@ -329,8 +408,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classify_detects_stream_kinds() {
-        let hls = Url::parse("http://127.0.0.1:8787/play.m3u8").unwrap();
+    fn classify_detects_stream_kinds() {        let hls = Url::parse("http://127.0.0.1:8787/play.m3u8").unwrap();
         assert_eq!(classify(&hls), "hls");
         let flv = Url::parse("http://127.0.0.1:8787/live/room.flv?token=1").unwrap();
         assert_eq!(classify(&flv), "flv");
@@ -338,6 +416,17 @@ mod tests {
         assert_eq!(classify(&file), "file");
         let page = Url::parse("http://127.0.0.1:8787/play?url=abc").unwrap();
         assert_eq!(classify(&page), "page");
+    }
+
+    #[test]
+    fn looks_like_playlist_accepts_only_extm3u_heads() {
+        assert!(looks_like_playlist(b"#EXTM3U\n#EXTINF:-1,CCTV1\nhttp://a/1.m3u8\n"));
+        // 带 BOM / 前导空行的列表也要认。
+        assert!(looks_like_playlist(
+            b"\xEF\xBB\xBF\n  #extm3u\n#EXTINF:-1,x\nhttp://a/1.m3u8\n"
+        ));
+        assert!(!looks_like_playlist(b"<html><body>player</body></html>"));
+        assert!(!looks_like_playlist(b""));
     }
 
     #[test]

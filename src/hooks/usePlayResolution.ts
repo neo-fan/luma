@@ -20,6 +20,8 @@ export interface UsePlayResolutionArgs {
   playFrom?: string;
   /** 直播源声明的 UA，直接用于播放请求（没有 playerContent 可问）。 */
   liveUa?: string;
+  /** 频道级 Referer（m3u 的 `http-referer`），比源级 UA 更精确，优先使用。 */
+  liveReferer?: string;
   vodId: string;
   /** 解析池命中提示，由播放页统一管理提示条。 */
   setSwitchTip: Dispatch<SetStateAction<string>>;
@@ -78,6 +80,7 @@ export function usePlayResolution({
   playUrl,
   playFrom,
   liveUa,
+  liveReferer,
   vodId,
   setSwitchTip,
   setVideoError,
@@ -101,7 +104,7 @@ export function usePlayResolution({
   resolvedRef.current = resolved;
 
   useEffect(() => {
-    const source = `${siteKey}|${playUrl}|${playFrom ?? ""}|${liveUa ?? ""}`;
+    const source = `${siteKey}|${playUrl}|${playFrom ?? ""}|${liveUa ?? ""}|${liveReferer ?? ""}`;
     // 软刷新：保留当前 resolved 与播放实例，控件全程可见可点；只有解析成功
     // 后才替换 resolved 重建解码器。首次进入 / 换集换源仍走硬解析。
     //
@@ -200,7 +203,7 @@ export function usePlayResolution({
             siteKey,
             url: target.url,
             ua: target.ua ?? liveUa,
-            referer: target.referer,
+            referer: target.referer ?? liveReferer,
             cookie: target.cookie,
           }),
           hardCap,
@@ -239,7 +242,7 @@ export function usePlayResolution({
     };
     // setter 引用稳定，vodId 仅用于日志；reloadNonce 只由用户点刷新时递增。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteKey, playUrl, playFrom, liveUa, reloadNonce]);
+  }, [siteKey, playUrl, playFrom, liveUa, liveReferer, reloadNonce]);
 
   return {
     resolved,

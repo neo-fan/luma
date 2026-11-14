@@ -187,7 +187,10 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
   } = usePlayResolution({
     siteKey: "live",
     playUrl,
-    liveUa: source?.ua,
+    // 频道级 UA/Referer（m3u 的 `http-user-agent` / `http-referer`）优先：
+    // 咪咕系央视/卫视不带它直接 404，源级 `lives[].ua` 只是兜底。
+    liveUa: channel?.ua || source?.ua,
+    liveReferer: channel?.referer,
     vodId: channel?.name ?? "",
     setSwitchTip,
     setVideoError,

@@ -35,6 +35,11 @@ struct Entry {
     logo: String,
     epg: String,
     group: String,
+    /// 频道级请求头：`http-user-agent` / `http-referer` 是 IPTV 列表里的
+    /// 通行写法，部分源站（咪咕系央视/卫视）不带它直接 404，带了才回播放
+    /// 列表。空串表示该频道没声明，回落到播放源的 `lives[].ua`。
+    ua: String,
+    referer: String,
 }
 
 fn parse_extinf(line: &str) -> Entry {
@@ -63,7 +68,40 @@ fn parse_extinf(line: &str) -> Entry {
         logo: attrs.get("tvg-logo").cloned().unwrap_or_default(),
         epg: attrs.get("tvg-id").cloned().unwrap_or_default(),
         group,
+        ua: attrs.get("http-user-agent").cloned().unwrap_or_default(),
+        referer: attrs.get("http-referer").cloned().unwrap_or_default(),
     }
+}
+
+/// 同名频道聚合：合并线路，去重且保留首次出现顺序；频道级请求头只在
+/// 当前频道还没声明时补上（先出现的那家说了算，避免同名台互相覆盖）。
+fn merge_channel(channel: &mut Value, streams: &[String], entry: &Entry) {
+    merge_urls(channel, streams);
+    for (key, value) in [("ua", &entry.ua), ("referer", &entry.referer)] {
+        if value.is_empty() {
+            continue;
+        }
+        if channel.get(key).and_then(Value::as_str).is_none() {
+            channel[key] = json!(value);
+        }
+    }
+}
+
+fn channel_value(name: &str, streams: &[String], entry: &Entry) -> Value {
+    let mut channel = serde_json::Map::new();
+    channel.insert("name".to_string(), json!(name));
+    channel.insert("url".to_string(), json!(streams[0]));
+    channel.insert("urls".to_string(), json!(streams));
+    channel.insert("logo".to_string(), json!(entry.logo));
+    channel.insert("epg".to_string(), json!(entry.epg));
+    // 只有真有值才写字段，免得几千条频道里多出两串空字符串。
+    if !entry.ua.is_empty() {
+        channel.insert("ua".to_string(), json!(entry.ua));
+    }
+    if !entry.referer.is_empty() {
+        channel.insert("referer".to_string(), json!(entry.referer));
+    }
+    Value::Object(channel)
 }
 
 /// 同名频道聚合：合并线路，去重且保留首次出现顺序。
@@ -140,6 +178,8 @@ pub(crate) fn parse(raw: &str, source: &str) -> Value {
                 logo: String::new(),
                 epg: String::new(),
                 group: DEFAULT_GROUP.to_string(),
+                ua: String::new(),
+                referer: String::new(),
             });
         }
         let Some(entry) = pending.take() else {
@@ -157,21 +197,12 @@ pub(crate) fn parse(raw: &str, source: &str) -> Value {
         });
         let key = (current_group.clone(), name.clone());
         match channels.get_mut(&key) {
-            Some(channel) => merge_urls(channel, &streams),
+            Some(channel) => merge_channel(channel, &streams, &entry),
             None => {
                 if !group_order.contains(&name) {
                     group_order.push(name.clone());
                 }
-                channels.insert(
-                    key.clone(),
-                    json!({
-                        "name": name,
-                        "url": streams[0],
-                        "urls": streams,
-                        "logo": entry.logo,
-                        "epg": entry.epg,
-                    }),
-                );
+                channels.insert(key.clone(), channel_value(&name, &streams, &entry));
             }
         }
         last_key = Some(key);
@@ -239,5 +270,33 @@ mod tests {
         let parsed = parse(raw, "");
         assert_eq!(parsed["count"], 1);
         assert_eq!(parsed["groups"][0]["channels"][0]["name"], "好行");
+    }
+
+    #[test]
+    fn channel_level_ua_and_referer_are_kept() {
+        let raw = "#EXTM3U\n#EXTINF:-1 http-user-agent=\"aliplayer\" http-referer=\"http://a/\" group-title=\"央视\",CCTV1\nhttp://a/cctv1.m3u8\n";
+        let parsed = parse(raw, "");
+        let channel = &parsed["groups"][0]["channels"][0];
+        assert_eq!(channel["ua"], "aliplayer");
+        assert_eq!(channel["referer"], "http://a/");
+    }
+
+    #[test]
+    fn channels_without_ua_do_not_carry_empty_fields() {
+        let raw = "#EXTM3U\n#EXTINF:-1,普通台\nhttp://a/1.m3u8\n";
+        let parsed = parse(raw, "");
+        let channel = &parsed["groups"][0]["channels"][0];
+        assert!(channel.get("ua").is_none());
+        assert!(channel.get("referer").is_none());
+    }
+
+    #[test]
+    fn merging_same_name_channels_keeps_first_declared_headers() {
+        let raw = "#EXTM3U\n#EXTINF:-1 http-user-agent=\"first\" group-title=\"央视\",CCTV1\nhttp://a/1.m3u8\n#EXTINF:-1 http-user-agent=\"second\" group-title=\"央视\",CCTV1\nhttp://b/2.m3u8\n";
+        let parsed = parse(raw, "");
+        let channels = parsed["groups"][0]["channels"].as_array().expect("channels");
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0]["ua"], "first");
+        assert_eq!(channels[0]["urls"], json!(["http://a/1.m3u8", "http://b/2.m3u8"]));
     }
 }

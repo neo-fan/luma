@@ -326,6 +326,13 @@ export interface LiveChannel {
   epg?: string;
   /** 后端原始字段（聚合前拆分的逐条地址），归一化时转为 lines。 */
   urls?: string[];
+  /**
+   * 频道级请求头：m3u 的 `#EXTINF ... http-user-agent` / `http-referer`。
+   * 部分源站（咪咕系央视/卫视）不带它就 404，带了对的 UA 才回播放列表；
+   * 没声明时不出现，播放时回落到 `lives[].ua`。
+   */
+  ua?: string;
+  referer?: string;
 }
 
 export interface LiveGroup {
