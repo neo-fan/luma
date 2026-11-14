@@ -1,174 +1,6 @@
-//! Local HTTP reverse proxy (spec 7.5 / T-08).
-//!
-//! Binds `127.0.0.1:9978`; when the port is taken it falls back to an
-//! ephemeral port and publishes the real one through `proxy_status`.
-//! Only loopback is bound. Targets are validated against a whitelist that
-//! rejects loopback / private / link-local / multicast addresses, unless
-//! `LUMA_PROXY_ALLOW_LOCAL=1` is set (development and stub tests only).
+use super::*;
 
-use crate::error::{code, AppError};
-use axum::body::{Body, Bytes};
-use axum::extract::{RawQuery, State};
-use axum::http::{HeaderMap, HeaderName, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use axum::Router;
-use futures_util::{stream, StreamExt};
-use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
-use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use url::Url;
-
-pub const DEFAULT_PORT: u16 = 9978;
-const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(20);
-// The fallback UA and the "fill in defaults" helper live in `netrules` so the
-// resolver and the proxy cannot drift apart. Some CDNs answer garbage (or a
-// 403 body that hls.js reports as `fragParsingError`) when no UA is present.
-
-/// Headers copied from the browser to the upstream request.
-const PASSTHROUGH: [&str; 5] = [
-    "range",
-    "if-range",
-    "accept",
-    "accept-language",
-    "if-modified-since",
-];
-
-/// Headers copied from the upstream response back to the client.
-const DOWNSTREAM: [&str; 10] = [
-    "content-type",
-    "content-length",
-    "content-range",
-    "accept-ranges",
-    "cache-control",
-    "last-modified",
-    "etag",
-    "content-disposition",
-    "date",
-    "expires",
-];
-
-pub struct ProxyState {
-    port: AtomicU16,
-    allow_local: bool,
-    client: reqwest::Client,
-}
-
-/// Port the proxy actually bound. Sidecars need it to build
-/// `getProxyUrl()` / `proxy?do=…` URLs; the requested `PROXY_PORT` is only a
-/// preference (a busy port falls back to an ephemeral one).
-static ACTIVE_PORT: AtomicU16 = AtomicU16::new(0);
-
-pub fn active_port() -> u16 {
-    match ACTIVE_PORT.load(Ordering::Relaxed) {
-        0 => DEFAULT_PORT,
-        port => port,
-    }
-}
-
-impl ProxyState {
-    fn client() -> reqwest::Client {
-        reqwest::Client::builder()
-            .timeout(UPSTREAM_TIMEOUT)
-            .pool_idle_timeout(Duration::from_secs(60))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port.load(Ordering::Relaxed)
-    }
-
-    pub fn allow_local(&self) -> bool {
-        self.allow_local
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ProxyQuery {
-    url: String,
-    ua: Option<String>,
-    referer: Option<String>,
-    cookie: Option<String>,
-    /// Base64 payload of extra headers as a JSON object, used by py/js/jar
-    /// runtimes that need more than ua/referer/cookie.
-    h: Option<String>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ProxyStatus {
-    pub port: u16,
-    pub base_url: String,
-    pub allow_local: bool,
-}
-
-/// Start the proxy on the Tauri runtime; failures are surfaced to the caller.
-pub fn start() -> Result<Arc<ProxyState>, AppError> {
-    let allow_local = crate::env::is_enabled("PROXY_ALLOW_LOCAL");
-
-    let listener = bind_listener()?;
-    let port = listener
-        .local_addr()
-        .map_err(|err| AppError::new(code::INTERNAL, "proxy local_addr failed").with_cause(err.to_string()))?
-        .port();
-
-    let state = Arc::new(ProxyState {
-        port: AtomicU16::new(port),
-        allow_local,
-        client: ProxyState::client(),
-    });
-    ACTIVE_PORT.store(port, Ordering::Relaxed);
-
-    let shared = state.clone();
-    // `setup` runs outside the Tokio context, so the std listener is handed to
-    // the async task and adopted there.
-    tauri::async_runtime::spawn(async move {
-        let listener = match tokio::net::TcpListener::from_std(listener) {
-            Ok(listener) => listener,
-            Err(err) => {
-                tracing::error!(error = %err, "proxy could not adopt listener");
-                return;
-            }
-        };
-        let router = Router::new()
-            .route("/proxy", get(handle_proxy).options(handle_options))
-            .route("/image", get(handle_image).options(handle_options))
-            .route("/health", get(handle_health))
-            .with_state(shared.clone());
-        if let Err(err) = axum::serve(listener, router).await {
-            tracing::error!(error = %err, "local proxy stopped");
-        }
-    });
-
-    tracing::info!(port, allow_local, "local proxy listening on 127.0.0.1");
-    Ok(state)
-}
-
-fn bind_listener() -> Result<std::net::TcpListener, AppError> {
-    let primary = format!("127.0.0.1:{DEFAULT_PORT}");
-    match std::net::TcpListener::bind(&primary) {
-        Ok(listener) => {
-            listener
-                .set_nonblocking(true)
-                .map_err(|err| AppError::new(code::INTERNAL, "proxy set_nonblocking failed").with_cause(err.to_string()))?;
-            Ok(listener)
-        }
-        Err(err) => {
-            tracing::warn!(port = DEFAULT_PORT, error = %err, "proxy port busy, falling back to ephemeral port");
-            let listener = std::net::TcpListener::bind("127.0.0.1:0")
-                .map_err(|err| AppError::new(code::INTERNAL, "proxy bind failed").with_cause(err.to_string()))?;
-            listener
-                .set_nonblocking(true)
-                .map_err(|err| AppError::new(code::INTERNAL, "proxy set_nonblocking failed").with_cause(err.to_string()))?;
-            Ok(listener)
-        }
-    }
-}
-
-async fn handle_health(State(state): State<Arc<ProxyState>>) -> Response {
+pub(super) async fn handle_health(State(state): State<Arc<ProxyState>>) -> Response {
     let body = format!(r#"{{"ok":true,"port":{}}}"#, state.port());
     Response::builder()
         .status(StatusCode::OK)
@@ -178,7 +10,7 @@ async fn handle_health(State(state): State<Arc<ProxyState>>) -> Response {
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-async fn handle_options() -> Response {
+pub(super) async fn handle_options() -> Response {
     Response::builder()
         .status(StatusCode::NO_CONTENT)
         .header("access-control-allow-origin", "*")
@@ -189,7 +21,7 @@ async fn handle_options() -> Response {
         .unwrap_or_else(|_| StatusCode::NO_CONTENT.into_response())
 }
 
-async fn handle_proxy(
+pub(super) async fn handle_proxy(
     State(state): State<Arc<ProxyState>>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
@@ -408,7 +240,7 @@ async fn handle_proxy(
 ///
 /// 只认「PNG 签名 + IEND 在前 1KB + 其后连续三个 0x47」这一种形态，真图片
 /// （海报）不会误判：它们的 IEND 在文件尾部，且后面没有 TS 同步字节。
-fn disguised_ts_offset(buffer: &[u8]) -> Option<usize> {
+pub(super) fn disguised_ts_offset(buffer: &[u8]) -> Option<usize> {
     const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
     const TS_PACKET: usize = 188;
     if buffer.len() < 256 || !buffer.starts_with(&PNG_MAGIC) {
@@ -432,7 +264,7 @@ fn disguised_ts_offset(buffer: &[u8]) -> Option<usize> {
 /// new dependency: `%XX` -> byte, `+` stays literal (header values, not form
 /// data), then UTF-8 decode. Invalid UTF-8 falls back to the raw input rather
 /// than rejecting the header.
-fn percent_decode(input: &str) -> String {
+pub(super) fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -535,7 +367,7 @@ pub(crate) fn parse_vod_pic_url(raw: &str) -> Option<(String, Vec<(String, Strin
 /// `?url=`; we parse the inline headers, validate the pure URL against the
 /// same whitelist as `/proxy`, inject headers (inline > config `headers[]` >
 /// defaults), then stream the image back with a long cache lifetime.
-async fn handle_image(
+pub(super) async fn handle_image(
     State(state): State<Arc<ProxyState>>,
     RawQuery(raw): RawQuery,
 ) -> Response {
@@ -604,7 +436,7 @@ async fn handle_image(
 /// Sources that implement `Spider.proxy(Map)` return URLs pointing at this
 /// route; the query map is handed to the spider and its
 /// `[contentType, headers, bytes]` answer becomes the HTTP response.
-async fn handle_spider_proxy(kind: &str, pairs: &[(String, String)]) -> Response {
+pub(super) async fn handle_spider_proxy(kind: &str, pairs: &[(String, String)]) -> Response {
     let Some(site) = crate::spider::last_play_site() else {
         return deny(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -666,126 +498,7 @@ async fn handle_spider_proxy(kind: &str, pairs: &[(String, String)]) -> Response
     }
 }
 
-/// Headers/params that must travel with every rewritten playlist URI.
-#[derive(Clone, Default)]
-struct Fwd {
-    ua: Option<String>,
-    referer: Option<String>,
-    cookie: Option<String>,
-    extra: Option<String>,
-}
-
-impl Fwd {
-    fn suffix(&self) -> String {
-        let mut out = String::new();
-        for (key, value) in [
-            ("ua", self.ua.as_deref()),
-            ("referer", self.referer.as_deref()),
-            ("cookie", self.cookie.as_deref()),
-            ("h", self.extra.as_deref()),
-        ] {
-            if let Some(value) = value.filter(|text| !text.is_empty()) {
-                out.push_str(&format!("&{key}={}", urlencode(value)));
-            }
-        }
-        out
-    }
-}
-
-fn wrap_url(port: u16, target: &str, fwd: &Fwd) -> String {
-    format!("http://127.0.0.1:{port}/proxy?url={}{}", urlencode(target), fwd.suffix())
-}
-
-/// Resolve a playlist URI against the manifest URL. Absolute http(s) URLs are
-/// already final and must pass through unchanged (they often carry signed query
-/// parameters); everything else is joined with the manifest's base.
-fn absolutize(base: &Url, uri: &str) -> String {
-    let trimmed = uri.trim();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        return trimmed.to_string();
-    }
-    base.join(trimmed)
-        .map(|url| url.to_string())
-        .unwrap_or_else(|_| trimmed.to_string())
-}
-
-/// Does this body actually look like an HLS playlist?
-///
-/// The `is_playlist` gate only looks at the URL and `content-type`, and a dead
-/// source keeps answering `200` — netdisk resolvers return JSON, CDNs return an
-/// HTML error page. Only a body whose first meaningful line is `#EXTM3U` can be
-/// handed to hls.js; tolerating a BOM / leading blank lines because some
-/// encoders prepend them.
-fn looks_like_playlist(text: &str) -> bool {
-    text.trim_start_matches('\u{feff}')
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .is_some_and(|line| line.starts_with("#EXTM3U"))
-}
-
-/// First `limit` bytes on one line, for log lines and error bodies.
-fn preview_text(text: &str, limit: usize) -> String {
-    let flat: String = text
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .take(limit)
-        .collect();
-    flat.trim().to_string()
-}
-
-/// Wrap every media line of an HLS playlist into the local proxy. Without this
-/// the webview would request segments (and `#EXT-X-KEY` URIs) directly from the
-/// CDN, losing the anti-leech headers and hitting CORS.
-fn rewrite_playlist(text: &str, base: &Url, port: u16, fwd: &Fwd) -> String {
-    let mut out = String::with_capacity(text.len() + 256);
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            out.push('\n');
-            continue;
-        }
-        if trimmed.starts_with('#') {
-            if trimmed.contains("URI=\"") {
-                out.push_str(&rewrite_tag_uris(trimmed, base, port, fwd));
-            } else {
-                out.push_str(trimmed);
-            }
-            out.push('\n');
-            continue;
-        }
-        out.push_str(&wrap_url(port, &absolutize(base, trimmed), fwd));
-        out.push('\n');
-    }
-    out
-}
-
-/// Rewrite every `URI="..."` in an HLS tag (e.g. `#EXT-X-KEY`) to point at the
-/// local proxy. One tag can carry more than one URI, so the scan resumes at the
-/// closing quote instead of returning after the first hit.
-fn rewrite_tag_uris(line: &str, base: &Url, port: u16, fwd: &Fwd) -> String {
-    let mut out = String::with_capacity(line.len() + 64);
-    let mut rest = line;
-    while let Some(position) = rest.find("URI=\"") {
-        // +5 skips the literal `URI="`; `tail` now starts at the value.
-        let (head, tail) = rest.split_at(position + 5);
-        out.push_str(head);
-        if let Some(end) = tail.find('"') {
-            let uri = &tail[..end];
-            out.push_str(&wrap_url(port, &absolutize(base, uri), fwd));
-            rest = &tail[end..];
-        } else {
-            // Unterminated quote: keep the original tail verbatim rather than
-            // emitting a broken playlist.
-            rest = tail;
-            break;
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn extra_headers(payload: Option<&str>) -> Vec<(HeaderName, String)> {
+pub(super) fn extra_headers(payload: Option<&str>) -> Vec<(HeaderName, String)> {
     let Some(payload) = payload else { return Vec::new() };
     let Ok(decoded) = base64_decode(payload) else { return Vec::new() };
     let Ok(map) = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&decoded) else {
@@ -826,280 +539,4 @@ pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
         }
     }
     Ok(out)
-}
-
-async fn check_target(url: &Url, allow_local: bool) -> Result<(), String> {
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(format!("scheme {} not allowed", url.scheme()));
-    }
-    let host = url.host_str().ok_or_else(|| "url has no host".to_string())?;
-    if allow_local {
-        return Ok(());
-    }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return if is_blocked(ip) {
-            Err(format!("target {ip} is not allowed"))
-        } else {
-            Ok(())
-        };
-    }
-    let port = url.port_or_known_default().unwrap_or(80);
-    let addrs = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|err| format!("resolve {host} failed: {err}"))?;
-    for addr in addrs {
-        if is_blocked(addr.ip()) {
-            return Err(format!("target {host} resolves to blocked address {}", addr.ip()));
-        }
-    }
-    Ok(())
-}
-
-fn is_blocked(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-                || v4.is_unspecified()
-                || v4.is_multicast()
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || v6.is_unique_local()
-                || v6.is_unicast_link_local()
-        }
-    }
-}
-
-fn deny(status: StatusCode, message: &str) -> Response {
-    Response::builder()
-        .status(status)
-        .header("content-type", "text/plain; charset=utf-8")
-        .header("access-control-allow-origin", "*")
-        .body(Body::from(message.to_string()))
-        .unwrap_or_else(|_| status.into_response())
-}
-
-/// Build the player-facing proxy URL for one playable item (spec 7.5).
-pub fn build_proxy_url(
-    port: u16,
-    url: &str,
-    ua: Option<&str>,
-    referer: Option<&str>,
-    cookie: Option<&str>,
-) -> String {
-    let mut out = format!("http://127.0.0.1:{port}/proxy?url={}", urlencode(url));
-    if let Some(ua) = ua.filter(|value| !value.is_empty()) {
-        out.push_str(&format!("&ua={}", urlencode(ua)));
-    }
-    if let Some(referer) = referer.filter(|value| !value.is_empty()) {
-        out.push_str(&format!("&referer={}", urlencode(referer)));
-    }
-    if let Some(cookie) = cookie.filter(|value| !value.is_empty()) {
-        out.push_str(&format!("&cookie={}", urlencode(cookie)));
-    }
-    out
-}
-
-fn urlencode(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for byte in input.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char)
-            }
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
-}
-
-#[tauri::command]
-pub fn proxy_status(state: tauri::State<'_, Arc<ProxyState>>) -> ProxyStatus {
-    let port = state.port();
-    ProxyStatus {
-        port,
-        base_url: format!("http://127.0.0.1:{port}"),
-        allow_local: state.allow_local(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn urlencode_keeps_unreserved_only() {
-        assert_eq!(urlencode("a-b_c.d~e"), "a-b_c.d~e");
-        assert_eq!(urlencode("http://a b/?x=1&y=2"), "http%3A%2F%2Fa%20b%2F%3Fx%3D1%26y%3D2");
-    }
-
-    #[test]
-    fn parse_vod_pic_plain_and_data_are_not_parsed() {
-        assert!(parse_vod_pic_url("https://img/x.jpg").is_none());
-        assert!(parse_vod_pic_url("").is_none());
-        assert!(parse_vod_pic_url("data:image/png;base64,AAAA").is_none());
-        assert!(parse_vod_pic_url("@Referer=http://x").is_none()); // empty url
-    }
-
-    #[test]
-    fn parse_vod_pic_douban_inline_headers() {
-        // The exact shape produced by douban.py PIC_SUFFIX, incl. %20 in UA.
-        let raw = "https://img3.doubanio.com/p.jpg@Referer=https://api.douban.com/@User-Agent=Mozilla/5.0%20(Windows%20NT%2010.0)";
-        let (url, headers) = parse_vod_pic_url(raw).expect("inline header");
-        assert_eq!(url, "https://img3.doubanio.com/p.jpg");
-        assert_eq!(headers.len(), 2);
-        assert!(headers.iter().any(|(k, v)| k == "Referer" && v == "https://api.douban.com/"));
-        assert!(headers.iter().any(|(k, v)| k == "User-Agent" && v == "Mozilla/5.0 (Windows NT 10.0)"));
-    }
-
-    #[test]
-    fn parse_vod_pic_cookie_and_header_aliases() {
-        let raw = "https://cdn/x.png@ua=okhttp%2F3.15@referer=https%3A%2F%2Fh%2F@Cookie=a%3D1%3Bb%3D2";
-        let (url, headers) = parse_vod_pic_url(raw).expect("aliases");
-        assert_eq!(url, "https://cdn/x.png");
-        assert!(headers.iter().any(|(k, v)| k == "User-Agent" && v == "okhttp/3.15"));
-        assert!(headers.iter().any(|(k, v)| k == "Referer" && v == "https://h/"));
-        assert!(headers.iter().any(|(k, v)| k == "Cookie" && v == "a=1;b=2"));
-    }
-
-    #[test]
-    fn parse_vod_pic_headers_json_and_explicit_override() {
-        // @Headers is URL-encoded JSON; an explicit @Referer must override it.
-        let raw = "https://cdn/x.webp@Headers=%7B%22Referer%22%3A%22https%3A%2F%2Fjson%2F%22%2C%22X-Token%22%3A%22abc%22%7D@Referer=https%3A%2F%2Fexplicit%2F";
-        let (url, headers) = parse_vod_pic_url(raw).expect("headers json");
-        assert_eq!(url, "https://cdn/x.webp");
-        let get = |k: &str| headers.iter().find(|(name, _)| name == k).map(|(_, v)| v.as_str());
-        assert_eq!(get("Referer"), Some("https://explicit/")); // explicit wins, single entry
-        assert_eq!(get("X-Token"), Some("abc"));
-        assert_eq!(headers.iter().filter(|(name, _)| name == "Referer").count(), 1);
-    }
-
-    #[test]
-    fn percent_decode_handles_invalid_utf8_gracefully() {
-        assert_eq!(percent_decode("a%20b%2Fc"), "a b/c");
-        assert_eq!(percent_decode("plain"), "plain");
-        assert_eq!(percent_decode("%FF%FE"), "%FF%FE"); // invalid UTF-8 -> raw
-    }
-
-    #[test]
-    fn proxy_url_includes_optional_headers() {
-        let url = build_proxy_url(9978, "http://cdn/x.m3u8", Some("okhttp/3.15"), Some("http://ref/"), None);
-        assert!(url.starts_with("http://127.0.0.1:9978/proxy?url=http%3A%2F%2Fcdn%2Fx.m3u8"));
-        assert!(url.contains("ua=okhttp%2F3.15"));
-        assert!(url.contains("referer=http%3A%2F%2Fref%2F"));
-        assert!(!url.contains("cookie="));
-    }
-
-    #[test]
-    fn blocked_ranges_cover_private_and_loopback() {
-        for ip in ["127.0.0.1", "10.1.2.3", "192.168.1.1", "169.254.1.1", "::1", "fd00::1"] {
-            assert!(is_blocked(ip.parse().unwrap()), "{ip} should be blocked");
-        }
-        for ip in ["8.8.8.8", "1.1.1.1"] {
-            assert!(!is_blocked(ip.parse().unwrap()), "{ip} should be allowed");
-        }
-    }
-
-    #[test]
-    fn playlist_rewrites_relative_segments_and_key_uris() {
-        let base = Url::parse("https://cdn.example/x/playlist.m3u8").unwrap();
-        let fwd = Fwd {
-            ua: Some("okhttp/3.15".into()),
-            referer: Some("https://ref.example/".into()),
-            cookie: None,
-            extra: None,
-        };
-        let source = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXTINF:2,\nseg0.ts\n#EXTINF:2,\nhttps://other.example/seg1.ts\n";
-        let out = rewrite_playlist(source, &base, 9978, &fwd);
-        assert!(out.contains("http://127.0.0.1:9978/proxy?url=https%3A%2F%2Fcdn.example%2Fx%2Fseg0.ts"), "{out}");
-        assert!(out.contains("URI=\"http://127.0.0.1:9978/proxy?url=https%3A%2F%2Fcdn.example%2Fx%2Fkey.bin"), "{out}");
-        assert!(out.contains("url=https%3A%2F%2Fother.example%2Fseg1.ts"), "{out}");
-        assert!(out.contains("ua=okhttp%2F3.15"), "{out}");
-        assert!(out.contains("#EXTM3U"), "{out}");
-    }
-
-    #[test]
-    fn base64_roundtrip_for_extra_headers() {
-        let payload = "eyJYLVN0dWIiOiIxIn0=";
-        let decoded = base64_decode(payload).expect("decode");
-        assert_eq!(String::from_utf8(decoded).unwrap(), r#"{"X-Stub":"1"}"#);
-    }
-
-    #[test]
-    fn looks_like_playlist_accepts_bom_and_blank_leading_lines() {
-        assert!(looks_like_playlist("#EXTM3U\n#EXTINF:4,\nseg.ts\n"));
-        assert!(looks_like_playlist("\u{feff}#EXTM3U\nseg.ts\n"));
-        assert!(looks_like_playlist("\n\n  #EXTM3U\r\nseg.ts\r\n"));
-    }
-
-    #[test]
-    fn looks_like_playlist_rejects_dead_source_payloads() {
-        // Netdisk resolver answering 200 while its token no longer works.
-        assert!(!looks_like_playlist(r#"{"code":201,"msg":"解析失败了","url":""}"#));
-        assert!(!looks_like_playlist("<html><body>404</body></html>"));
-        assert!(!looks_like_playlist(""));
-        assert!(!looks_like_playlist("#EXTINF:4,\nseg.ts\n"));
-    }
-
-    #[test]
-    fn preview_text_flattens_control_chars_and_truncates() {
-        let text = "{\"code\":201,\n\"msg\":\"解析失败了\"}";
-        let preview = preview_text(text, 12);
-        assert!(!preview.contains('\n'), "{preview}");
-        assert!(preview.chars().count() <= 12, "{preview}");
-    }
-
-    /// 造一段「1×1 PNG 头 + n 个 TS 包」的伪装分片（PAN1/NBY 线路的真实形态）。
-    fn disguised_segment() -> Vec<u8> {
-        let mut png: Vec<u8> = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-        png.extend_from_slice(&[0, 0, 0, 13]); // IHDR 长度
-        png.extend_from_slice(b"IHDR");
-        png.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]); // 1×1 RGBA
-        png.extend_from_slice(&[0x1f, 0x15, 0xc4, 0x89]); // IHDR CRC
-        png.extend_from_slice(&[0, 0, 0, 0]); // IEND 长度
-        png.extend_from_slice(b"IEND");
-        png.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]); // IEND CRC
-        let prefix = png.len();
-        let mut out = png;
-        for i in 0..6 {
-            out.push(0x47); // 同步字节
-            out.extend(std::iter::repeat(0x20u8).take(187));
-            out[prefix + i * 188] = 0x47;
-        }
-        out
-    }
-
-    #[test]
-    fn disguised_ts_offset_strips_png_prefix() {
-        let body = disguised_segment();
-        let offset = disguised_ts_offset(&body).expect("should detect disguise");
-        assert_eq!(body[offset], 0x47);
-        assert_eq!(offset, body.windows(4).position(|w| w == b"IEND").unwrap() + 8);
-    }
-
-    #[test]
-    fn disguised_ts_offset_ignores_real_png_and_plain_ts() {
-        // 真实海报：PNG 签名 + IEND 在尾部，后面没有 TS 同步字节。
-        let mut poster: Vec<u8> = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-        poster.extend_from_slice(&[0u8; 600]);
-        poster.extend_from_slice(b"IEND");
-        poster.extend_from_slice(&[0u8; 4]);
-        assert!(disguised_ts_offset(&poster).is_none());
-
-        // 干净 TS：没有 PNG 签名。
-        let mut ts = vec![0x47u8; 1024];
-        for i in 1..1024 {
-            ts[i] = 0x20;
-        }
-        for k in (0..1024).step_by(188) {
-            ts[k] = 0x47;
-        }
-        assert!(disguised_ts_offset(&ts).is_none());
-    }
 }

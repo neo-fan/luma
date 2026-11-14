@@ -54,7 +54,7 @@ pub mod mpv;
 pub mod parse;
 #[path = "domain/play.rs"]
 pub mod play;
-#[path = "domain/proxy.rs"]
+#[path = "domain/proxy/mod.rs"]
 pub mod proxy;
 #[path = "domain/sniff.rs"]
 pub mod sniff;

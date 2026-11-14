@@ -91,6 +91,8 @@ luma/
 │       ├── infra/                         # 底座：error/env/paths/process/netrules/http/
 │       │                                  #   bridge/db/store/logging/window
 │       └── domain/                        # 业务：config/play/parse/proxy/live/sniff/
+│                                          #   config/{mod,derive,naming,import,github,refresh}
+│                                          #   proxy/{mod,handlers,guard,playlist,tests}
 │                                          #   mpv/clipboard/ghproxy/spider/{mod,cms,jvm,python,quickjs}
 │
 ├── sidecars/                              # 随包分发的 sidecar

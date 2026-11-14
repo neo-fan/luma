@@ -79,7 +79,7 @@ PlayerPage.resolve_play
 
 ## 6. 本地反代与嗅探
 
-- 反代（`proxy.rs` + `netrules.rs`）：对源站请求做 UA/Referer/Cookie 透传、m3u8 分片重写、`/image` 封面代理；`LUMA_PROXY_PORT` 默认 9978。
+- 反代（`proxy/{mod,handlers,guard,playlist}.rs` + `netrules.rs`）：对源站请求做 UA/Referer/Cookie 透传、m3u8 分片重写、`/image` 封面代理；`LUMA_PROXY_PORT` 默认 9978。
 - 嗅探（`sniff.rs`）：隐藏 `sniffer-*` WebView2 加载播放页，用 `WebResourceRequested` 抓取媒体请求；独立 `data_directory` + 覆盖 `--remote-debugging-port=0`（避开 dev 的 9222 冲突）；成功缓存 10 分钟、失败不缓存、串行化避免抢 user data dir。
 
 ## 7. 数据层（SQLite）
