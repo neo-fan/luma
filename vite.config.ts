@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import packageJson from "./package.json";
 
 // 版本号唯一来源：package.json。Cargo.toml / tauri.conf.json 手工保持同步，
@@ -9,13 +9,20 @@ const APP_VERSION = packageJson.version;
 
 // 构建号：取最近一次提交的 short hash 与提交时间，与后端 build.rs 用完全相同
 // 的方式注入，双击 exe 也能一眼比对前后端是否同源同构建（无 .git 时回退 unknown）。
+// 优先读环境变量（重编脚本显式注入，避免子进程取不到 git 时回退 unknown）。
+// 注意必须用 spawnSync 数组参数直调 git：execSync 默认走 cmd.exe，
+// --format=%h|%cd 里的 | 会被 cmd 当管道符，hash 永远回退 unknown。
 function gitBuildInfo(): { hash: string; time: string } {
+  const envHash = process.env.LUMA_BUILD_HASH;
+  const envTime = process.env.LUMA_BUILD_TIME;
+  if (envHash && envTime) return { hash: envHash, time: envTime };
   try {
-    const out = execSync(
-      "git log -1 --format=%h|%cd --date=format:%Y-%m-%dT%H:%M:%S%z",
+    const res = spawnSync(
+      "git",
+      ["log", "-1", "--format=%h|%cd", "--date=format:%Y-%m-%dT%H:%M:%S%z"],
       { encoding: "utf-8" },
-    ).trim();
-    const [hash, time] = out.split("|");
+    );
+    const [hash, time] = (res.stdout ?? "").trim().split("|");
     return { hash: hash || "unknown", time: time || "unknown" };
   } catch {
     return { hash: "unknown", time: "unknown" };

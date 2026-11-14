@@ -589,6 +589,12 @@ export default function SearchPage({ sites, navigate, initialKeyword }: SearchPa
         </div>
       ) : null}
 
+      {!loading && !searched && keyword.trim() === "" ? (
+        <p className="search-hint">
+          输入片名或关键词，<strong>跨全部站点</strong>检索资源；也可在上方选择特定站点后搜索。
+        </p>
+      ) : null}
+
       {error ? <ErrorBar message={error} /> : null}
 
       {loading ? (

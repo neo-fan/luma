@@ -447,7 +447,7 @@ textarea {
 
 .page-title {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   margin: 0;
   font-size: var(--fs-h1);
@@ -475,7 +475,7 @@ textarea {
 
 .page-meta {
   color: var(--muted);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
@@ -483,6 +483,24 @@ textarea {
   margin: 0 0 14px;
   color: var(--muted);
   font-size: var(--fs-sm);
+}
+
+/* 搜索页无关键词初始态：最近搜索之下的引导，避免大片黑洞留白。 */
+.search-hint {
+  margin: 6px 0 4px;
+  padding: 30px 24px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-lg);
+  background: rgba(20, 25, 34, 0.4);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.search-hint strong {
+  color: var(--text-soft);
+  font-weight: var(--fw-medium);
 }
 
 /* 直播线路切换已并入 ArtPlayer 控制栏（selector 按钮），下方不再占一行。 */
@@ -1382,8 +1400,9 @@ textarea {
 
 .vod-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 24px 18px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* 宽屏提密度：列距收窄到 14px，行距保持 24px 与纵向呼吸一致 */
+  gap: 24px 14px;
 }
 
 /* 聚合一次可能出 200+ 张卡片：离屏卡片跳过布局与绘制，进入视口再渲染。
@@ -1758,8 +1777,8 @@ textarea {
  * 扫光复用 vod-skeleton 关键帧（封面加载中那套）。 */
 .sk-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 24px 18px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 24px 14px;
 }
 
 .sk-card {
