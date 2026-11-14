@@ -11,7 +11,7 @@ const STORAGE_KEY = "luma:epg:url";
  * 默认节目单地址：`fanmingming/live` 仓库的 `e.xml`（XMLTV，约 7.6 MB）。
  *
  * 选它而不是原来那份 guide.xml，是因为实测只有它按 `CCTV1` / `湖南卫视` 这种
- * **频道 id** 命名：真实直播源（cluntop 的 iptv.m3u）里的频道名正好就是
+ * **频道 id** 命名：真实直播源里的频道名正好就是
  * `CCTV1`、`湖南卫视`、`东方卫视4K`，能被 `parse_epg` 的名字匹配直接命中；
  * 原来那份 guide.xml 用 `CCTV-1 综合` 一类写法，CCTV1 一条节目都匹配不到。
  *

@@ -2,23 +2,8 @@
 tests/fixtures/manual/
 docs/verification-config.md
 
-# 上游源码镜像与工具临时目录（只读参考，不作为本仓库内容）
-.workbuddy/upstream/
-
-# 联调产物：UI 截图、临时日志与一次性诊断脚本（.workbuddy/memory 仍需入库）
-.workbuddy/*.png
-.workbuddy/*.jpg
-.workbuddy/*.txt
-.workbuddy/q_*
-.workbuddy/probe_*
-.workbuddy/*.json
-# 一次性验证用的真实配置副本、站点脚本与探针（含外部地址，禁止入库）
-.workbuddy/tmp/
-# Windows 设备名残留（误写 `> nul` 产生，无法常规删除）
-/nul
-# 便携版/安装包的本机解压验证目录
-.workbuddy/*-test/
-.workbuddy/user-config.b64
+# 本地工作目录：探针截图 / 一次性诊断脚本 / 上游源码镜像（整个目录都不入库）
+.workbuddy/
 
 # ---- 编译产物（三类，各自唯一位置，均可重建）----
 # ① 前端：Vite 产出，tauri.conf.json 的 frontendDist 指向 ../dist

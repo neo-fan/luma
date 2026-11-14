@@ -24,8 +24,8 @@ sys.path.insert(0, str(PY))
 
 from normalize import normalize_config  # noqa: E402
 
-ORIGIN = "https://raw.githubusercontent.com/cluntop/tvbox/deadbeef/box.json"
-BASE = "https://raw.githubusercontent.com/cluntop/tvbox/deadbeef/"
+ORIGIN = "https://example.com/tvbox/deadbeef/box.json"
+BASE = "https://example.com/tvbox/deadbeef/"
 PASS = 0
 FAIL = 0
 

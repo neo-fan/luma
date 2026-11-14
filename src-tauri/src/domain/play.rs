@@ -253,11 +253,8 @@ pub async fn resolve_play(
 
     // `explicit` already carries the spider-supplied headers (and any the source
     // parser returned). Config host rules fill in what was not supplied: a few
-    // CDNs only accept their own UA/Referer (`media.example.com`, `*.example.com`),
-    // and without them a perfectly valid m3u8 still answers 403.
-    // Config host rules fill in what the spider did not: a few CDNs only accept
-    // their own UA/Referer (`media.example.com`, `*.example.com`), and without
-    // them a perfectly valid m3u8 still answers 403.
+    // CDNs only accept their own UA/Referer, and without them a perfectly valid
+    // m3u8 still answers 403.
     let headers = crate::netrules::with_defaults(
         &parsed,
         crate::netrules::merged_for(&effective_url, &explicit),

@@ -8,12 +8,12 @@ import {
 
 describe("configNameFromUrl", () => {
   it("取域名并去掉 www 前缀", () => {
-    expect(configNameFromUrl("https://www.例子.cc/tv/box.json")).toBe("例子.cc");
+    expect(configNameFromUrl("https://www.例子.测试/tv/box.json")).toBe("例子.测试");
     expect(configNameFromUrl("http://example.com:8080/api.json")).toBe("example.com");
   });
 
   it("中文域名保留原字符，不转成 punycode", () => {
-    expect(configNameFromUrl("https://例子.cc/api.json")).toBe("例子.cc");
+    expect(configNameFromUrl("https://例子.测试/api.json")).toBe("例子.测试");
   });
 
   it("缺少协议时也能解析（用户常这样粘贴）", () => {

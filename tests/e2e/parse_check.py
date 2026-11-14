@@ -134,7 +134,7 @@ def test_real_config() -> None:
         return
     cfg = json.loads(raw.read_text(encoding="utf-8"))
     snap = normalize_config(
-        cfg, "https://raw.githubusercontent.com/cluntop/tvbox/a08e4fe8/box.json"
+        cfg, "https://example.com/tvbox/a08e4fe8/box.json"
     )
     sites = snap["sites"]
     counts: dict[str, int] = {}

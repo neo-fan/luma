@@ -1,10 +1,9 @@
 //! Config-level `headers[]`: per-host request headers (TVBox's top-level field).
 //!
 //! Community configs ship a small host → header table so CDN endpoints that
-//! reject the default UA still work, e.g. `media.example.com` expects
-//! `okHttp/Mod-1.5.0.0` and `hls.example.com` expects
-//! `bingcha/1.1`. Without it those streams answer 403 even though the play URL
-//! resolved fine.
+//! reject the default UA still work, e.g. a CDN may require its own client
+//! string (`okHttp/Mod-1.5.0.0`) or a specific Referer. Without it those
+//! streams answer 403 even though the play URL resolved fine.
 //!
 //! The table is global and replaced wholesale on every config import: it
 //! describes the active config, not per-site state.
@@ -218,10 +217,10 @@ mod tests {
     #[test]
     fn wildcard_matches_subdomains_only() {
         let _guard = serial();
-        load(json!([{ "host": "*.example.com", "header": { "User-Agent": "bingcha/1.1" } }]));
-        assert_eq!(headers_for("https://hls.example.com/a.m3u8").len(), 1);
-        assert_eq!(headers_for("https://example.com/a.m3u8").len(), 1);
-        assert!(headers_for("https://notexample.com/a.m3u8").is_empty());
+        load(json!([{ "host": "*.media.test", "header": { "User-Agent": "bingcha/1.1" } }]));
+        assert_eq!(headers_for("https://hls.media.test/a.m3u8").len(), 1);
+        assert_eq!(headers_for("https://media.test/a.m3u8").len(), 1);
+        assert!(headers_for("https://notmedia.test/a.m3u8").is_empty());
     }
 
     #[test]

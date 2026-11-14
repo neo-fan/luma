@@ -287,7 +287,7 @@ def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
         "sites": sites,
         "lives": lives,
         "parses": parses,
-        # Host -> header table for anti-leech CDNs (`media.example.com` etc).
+        # Host -> header table for anti-leech CDNs (UA/Referer injected per host).
         "headers": _host_rules(config.get("headers")),
         "spider": spider_value,
         "wallpaper": config.get("wallpaper"),

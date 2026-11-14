@@ -1,8 +1,7 @@
 /**
  * 直播频道台标。
  *
- * 直播源自己的 `tvg-logo` 只有一部分源会给（cluntop 的 iptv.m3u 就没有），
- * 所以这里用 `fanmingming/live` 仓库 `tv/` 目录下的 PNG 做兜底：该仓库按
+ * 直播源自己的 `tvg-logo` 只有一部分源会给（很多 m3u 根本不带），所以这里用 `fanmingming/live` 仓库 `tv/` 目录下的 PNG 做兜底：该仓库按
  * 频道名存图（`CCTV1.png`、`湖南卫视.png`、`CCTV4美洲.png`…），实测真实源里
  * 常见频道命中率约 90%。
  *

@@ -21,7 +21,7 @@ async function home() {
   }
   try {
     const b = await req(
-      "https://raw.githubusercontent.com/cluntop/tvbox/a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8/box.json",
+      "https://example.com/box.json",
       {},
     );
     probe.https = {

@@ -632,7 +632,7 @@ mod tests {
     fn engine_urls_are_recognised_by_basename() {
         // Mirrors spell the engine differently but the file is the same.
         for api in [
-            "https://raw.githubusercontent.com/cluntop/tvbox/main/lib/drpy2.min.js",
+            "https://cdn.example.com/mirror/lib/drpy2.min.js",
             "https://cdn.example.com/js/drpy2.js",
             "https://cdn.example.com/lib/drpy2.min.js?v=3#x",
         ] {
@@ -703,8 +703,8 @@ mod tests {
     async fn engine_falls_back_when_remote_is_missing() {
         let local = bundled_engine("https://x/lib/drpy2.min.js").expect("bundled engine");
         for api in [
-            // Same basename, nonexistent directory: raw.githubusercontent 404s.
-            "https://raw.githubusercontent.com/cluntop/tvbox/main/__nope__/drpy2.min.js",
+            // Same basename, nonexistent directory on a public host: 404s.
+            "https://raw.githubusercontent.com/example/nonexistent/main/__nope__/drpy2.min.js",
             // Unresolvable host: exercises the transport-error branch.
             "https://luma-no-such-host.invalid/lib/drpy2.min.js",
         ] {

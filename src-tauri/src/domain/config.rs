@@ -359,9 +359,9 @@ fn clean_name(value: &str) -> String {
 /// domain is what tells them apart — the TVBox `name` field is often just
 /// "box" or missing entirely.
 ///
-/// Parsed by hand on purpose: `url::Url` IDNA-encodes the host, so a config
-/// served from `www.例子.cc` would be labelled `xn--sss604efuw.cc`. The raw
-/// authority keeps whatever the user actually typed.
+/// Parsed by hand on purpose: `url::Url` IDNA-encodes the host, so an
+/// internationalized domain would be labelled `xn--…`. The raw authority keeps
+/// whatever the user actually typed.
 fn host_of(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -1759,9 +1759,11 @@ mod tests {
             name: None,
         };
         // `www.` and the path are noise; the registrable host is the label.
+        // Chinese domains must stay readable: `url::Url` would IDNA them into
+        // `xn--…`, which is unusable in the UI.
         assert_eq!(
-            default_name(&url("https://www.例子.cc/tv/box.json"), "box"),
-            "例子.cc"
+            default_name(&url("https://www.例子.测试/tv/box.json"), "box"),
+            "例子.测试"
         );
         assert_eq!(default_name(&url("http://example.com:8080/api"), "box"), "example.com");
         // No host to show: keep what the normalizer derived.
