@@ -3356,17 +3356,6 @@ textarea {
   height: 38px;
 }
 
-.source-picker__search .app-select {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-}
-
-.source-picker__search .app-select__trigger {
-  height: 38px;
-  font-size: var(--fs-sm);
-}
-
 /* 检索是「重跑一次聚合」，主操作是行内的「切换」，所以这里是次级按钮 */
 .source-picker__research {
   display: inline-flex;

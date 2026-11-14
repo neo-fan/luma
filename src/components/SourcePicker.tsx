@@ -5,7 +5,6 @@ import Empty from "./Empty";
 import ErrorBar from "./ErrorBar";
 import Icon from "./Icon";
 import IconButton from "./IconButton";
-import AppSelect from "./AppSelect";
 import { errorMessage } from "../lib/invoke";
 import {
   ensureSources,
@@ -96,7 +95,6 @@ export default function SourcePicker({
   const [backfilling, setBackfilling] = useState(false);
   const [error, setError] = useState("");
   const [onlyMatch, setOnlyMatch] = useState(true);
-  const [timeoutMs, setTimeoutMs] = useState(20_000);
   const [picking, setPicking] = useState("");
   const aliveRef = useRef(true);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -176,7 +174,7 @@ export default function SourcePicker({
     keywordRef.current = word;
     setLoading(true);
     setError("");
-    void refreshSources(word, sites, currentSiteKey, timeoutMs)
+    void refreshSources(word, sites, currentSiteKey)
       .then((next) => {
         if (aliveRef.current) {
           setView(next);
@@ -305,16 +303,6 @@ export default function SourcePicker({
                   placeholder="片名关键词"
                   aria-label="换源检索关键词"
                   onChange={(event) => setKeyword(event.target.value)}
-                />
-                <AppSelect
-                  ariaLabel="检索时长"
-                  triggerTitle="慢源较多时放宽墙钟，可列出更多候选；仅手动重新搜索时生效"
-                  value={String(timeoutMs)}
-                  onChange={(value) => setTimeoutMs(Number(value))}
-                  options={[
-                    { value: "20000", label: "20 秒" },
-                    { value: "35000", label: "35 秒" },
-                  ]}
                 />
                 {/* 主操作是列表里的「切换」，检索只是重跑一次聚合，用次级按钮 */}
                 <button type="submit" className="btn source-picker__research" disabled={busy}>
