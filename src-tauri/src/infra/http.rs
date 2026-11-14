@@ -118,6 +118,12 @@ pub async fn fetch(request: FetchRequest) -> Result<FetchResponse, AppError> {
     })?;
 
     let status = response.status().as_u16();
+    // Charset must be read before the body consumes the response.
+    let declared_charset = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(crate::textio::charset_from_content_type);
     let response_headers = response
         .headers()
         .iter()
@@ -128,10 +134,14 @@ pub async fn fetch(request: FetchRequest) -> Result<FetchResponse, AppError> {
             )
         })
         .collect();
-    let body = response.text().await.map_err(|err| {
+    // `Response::text()` assumes UTF-8 (the `charset` feature is off), which
+    // turns GBK/GB18030 bodies into `????`. Collect bytes and normalise here so
+    // every caller of the shared fetch gets UTF-8 text.
+    let bytes = response.bytes().await.map_err(|err| {
         AppError::new(code::CONFIG_FETCH_FAIL, "read response body failed")
             .with_cause(err.to_string())
     })?;
+    let body = crate::textio::decode_with_charset(&bytes, declared_charset.as_deref());
 
     Ok(FetchResponse {
         status,

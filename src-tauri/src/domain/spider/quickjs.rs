@@ -21,7 +21,6 @@ use crate::spider::{ProxyPayload, RuntimeKind, SpiderMethod, SpiderRuntime};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
@@ -271,7 +270,7 @@ fn bundled_engine(api: &str) -> Option<String> {
         return None;
     }
     let path = resolve_assets_dir().join("js").join("lib").join("drpy2.min.js");
-    fs::read_to_string(&path).ok()
+    crate::textio::read_file(&path).ok()
 }
 
 /// `fetch` only reports transport failures, but a CDN/captive portal happily
@@ -660,7 +659,7 @@ mod tests {
         // script, otherwise the fallback would hand garbage to QuickJS.
         let path = resolve_assets_dir().join("js").join("lib").join("drpy2.min.js");
         assert!(path.is_file(), "missing bundled engine: {}", path.display());
-        let text = fs::read_to_string(&path).expect("read bundled engine");
+        let text = crate::textio::read_file(&path).expect("read bundled engine");
         assert!(text.len() > 10_000);
         assert!(text.contains("assets://js/lib/cheerio.min.js"));
         assert!(looks_like_script(&text));

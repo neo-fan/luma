@@ -467,7 +467,7 @@ pub fn export_report(configs: tauri::State<'_, crate::config::ConfigStore>) -> R
     text.push_str(&REPORT_TAIL_LINES.to_string());
     text.push_str(" 行）==\n");
     for info in &diag.log_files {
-        let raw = fs::read_to_string(log_dir().join(&info.name)).unwrap_or_default();
+        let raw = crate::textio::read_file(&log_dir().join(&info.name)).unwrap_or_default();
         let lines: Vec<&str> = raw.lines().collect();
         let start = lines.len().saturating_sub(REPORT_TAIL_LINES);
         text.push_str(&format!("\n--- {} ({} 字节) ---\n", info.name, info.bytes));

@@ -57,7 +57,7 @@ fn snapshot_key(url: &str) -> String {
 /// 读磁盘快照；返回（脚本文本, 是否在 TTL 内）。
 fn read_snapshot(url: &str) -> Option<(String, bool)> {
     let path = snapshot_dir().join(format!("{}.py", snapshot_key(url)));
-    let text = std::fs::read_to_string(&path).ok()?;
+    let text = crate::textio::read_file(&path).ok()?;
     if !looks_like_spider(&text) {
         return None;
     }

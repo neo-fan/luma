@@ -28,9 +28,20 @@ async fn fetch_text(url: &str) -> Result<String, AppError> {
             format!("fetch {url} -> {}", response.status()),
         ));
     }
-    response.text().await.map_err(|err| {
+    // 配置正文可能不是 UTF-8（中文圈配置大量是 GBK，论坛里复制的还常带 BOM），
+    // 所以收字节再洗，不交给 `Response::text()` 按 UTF-8 硬解。
+    let declared_charset = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(crate::textio::charset_from_content_type);
+    let bytes = response.bytes().await.map_err(|err| {
         AppError::new(code::CONFIG_FETCH_FAIL, "read body failed").with_cause(err.to_string())
-    })
+    })?;
+    Ok(crate::textio::decode_with_charset(
+        &bytes,
+        declared_charset.as_deref(),
+    ))
 }
 
 /// 读一份配置（url / file / text），归一化后**统一套上 GitHub 加速前缀**。
@@ -51,7 +62,7 @@ pub async fn import_from_source(
             source.value.clone(),
         ),
         "file" => (
-            std::fs::read_to_string(&source.value).map_err(|err| {
+            crate::textio::read_file(std::path::Path::new(&source.value)).map_err(|err| {
                 AppError::new(code::CONFIG_FETCH_FAIL, "read config file failed")
                     .with_cause(err.to_string())
             })?,

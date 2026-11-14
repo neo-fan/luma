@@ -137,7 +137,7 @@ pub(super) async fn handle_proxy(
             Ok(bytes) => bytes,
             Err(err) => return deny(StatusCode::BAD_GATEWAY, &format!("playlist read failed: {err}")),
         };
-        let text = String::from_utf8_lossy(&body);
+        let text = crate::textio::decode(&body);
         // A 200 with a non-playlist body is the normal shape of a dead source:
         // netdisk resolvers answer `{"code":201,"msg":"解析失败了","url":""}` and
         // some CDNs replace the manifest with an HTML error page. Passing that
@@ -287,7 +287,7 @@ pub(super) fn percent_decode(input: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
+    crate::textio::decode(&out)
 }
 
 /// Parse a TVBox `vod_pic` that may carry inline request headers.

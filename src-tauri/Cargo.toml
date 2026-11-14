@@ -32,6 +32,11 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "smallvec",
 ] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+# 外部字节不保证 UTF-8（中文圈配置大量是 GBK/GB18030，论坛复制的片段常带
+# BOM 或 UTF-16）。`charset` 特性会把解码塞进 reqwest 内部且只认 Content-Type，
+# 这里自己收字节再按 BOM → UTF-8 → 声明 → GB18030 的顺序洗，规则集中在
+# `infra/textio.rs`，测试也一起放在那里。
+encoding_rs = "0.8"
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 url = "2"

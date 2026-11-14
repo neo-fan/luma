@@ -36,6 +36,8 @@ pub mod paths;
 pub mod process;
 #[path = "infra/store.rs"]
 pub mod store;
+#[path = "infra/textio.rs"]
+pub mod textio;
 #[path = "infra/window.rs"]
 pub mod window;
 
