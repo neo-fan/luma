@@ -20,7 +20,24 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容客户端**（空壳播放框架
 - 界面与性能：现代简约暗色主题（蓝紫强调色、渐变主按钮、离屏卡片跳过渲染、遵循系统「减弱动效」）；**播放页按需加载**，首屏 JS 从 289.6 kB gzip 降到 60.1 kB（-79%），ArtPlayer / hls.js 只在打开播放页时下载并拆为独立可缓存块。
 - 第 4 级嗅探：前三级都拿不到直链时，用隔离的隐藏 WebView2 加载播放页并拦截网络请求取真实地址（该窗口不在 capabilities 授权列表内，零 command 权限）。
 - mpv 兜底：WebView2 无法解码（如 HEVC）时自动交给随包 mpv；找不到 `mpv.exe` 时退回外部播放器提示。
-- 直播：m3u/m3u8 解析，代理内重写相对分片。
+- 直播：m3u/m3u8 解析，代理内重写相对分片；支持 XMLTV EPG（节目单）导入与频道台标。
+- 多配置管理：导入的配置可命名、切换、删除，各自独立的收藏/历史/页面缓存作用域；可设自动刷新间隔。
+- GitHub 资源加速：导入配置时把 `github.com` / `*githubusercontent.com` 链接改写为镜像前缀（默认 `gh-proxy.com`，可切 `ghfast` / `ghproxy.net` / 直连），避免 jar 与 JS 资源下载超时。
+- 站点体检：并发测活并可按站点手动禁用，不健康站点在搜索页灰显并给出原因。
+
+## 项目结构
+
+```text
+src/                     React + TS 前端（routes.tsx 路由表 / pages 页面 / components / hooks / lib / stores）
+src-tauri/src/           Rust 宿主（infra/ 底座与 domain/ 业务，用 #[path] 映射，模块名仍是 crate::xxx）
+sidecars/                Python 适配层 · Java SpiderRunner · qjs-runner（JS）· 随包 python-embed/jre
+contracts/               归一化契约唯一真源（TS / Rust / Python 三端由 tests/e2e/contract_check.py 校验）
+tests/                   e2e 阶段断言（p0~p3）· 离线兼容检查 · 前端单测
+tools/                   构建脚本（prepare_runtime / make_portable）+ CDP 探针
+docs/                    需求基线、目录约定、JSON 源支持与兼容性报告、任务记录
+```
+
+目录/产物/编码约定的权威文档是 `docs/project-layout.md`；协作约定与逐轮决策记录在 `AGENTS.md`。
 
 ## 环境要求
 
@@ -49,7 +66,7 @@ node tools/bundle_report.mjs               # 构建产物体积 / gzip 报告
 产物：
 
 - `release/portable/Luma/` —— 解压即用的文件夹；
-- `release/Luma-1.0.0-alpha-portable.zip` —— 分发包（约 41MB，SQLite bundled 后需重测体积）。
+- `release/Luma-1.0.0-alpha-portable.zip` —— 分发包（最近一次实测 **45.80 MB**，见 `docs/size-report.md`）。
 
 不需要安装程序；整个文件夹可以放在任意目录、U 盘或移动硬盘。
 
@@ -113,11 +130,13 @@ $env:LUMA_JAVA = "D:\software\java\oracle-jdk-17\bin\java.exe"
 ```text
 Luma/
   Luma.exe
+  qjs-runner.exe      JS 源侧载进程（exe 同目录，运行时首选命中点）
   sidecars/
     py/               适配层源码
     python-embed/     嵌入式 Python 3.11 + 第三方包
     jre/              jlink 裁剪的 JDK 17
     java/runner.jar   JVM spider 桥
+    qjs-assets/       JS 源内置依赖（8 个模块 + manifest）
     mpv/              可选，自行放入
   data/
     luma.db           配置 / 收藏 / 历史（SQLite）
@@ -135,9 +154,11 @@ python tests/e2e/p3.py     # P3 嗅探 / mpv / 打包
 python tests/e2e/parse_check.py       # 解析池与配置字段（离线，无需窗口）
 python tests/e2e/py_compat_check.py   # TVBox py 脚本通用兼容 / 错误日志（离线）
 python tests/e2e/py_base_spider_check.py  # py 框架与原生对齐（离线）
-corepack pnpm test         # 前端单测（含播放页生命周期契约）
+corepack pnpm test         # 前端单测：src/**/*.test.ts（19 个）+ tests/frontend/（18 个）
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
+
+前端单测有两种位置：与被测模块同目录的 `*.test.ts`（纯函数、lib 层），以及 `tests/frontend/`（跨文件契约，如播放器生命周期、图标控件）。新增纯函数测试放前者，跨模块契约放后者。
 
 第三方 py 脚本的异常、缺失方法、非法返回值都会记到 `logs/spider.log`（`LUMA_ADAPTER_LOG` 可指定路径；默认 `%APPDATA%\Luma\logs\spider.log`）。每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback，便于定位「未响应源」。`detailContent` 返回空也会记一条 `empty_detail`（带 `sourceApi` / `vodId`）——TVBox 中「发现 / 推荐」型源只给列表、不给播放列表是合法能力缺口，客户端会在详情页提示换源，并按片名回查一次。前端对应的空结果记在 `luma-*.log` 的 `detail empty`。日志模块对 spider 协议是**尽力而为**的：即使它缺失或路径不通，也只降级为不写日志，绝不让 py 源整体失效。
 
@@ -153,9 +174,11 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 | 配置级 `headers[]` | ✅ 支持 | 按 host 注入 UA/Referer，防盗链 CDN 必需 |
 | 直播（`lives`） | ✅ 支持 | m3u8 经本地代理重写后播放 |
 | jar（`csp_*` / `spider` 全局 jar） | ⚠️ 仅纯 class jar | 见下方说明 |
-| js（drpy2） | ⚠️ 不支持 | 需要 ES 模块加载器与 cheerio |
+| js（drpy2 / `var spider`） | ✅ 支持 | 独立 `qjs-runner` sidecar，内置 ESM 加载器与 8 个随包库 |
 
-本项目**以 CMS + Python 两类源为交付目标**。实测用户配置 101 个站点中，这两类占 67 个，且覆盖了实际可播的绝大部分内容。
+本项目**以 CMS + Python + JS 三类源为交付目标**。实测用户配置 101 个站点中，这三类覆盖了实际可播的绝大部分内容；jar 类因 Android dex 依赖宿主类而无法在 Windows x64 上运行。
+
+JS 源的支持范围与限制：支持经典 `var spider` 脚本、drpy2 风格脚本与 ES 模块（`export default` / `export function __jsEvalReturn()`），内置 `assets://js/lib/*` 解析、`req` / `local` / `console` / `md5X` 宿主注入与 drpy2 polyfill。**仍未支持** drpy2 `initEnv` 完整 polyfill 与 FongMi 新版 class-based `Spider` 规范。机制与随包资源清单见 `docs/js-support.md`。
 
 ### 为什么 jar 源基本不可用
 

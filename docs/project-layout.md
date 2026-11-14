@@ -2,7 +2,7 @@
 
 > 适用路径：`<repo>`
 > 本文只约定「文件放哪、怎么写、产物归哪」，不替代规格书；工程实现以本地 `docs/spec-v1.1/` 为唯一依据。
-> 当前状态（2026-11-11）：P0~P3 完成，真实配置「导入 → 搜索 → 详情 → 播放」跑通；前端 React+Tauri，Rust 后端已按 `infra/`+`domain/` 物理分层。
+> 当前状态（2026-11-14）：P0~P3 完成，真实配置「导入 → 搜索 → 详情 → 播放」跑通；前端 React + react-router + zustand，Rust 后端已按 `infra/` + `domain/` 物理分层。
 
 ## 1. 标准 Tauri v2 结构与本项目对齐
 
@@ -52,6 +52,10 @@ tvbox/
 │   ├── project-layout.md                  # 本文档（目录/产物/编码权威）
 │   ├── verification-config.md             # 抓取记录（含真实地址，不入库）
 │   ├── verification-report.md             # 真实配置形态验证报告
+│   ├── site-compat-report.md              # 全站兼容性扫描结论（101 站点逐站）
+│   ├── js-support.md                      # JS 源机制、ESM 加载与随包资源清单（含 SHA256）
+│   ├── zyfun-comparison.md                # 竞品 zyfun 对比分析（能力/取舍）
+│   ├── avbox-sync-assessment.md           # 上游 AVBox 参考评估（结论：不引入其代码）
 │   ├── size-report.md                     # 体积实测报告
 │   ├── spec-v1.0/  spec-v1.1/            # 需求文档归档与本地基线
 │   └── tasks/                             # T-xx 交付记录
@@ -60,53 +64,65 @@ tvbox/
 │   └── tvbox.schema.json                  # 归一化契约唯一真源（R8）
 │
 ├── src/                                   # React + TypeScript + Vite
-│   ├── main.tsx  App.tsx  styles.css
-│   ├── lib/                               # invoke（唯一 IPC）、pageCache、usePageState、
-│   │                                      # playerPrefs、sources、sourceCache、format、logger…
-│   ├── types/tvbox.ts                     # 归一化契约 TS 侧
-│   ├── components/                        # ErrorBar、Spinner、SourcePicker、player/*
-│   └── pages/                             # Home/Category/Search/Detail/Player/Live/Favs/History/Settings
+│   ├── main.tsx  App.tsx  AppShell.tsx    # 入口 / RouterProvider / 布局壳（侧栏·同步·Esc·滚动）
+│   ├── routes.tsx                         # 路由表（8 条）+ 页面包装组件
+│   ├── styles.css
+│   ├── pages/                             # Home/Search/Detail/Player/Live/Favorites/History/Settings
+│   ├── components/                        # 通用控件；player/ 播放页组件；settings/ 设置分区
+│   ├── hooks/                             # usePlayerEngine / usePlayResolution / useEpisodeList /
+│   │                                      #   useLiveCatalog / useProxiedImage
+│   ├── stores/appStore.ts                 # zustand：跨页共享态（cache/preferredSite/sidebarCollapsed）
+│   ├── lib/                               # invoke（唯一 IPC）、pageCache、usePageState、playerPrefs、
+│   │                                      #   sources、sourceCache、format、logger…（纯逻辑为主，
+│   │                                      #   与被测模块同目录的 *.test.ts 也放这里）
+│   └── types/tvbox.ts                     # 归一化契约 TS 侧
 │
 ├── src-tauri/
 │   ├── Cargo.toml / Cargo.lock  build.rs
-│   ├── tauri.conf.json                    # frontendDist=../dist、externalBin、resources、bundle
-│   ├── capabilities/default.json          # 权限白名单
-│   ├── icons/                             # 各尺寸 ICO/PNG + icon.svg
-│   ├── binaries/                          # [产物] externalBin 暂存，gitignore
+│   ├── tauri.conf.json                    # frontendDist=../dist、window、bundle.targets 置空
+│   ├── capabilities/default.json          # 权限白名单（只授 main 窗口）
+│   ├── icons/                             # 各尺寸 ICO/PNG
+│   ├── binaries/                          # [产物] externalBin 暂存，gitignore（当前未在 conf 登记）
 │   └── src/
 │       ├── main.rs                        # 只调 luma_lib::run()
-│       ├── lib.rs                         # #[path] 分层映射 + run() + 27 个 command 注册
+│       ├── lib.rs                         # #[path] 分层映射 + run() + 37 个 command 注册
 │       ├── infra/                         # 底座：error/env/paths/process/netrules/http/
-│       │                                  #   bridge/db/migrate/store/logging/window
+│       │                                  #   bridge/db/store/logging/window
 │       └── domain/                        # 业务：config/play/parse/proxy/live/sniff/
-│                                          #   mpv/clipboard/spider/{mod,cms,jvm,python,quickjs}
+│                                          #   mpv/clipboard/ghproxy/spider/{mod,cms,jvm,python,quickjs}
 │
 ├── sidecars/                              # 随包分发的 sidecar
 │   ├── py/  java/  qjs-runner/            # 源码（入库）
+│   ├── qjs-assets/                        # [入库资源] 8 个 JS 依赖 + manifest.json，SHA256 校验
 │   ├── python-embed/                      # [产物] 3.11 embeddable + site-packages 第三方依赖，gitignore
 │   │                                      #   dev/交付统一用它（bridge.rs::embedded_python 自动探测）
 │   │                                      #   依赖由 tools/python-requirements.txt + prepare_runtime.py 重建
 │   ├── jre/  mpv/                         # [产物] 二进制，gitignore，prepare_runtime.py 重建
 │
 ├── tests/
+│   ├── frontend/                          # 跨模块契约单测（播放器生命周期、图标控件…）
+│   ├── stub_server.py                     # e2e 用的 127.0.0.1 桩服务
 │   ├── fixtures/
 │   │   ├── manual/                        # 真实配置样本（不入库）
 │   │   ├── configs/  jars/  spiders/      # 脱敏 fixture / 模板 jar / py spider
-│   └── e2e/                               # contract_check、stub_server、p0~p3、probe_*
+│   │   └── media/                         # m3u8 / flv / mp4 / ts 解码与解析样本
+│   └── e2e/                               # p0~p3、contract_check、config_compat、parse_check、
+│                                          #   py_compat_check、py_base_spider_check、capabilities_check
 │
 └── tools/                                 # 离线辅助脚本（不参与构建）
-    ├── prepare_runtime.py                 # 重建 jre/python-embed 等产物；含随包 Python 依赖安装 + .pth 修正
+    ├── prepare_runtime.py                 # 重建 jre/python-embed 等产物；含 Python 依赖安装 + .pth 修正
     ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
     ├── make_portable.py                   # 组装便携版 → release/
     ├── build_icons.py                     # 生成图标
-    └── probe_*.mjs / run_probes.mjs       # CDP 窗口探针与一键回归
+    ├── javap_conserve.py                  # jar 符号守恒检查（T-20）
+    └── probe_*.mjs / diag_*.mjs / audit_*.mjs / verify_*.mjs / run_probes.mjs   # CDP 窗口探针与一键回归
 ```
 
 ## 3. Rust 后端分层（2026-11-11 物理归档）
 
 27 个 `.rs` 原先 21 个平铺在 `src-tauri/src/` 根，`lib.rs` 一屏 `pub mod`。现按技术层归入两目录，用 `#[path = "…"]` 映射：
 
-- **逻辑模块名不变**：仍是 `crate::error`、`crate::config`……所有 `use crate::foo` 与 `generate_handler!` 的 27 个 command 路径零改动 → 不会引发运行时 "command not found"（这是 Rust 分层最大的隐性雷区，编译期抓不到）。
+- **逻辑模块名不变**：仍是 `crate::error`、`crate::config`……所有 `use crate::foo` 与 `generate_handler!` 的 37 个 command 路径零改动 → 不会引发运行时 "command not found"（这是 Rust 分层最大的隐性雷区，编译期抓不到）。
 - **分层规避双向依赖环**：`db ↔ store` 同放 `infra/`，`proxy ↔ spider` 同放 `domain/`，两组真实双向引用都不跨层。
 - **这是物理分层，非依赖方向硬约束**。后续阶段再把 `crate::` 路径前缀化为 `crate::infra::*` / `crate::domain::*`，并把 command 与私有 helper 分离到 `commands/`（需逐个提升 helper 为 `pub(crate)`）。详见 `AGENTS.md`「PlayerPage 拆分重构」同期的架构说明。
 
@@ -125,7 +141,9 @@ tvbox/
 | Rust 宿主源码 | `src-tauri/src/{infra,domain}/` | 命令、进程管理、proxy、运行时，按层归档 |
 | sidecar 源码 | `sidecars/{py,java,qjs-runner}/` | 入库；二进制产物目录见 §1 |
 | 验收脚本与 stub | `tests/e2e/`、`tools/probe_*.mjs` | 分阶段断言 + CDP 窗口探针 |
-| 离线工具 | `tools/` | 不参与构建、不发网络请求的开发辅助脚本 |
+| 前端单测 | 纯函数放被测模块同目录 `*.test.ts`；跨模块契约放 `tests/frontend/` | 两种位置各司其职，跨模块契约不塞回 `src/` |
+| 离线工具 | `tools/` | 不参与构建、不发网络请求的开发辅助脚本（`prepare_runtime.py` / `make_portable.py` 例外，参与打包） |
+| 机制说明与专项报告 | `docs/`，文件名 ASCII kebab | 如 `js-support.md`、`site-compat-report.md`；结论性长文不写进 `AGENTS.md`，只在其中留摘要与指针 |
 
 ## 5. 编码约定
 
