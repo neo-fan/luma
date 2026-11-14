@@ -113,7 +113,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 32px;
+  height: var(--h-control);
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);

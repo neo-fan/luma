@@ -100,7 +100,7 @@ button:focus:not(:focus-visible) {
 
 /* ---------- 页头 / 分节 ---------- */
 .page-title {
-  font-size: 21px;
+  font-size: var(--fs-h1);
   font-weight: var(--fw-semibold);
   letter-spacing: -0.02em;
 }
@@ -130,7 +130,7 @@ button:focus:not(:focus-visible) {
 
 /* ---------- chip：从胶囊改小圆角，默认透明，靠边框与 hover 表达可点 ---------- */
 .chip {
-  padding: 5px 11px;
+  padding: 0 11px;
   border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
@@ -150,7 +150,7 @@ button:focus:not(:focus-visible) {
 
 /* ---------- 表单控件 ---------- */
 .input {
-  height: 36px;
+  height: var(--h-control);
   border-radius: var(--r-sm);
   background: var(--panel-sunken);
   border-color: var(--border);

@@ -566,7 +566,7 @@ export default function HomePage({
 
       {/* 分类 chip 是「切换下方网格」，不再是路由跳转：点同一个可取消回到推荐。 */}
       {siteKey ? (
-        <div className="chip-row">
+        <div className="chip-row chip-row--tabs">
           <button
             type="button"
             className={isCategory ? "chip" : "chip is-active"}

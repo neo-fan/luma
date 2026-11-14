@@ -164,7 +164,7 @@ export default function LiveChannelRail({
                 </span>
                 <Icon
                   name="chevron"
-                  size={12}
+                  size={14}
                   className="live-rail__group-caret"
                 />
               </button>
@@ -188,7 +188,7 @@ export default function LiveChannelRail({
                         <ChannelLogo
                           name={channel.name}
                           logo={channel.logo}
-                          size={22}
+                          size={20}
                         />
                         <span className="live-rail__name">{channel.name}</span>
                         {active ? (

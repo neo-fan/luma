@@ -41,7 +41,7 @@
 /* 「播放 / 继续播放」是详情页唯一的目标动作：高 40、横向留白更大，图标 18px，
    在信息区里明显压过 chip 与图标按钮——找按钮不该靠读文字。 */
 .detail-actions--inline .btn--primary {
-  height: 40px;
+  height: var(--h-cta);
   padding: 0 22px;
   font-size: var(--fs-body);
   border-radius: var(--r-md);
@@ -71,14 +71,22 @@
 }
 
 .episode.is-seen {
+  position: relative;
   border-color: rgba(110, 139, 255, 0.3);
 }
 
-.episode__flag {
-  display: block;
-  color: var(--ok);
-  font-size: var(--fs-2xs);
-  line-height: 1.2;
+/* 「上次看到」不再往格子里塞第二行文字（单集片子会变成一个两行的怪方块），
+   改为右上角一个绿点，完整文案在上方工具行里已有。 */
+.episode.is-seen::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(74, 222, 155, 0.14);
 }
 
 .detail-episode-tools {

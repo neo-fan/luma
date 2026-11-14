@@ -6,7 +6,7 @@ interface ChannelLogoProps {
   name: string;
   /** 源里 `tvg-logo` 给的真实地址；有则优先，猜名只作兜底。 */
   logo?: string;
-  /** 边长（px）。列表里 18，标题旁 20。 */
+  /** 边长（px）。默认 18；直播列表与节目单标题旁统一用 20。 */
   size?: number;
   className?: string;
 }

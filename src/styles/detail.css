@@ -56,6 +56,7 @@
 }
 
 .detail-content {
+  max-width: var(--line-measure);
   margin: 14px 0 0;
   color: var(--text-soft);
   font-size: var(--fs-sm);
@@ -126,7 +127,11 @@
 }
 
 .episode {
-  padding: 9px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--h-control);
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--panel);

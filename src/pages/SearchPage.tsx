@@ -749,75 +749,70 @@ export default function SearchPage({
           </>
         ) : null}
 
+        {/* 摘要、失败源开关、只看匹配合并成一行：原来三个段落把结果网整体下推。 */}
         {!loading && searched ? (
-          <p className="result-meta">
-            {progress ? `${progress}；` : ""}共 {hits.length} 条结果
-            {matchCount > 0 ? `；其中 ${matchCount} 条片名匹配` : ""}
-            {onlyMatches ? `；当前显示 ${visibleHits.length} 条` : ""}
-            {failures > 0 ? `；${failures} 个站点失败` : ""}
-            {skipped > 0 ? `；${skipped} 个站点按配置跳过` : ""}
-          </p>
-        ) : null}
-
-        {!loading && searched && failureReasons.length > 0 ? (
-          <p
-            className="result-meta"
-            style={{ opacity: 0.72, fontSize: "var(--fs-xs)" }}
-          >
-            失败原因：{failureReasons.join("；")}
-          </p>
-        ) : null}
-
-        {!loading && searched && failureRows.length > 0 ? (
-          <div className="failure-panel">
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              aria-expanded={showFailures}
-              onClick={() => setShowFailures((value) => !value)}
-            >
-              {showFailures
-                ? "收起失败源"
-                : `查看 ${failureRows.length} 个失败源`}
-            </button>
-            {showFailures ? (
-              <ul className="failure-list">
-                {failureRows.map((row) => (
-                  <li className="failure-item" key={row.siteKey}>
-                    <span className="failure-item__name" title={row.siteKey}>
-                      {row.siteName}
-                    </span>
-                    <span className="failure-item__reason" title={row.detail}>
-                      {row.message}
-                    </span>
-                    <IconButton
-                      name="refresh"
-                      label={row.busy ? "重试中" : "重试"}
-                      size="sm"
-                      busy={row.busy}
-                      disabled={row.busy}
-                      onClick={() => void retrySite(row)}
-                    />
-                  </li>
-                ))}
-              </ul>
+          <div className="result-summary">
+            <p className="result-meta">
+              {progress ? `${progress}；` : ""}共 {hits.length} 条结果
+              {matchCount > 0 ? `；其中 ${matchCount} 条片名匹配` : ""}
+              {onlyMatches ? `；当前显示 ${visibleHits.length} 条` : ""}
+              {failures > 0 ? `；${failures} 个站点失败` : ""}
+              {skipped > 0 ? `；${skipped} 个站点按配置跳过` : ""}
+            </p>
+            {failureRows.length > 0 ? (
+              <div className="failure-panel">
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  aria-expanded={showFailures}
+                  onClick={() => setShowFailures((value) => !value)}
+                >
+                  {showFailures
+                    ? "收起失败源"
+                    : `查看 ${failureRows.length} 个失败源`}
+                </button>
+              </div>
+            ) : null}
+            {hits.length > 0 && matchCount > 0 && matchCount < hits.length ? (
+              <label className="filter-toggle">
+                <input
+                  type="checkbox"
+                  checked={onlyMatches}
+                  onChange={(event) => setOnlyMatches(event.target.checked)}
+                />
+                只看片名匹配（{matchCount} 条）
+              </label>
             ) : null}
           </div>
         ) : null}
 
-        {!loading &&
-        searched &&
-        hits.length > 0 &&
-        matchCount > 0 &&
-        matchCount < hits.length ? (
-          <label className="filter-toggle">
-            <input
-              type="checkbox"
-              checked={onlyMatches}
-              onChange={(event) => setOnlyMatches(event.target.checked)}
-            />
-            只看片名匹配（{matchCount} 条）
-          </label>
+        {!loading && searched && showFailures && failureReasons.length > 0 ? (
+          <p className="result-meta result-meta--reason">
+            失败原因：{failureReasons.join("；")}
+          </p>
+        ) : null}
+
+        {!loading && searched && showFailures && failureRows.length > 0 ? (
+          <ul className="failure-list">
+            {failureRows.map((row) => (
+              <li className="failure-item" key={row.siteKey}>
+                <span className="failure-item__name" title={row.siteKey}>
+                  {row.siteName}
+                </span>
+                <span className="failure-item__reason" title={row.detail}>
+                  {row.message}
+                </span>
+                <IconButton
+                  name="refresh"
+                  label={row.busy ? "重试中" : "重试"}
+                  size="sm"
+                  busy={row.busy}
+                  disabled={row.busy}
+                  onClick={() => void retrySite(row)}
+                />
+              </li>
+            ))}
+          </ul>
         ) : null}
 
         {!loading && searched && visibleHits.length === 0 ? (

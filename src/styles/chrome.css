@@ -1,10 +1,13 @@
 /* ---------- 页头 ---------- */
 
+/* 页头高度固定：有的页头右侧有下拉/按钮、有的只有标题，不锁高度时
+   页头在 32~38px 之间跳，翻页时正文会整体上下抖一像素级。 */
 .page-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-height: 38px;
   margin-bottom: 24px;
 }
 
@@ -416,9 +419,39 @@
 }
 
 .result-meta {
-  margin: 0 0 16px;
+  margin: 0;
   color: var(--muted);
   font-size: var(--fs-sm);
+}
+
+/* 搜索结果摘要：进度、条数、失败源、只看匹配合并成一行。
+   原来拆成三段段落，测试串里横着三条灰字，把结果网整体往下推了两行。 */
+.result-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 0 0 16px;
+}
+
+.result-summary .result-meta {
+  flex: 1 1 320px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.result-summary .failure-panel {
+  margin: 0;
+  align-items: center;
+}
+
+/* 展开失败源后，原因归并一行弱提示，逐站明细在下面 */
+.result-meta--reason {
+  margin: 0 0 10px;
+  color: var(--faint);
+  font-size: var(--fs-xs);
 }
 
 /* 聚合搜索的失败源明细：默认收起，只占一行开关，展开后逐站可重试 */
@@ -432,7 +465,7 @@
 
 .failure-list {
   list-style: none;
-  margin: 0;
+  margin: 0 0 16px;
   padding: 0;
   width: 100%;
   display: flex;
@@ -473,7 +506,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  margin: 0 0 14px;
+  margin: 0;
   color: var(--muted);
   font-size: var(--fs-sm);
   cursor: pointer;

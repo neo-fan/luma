@@ -868,12 +868,9 @@ export default function DetailPage({
                         type="button"
                         className={seen ? "episode is-seen" : "episode"}
                         onClick={() => playEpisode(line, episode)}
-                        title={episode.name}
+                        title={seen ? `${episode.name}（上次看到）` : episode.name}
                       >
                         {episode.name}
-                        {seen ? (
-                          <span className="episode__flag">上次看到</span>
-                        ) : null}
                       </button>
                     );
                   })}

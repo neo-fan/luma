@@ -189,9 +189,18 @@
 /* ---------- 设置 ---------- */
 
 .settings-block {
-  margin-bottom: 30px;
-  padding-bottom: 24px;
+  margin-bottom: 32px;
+  padding-bottom: 26px;
   border-bottom: 1px solid var(--border);
+}
+
+/* 设置页每个 block 是一级章节：标题比全局 .section-title 高一档，
+   否则 7 个 block 的标题与字段标签同级，扫读时分不出段落。 */
+.settings-block .section-title {
+  margin-bottom: 16px;
+  color: var(--text);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
 }
 
 /* section 外面套了 .settings-anchor（承载目录锚点），last-of-type 语义迁移到这里 */
@@ -218,7 +227,7 @@
 }
 
 .settings-nav__item {
-  height: 32px;
+  height: var(--h-control);
   padding: 0 12px;
   border: 0;
   border-radius: var(--r-sm);
@@ -235,10 +244,12 @@
   color: var(--text);
 }
 
+/* 与侧栏当前页同一套表达：淡色底 + 左侧 2px 竖标，位置感一致。 */
 .settings-nav__item.is-active {
-  background: var(--icon-on);
+  background: var(--accent-softer);
   color: var(--text);
   font-weight: var(--fw-medium);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 /* .settings-nav__item 聚焦态不再描边（全局 focus-visible 已取消）。 */
@@ -283,7 +294,7 @@
 }
 
 .refresh-bar .app-select__trigger {
-  height: 32px;
+  height: var(--h-control);
   padding: 0 8px;
   font-size: var(--fs-xs);
   flex: 0 0 auto;
@@ -492,7 +503,7 @@
 
 .gh-proxy-custom .input,
 .gh-proxy-custom .btn {
-  height: 36px;
+  height: var(--h-control);
 }
 
 .gh-proxy-foot {

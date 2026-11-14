@@ -131,9 +131,9 @@
   max-width: calc(100% - 20px);
   padding: 3px 9px;
   border-radius: var(--r-sm);
-  background: rgba(8, 10, 15, 0.76);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
-  color: #f1f1f6;
+  color: var(--text);
   font-size: var(--fs-2xs);
   overflow: hidden;
   white-space: nowrap;
@@ -147,9 +147,9 @@
   right: 10px;
   padding: 2px 7px;
   border-radius: var(--r-sm);
-  background: rgba(8, 10, 15, 0.72);
+  background: var(--scrim);
   backdrop-filter: blur(4px);
-  color: rgba(241, 241, 246, 0.92);
+  color: var(--text-soft);
   font-size: var(--fs-2xs);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
@@ -179,8 +179,8 @@
 
 .vod-card__meta-line {
   overflow: hidden;
-  color: #f2f4f9;
-  font-size: var(--fs-2xs);
+  color: var(--text);
+  font-size: var(--fs-xs);
   line-height: 1.35;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -190,7 +190,7 @@
 
 /* 第二行是辅助信息（线路 / 时间），压暗一档，视觉上不跟集数抢 */
 .vod-card__meta-line--dim {
-  color: rgba(238, 241, 247, 0.82);
+  color: var(--text-soft);
   font-size: var(--fs-2xs);
 }
 
