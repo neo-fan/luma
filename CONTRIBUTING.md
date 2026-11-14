@@ -9,7 +9,7 @@
 |---|---|
 | 前端 | Node 20+ / pnpm 9（版本由 `package.json` 的 `packageManager` 锁定，用 `corepack pnpm` 即可） |
 | 宿主 | Rust stable ≥ 1.77.2（`x86_64-pc-windows-msvc`）、VS2022 Build Tools + Windows SDK |
-| 随包运行时 | `python tools/prepare_runtime.py`（JRE / Python embeddable / qjs-runner staging） |
+| 随包运行时 | `python tools/prepare_runtime.py`（Python embeddable / qjs-runner staging；JVM 运行时已移除） |
 | 窗口调试 | WebView2 常青版；debug 构建默认开 CDP 9222 |
 
 一次性的准备工作：
@@ -80,13 +80,13 @@ schema → `src/types/tvbox.ts` → Rust 序列化 / `sidecars/py/normalize.py` 
 - 提交信息用 `type(scope): 摘要`（`feat` / `fix` / `refactor` / `docs` / `test` / `chore` / `ci`），正文写**为什么**改，而不是复述 diff。
 - 一个 PR 只做一件事；顺手修的东西单独提交。
 - PR 描述里写：改动文件清单、跑过的命令与结果、未解决的问题。**没跑门禁的 PR 会被打回**，这比写得难看严重得多。
-- 不要提交：`dist/`、`src-tauri/target/`、`sidecars/{jre,python-embed}/`、`node_modules/`、真实配置样本、日志。`.gitignore` 已经覆盖，若 `git status` 冒出它们说明忽略规则被改坏。
+- 不要提交：`dist/`、`src-tauri/target/`、`sidecars/python-embed/`、`node_modules/`、真实配置样本、日志。`.gitignore` 已经覆盖，若 `git status` 冒出它们说明忽略规则被改坏。
 
 ## 6. 明确不接受的改动
 
 - 内置或硬编码任何源的地址 / 片源 / 直播源 / API Key。
 - 绕过 `contracts/tvbox.schema.json` 或双快照隔离（直接改 `imported_json`）。
-- 声称「支持社区 jar 源」——原因见 README「为什么社区 jar 源不支持」，这是运行时依赖问题，不是工作量问题。
+- 声称「支持社区 jar 源」——原因见 README「为什么社区 jar 源不支持」，这是运行时依赖问题，不是工作量问题；JVM 运行时已于 1.0.3 移除，jar 站点只保留分类与导入屏蔽，不要重新引入 JVM 通道。
 - 为了让测试变绿而放宽断言、删测试、或把 `FAIL` 改成 `N/A`。
 
 ## 7. 行为准则

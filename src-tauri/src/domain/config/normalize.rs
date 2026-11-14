@@ -77,7 +77,7 @@ pub fn route(site: &Map<String, Value>, global_spider: Option<&str>) -> &'static
         return "jvm";
     }
     // 分组分隔条（`{"key":"1","name":"--- 1 ---"}`）什么源都不是。它们以前会继承
-    // 全局 spider 被当成 jvm 站点，每次扇出都白烧一次必然失败的调用。
+    // 全局 spider 被当成 jvm 站点（旧版会因此白烧一次必然失败的调用）。
     if api.is_empty() && !truthy(site.get("ext")) && !truthy(site.get("jar")) {
         return "none";
     }
@@ -223,7 +223,7 @@ pub fn normalize_config(raw: &Value, origin: &str) -> Result<Value, AppError> {
         _ => Vec::new(),
     };
     // `csp_*` 站点自己没有 jar，配置级 `spider` 就是它们的类来源；导入期挂上，
-    // JVM 运行时就不用再做一次 IPC 往返，旧快照也还能路由到 jvm。
+    // 分类和屏蔽原因才能落到这些站点上（JVM 运行时已移除，分类保留）。
     let sites: Vec<Value> = match &spider_value {
         Some(spider) => sites
             .into_iter()

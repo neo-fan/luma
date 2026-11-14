@@ -2,7 +2,7 @@
 //!
 //! Every sidecar is spawned into a Windows Job Object configured with
 //! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so a hard kill of the host (or of the
-//! adapter) reaps the whole tree — no orphan `python.exe` / `java.exe`.
+//! adapter) reaps the whole tree — no orphan `python.exe` / `qjs-runner.exe`.
 //! Timeouts are wall-clock and process-level: on expiry the child is killed,
 //! never merely "cancelled at the future level".
 
@@ -16,7 +16,7 @@ use tokio::process::{Child, Command};
 pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Windows `CREATE_NO_WINDOW`: the host is a GUI-subsystem binary
-/// (`windows_subsystem = "windows"`), while python/java/qjs sidecars are
+/// (`windows_subsystem = "windows"`), while python/qjs sidecars are
 /// console-subsystem executables. Without this flag every adapter call makes
 /// Windows allocate a new conhost window for the child, flashing a black
 /// console in front of the app. Stdio stays piped, so this does not affect

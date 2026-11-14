@@ -19,21 +19,19 @@ clone → 装依赖 → 准备运行时 → pnpm tauri dev → 改代码热更�
 | 前端 | Node 20+ / `pnpm`（由 corepack 固定版本） |
 | Rust | stable ≥ 1.77.2，`x86_64-pc-windows-msvc` |
 | 构建 | VS2022 Build Tools + Win11 SDK（MSVC） |
-| jar 源 | **运行期无需 JDK**（用随包 `sidecars/jre`）；仅重建 JRE / 编译 `runner.jar` 时需 JDK 17 |
-| 可选 | 无（外部播放整体关闭，随包 mpv 已移除） |
+| 可选 | 无（外部播放整体关闭，随包 mpv 已移除；jar/JVM 运行时已移除，不需要 JDK） |
 
 ```powershell
 corepack pnpm install                       # 前端依赖
-python tools/prepare_runtime.py            # jlink JRE + python-embed + externalBin（幂等；--force 强做，--check 只体检）
-# 仅当要重新编译模板 jar 时（构建期一次性，需 JDK 17）：
-#   python sidecars/java/build.py
+python tools/prepare_runtime.py            # python-embed + externalBin staging（幂等；--force 强做，--check 只体检）
 
-# 不需要设 LUMA_JAVA：运行期优先用随包 sidecars/jre/bin/java.exe，dev 与交付同源
+# 不需要设 LUMA_JAVA / LUMA_JDK17_HOME：JVM 运行时（sidecars/jre + runner.jar）已在 1.0.3 移除。
+# jar 站点仍在导入时被识别为 runtime=jvm 并屏蔽，但不会启动任何 JVM。
 
 # 外部播放 / mpv 兜底已移除；解码失败走换线路 → 换源。
 ```
 
-运行时产物（JRE / python-embed / binaries）**不入库**，统一由 `prepare_runtime.py` 重建。
+运行时产物（python-embed / binaries）**不入库**，统一由 `prepare_runtime.py` 重建。
 dev 与安装交付版统一用随包 `sidecars/python-embed/python.exe`（`bridge.rs::embedded_python` 自动探测，无需设环境变量）。
 
 ## 2. 日常开发
@@ -118,13 +116,7 @@ $env:PATH    = "$vc\bin\Hostx64\x64;$sdk\bin\10.0.26100.0\x64;$env:PATH"   # 必
 - 诊断日志写 `logs/spider/spider.<UTC 日期>.log`（每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback）。宿主 spawn 时通过 `LUMA_ADAPTER_LOG` 注入这个路径，`LUMA_ADAPTER_LOG` 也可手动改；单个文件上限 10 MiB，超出滚成 `.1`。日志模块对 spider 协议尽力而为——缺失也不让 py 源整体失效。
 - 临时切解释器：`$env:LUMA_PYTHON = <path>`。
 
-### 3.4 JVM spider 桥（仅实验/回归通道）
-
-- **社区 jar 源不支持**：导入时 `runtime=jvm` 站点已自动屏蔽，正常使用不会启动 JVM。此通道只服务 `p2.py` 回归与自编纯 class 模板 jar。
-- **不需要 JDK 17**：`resolve_java()` 优先探测随包 `sidecars/jre/bin/java.exe`（与 `embedded_python()` 同一套 `sidecar_roots()` 探测），其次才 `JAVA_HOME` / PATH。零配置即可，避免 dev 用 JDK 23、交付用 JRE 17 的漂移。
-- `$env:LUMA_JAVA` 仅在需要临时改用其它虚拟机时设置；`$env:LUMA_JVM_RUNNER` 覆盖 `runner.jar`。
-
-### 3.5 QuickJS 侧载进程（JS 源）
+### 3.4 QuickJS 侧载进程（JS 源）
 
 - 改 `rquickjs` 后需重编：`cargo build --release --manifest-path sidecars/qjs-runner/Cargo.toml`，产物在 `sidecars/qjs-runner/target/release`。
 - 直驱 JS 源前先确认 sidecar 已重编（mtime 晚于源码），否则跑的是旧副本。
@@ -155,7 +147,7 @@ corepack pnpm test
 python tests/offline/parse_check.py            # 解析池与配置字段
 python tests/offline/py_compat_check.py        # TVBox py 脚本通用兼容 / 错误日志
 python tests/offline/py_base_spider_check.py   # py 框架与原生对齐
-python tools/prepare_runtime.py --check    # 随包 JRE/Python 依赖齐全度
+python tools/prepare_runtime.py --check    # 随包 Python 依赖齐全度（JVM 运行时已移除，不再检查 JRE）
 python tests/offline/contract_check.py         # 校验 contracts/tvbox.schema.json 与 TS 侧字段
 ```
 
@@ -164,7 +156,6 @@ python tests/offline/contract_check.py         # 校验 contracts/tvbox.schema.j
 ```powershell
 python tests/acceptance/p0.py     # P0 基线（需 stub + 运行中的应用，可用 --offline）
 python tests/acceptance/p1.py     # P1 子进程运行时
-python tests/acceptance/p2.py     # P2 jar / JVM 运行时
 python tests/acceptance/p3.py     # P3 嗅探 / 打包
 node tools/run_probes.mjs                 # 一条命令跑全部窗口探针
 node tools/run_probes.mjs --with-ui       # 连 UI 冒烟（会切桩配置，放最后）
@@ -183,8 +174,6 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 | 变量 | 用途 | 调试常用值 |
 |---|---|---|
 | `LUMA_PYTHON` | 覆盖 Python 解释器 | 临时切测试解释器 |
-| `LUMA_JAVA` | 覆盖 java 可执行文件 | 一般**不设**，缺省用随包 `sidecars/jre` |
-| `LUMA_JVM_RUNNER` | 覆盖 `runner.jar` | 自测用 |
 
 | `LUMA_PROXY_PORT` | 本地反代端口 | 默认 9978 |
 | `LUMA_DATA_DIR` | 覆盖数据目录 | — |

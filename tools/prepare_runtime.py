@@ -2,23 +2,22 @@
 """P3 打包期运行时产物准备（幂等）。
 
 步骤：
-  1. jlink 裁剪 JRE        -> sidecars/jre
-  2. Python 3.11 embeddable -> sidecars/python-embed（含第三方依赖，见第 2.5 步）
-  2.5 按 tools/python-requirements.txt 装回 py 采集源依赖（Crypto/requests/lxml…）
-  3. Tauri externalBin staging -> src-tauri/binaries
-  4. 随包 JS 依赖资源校验 -> sidecars/qjs-assets（只读、离线，不下载）
+  1. Python 3.11 embeddable -> sidecars/python-embed（含第三方依赖，见第 1.5 步）
+  1.5 按 tools/python-requirements.txt 装回 py 采集源依赖（Crypto/requests/lxml…）
+  2. Tauri externalBin staging -> src-tauri/binaries
+  3. 随包 JS 依赖资源校验 -> sidecars/qjs-assets（只读、离线，不下载）
 
 约定：
   * 脚本自身只用标准库，不 import 任何第三方包（装依赖通过 subprocess 调 pip）。
   * 所有路径相对项目根（本文件上一级），不硬编码盘符。
   * 已存在即跳过，可重复执行。
-  * 第 4 步是入库源码资源的只读体检，离线可用，绝不联网下载资源。
-  * JDK 只在重建 JRE 时需要：LUMA_JDK17_HOME -> JAVA_HOME -> PATH 上的 jlink；
-    不硬编码任何本机盘符。运行期一律用随包 sidecars/jre，无需安装 JDK。
+  * 第 3 步是入库源码资源的只读体检，离线可用，绝不联网下载资源。
+  * 不再准备 JVM/JRE：jar 站点仅保留分类并在导入时屏蔽（社区 jar 是
+    Android dex，Windows 端无解），本脚本不再需要 JDK。
 
 用法：
   python tools/prepare_runtime.py                    # 全量（缺失项补齐）
-  python tools/prepare_runtime.py --force            # 强制重做 jre / python-embed
+  python tools/prepare_runtime.py --force            # 强制重做 python-embed
   python tools/prepare_runtime.py --check            # 只体检，不写文件
   python tools/prepare_runtime.py --skip-qjs-sha     # 跳过 JS 资源的 SHA256 校验
 """
@@ -39,16 +38,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-JRE_DIR = ROOT / "sidecars" / "jre"
+# jar 站点仅保留分类（导入时屏蔽）；JVM 运行时已移除，不再准备 JRE。
 PY_DIR = ROOT / "sidecars" / "python-embed"
 BIN_DIR = ROOT / "src-tauri" / "binaries"
-
-JLINK_MODULES = "java.base,java.net.http,java.logging,jdk.unsupported"
-JLINK_FLAGS = [
-    "--strip-debug",
-    "--no-man-pages",
-    "--no-header-files",
-]
 
 PY_VERSION = "3.11.9"
 PY_REQUIREMENTS = ROOT / "tools" / "python-requirements.txt"
@@ -115,72 +107,11 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
 
-def resolve_jdk17() -> Path | None:
-    for env in ("LUMA_JDK17_HOME", "TVBOX_JDK17_HOME", "JAVA_HOME"):
-        value = os.environ.get(env)
-        if value and (Path(value) / "bin" / "jlink.exe").exists():
-            print(f"  [jdk] 使用 {env}={value}")
-            return Path(value)
-    which = shutil.which("jlink")
-    if which:
-        jdk = Path(which).parent.parent
-        print(f"  [jdk] 使用 PATH 上的 jlink -> {jdk}")
-        return jdk
-    return None
-
-
-# 运行时产物目录（sidecars/jre、python-embed）整目录在 .gitignore 里，
+# 运行时产物目录（python-embed）整目录在 .gitignore 里，
 # 不跟踪任何占位文件：这里不再补 .gitkeep，产物目录保持干净。
 
 
 # ---------------------------------------------------------------- step 1
-
-
-def step_jre(force: bool = False) -> bool:
-    print("[1/4] jlink 裁剪 JRE -> sidecars/jre")
-    java_exe = JRE_DIR / "bin" / "java.exe"
-    if java_exe.exists() and not force:
-        print("  已存在，跳过 jlink")
-        report_size("sidecars/jre", JRE_DIR)
-        return True
-
-    jdk = resolve_jdk17()
-    if jdk is None:
-        print("  [fail] 重建 JRE 需 JDK 17：设 LUMA_JDK17_HOME / JAVA_HOME，或让 jlink 在 PATH 上")
-        return False
-
-    jlink = jdk / "bin" / "jlink.exe"
-    tmp_root = Path(tempfile.mkdtemp(prefix="tvbox-jre-"))
-    attempts = [["--compress=2"], ["--compress=zip-6"]]
-    ok = False
-    for extra in attempts:
-        out = tmp_root / "jre"
-        if out.exists():
-            shutil.rmtree(out, ignore_errors=True)
-        cmd = [str(jlink), "--add-modules", JLINK_MODULES, *JLINK_FLAGS, *extra,
-               "--output", str(out)]
-        proc = run(cmd)
-        if proc.returncode == 0 and (out / "bin" / "java.exe").exists():
-            ok = True
-            break
-        print(f"  [warn] jlink 失败（{' '.join(extra)}）：{(proc.stderr or proc.stdout).strip()[:400]}")
-    if not ok:
-        shutil.rmtree(tmp_root, ignore_errors=True)
-        print("  [fail] jlink 未能产出可用 JRE")
-        return False
-
-    if JRE_DIR.exists():
-        shutil.rmtree(JRE_DIR)
-    shutil.move(str(tmp_root / "jre"), str(JRE_DIR))
-    shutil.rmtree(tmp_root, ignore_errors=True)
-
-    ver = run([str(JRE_DIR / "bin" / "java.exe"), "-version"])
-    print("  [ok] " + (ver.stderr or ver.stdout).strip().splitlines()[0])
-    report_size("sidecars/jre", JRE_DIR)
-    return True
-
-
-# ---------------------------------------------------------------- step 2
 
 
 def _download(url: str, dest: Path) -> bool:
@@ -231,7 +162,7 @@ def ensure_site_packages_in_pth(py_dir: Path) -> None:
 
 
 def step_python(force: bool = False) -> bool:
-    print("[2/4] Python embeddable -> sidecars/python-embed")
+    print("[1/3] Python embeddable -> sidecars/python-embed")
     py_exe = PY_DIR / "python.exe"
     if py_exe.exists() and not force:
         print("  已存在，跳过下载")
@@ -354,7 +285,7 @@ def step_python_deps(force: bool = False) -> bool:
     return True
 
 
-# ---------------------------------------------------------------- step 3
+# ---------------------------------------------------------------- step 2
 
 
 def stage(src: Path, name: str) -> bool:
@@ -372,18 +303,8 @@ def stage(src: Path, name: str) -> bool:
 
 
 def step_binaries() -> bool:
-    print("[3/4] Tauri externalBin staging -> src-tauri/binaries")
+    print("[2/3] Tauri externalBin staging -> src-tauri/binaries")
     BIN_DIR.mkdir(parents=True, exist_ok=True)
-
-    # jvm：不生成 externalBin 副本。实测（2026-11）把 sidecars/jre/bin/java.exe
-    # 复制改名后单独运行，launcher 找不到 <exe目录>/../bin/server/jvm.dll，会
-    # 回落到注册表里宿主安装的 JDK（实测输出 23.0.1，java.home=oracle-jdk-23），
-    # 设置 JAVA_HOME 也无法改变优先级 —— 属于"能启动但用错运行时"，故意不做。
-    # 正确做法：把 sidecars/jre 作为 resource 目录整体打包，Rust 直接 spawn
-    # `<resource>/jre/bin/java.exe -cp <runner.jar> ...`（实测 java.home 指向
-    # 自身、版本 17.0.12），JVM 参数与 runner.jar 路径由 Rust 传入。
-    print("  [skip] jvm 不放进 externalBin：java.exe 单文件副本无法自包含 JRE，")
-    print("         请改由 Rust spawn resource 目录下的 sidecars/jre/bin/java.exe")
 
     # python-embed：externbin 里只放 python.exe 壳；实测必须让进程的
     # 工作目录或 PATH 指向 sidecars/python-embed，否则 0xC0000135（缺
@@ -403,7 +324,7 @@ def step_binaries() -> bool:
     return True
 
 
-# ---------------------------------------------------------------- step 4
+# ---------------------------------------------------------------- step 3
 
 
 def qjs_assets_hint() -> None:
@@ -414,13 +335,13 @@ def qjs_assets_hint() -> None:
 
 
 def step_qjs_assets(verify_sha: bool = True) -> bool:
-    """[4/4] 校验随包 QuickJS ESM 依赖资源（只读、离线、幂等）。
+    """[3/3] 校验随包 QuickJS ESM 依赖资源（只读、离线、幂等）。
 
     sidecars/qjs-assets/ 是入库源码资源，不由本脚本下载/重建。这里只做交付前
     体检：8 个文件是否齐全，并可选按 manifest.json 校验字节数与 SHA256。
     缺文件或与清单不一致时给出可操作的补齐提示，不联网、不中断打包。
     """
-    print("[4/4] 随包 JS 依赖资源校验 -> sidecars/qjs-assets")
+    print("[3/3] 随包 JS 依赖资源校验 -> sidecars/qjs-assets")
 
     missing = [name for name in QJS_ASSET_FILES if not (QJS_ASSETS_LIB / name).is_file()]
     print(f"  {len(QJS_ASSET_FILES) - len(missing)}/{len(QJS_ASSET_FILES)} 个文件齐全，"
@@ -487,7 +408,7 @@ def step_qjs_assets(verify_sha: bool = True) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="准备 P3 打包期运行时产物（幂等）")
-    parser.add_argument("--force", action="store_true", help="强制重做 jre 与 python-embed")
+    parser.add_argument("--force", action="store_true", help="强制重做 python-embed")
     parser.add_argument("--check", action="store_true", help="只体检，不写文件")
     parser.add_argument("--skip-qjs-sha", action="store_true",
                         help="跳过 qjs-assets 的 SHA256/字节数校验，只查文件齐全")
@@ -496,7 +417,6 @@ def main() -> int:
     print(f"项目根：{ROOT}")
     verify_sha = not args.skip_qjs_sha
     if args.check:
-        report_size("sidecars/jre", JRE_DIR)
         report_size("sidecars/python-embed", PY_DIR)
         report_size("src-tauri/binaries", BIN_DIR)
         report_size("sidecars/qjs-assets", QJS_ASSETS_DIR)
@@ -506,20 +426,18 @@ def main() -> int:
         ok_qjs = step_qjs_assets(verify_sha=verify_sha)
         return 0 if (not missing and ok_qjs) else 1
 
-    ok_jre = step_jre(force=args.force)
     ok_py = step_python(force=args.force)
     ok_deps = step_python_deps(force=args.force)
     ok_bin = step_binaries()
     ok_qjs = step_qjs_assets(verify_sha=verify_sha)
 
     print("\n汇总")
-    report_size("sidecars/jre", JRE_DIR)
     report_size("sidecars/python-embed", PY_DIR)
     report_size("src-tauri/binaries", BIN_DIR)
     report_size("sidecars/qjs-assets", QJS_ASSETS_DIR)
     report_size("dist", ROOT / "dist")
 
-    return 0 if (ok_jre and ok_py and ok_deps and ok_bin and ok_qjs) else 1
+    return 0 if (ok_py and ok_deps and ok_bin and ok_qjs) else 1
 
 
 if __name__ == "__main__":

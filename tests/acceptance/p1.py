@@ -156,8 +156,10 @@ def adapter_phase() -> None:
                 missing.append(f"{method}(runtime)")
         check(not missing, "T-14 adapter", "11 method table", ",".join(missing) or "all answered")
 
+        # 纯分类断言：1.0.3 起不再随包 JVM 运行时，但 site.route 仍需把 jar
+        # 站点识别为 jvm（宿主据此在导入时屏蔽并给出原因）。
         route = adapter.call("site.route", {"site": {"key": "csp_x", "api": "http://127.0.0.1/a"}})
-        check(route.get("result", {}).get("runtime") == "jvm", "T-14 adapter", "site.route jvm")
+        check(route.get("result", {}).get("runtime") == "jvm", "T-14 adapter", "site.route jvm (classification)")
 
         m3u = adapter.call("live.parseM3u", {"raw": http_text(f"{STUB}/live/list.m3u")})
         groups = m3u.get("result", {}).get("groups", [])

@@ -6,7 +6,7 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容播放器**（空壳播放框架
 
 - 前端：React 18 + TypeScript + Vite
 - 宿主：Tauri v2（Rust）+ WebView2
-- 适配层：Python 3.11 / QuickJS / JVM 三个随包 sidecar
+- 适配层：Python 3.11 / QuickJS 两个随包 sidecar（JVM 运行时已移除）
 - 交付：官方 `tauri build` 产出的 NSIS 安装器（Windows）
 
 > **免责声明（先读这一段）**
@@ -38,7 +38,7 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容播放器**（空壳播放框架
 | 配置级 `headers[]` | ✅ 支持 | 按 host 注入 UA/Referer，防盗链 CDN 必需 |
 | 直播（`lives`） | ✅ 支持 | m3u8 经本地代理重写后播放 |
 | JavaScript（drpy2 / `var spider`） | ✅ 支持 | 独立 `qjs-runner` sidecar，内置 ESM 加载器与 8 个随包库 |
-| jar（`csp_*` / 全局 `spider` jar） | ❌ 社区配置不支持 | 导入时自动屏蔽；仅自编纯 class 模板 jar 用于回归 |
+| jar（`csp_*` / 全局 `spider` jar） | ❌ 社区配置不支持 | 导入时自动屏蔽；JVM 运行时已移除，jar 站点仍被识别并屏蔽 |
 
 ### 为什么社区 jar 源不支持
 
@@ -48,7 +48,7 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容播放器**（空壳播放框架
 - 还依赖 ART、OkHttp、gson、NanoHTTPD、QuickJS binding 与整套 `android.util.*`，桩类无法补全；
 - 这些站点的差异全在 jar 内部的 XPath 规则引擎里，无法绕开。
 
-所以**导入阶段就把这些站点屏蔽掉**（`runtime=jvm` → `enabled=false` + `disabledReason`），不参与搜索聚合、不拖慢响应。JVM 通道保留仅用于 `p2.py` 回归与自编纯 class 模板 jar，**不代表能运行社区 jar**，也不需要你安装 JDK。
+所以**导入阶段就把这些站点屏蔽掉**（`runtime=jvm` → `enabled=false` + `disabledReason`），不参与搜索聚合、不拖慢响应。JVM 运行时（随包 JRE / `runner.jar`）已于 2026-11-15 移除：jar 站点仍会被识别为 `jvm` 并屏蔽，但不再有任何 JVM 通道，你也不需要安装 JDK。
 
 ## 系统要求
 
@@ -56,8 +56,6 @@ Windows 11 x64 桌面端的 **TVBox 配置兼容播放器**（空壳播放框架
 |---|---|
 | 运行 | Windows 11 x64；WebView2 常青版（系统自带，不随包分发） |
 | 开发 | Node 20+ / pnpm 9；Rust stable ≥ 1.77.2（`x86_64-pc-windows-msvc`）；VS2022 Build Tools + Windows SDK |
-
-| jar 通道 | **运行期无需 JDK**：用随包 `sidecars/jre`（jlink 裁剪的 17）；只有重建 JRE / 编译 `runner.jar` 才需要本机 JDK 17 |
 
 ## 安装（使用者）
 
@@ -82,7 +80,7 @@ corepack pnpm tauri build            # release：嵌前端 + 打包 NSIS 安装�
 
 ### 为什么还要 `prepare_runtime.py`
 
-Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会替你准备 JRE / Python embeddable / qjs-runner 这些 sidecar 运行时。这个脚本只产出 `tauri.conf.json` 里 `bundle.resources` / `bundle.externalBin` 指向的源文件；**构建本身仍 100% 交给 `tauri build`**。运行时产物不入库，可随时用 `python tools/prepare_runtime.py --check` 体检。
+Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会替你准备 Python embeddable / qjs-runner 这些 sidecar 运行时。这个脚本只产出 `tauri.conf.json` 里 `bundle.resources` / `bundle.externalBin` 指向的源文件；**构建本身仍 100% 交给 `tauri build`**。运行时产物不入库，可随时用 `python tools/prepare_runtime.py --check` 体检。
 
 ### 产物位置（Tauri 官方约定）
 
@@ -92,7 +90,7 @@ Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会�
 | release | `pnpm tauri build` | `src-tauri/target/release/luma.exe`，安装器在 `src-tauri/target/release/bundle/nsis/` |
 | 前端 | `pnpm build` | `dist/`（`tauri.conf.json` 的 `frontendDist` 指向它） |
 
-`src-tauri/target/`、`dist/`、`sidecars/{jre,python-embed}/` 均为可重建产物，已 gitignore。Release profile 与 `Cargo.toml` 的 `[profile.dev]` / `[profile.release]` 按 Tauri 官方 [App Size](https://v2.tauri.app/concept/size/) 建议设置。
+`src-tauri/target/`、`dist/`、`sidecars/python-embed/` 均为可重建产物，已 gitignore。Release profile 与 `Cargo.toml` 的 `[profile.dev]` / `[profile.release]` 按 Tauri 官方 [App Size](https://v2.tauri.app/concept/size/) 建议设置。
 
 > 注意：裸 `cargo build --release` **不会**把前端嵌入 exe，启动会回退到 `devUrl` 并报连接被拒。发版一律走 `tauri build`。
 
@@ -103,8 +101,6 @@ Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会�
 | 变量 | 用途 |
 |---|---|
 | `LUMA_PYTHON` | 覆盖 Python 解释器（缺省用随包 `python-embed`，再缺省 `python`） |
-| `LUMA_JAVA` | 覆盖 java 可执行文件（缺省优先随包 `sidecars/jre`，再兜底 `JAVA_HOME` / `java`） |
-| `LUMA_JVM_RUNNER` | 覆盖 `runner.jar` 路径 |
 | `LUMA_QJS_RUNNER` | 覆盖 `qjs-runner.exe` 路径 |
 
 | `LUMA_PROXY_PORT` | 本地反代端口，默认 `9978` |
@@ -126,8 +122,6 @@ Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会�
     sidecars/
       py/                 适配层源码
       python-embed/       嵌入式 Python 3.11 + 第三方包
-      jre/                jlink 裁剪的 JDK 17（仅 jar 通道）
-      java/runner.jar     JVM spider 桥
       qjs-assets/         JS 源内置依赖（8 个模块 + manifest，见 THIRD-PARTY-NOTICES.md）
 ```
 
@@ -147,14 +141,14 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib   # Rust 单测
 node tools/run_probes.mjs --list       # 窗口探针清单（需要 debug 窗口 + CDP 9222）
 ```
 
-阶段断言（`tests/acceptance/p0.py` ~ `p3.py`）采用累积断言：未交付能力标 `N/A`，`FAIL = 0` 即通过。CI 入口见 `.github/workflows/check.yml`。
+阶段断言（`tests/acceptance/p0.py` / `p1.py` / `p3.py`；`p2.py` 的 jar/JVM 回归已随运行时删除）采用累积断言：未交付能力标 `N/A`，`FAIL = 0` 即通过。CI 入口见 `.github/workflows/check.yml`。
 
 ## 项目结构
 
 ```text
 src/                前端（routes / pages / components / hooks / lib / stores / types）
 src-tauri/          Rust 宿主（infra/ 底座 + domain/ 业务，#[path] 映射）
-sidecars/           Python 适配层 · Java SpiderRunner · qjs-runner · 随包 js 资源
+sidecars/           Python 适配层 · qjs-runner · 随包 js 资源
 contracts/          归一化契约唯一真源（TS / Rust / Python 三端校验）
 tests/              e2e 阶段断言 · 兼容检查 · 前端跨模块单测 · fixture
 tools/              离线回归（check.py）· 运行时准备 · CDP 探针（probes/ diag/ verify/ audit/）
@@ -179,11 +173,12 @@ docs/               架构 · 开发 · 维护 · 发布 · 目录约定 · JS �
 ## 已知限制
 
 - 返回**自有本地服务**地址（如 `127.0.0.1:10010`）的 py 源不可用。
-- `parses[]` 只实现 type 0 / 1 / 4；type 2/3 依赖 jar 反射，直接返回「不支持」而不是卡住。
+- `parses[]` 只实现 type 0 / 1 / 4；type 2/3 依赖 jar 反射（JVM 运行时已移除），直接返回「不支持」而不是卡住。
 - 公开的 jx 解析接口存活期普遍很短，解析池失败是常态；失败会保留原地址，由内置嗅探兜底。
 - JS 源尚未覆盖 drpy2 `initEnv` 完整 polyfill 与 FongMi 新版 class-based `Spider`。
 - T-31（`tvbox://` 协议关联、JumpList、全屏勿扰）未实现。
 - 外部播放与随包 mpv 已移除（2026-11-14）：解码失败只走换线路 / 换源。
+- jar 站点（`runtime=jvm`）仍被识别并在导入时屏蔽，但 JVM 运行时已移除（2026-11-15）：社区 Android dex jar 在任何情况下都不会被执行。
 - 公开源失效频繁，属正常现象；自动换源与源级原因提示是必需能力。
 
 ## 许可证

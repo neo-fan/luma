@@ -274,7 +274,7 @@ impl ConfigStore {
             if site.get("key").and_then(Value::as_str) != Some(site_key) {
                 continue;
             }
-            // 屏蔽源（当前只有 jvm / Android dex）不允许手动打开，否则会把
+            // 屏蔽源（当前只有 jar / Android dex）不允许手动打开，否则会把
             // 不支持的站点放回 fan-out；JS 源已解禁，禁用则始终允许。
             if enabled && blocked_reason(site).is_some() {
                 return Err(AppError::new(

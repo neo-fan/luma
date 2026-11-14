@@ -154,7 +154,7 @@ pub fn run() {
             }
             // T-32: in an installed build the sidecars live under the resource
             // dir, not next to the source tree. Publish that root once so
-            // bridge / jvm resolve the same layout in dev and prod.
+            // bridge / qjs runner resolve the same layout in dev and prod.
             if let Ok(resource) = app.path().resource_dir() {
                 env::set("RESOURCE_DIR", &resource);
                 tracing::info!(dir = %resource.display(), "resource dir");

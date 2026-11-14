@@ -240,8 +240,9 @@ def normalize_config(raw: dict[str, Any], origin: str) -> dict[str, Any]:
 
     # Spec 8.3 / T-24: `csp_*` sites carry no per-site jar; the config-level
     # `spider` is the jar that supplies their classes. Attach it at import time
-    # so the JVM runtime can probe/load it without another IPC round trip, and
-    # so a stale snapshot still routes to jvm.
+    # so the jar reference stays visible on jar-classified sites and a stale
+    # snapshot still routes to jvm. 1.0.3 已移除 JVM 运行时：jar 站点只保留分类
+    # 并在导入时屏蔽，这个字段不再用于探测或加载。
     if spider_value:
         for site in sites:
             if site.get("runtime") == "jvm" and not site.get("jar"):

@@ -4,7 +4,7 @@ name: regression
 # split into three jobs, because two of its checks need things a fresh checkout does
 # not have:
 #   - py adapter checks need pip deps (lxml / pyquery / pycryptodome)
-#   - rust tests need `dist/` and the `bundle.resources` paths (jre / python-embed)
+#   - rust tests need `dist/` and the `bundle.resources` paths (python-embed)
 # Window probes (tools/run_probes.mjs) are NOT covered here: they need a debug window
 # with CDP 9222. They stay in the manual pre-release checklist (docs/RELEASING.md §2.2).
 
@@ -63,12 +63,12 @@ jobs:
       - name: Stub bundled runtime artifacts
         shell: pwsh
         # tauri-build copies `bundle.resources` / `bundle.externalBin` into the target
-        # dir on every build and hard-fails on a missing path. The real jre /
-        # python-embed / qjs-runner binaries are gitignored local artifacts rebuilt by
+        # dir on every build and hard-fails on a missing path. The real python-embed /
+        # qjs-runner binaries are gitignored local artifacts rebuilt by
         # tools/prepare_runtime.py, so CI supplies empty stand-ins: enough to compile,
         # and the unit tests never spawn a sidecar.
         run: |
-          New-Item -ItemType Directory -Force sidecars/jre, sidecars/python-embed | Out-Null
+          New-Item -ItemType Directory -Force sidecars/python-embed | Out-Null
           New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
           Set-Content -NoNewline -Path src-tauri/binaries/qjs-runner-x86_64-pc-windows-msvc.exe -Value ""
       - name: cargo test --lib

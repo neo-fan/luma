@@ -19,7 +19,7 @@ project-root/
     └── target/                ② Rust 产物（Cargo 默认；debug/ release/ bundle/）
 ```
 
-本项目**完全对齐**标准 Tauri v2 骨架：前端 `dist/`、Rust `src-tauri/target/`、交付包走 Tauri 官方 `src-tauri/target/release/bundle/`。构建与打包**全部用官方 `tauri build`**，不手搓。交付形态为 **NSIS 安装器**（用户决定先出安装版、跟随官方），由 `tauri.conf.json` 的 `bundle.targets` 控制；随包运行时（JRE / python-embed / qjs-runner 二进制）经 `bundle.resources` / `bundle.externalBin` 打包，源文件由 `tools/prepare_runtime.py` 准备好（这一步是项目特有，不是轮子）。
+本项目**完全对齐**标准 Tauri v2 骨架：前端 `dist/`、Rust `src-tauri/target/`、交付包走 Tauri 官方 `src-tauri/target/release/bundle/`。构建与打包**全部用官方 `tauri build`**，不手搓。交付形态为 **NSIS 安装器**（用户决定先出安装版、跟随官方），由 `tauri.conf.json` 的 `bundle.targets` 控制；随包运行时（python-embed / qjs-runner 二进制）经 `bundle.resources` / `bundle.externalBin` 打包，源文件由 `tools/prepare_runtime.py` 准备好（这一步是项目特有，不是轮子）。
 
 三类产物统一归口（`AGENTS.md`「常用命令」给重建命令）：
 
@@ -95,30 +95,28 @@ luma/
 │       └── domain/                        # 业务：config/play/parse/proxy/live/sniff/
 │                                          #   config/{mod,derive,naming,import,github,refresh}
 │                                          #   proxy/{mod,handlers,guard,playlist,tests}
-│                                          #   clipboard/ghproxy/spider/{mod,cms,jvm,python,quickjs}
+│                                          #   clipboard/ghproxy/spider/{mod,cms,python,quickjs}
 │
 ├── sidecars/                              # 随包分发的 sidecar
-│   ├── py/  java/  qjs-runner/            # 源码（入库）
+│   ├── py/  qjs-runner/                   # 源码（入库）
 │   ├── qjs-assets/                        # [入库资源] 8 个 JS 依赖 + manifest.json，SHA256 校验
 │   ├── python-embed/                      # [产物] 3.11 embeddable + site-packages 第三方依赖，gitignore
 │   │                                      #   dev/交付统一用它（bridge.rs::embedded_python 自动探测）
 │   │                                      #   依赖由 tools/python-requirements.txt + prepare_runtime.py 重建
-│   ├── jre/                               # [产物] 二进制，gitignore，prepare_runtime.py 重建
 │
 ├── tests/
 │   ├── frontend/                          # 跨模块契约单测（播放器生命周期、图标控件…）
 │   ├── stub_server.py                     # e2e 用的 127.0.0.1 桩服务
 │   ├── fixtures/
 │   │   ├── manual/                        # 真实配置样本（不入库）
-│   │   ├── configs/  jars/  spiders/      # 脱敏 fixture / 模板 jar / py spider
+│   │   ├── configs/  spiders/            # 脱敏 fixture / py spider
 │   │   └── media/                         # m3u8 / flv / mp4 / ts 解码与解析样本
-│   └── e2e/                               # p0~p3、contract_check、config_compat、parse_check、
+│   └── e2e/                               # p0/p1/p3、contract_check、config_compat、parse_check、
 │                                          #   py_compat_check、py_base_spider_check、capabilities_check
 │
 └── tools/                                 # 离线辅助脚本（不参与构建）
-    ├── prepare_runtime.py                 # 重建 jre/python-embed 等产物；含 Python 依赖安装 + .pth 修正
+    ├── prepare_runtime.py                 # 重建 python-embed 等产物；含 Python 依赖安装 + .pth 修正
     ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
-    ├── javap_conserve.py                  # jar 符号守恒检查（T-20）
     ├── inspect_config.py                  # 离线解码配置（图种 / 方言），只读不发网络
     ├── check.py                           # 离线一键回归（7 项门禁）
     ├── run_probes.mjs                     # 窗口探针一键回归（唯一入口）
@@ -148,7 +146,7 @@ luma/
 | 契约 | `contracts/` | 归一化契约唯一真源；TS/Rust/Python 三端一致 |
 | 前端源码 | `src/` | React + TypeScript + Vite |
 | Rust 宿主源码 | `src-tauri/src/{infra,domain}/` | 命令、进程管理、proxy、运行时，按层归档 |
-| sidecar 源码 | `sidecars/{py,java,qjs-runner}/` | 入库；二进制产物目录见 §1 |
+| sidecar 源码 | `sidecars/{py,qjs-runner}/` | 入库；二进制产物目录见 §1 |
 | 离线检查脚本 | `tests/offline/` | 契约、py 兼容、解析池、适配层隔离等确定性检查，全部接进 `tools/check.py` |
 | 阶段验收脚本 | `tests/acceptance/p0.py~p3.py` | 规格书 12.2 累积断言；stub 在 `tests/stub_server.py` |
 | 前端单测 | 与被测模块同目录 `*.test.ts`（`src/lib`、`src/pages`、`src/stores`） | 只测本模块；不为了放测试而新建目录 |
@@ -182,7 +180,7 @@ luma/
 | `tests/fixtures/manual/`、`docs/verification-config.md` | 真实配置样本与抓取记录，含外部地址，规格书禁止内置 |
 | `dist/`、`src-tauri/target/`、`src-tauri/target/release/bundle/` | 三类编译/交付产物，均可重建（见 §1） |
 | `src-tauri/gen/` | Tauri 生成的 schema 与中间产物 |
-| `sidecars/{jre,python-embed}/`、`src-tauri/binaries/` | 随包运行时/二进制产物，由 `prepare_runtime.py` 重建 |
+| `sidecars/python-embed/`、`src-tauri/binaries/` | 随包运行时/二进制产物，由 `prepare_runtime.py` 重建 |
 | `node_modules/` | 前端依赖，由 pnpm 锁文件重建 |
 | `*.log`、`pnpm-debug.log*` | 运行日志，可能含密钥/外部地址 |
 | `.DS_Store`、`Thumbs.db` | 系统元数据 |

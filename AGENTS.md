@@ -18,7 +18,7 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 |---|---|
 | 版本 | `1.0.3`（`package.json` 唯一来源；同步清单见 `docs/RELEASING.md` §1） |
 | 交付物 | `src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe` |
-| 回归基线 | `python tools/check.py` 8/8；`pnpm test` 336（39 个文件）；`cargo test --lib` 159 passed / 1 ignored |
+| 回归基线 | `python tools/check.py` 8/8；`pnpm test` 342（40 个文件）；`cargo test --lib` 151 passed / 1 ignored |
 | 窗口探针 | `node tools/run_probes.mjs --list`（需要 debug 窗口 + CDP 9222） |
 | 发布状态 | **本地私有，暂不发布**：无 remote、未 push；`LICENSE` 是占位（All rights reserved），不要当成已开源 |
 
@@ -26,7 +26,7 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 
 - 前端：React 18 + TS + Vite、react-router（hash）、zustand、ArtPlayer + hls.js / mpegts.js、Radix / cmdk / sonner / lucide。
 - 宿主：Tauri v2 + Rust stable（`x86_64-pc-windows-msvc`）、`reqwest`(rustls)、`tokio`、`axum`(反代)、`rusqlite`(bundled)、`windows`(JobObjects)。
-- 适配层：Python 3.11 embeddable（stdio JSON-RPC，线程池 8）、`qjs-runner`（QuickJS）、`sidecars/jre` + `runner.jar`（仅维护态）。
+- 适配层：Python 3.11 embeddable（stdio JSON-RPC，线程池 8）、`qjs-runner`（QuickJS）；jar 站点只保留分类，JVM 运行时已移除。
 - 配置链与解析链全在 Rust：解密（`domain/config/decrypt.rs`）、归一化（`normalize.rs`）、导入（`import.rs`）、CMS 采集解析（`domain/spider/cms_parse.rs`）、M3U/XMLTV（`domain/live/{m3u,epg}.rs`）都是进程内纯函数，**不再走 sidecar**；sidecar 只负责执行第三方源脚本。外部字节一律经 `infra/textio.rs` 洗成 UTF-8 再解析。
 
 ## 架构
@@ -34,7 +34,7 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 ```text
 前端 (React, Vite dev 1420) ── invoke（唯一 IPC 出口 src/lib/invoke.ts）
   → Rust 主进程：infra/（底座）+ domain/（业务）+ 本地反代 :9978
-  → sidecar：Python 适配层 / JVM runner / qjs-runner（stdio JSON-RPC）
+  → sidecar：Python 适配层 / qjs-runner（stdio JSON-RPC）
 ```
 
 - **37 个 command 闭集**，注册在 `src-tauri/src/lib.rs`；新增 command 或错误码需先改文档与契约。
@@ -52,15 +52,15 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 | Python（`base.spider`） | ✅ 承诺 | 直链型与 `proxy?do=py` 型；返回自有本地服务的源除外 |
 | `parses[]` | ✅ 承诺 | type 0 嗅探 / 1 JSON / 4 竞速；type 2/3（jar 反射）不在范围 |
 | JS（drpy2 / 经典 `var spider`） | ✅ 支持 | qjs-runner：ESM loader + `assets://` + 8 个随包依赖 |
-| jar（jvm / `csp_*`） | ⏸ 仅维护态 | 社区配置是 Android dex jar，Win x64 无解，**导入即屏蔽** |
+| jar（jvm / `csp_*`） | ⛔ 运行时已移除 | 社区配置是 Android dex jar，Win x64 无解；站点仍识别为 `jvm` 并**导入即屏蔽**，但 JVM 运行时（`sidecars/jre` + `runner.jar`）已删除 |
 | 分组分隔条 | — | 归一化为 `enabled: false`，不参与扇出 |
 
-jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar 内 + 缺 Android 运行时），不是工作量问题。`sidecars/java` + `spider/jvm.rs` 保留只为 `p2.py` 回归与自编纯 class 模板 jar，**不要写成「部分支持」**。
+jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar 内 + 缺 Android 运行时），不是工作量问题。JVM 运行时（`spider/jvm.rs` + `sidecars/java` + `sidecars/jre` + 打包 resources）已在 1.0.3 整体移除；契约里的 `jvm` 分类与屏蔽原因**必须保留**，配置里的 jar 站点仍要识别为 `jvm` 并屏蔽。**不要写成「部分支持」，也不要重新引入 JVM 通道。**
 
 ## 工程铁律
 
 1. **构建与打包只走 Tauri 官方工具链**：`tauri dev`（debug）/ `tauri build`（release）/ `tauri icon`（图标）。裸 `cargo build --release` 不会把 `frontendDist` 嵌进 exe，窗口会回退到 `devUrl` 报 `ERR_CONNECTION_REFUSED`。Cargo profile 用官方 [App Size](https://v2.tauri.app/concept/size/) 建议值，不要加项目私有 tweak。
-2. **随包运行时优先**：sidecar 运行时一律走 `paths::sidecar_roots()`，优先级 = 显式环境变量（`LUMA_JAVA` / `LUMA_PYTHON` / `LUMA_QJS_RUNNER`）→ 随包 `sidecars/jre`、`sidecars/python-embed`、exe 同目录 `qjs-runner.exe` → 宿主兜底。用户无需安装 JDK；`prepare_runtime.py` 禁止硬编码本机路径。
+2. **随包运行时优先**：sidecar 运行时一律走 `paths::sidecar_roots()`，优先级 = 显式环境变量（`LUMA_PYTHON` / `LUMA_QJS_RUNNER`）→ 随包 `sidecars/python-embed`、exe 同目录 `qjs-runner.exe` → 宿主兜底。用户无需安装 Python；`prepare_runtime.py` 禁止硬编码本机路径。
 3. **契约单一真源** `contracts/tvbox.schema.json`：改字段先改 schema → `src/types/tvbox.ts` → Rust 序列化与 `sidecars/py/normalize.py` → `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。字段 camelCase、`additionalProperties: false`；不许删 TS 字段来「修」校验。
 4. **双快照不可越过**：运行策略只改 `runtime_json`，`imported_json` 一个字段都不许动。
 5. **换线只认证据**：`dead` 仅限 4xx/5xx、非 `#EXTM3U`、首分片是图片/HTML；超时算 `unknown`，连续 3 次才换。**慢 ≠ 死**。

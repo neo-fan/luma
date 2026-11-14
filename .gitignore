@@ -54,10 +54,9 @@ luma.db-shm
 !sidecars/qjs-assets/js/lib/*.js
 
 # 随包运行时产物（非编译生成：由 tools/prepare_runtime.py 下载/裁剪重建，不入库）
-# 整目录忽略，不保留任何 .gitkeep 占位；sidecars/py、sidecars/java、sidecars/qjs-runner
-# 是源码（入库），sidecars/qjs-assets 是入库资源（见上一段），与下面三个二进制
-# 产物目录区分开。
-sidecars/jre/
+# 整目录忽略，不保留任何 .gitkeep 占位；sidecars/py、sidecars/qjs-runner
+# 是源码（入库），sidecars/qjs-assets 是入库资源（见上一段），与下面两个二进制
+# 产物目录区分开。JVM 运行时已移除，不再忽略 sidecars/jre。
 sidecars/python-embed/
 sidecars/mpv/
 src-tauri/binaries/

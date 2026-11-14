@@ -35,7 +35,7 @@ python tools/check.py
 
 `check.py` 串行执行并汇总：契约校验、Python 兼容、py 框架、适配层车道隔离、`py_compile`、前端单测、`cargo test --lib`、`prepare_runtime.py --check`。任一失败即非零退出。
 
-**当前基线（1.0.3）**：`python tools/check.py` **8/8 全绿**；其中 `pnpm test` 326/326、`cargo test --lib` 117 passed / 1 ignored、`py_compat_check` 37/37、`adapter_isolation` 14/14、`contract_check` 8 类型 + 7 方法对齐、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
+**当前基线（1.0.3）**：`python tools/check.py` **8/8 全绿**；其中 `pnpm test` 342/342（40 个文件）、`cargo test --lib` 151 passed / 1 ignored、`py_compat_check` 37/37、`adapter_isolation` 14/14、`contract_check` 8 类型 + 7 方法对齐、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
 
 ### 2.2 窗口回归（需要 debug 窗口）
 
@@ -50,13 +50,13 @@ node tools/run_probes.mjs --with-ui
 ### 2.3 构建安装器（官方 `tauri build`）
 
 ```bash
-# 1) 先准备随包运行时（jre / python-embed / qjs-runner 二进制 / qjs 资源校验）
+# 1) 先准备随包运行时（python-embed / qjs-runner 二进制 / qjs 资源校验；JVM 运行时已移除）
 python tools/prepare_runtime.py
 # 2) 官方构建：自动 pnpm build + cargo build + 嵌入前端 + 打包 NSIS 安装器
 corepack pnpm tauri build
 ```
 
-> **为什么两步**：Tauri 官方只负责「把 `dist/` 嵌入 exe + 打包安装器」，它不会替你构建 JRE / Python embeddable / qjs-runner 这些 sidecar 运行时。这一步是项目特有的，不是重新造 Tauri 的轮子——`prepare_runtime.py` 只产出 `tauri.conf.json` 里 `bundle.resources` / `bundle.externalBin` 指向的源文件，构建本身仍 100% 交给 `tauri build`。
+> **为什么两步**：Tauri 官方只负责「把 `dist/` 嵌入 exe + 打包安装器」，它不会替你构建 Python embeddable / qjs-runner 这些 sidecar 运行时。这一步是项目特有的，不是重新造 Tauri 的轮子——`prepare_runtime.py` 只产出 `tauri.conf.json` 里 `bundle.resources` / `bundle.externalBin` 指向的源文件，构建本身仍 100% 交给 `tauri build`。
 
 产物：`src-tauri/target/release/bundle/nsis/Luma_1.0.3_x64-setup.exe`（NSIS 安装器）。
 
@@ -84,7 +84,7 @@ corepack pnpm tauri build
 
 1. **嵌入校验**：`tauri build` 已把前端嵌入 exe；验收可在解压后的安装目录用 `grep -a "usePlayerEngine" Luma.exe` 确认（应有命中），或直接跑安装器看 UI 是否正常出画。
 2. **安装器冒烟**：安装到任意目录 → 启动 → 导入配置 → 搜索 → 详情 → 播放出画（`videoWidth/Height > 0`）。
-3. **自检**：`LUMA_SELFCHECK=1` 启动，检查日志里 `ping ok`，且子进程指向安装目录内的 `sidecars/python-embed`、`sidecars/jre`。
+3. **自检**：`LUMA_SELFCHECK=1` 启动，检查日志里 `ping ok`，且子进程指向安装目录内的 `sidecars/python-embed`。
 4. **日志**：确认 `data/logs/app|luma.<UTC 日期>.log`、`ui/ui.<UTC 日期>.log`、`spider/spider.<UTC 日期>.log` 三个通道都有生成，且 URL 无查询参数落盘。
 
 ### 2.6 记录与提交

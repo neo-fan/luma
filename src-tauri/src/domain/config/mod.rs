@@ -195,8 +195,8 @@ impl ConfigStore {
                 stored.runtime = Some(derived);
             } else if let Some(runtime) = stored.runtime.as_mut() {
                 // Policy replay: unblocks JS sources imported before the qjs
-                // ESM loader landed, and keeps jvm blocked. Persist only when
-                // something actually changed.
+                // ESM loader landed, and keeps jar sources blocked. Persist only
+                // when something actually changed.
                 if refresh_policy(runtime) {
                     db.set_runtime_json(&stored.imported.id, &serde_json::to_string(runtime)?)?;
                 }

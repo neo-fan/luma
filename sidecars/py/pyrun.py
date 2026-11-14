@@ -44,7 +44,8 @@ SIGNATURES = {
     "homeContent": 1,
     # TVBox standard: home recommendation list, no args (`def homeVideoContent(self)`).
     # Sources that keep homeContent strictly class-only (e.g. Douban) put all
-    # their cards here; py/jvm/js runtimes call the same-named script method.
+    # their cards here; py/js runtimes call the same-named script method
+    # (jar 站点在导入时即被屏蔽，不会派发到任何运行时).
     "homeVideoContent": 0,
     "categoryContent": 4,
     "detailContent": 1,

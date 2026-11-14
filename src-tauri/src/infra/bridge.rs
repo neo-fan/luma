@@ -25,9 +25,9 @@ use tokio::sync::{oneshot, Mutex};
 
 type Pending = std::sync::Arc<StdMutex<HashMap<u64, oneshot::Sender<Result<Value, AppError>>>>>;
 
-/// A long-lived stdio sidecar connection. `pub(crate)` so the P2 JVM runner
-/// can reuse the exact same frame routing / crash detection / Job Object
-/// lifetime instead of growing a second, subtly different implementation.
+/// A long-lived stdio sidecar connection. Kept `pub(crate)` so a future sidecar
+/// can reuse the exact frame routing / crash detection / Job Object lifetime
+/// instead of growing a second, subtly different implementation.
 pub(crate) struct Conn {
     stdin: Mutex<ChildStdin>,
     pending: Pending,
@@ -83,8 +83,7 @@ fn python_launch() -> (String, Option<PathBuf>) {
 ///
 /// `program`/`args` are resolved by the caller; the `Guarded` child (and its
 /// Windows Job Object) stays owned by the connection, so a crash or shutdown
-/// reaps the whole process tree. Used by both `spawn_conn` (Python adapter)
-/// and `spider::jvm` (P2 JVM runner).
+/// reaps the whole process tree. Used by `spawn_conn` (Python adapter).
 pub(crate) fn spawn_stdio(
     program: &str,
     args: &[String],
@@ -261,9 +260,7 @@ pub async fn call_with_timeout(
     call_on(&conn, method, params, timeout).await
 }
 
-/// Send one frame over an arbitrary shared connection. The Python adapter and
-/// the P2 JVM runner both use this, so their timeout / crash semantics stay
-/// identical.
+/// Send one frame over an arbitrary shared connection.
 pub(crate) async fn call_on(
     conn: &std::sync::Arc<Conn>,
     method: &str,
@@ -358,17 +355,8 @@ fn spawn_cancel(conn: &std::sync::Arc<Conn>, target_id: u64) {
     });
 }
 
-pub(crate) fn conn_alive(conn: &std::sync::Arc<Conn>) -> bool {
-    conn.alive.load(Ordering::SeqCst)
-}
-
-pub(crate) fn conn_pid(conn: &std::sync::Arc<Conn>) -> Option<u32> {
-    let pid = conn.pid.load(Ordering::Relaxed);
-    (pid != 0).then_some(pid)
-}
-
 /// Kill a dead/retired sidecar together with its Job Object.
-pub(crate) async fn kill_conn(conn: &std::sync::Arc<Conn>) {
+async fn kill_conn(conn: &std::sync::Arc<Conn>) {
     conn.alive.store(false, Ordering::SeqCst);
     conn.fail_all("sidecar shut down");
     let child = conn
@@ -422,15 +410,6 @@ pub async fn shutdown() {
     let bridge = state();
     let mut guard = bridge.conn.lock().await;
     if let Some(conn) = guard.take() {
-        conn.alive.store(false, Ordering::SeqCst);
-        conn.fail_all("adapter shut down");
-        let child = conn
-            .child
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take();
-        if let Some(mut child) = child {
-            child.kill().await;
-        }
+        kill_conn(&conn).await;
     }
 }

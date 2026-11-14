@@ -16,7 +16,7 @@
 | `image-seed.txt` | 599 | 图种外壳：1x1 JPEG + 标记 `BFkMrNQT**` + base64(JSONC)；JSONC 含 `//` 注释与 `spider` 的 `;md5;` 校验 | 6.1、8.1（解密链）、12.1 | T-05 | `/spider.jpg`（图种本体）、内含站点指向 `/cms/xml` |
 | `py-site.json` | 497 | 站点 A `jar="py"` + `api=…/site.py`；站点 B 仅 `api` 以 `.py` 结尾（无 jar）；均带 `ext` | 8.3 规则 1、6.1、6.2（`runtime=python`）、8.5 | T-15 | `/site.py`、`/spider/template.py` |
 | `js-site.json` | 497 | 站点 A `jar="js"` + `api=…/site.js`；站点 B 仅 `api` 以 `.js` 结尾（无 jar）；均带 `ext` | 8.3 规则 2、6.1、6.2（`runtime=quickjs`）、8.5 | T-16 | `/site.js`、`/spider/template.js` |
-| `jar-csp.json` | 508 | 规则 3 的两种触发：`key` 以 `csp_` 开头；普通 `key` 但 `jar` 为 `.jar` URL；两站均带 `ext` | 8.3 规则 3、6.2（`runtime=jvm`）、8.5 | P2（T-20、T-23、T-24） | `/spider.jar` |
+| `jar-csp.json` | 508 | 规则 3 的两种触发：`key` 以 `csp_` 开头；普通 `key` 但 `jar` 为 `.jar` URL；两站均带 `ext` | 8.3 规则 3、6.2（`runtime=jvm`）、8.5 | 分类与屏蔽（P2 已随 JVM 运行时移除） | `/spider.jar` |
 | `extras-unknown.json` | 1396 | 全 `type=3` + 无扩展名 `api=/probe`；`ext`≥30 字符、`style`/`indexs`/`timeout`/`playerType`/`changeable`/`quickSearch`；顶层 `hosts`/`rules`/`logo`/`wallpaper`、`lives[].timeZone`；2 个规格书未定义键 | 6.1、8.3 规则 7（探测）、8.5、12.1 | T-05、T-07、T-23（ext 透传） | `/probe`（×2）、`/live/list.m3u` |
 
 ## 覆盖点细目
@@ -65,7 +65,7 @@
    另，原始样本惯例用 `1/0` 表示布尔（如 `searchable`），归一化需转 `boolean`。
 6. **规则 3 的「顶层 `spider` + 站点无显式 `api`」未单独构造**：`image-seed.txt` 的 JSONC 有顶层 `spider`，
    但站点有显式 `api`，因此按 8.3 不触发 jvm；本清单用 `jar-csp.json` 覆盖规则 3 的另外两种触发方式。
-   如需该组合，建议 P2 再补一份无 `api` 的站点样本。
+   如需该组合，可另补一份无 `api` 的站点样本（P2 已随 JVM 运行时移除，这里只作分类覆盖）。
 
 ## 安全声明
 

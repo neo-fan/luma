@@ -56,8 +56,6 @@
     "resources": {
       "../sidecars/py": "sidecars/py",
       "../sidecars/python-embed": "sidecars/python-embed",
-      "../sidecars/jre": "sidecars/jre",
-      "../sidecars/java": "sidecars/java",
       "../sidecars/qjs-assets": "sidecars/qjs-assets"
     },
     "externalBin": [

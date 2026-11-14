@@ -8,6 +8,7 @@ pub struct ConfigDiagnostics {
     pub sites: usize,
     pub enabled: usize,
     pub blocked: usize,
+    /// jar 站点数（分类统计；JVM 运行时已移除，这些站点会被屏蔽）。
     pub jvm: usize,
     pub quickjs: usize,
     pub lives: usize,

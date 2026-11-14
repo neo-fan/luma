@@ -16,15 +16,15 @@
 │   infra/  底座: error/env/paths/process/netrules/http/        │
 │            bridge/db/migrate/store/logging/window             │
 │   domain/ 业务: config/play/parse/proxy/live/sniff/           │
-│            clipboard + spider/{cms,jvm,python,quickjs}        │
+│            clipboard + spider/{cms,python,quickjs}           │
 │   本地反代 :9978  (m3u8 重写 / parses / headers / /image)     │
-└───┬───────────┬───────────────────────────┬──────────────────┘
-    │ stdio JSON-RPC (spawn_stdio/call_on)  │
-┌───▼────────┐ ┌──────────────┐ ┌──────────▼──────────┐
-│ Python     │ │ JVM (唯一常驻)│ │ QuickJS (qjs-runner)│
-│ 适配层     │ │ runner.jar   │ │ rquickjs ESM 加载   │
-│ 3.11 embed │ │ JDK 17       │ │ 随包 qjs-assets     │
-└────────────┘ └──────────────┘ └─────────────────────┘
+└───┬───────────────────────────────┬──────────────────────────┘
+    │ stdio JSON-RPC (spawn_stdio/call_on) │
+┌───▼────────┐            ┌──────────▼──────────┐
+│ Python     │            │ QuickJS (qjs-runner)│
+│ 适配层     │            │ rquickjs ESM 加载   │
+│ 3.11 embed │            │ 随包 qjs-assets     │
+└────────────┘            └─────────────────────┘
 ```
 
 进程边界：**主进程不直连源站协议**，所有源站访问都经 sidecar；sidecar 崩溃由主进程按源级熔断（连续 3 次超时/崩溃禁用该源）处理，不影响其它源。
@@ -51,7 +51,7 @@
 | `cms` | 主进程直接 HTTP | ✅ 主体 | `api.php/provide/vod`，直链 m3u8 |
 | `python` | Python 适配层 | ✅ 支持 | `spider` 方法经 `py/main.py` 桥，含 JSON 安全/空信封/`_absolutize` 降级 |
 | `quickjs` | qjs-runner | ✅ 支持（部分） | ESM 加载 + cheerio 等价；`initEnv` 完整 polyfill、FongMi class-based 仍未支持 |
-| `jvm` | JVM runner | ❌ **社区配置不支持** | 导入时 `runtime=jvm` 站点自动屏蔽；Android dex jar 依赖 ART/okhttp/gson/QuickJS，Win x64 无法加载。通道仅为 `p2.py` 回归 + 自编纯 class 模板 jar 保留 |
+| `jvm` | （无运行时） | ⛔ 运行时已移除 | jar 站点仍被识别为 `jvm` 并在导入时屏蔽（`enabled=false`+`disabledReason`）；Android dex jar 依赖 ART/okhttp/gson/QuickJS，Win x64 无法加载。JVM 运行时（`spider/jvm.rs` / `sidecars/java` / `sidecars/jre`）已于 1.0.3 整体移除 |
 
 策略入口 `spider_invoke` 单点补运行策略检查，防止绕过；`derive_runtime()` 从 `imported` 单向派生 `runtime` 快照（命中站点 `enabled=false` + `disabledReason`），fan-out/播放只读 `runtime`。
 
@@ -117,7 +117,7 @@ src/types/tvbox.ts  归一化契约 TS 侧
 | ② Rust | `src-tauri/target/` | `cargo build` / `pnpm tauri dev` | 否 |
 | ③ 交付包 | `src-tauri/target/release/bundle/nsis/*.exe` | `corepack pnpm tauri build`（官方） | 否 |
 
-- 运行时产物（JRE / python-embed / qjs-runner 二进制）**不入库**，由 `tools/prepare_runtime.py` 重建后由 `tauri build` 经 `bundle.resources` / `bundle.externalBin` 打包。
+- 运行时产物（python-embed / qjs-runner 二进制）**不入库**，由 `tools/prepare_runtime.py` 重建后由 `tauri build` 经 `bundle.resources` / `bundle.externalBin` 打包。JVM 运行时已移除，不再产出 JRE / `runner.jar`。
 - 交付形态：**官方 NSIS 安装器**（`tauri build` 产出），`data/` 优先 `exe` 同级、`sidecars/` 来自资源目录。
 
 ## 11. 硬边界（不可逾越）
@@ -129,14 +129,16 @@ src/types/tvbox.ts  归一化契约 TS 侧
 
 ## 12. 调试入口
 
-- **调试**：`docs/DEVELOPMENT.md` —— 环境准备、四端调试（前端 CDP 9222、Rust cargo check、Python `logs/spider`、JVM 随包 JRE、qjs-runner 重编）、日志（`LUMA_LOG=debug`，三个通道 `logs/{app,ui,spider}`）、环境变量速查、常见坑 6 条。
+- **调试**：`docs/DEVELOPMENT.md` —— 环境准备、四端调试（前端 CDP 9222、Rust cargo check、Python `logs/spider`、qjs-runner 重编）、日志（`LUMA_LOG=debug`，三个通道 `logs/{app,ui,spider}`）、环境变量速查、常见坑 6 条。
 - **回归**：`python tools/check.py`（离线一键）/ `node tools/run_probes.mjs`（窗口探针）。
 - **维护与升级**：`docs/MAINTENANCE.md`；**发布**：`docs/RELEASING.md`；**变更记录**：`CHANGELOG.md`。
 
 ## 13. ADR：随包运行时优先于宿主环境（2026-11-14）
 
-**Context**：`prepare_runtime.py` 用 `jlink` 产出 `sidecars/jre` 并随包分发，但 `jvm.rs` 原先按 `LUMA_JAVA -> JAVA_HOME -> PATH java` 解析，从不使用这个 JRE；开发机默认 JDK 23 与交付 JRE 17 行为不一致，且需要用户额外安装 JDK。`python-embed` 早已用 `paths::embedded_python()` 解决同类问题。
+**Context**：`prepare_runtime.py` 产出随包运行时（当时含 `jlink` 裁剪的 `sidecars/jre`），但早期 sidecar 按 `LUMA_* -> JAVA_HOME -> PATH` 解析，从不使用随包产物；开发机默认 JDK 23 与交付 JRE 17 行为不一致，且需要用户额外安装 JDK。`python-embed` 早已用 `paths::embedded_python()` 解决同类问题。
 
-**Decision**：所有 sidecar 运行时统一走 `sidecar_roots()` 探测，优先级 = 显式环境变量覆盖 -> 随包运行时 -> 宿主环境兜底。JVM 按此改造；`prepare_runtime.py` 删除硬编码的 `D:/software/java/...`，JDK 17 仅在**重建产物**时需要（设 `LUMA_JDK17_HOME` / `JAVA_HOME` 或 PATH 上的 `jlink`）。jar 源能力边界在 README 明确标为「社区配置不支持」。
+**Decision**：所有 sidecar 运行时统一走 `sidecar_roots()` 探测，优先级 = 显式环境变量覆盖 -> 随包运行时 -> 宿主环境兜底。各 sidecar 按此改造；`prepare_runtime.py` 删除硬编码的 `D:/software/java/...`。
 
-**Consequences**：零配置启动、dev/交付同源、用户无需装 JDK、JRE 从死产物变为真实依赖。代价：若 `sidecars/jre` 缺失且宿主无 JDK，jar 通道仍会失败（该通道本就不承载交付能力）；保留 26MB 随包体积，换取 `p2.py` 回归资产不失效。
+**Consequences**：零配置启动、dev/交付同源、用户无需安装额外运行时；sidecar 运行时缺失时由宿主环境兜底，探测顺序可预测。
+
+> **2026-11-15 后续**：JVM 运行时（`sidecars/jre`、`runner.jar`、`spider/jvm.rs`、`p2.py`）已整体移除，本 ADR 中与 JVM 相关的取舍作废；随包运行时探测只剩 Python embeddable 与 `qjs-runner`。jar 站点仍被识别为 `jvm` 并在导入时屏蔽。

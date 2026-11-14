@@ -118,7 +118,7 @@ def main() -> int:
     if args.ci:
         skipped = [
             "py compatibility / py base spider (need pip deps, run in the py-adapter job)",
-            "runtime artifacts (needs locally prepared jre/python-embed)",
+            "runtime artifacts (needs locally prepared python-embed)",
             "rust unit tests (tauri-build copies bundle.resources, needs stubs)",
         ]
 

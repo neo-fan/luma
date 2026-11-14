@@ -112,11 +112,12 @@ def main() -> int:
             print("[warn] local proxy not reachable, HTTP assertions skipped", flush=True)
     check_proxy(online)
 
-    # 12.2: capabilities that only land in P1/P2 are N/A at P0.
+    # 12.2: capabilities that only land in P1 are N/A at P0; the jar/JVM
+    # runtime was removed in 1.0.3 (jar sites stay classified and blocked).
     for name, note in [
         ("py runtime isolation", "asserted by tests/acceptance/p1.py"),
         ("js runtime isolation", "asserted by tests/acceptance/p1.py"),
-        ("jar runtime isolation", "scheduled for P2"),
+        ("jar runtime isolation", "removed in 1.0.3; jar sites stay blocked at import"),
         ("ext passthrough to sidecars", "asserted by tests/acceptance/p1.py"),
         ("crash isolation / no zombie process", "asserted by tests/acceptance/p1.py"),
     ]:

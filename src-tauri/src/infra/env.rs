@@ -32,7 +32,7 @@ pub fn is_enabled(key: &str) -> bool {
 }
 
 /// Publish a value to child processes. Both spellings are exported because a
-/// side-loaded sidecar or runner.jar may still read the old spelling.
+/// side-loaded sidecar may still read the old spelling.
 pub fn set(key: &str, value: impl AsRef<Path>) {
     let text = value.as_ref().to_string_lossy().into_owned();
     std::env::set_var(format!("LUMA_{key}"), &text);

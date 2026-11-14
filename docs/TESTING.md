@@ -26,7 +26,7 @@ src-tauri/tests/           # 目前为空（没有跨 crate 集成测试就不�
 
 tests/
   stub_server.py           # 共享桩服务（离线检查与阶段验收共用）
-  fixtures/                # 测试输入：configs / spiders / media / jars / manual
+  fixtures/                # 测试输入：configs / spiders / media / manual
   frontend/                # 跨文件约定测试（readFileSync 读源码文本，断言"哪些文件里必须出现什么"）
   offline/                 # 离线确定性检查，全部进 tools/check.py
     contract_check.py      #   schema ↔ TS ↔ Rust ↔ Python 字段对齐
@@ -39,7 +39,7 @@ tests/
     config_compat.py       #   真实 box.json 形态（相对地址、base.spider）
     config_shapes_check.py #   T-05：六种配置形状端到端
   acceptance/              # spec 12.2 阶段验收，累积断言，未交付能力标 N/A
-    p0.py p1.py p2.py p3.py
+    p0.py p1.py p3.py      # p2.py（jar/JVM 回归）已随 JVM 运行时移除
 
 tools/
   probes/                  # 窗口回归探针（每个文件自己断言，失败 exit 1）
@@ -69,5 +69,5 @@ tools/
 
 ## 5. 现状基线
 
-`python tools/check.py` 8/8、`pnpm test` 336（39 个文件）、`cargo test --lib` 159 passed / 1 ignored。
+`python tools/check.py` 8/8、`pnpm test` 342（40 个文件）、`cargo test --lib` 151 passed / 1 ignored。
 数字随提交变化，以 `AGENTS.md`「当前状态」为准。

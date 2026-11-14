@@ -97,7 +97,8 @@ async function main() {
   }
 
   const summary = {};
-  for (const runtime of ["cms", "python", "quickjs", "jvm"]) {
+  // jar 站点（runtime=jvm）在导入时即被屏蔽，永远拿不到搜索结果，故不采样。
+  for (const runtime of ["cms", "python", "quickjs"]) {
     const picks = buckets.get(runtime) || [];
     if (picks.length === 0) {
       summary[runtime] = { sampled: 0, note: "no search hits" };

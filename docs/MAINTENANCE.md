@@ -30,7 +30,7 @@
 `--ci` 是**便携子集**（契约 + Python 语法 + 前端单测），只挑「任何干净机器都能跑」的检查：
 
 - py 适配层断言要 pip 依赖（lxml / pyquery / pycryptodome）→ 由 CI 的 `py-adapter` job 单独装 `tools/python-requirements.txt` 后跑；
-- Rust 单测需要 `dist/` 与 `bundle.resources` 路径（`tauri-build` 每次构建都复制，缺路径直接失败）→ 由 `rust` job 先 `pnpm build`、再用空目录/空文件补齐 `sidecars/{jre,python-embed}` 与 `src-tauri/binaries/qjs-runner-<triple>.exe` 后跑；
+- Rust 单测需要 `dist/` 与 `bundle.resources` 路径（`tauri-build` 每次构建都复制，缺路径直接失败）→ 由 `rust` job 先 `pnpm build`、再用空目录/空文件补齐 `sidecars/python-embed` 与 `src-tauri/binaries/qjs-runner-<triple>.exe` 后跑；
 - 运行时产物体检只对**本机已 prepare 过**的仓库有意义，CI 里没有这些产物。
 
 **窗口探针不进 CI**：需要 debug 窗口 + CDP 9222，仍留在发版手工清单（`docs/RELEASING.md` §2.2）。
@@ -61,7 +61,6 @@
 | 产物 | 重建命令 | 注意 |
 |---|---|---|
 | 随包 Python 第三方依赖 | `python tools/prepare_runtime.py` | 清单在 `tools/python-requirements.txt`；dev 与交付统一用 `sidecars/python-embed`，不要退回系统 python |
-| 随包 JRE | `python tools/prepare_runtime.py --force` | 只在重建时需要 JDK 17（设 `LUMA_JDK17_HOME` / `JAVA_HOME` 或 PATH 上的 `jlink`）；**运行期用随包 JRE，用户无需装 JDK** |
 | qjs-runner | `cargo build --release --manifest-path sidecars/qjs-runner/Cargo.toml` | 改 `rquickjs` 后必重编，直驱前确认 mtime |
 | 前端依赖 | `corepack pnpm install` | pnpm 由 corepack 锁 9.15.4，`pnpm-lock.yaml` 入库 |
 | JS 随包资源 | 只读校验 `prepare_runtime.py --check` | `sidecars/qjs-assets/` 是**入库源码资源**，8 个文件 + manifest 有 SHA256 校验，不下载、不可重建 |

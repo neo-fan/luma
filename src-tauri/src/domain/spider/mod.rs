@@ -2,15 +2,15 @@
 //!
 //! `route()` maps a normalized site to one runtime; every runtime implements
 //! `SpiderRuntime` and returns TVBox-shaped JSON. CMS lives in-process while
-//! py / js / jar are isolated sidecars. `spider_invoke` with `siteKey = "all"`
+//! py / js are isolated sidecars. `spider_invoke` with `siteKey = "all"`
 //! fans out over the usable sites of the active config with bounded
 //! concurrency and a shared wall clock, so a single dead source never blocks
-//! the home page. P2 adds the JVM/jar runtime; unsupported Android dex jars
-//! fail fast with a reason instead of being silently skipped.
+//! the home page. jar sites are still classified as `jvm` so they can be
+//! recognised and blocked with a reason, but no JVM runtime ships anymore:
+//! community jars are Android dex and cannot run on Windows x64.
 
 pub mod cms;
 mod cms_parse;
-pub mod jvm;
 pub mod python;
 pub mod quickjs;
 
@@ -32,7 +32,7 @@ pub const MAX_FANOUT: usize = 20;
 pub enum SpiderMethod {
     HomeContent,
     /// TVBox 标准方法：首页推荐流（无 `homeContent.list` 的严格源靠它出卡片，
-    /// 如豆瓣只给分类）。py/jvm/js runtime 直连脚本同名方法，CMS alias 到 ac=list。
+    /// 如豆瓣只给分类）。py/js runtime 直连脚本同名方法，CMS alias 到 ac=list。
     HomeVideoContent,
     CategoryContent,
     DetailContent,
@@ -66,6 +66,8 @@ pub enum RuntimeKind {
     Cms,
     Python,
     QuickJs,
+    /// jar 站点分类。JVM 运行时已移除（社区 jar 是 Android dex，Windows 端
+    /// 跑不起来），保留该分类只为继续识别 jar 站点并给出来源屏蔽原因。
     Jvm,
 }
 
@@ -257,14 +259,14 @@ impl SpiderRuntime for CmsRuntimeAdapter {
 static CMS_RUNTIME: CmsRuntimeAdapter = CmsRuntimeAdapter;
 static PY_RUNTIME: python::PythonRuntime = python::PythonRuntime;
 static QJS_RUNTIME: quickjs::QuickJsRuntime = quickjs::QuickJsRuntime;
-static JVM_RUNTIME: jvm::JvmRuntime = jvm::JvmRuntime;
 
 pub fn runtime_for(kind: RuntimeKind) -> Option<&'static dyn SpiderRuntime> {
     match kind {
         RuntimeKind::Cms => Some(&CMS_RUNTIME),
         RuntimeKind::Python => Some(&PY_RUNTIME),
         RuntimeKind::QuickJs => Some(&QJS_RUNTIME),
-        RuntimeKind::Jvm => Some(&JVM_RUNTIME),
+        // 1.0.3 起不再随包 JVM：jar 源在导入时即被屏蔽，不会走到这里。
+        RuntimeKind::Jvm => None,
     }
 }
 
@@ -358,8 +360,7 @@ async fn aggregate(
         // 只有搜索才尊重 `searchable: 0`。首页/分类的聚合种子与「能不能搜」
         // 无关，拿这个字段过滤会连发现型源的首页都拿不到（豆瓣就只有首页）。
         .filter(|site| method != SpiderMethod::SearchContent || is_searchable(site))
-        // Runtimes that are not implemented yet are skipped instead of failing
-        // the whole home page.
+        // 分类存在但没有随包运行时的站点（jar）直接跳过，而不是让整页失败。
         .filter(|site| runtime_for(route(site)).is_some())
         // Divider entries (`--- 1 ---`) are normalised to `enabled: false`, but
         // older snapshots may still carry them, so keep a defensive check. They
@@ -824,13 +825,12 @@ mod tests {
     }
 
     #[test]
-    fn jvm_runtime_is_registered() {
-        // Before P2 `runtime_for(Jvm)` returned None, which made aggregate()
-        // silently drop every csp_* site. It must now be dispatchable.
-        assert_eq!(
-            runtime_for(RuntimeKind::Jvm).map(|r| r.kind()),
-            Some(RuntimeKind::Jvm)
-        );
+    fn jvm_sites_are_classified_but_have_no_runtime() {
+        // jar 站点仍要识别为 jvm（导入时按该分类屏蔽并给原因），但 1.0.3 起
+        // 不再随包 JVM 运行时，因此不能派发。
+        let jar = json!({ "key": "csp_demo", "jar": "http://127.0.0.1/x.jar", "api": "csp_Demo" });
+        assert_eq!(route(&jar), RuntimeKind::Jvm);
+        assert!(runtime_for(RuntimeKind::Jvm).is_none());
     }
 
     fn health_row(key: &str, status: &str, took_ms: u64) -> SiteHealthRow {
