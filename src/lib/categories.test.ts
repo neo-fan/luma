@@ -39,4 +39,14 @@ describe("leafClasses", () => {
     ]);
     expect(result).toEqual([{ type_id: "6", type_name: "子", parentName: "父" }]);
   });
+
+  it("de-duplicates repeated classes while keeping source order", () => {
+    // 直播转点播这类 js 源会把同一批分类返回两遍，chip 行不该整排重复。
+    const classes = [
+      { type_id: "a", type_name: "A" },
+      { type_id: "b", type_name: "B" },
+      { type_id: "a", type_name: "A" },
+    ];
+    expect(leafClasses(classes).map((c) => c.type_id)).toEqual(["a", "b"]);
+  });
 });

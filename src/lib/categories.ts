@@ -39,5 +39,8 @@ export function leafClasses(
         type_name: String(item.type_name ?? ""),
         ...(parentName ? { parentName } : {}),
       };
-    });
+    })
+    // 有些 js 源（直播转点播这类）把同一批分类重复返回两遍，chip 行会整排
+    // 重复。按 type_id 去重，保留第一次出现的顺序。
+    .filter((item, index, all) => all.findIndex((other) => other.type_id === item.type_id) === index);
 }

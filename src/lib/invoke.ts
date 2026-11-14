@@ -8,7 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { CACHE_TTL, pageCache } from "./pageCache";
 import { rememberCards } from "./cardIndex";
-import { mergeHomeFallback } from "./home";
+import { mergeHomeFallback, normalizeHomeResult } from "./home";
 import { pickRecoveryCandidate } from "./detailRecovery";
 import { noDetailSources } from "./noDetailSource";
 import { loadCategoryPage } from "./categoryLoad";
@@ -246,29 +246,33 @@ export const api = {
       key,
       CACHE_TTL.home,
       async () => {
-        const base = await spider<HomeResult>(siteKey, "homeContent", []);
-        if ((base?.list ?? []).length > 0) {
+        // JS 源按 TVBox 原始协议给 `class`，py 适配层给 `classes`：在这里统一，
+        // 否则 JS 源首页分类空白。
+        const base = normalizeHomeResult(await spider<HomeResult>(siteKey, "homeContent", []));
+        if (base.list.length > 0) {
           return base;
         }
+        let merged: HomeResult;
         try {
           const extra = await spider<HomeResult>(siteKey, "homeVideoContent", []);
-          const merged = mergeHomeFallback(base, extra);
-          if ((merged.list ?? []).length === 0 && (merged.classes ?? []).length > 0) {
-            // 分类有、推荐空：严格分家的源（豆瓣[py]）此刻多半是它自己吞掉了
-            // 上游异常（脚本里 except 后返回空 list）。这种情况**不能进长缓存**，
-            // 否则首页会空着挂满一整个 TTL，用户看到的就是「首页推荐没了」。
-            // 立刻失效，下次进首页重试；同时留一条日志便于排查。
-            log.warn("home recommendation empty", { siteKey });
-            pageCache.invalidate(key);
-          }
-          return merged;
+          merged = mergeHomeFallback(base, extra);
         } catch (err) {
           log.warn("homeVideoContent unavailable", {
             siteKey,
             message: errorMessage(err),
           });
-          return base;
+          merged = base;
         }
+        if (merged.list.length === 0) {
+          // 首页一个卡片都没有：不写长缓存。源侧偶发失败（或一次响应错位）
+          // 若被缓存 5 分钟，用户切回来还是空，只能靠重启。
+          log.warn("home recommendation empty", {
+            siteKey,
+            classes: merged.classes.length,
+          });
+          pageCache.invalidate(key);
+        }
+        return merged;
       },
       force,
     ).then((result) => {

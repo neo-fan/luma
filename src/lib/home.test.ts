@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeHomeFallback } from "./home";
+import { mergeHomeFallback, normalizeHomeResult } from "./home";
 import type { HomeResult } from "../types/tvbox";
 
 /**
@@ -41,9 +41,26 @@ describe("mergeHomeFallback", () => {
     expect(mergeHomeFallback(base, fallback).list[0].vod_name).toBe("本源首屏");
   });
 
-  it("fallback null (unsupported method) -> return base untouched", () => {
+  it("fallback null (unsupported method) -> keep base content", () => {
     const base = homeContent([], [{ vod_id: "a", vod_name: "本源" }]);
-    expect(mergeHomeFallback(base, null)).toBe(base);
+    const merged = mergeHomeFallback(base, null);
+    expect(merged.list.map((v) => v.vod_name)).toEqual(["本源"]);
+    expect(merged.classes).toEqual([]);
+  });
+
+  it("JS source shape: protocol `class` is promoted to `classes`", () => {
+    // quickjs 源原样透传 TVBox 协议字段，py 适配层才是 `classes`。
+    const jsBase = { class: [{ type_id: "1", type_name: "电影" }], filters: {} } as unknown as HomeResult;
+    expect(normalizeHomeResult(jsBase).classes).toEqual([{ type_id: "1", type_name: "电影" }]);
+    expect(mergeHomeFallback(jsBase, null).classes).toHaveLength(1);
+  });
+
+  it("`classes` wins over `class` when both are present", () => {
+    const both = {
+      classes: [{ type_id: "a", type_name: "A" }],
+      class: [{ type_id: "b", type_name: "B" }],
+    } as unknown as HomeResult;
+    expect(normalizeHomeResult(both).classes[0].type_id).toBe("a");
   });
 
   it("base classes empty -> borrow fallback classes defensively", () => {

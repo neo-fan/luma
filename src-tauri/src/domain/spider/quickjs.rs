@@ -2,9 +2,17 @@
 //!
 //! Third-party JS never runs in the host process: it is handed to the
 //! `qjs-runner` sidecar, which owns a dedicated QuickJS context per call and can
-//! be killed by the host at any time. Frames are line-delimited JSON, one
-//! request at a time (JS calls are milliseconds, serializing keeps the runner
-//! trivial and race-free).
+//! be killed by the host at any time. Frames are line-delimited JSON.
+//!
+//! Frames are correlated by `id`, not by arrival order: one reader task drains
+//! stdout and hands each response to the caller that asked for it. The previous
+//! design held a global mutex while writing one frame and reading the next
+//! line, which assumed the whole host only ever had one call in flight. The
+//! frontend does not honour that (home page asks `homeContent`, then
+//! `homeVideoContent`; a manual retry / source switch / detail prefetch can
+//! overlap), and when two calls did overlap each task read whichever line
+//! happened to be first — `homeContent` would receive `homeVideoContent`'s
+//! payload and the page rendered as empty.
 
 use crate::error::{code, AppError};
 use crate::http;
@@ -15,22 +23,29 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Mutex as StdMutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{ChildStdin, ChildStdout};
+use tokio::process::ChildStdin;
+use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 const SOURCE_TTL: Duration = Duration::from_secs(600);
 
+type Pending = StdMutex<HashMap<u64, oneshot::Sender<Value>>>;
+
 struct Runner {
-    guard: Guarded,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
+    guard: AsyncMutex<Guarded>,
+    stdin: AsyncMutex<ChildStdin>,
+    /// `id -> caller`. Written by `call`, drained by the reader task.
+    pending: Arc<Pending>,
+    next_id: AtomicU64,
+    /// Cleared when the pipe breaks; the next call respawns the runner.
+    alive: AtomicBool,
 }
 
 impl Runner {
-    fn spawn() -> Result<Self, AppError> {
+    fn spawn() -> Result<Arc<Self>, AppError> {
         let exe = resolve_runner().ok_or_else(|| {
             AppError::new(
                 code::RUNTIME_UNAVAILABLE,
@@ -45,62 +60,130 @@ impl Runner {
             .take_stdout()
             .ok_or_else(|| AppError::new(code::INTERNAL, "qjs stdout unavailable"))?;
         tracing::info!(path = %exe.display(), "qjs-runner spawned");
-        Ok(Self {
-            guard,
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_id: 0,
-        })
+
+        let pending: Arc<Pending> = Arc::new(StdMutex::new(HashMap::new()));
+        let runner = Arc::new(Self {
+            guard: AsyncMutex::new(guard),
+            stdin: AsyncMutex::new(stdin),
+            pending: Arc::clone(&pending),
+            next_id: AtomicU64::new(0),
+            alive: AtomicBool::new(true),
+        });
+        // Reader task outlives individual calls; it only holds a Weak so a
+        // replaced runner can actually be dropped (and killed) by the host.
+        let weak: Weak<Self> = Arc::downgrade(&runner);
+        tokio::spawn(read_loop(weak, BufReader::new(stdout)));
+        Ok(runner)
     }
 
-    async fn call(&mut self, payload: Value, timeout: Duration) -> Result<Value, AppError> {
-        self.next_id += 1;
-        let id = self.next_id;
+    fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst)
+    }
+
+    async fn call(&self, payload: Value, timeout: Duration) -> Result<Value, AppError> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
+        let (tx, rx) = oneshot::channel();
+        lock_pending(&self.pending).insert(id, tx);
+
         let mut frame = payload;
         frame["id"] = json!(id);
         let mut line = serde_json::to_string(&frame)?;
         line.push('\n');
 
-        self.stdin.write_all(line.as_bytes()).await.map_err(|err| {
-            AppError::new(code::SPIDER_CRASH, "write to qjs-runner failed").with_cause(err.to_string())
-        })?;
-        self.stdin.flush().await.map_err(|err| {
-            AppError::new(code::SPIDER_CRASH, "flush qjs-runner failed").with_cause(err.to_string())
-        })?;
+        let write = async {
+            let mut stdin = self.stdin.lock().await;
+            stdin.write_all(line.as_bytes()).await?;
+            stdin.flush().await
+        };
+        if let Err(err) = write.await {
+            lock_pending(&self.pending).remove(&id);
+            self.alive.store(false, Ordering::SeqCst);
+            return Err(AppError::new(code::SPIDER_CRASH, "write to qjs-runner failed")
+                .with_cause(err.to_string()));
+        }
 
-        let mut buffer = String::new();
-        let read = tokio::time::timeout(timeout, self.stdout.read_line(&mut buffer)).await;
-        match read {
-            Ok(Ok(0)) => Err(AppError::new(code::SPIDER_CRASH, "qjs-runner exited unexpectedly")),
-            Ok(Ok(_)) => {
-                let response: Value = serde_json::from_str(buffer.trim())?;
-                if response.get("ok").and_then(Value::as_bool) == Some(true) {
-                    Ok(response.get("result").cloned().unwrap_or(Value::Null))
-                } else {
-                    let error = response.get("error").cloned().unwrap_or_else(|| json!({}));
-                    let error_code = error
-                        .get("code")
-                        .and_then(Value::as_str)
-                        .unwrap_or(code::SPIDER_CRASH);
-                    let message = error
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("qjs error");
-                    Err(AppError::new(error_code, message))
-                }
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(response)) => decode_response(&response),
+            // The reader task exited (pipe closed) and dropped every sender.
+            Ok(Err(_)) => {
+                self.alive.store(false, Ordering::SeqCst);
+                Err(AppError::new(code::SPIDER_CRASH, "qjs-runner exited unexpectedly"))
             }
-            Ok(Err(err)) => Err(AppError::new(code::SPIDER_CRASH, "read qjs-runner failed")
-                .with_cause(err.to_string())),
             Err(_) => {
                 // The interrupt handler covers loops inside a context, but a
-                // wedged runner is killed outright.
-                self.guard.kill().await;
+                // wedged runner is killed outright by the caller.
+                lock_pending(&self.pending).remove(&id);
                 Err(AppError::new(
                     code::SITE_TIMEOUT,
                     format!("qjs-runner exceeded {}ms", timeout.as_millis()),
                 ))
             }
         }
+    }
+
+    async fn kill(&self) {
+        self.alive.store(false, Ordering::SeqCst);
+        self.guard.lock().await.kill().await;
+    }
+}
+
+fn lock_pending(pending: &Pending) -> std::sync::MutexGuard<'_, HashMap<u64, oneshot::Sender<Value>>> {
+    pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn decode_response(response: &Value) -> Result<Value, AppError> {
+    if response.get("ok").and_then(Value::as_bool) == Some(true) {
+        return Ok(response.get("result").cloned().unwrap_or(Value::Null));
+    }
+    let empty = json!({});
+    let error = response.get("error").unwrap_or(&empty);
+    let error_code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or(code::SPIDER_CRASH);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("qjs error");
+    Err(AppError::new(error_code, message))
+}
+
+/// Drain stdout and route every frame to the caller that owns its `id`.
+async fn read_loop(weak: Weak<Runner>, mut stdout: BufReader<tokio::process::ChildStdout>) {
+    let mut buffer = String::new();
+    loop {
+        buffer.clear();
+        match stdout.read_line(&mut buffer).await {
+            Ok(0) => break,
+            Ok(_) => {
+                let text = buffer.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                let Ok(response) = serde_json::from_str::<Value>(text) else {
+                    tracing::warn!("qjs-runner emitted a non-JSON line");
+                    continue;
+                };
+                let Some(runner) = weak.upgrade() else { break };
+                let id = response.get("id").and_then(Value::as_u64).unwrap_or(0);
+                let sender = lock_pending(&runner.pending).remove(&id);
+                match sender {
+                    Some(tx) => {
+                        let _ = tx.send(response);
+                    }
+                    None => tracing::warn!(id, "qjs-runner frame has no waiting caller"),
+                }
+            }
+            Err(err) => {
+                tracing::warn!(%err, "qjs-runner stdout read failed");
+                break;
+            }
+        }
+    }
+    // Pipe closed: fail everything still waiting instead of hanging them.
+    if let Some(runner) = weak.upgrade() {
+        runner.alive.store(false, Ordering::SeqCst);
+        lock_pending(&runner.pending).clear();
     }
 }
 
@@ -286,10 +369,39 @@ impl Default for QuickJsRuntime {
     }
 }
 
-static RUNNER: OnceLock<tokio::sync::Mutex<Option<Runner>>> = OnceLock::new();
+static RUNNER: OnceLock<AsyncMutex<Option<Arc<Runner>>>> = OnceLock::new();
 
-fn runner_slot() -> &'static tokio::sync::Mutex<Option<Runner>> {
-    RUNNER.get_or_init(|| tokio::sync::Mutex::new(None))
+fn runner_slot() -> &'static AsyncMutex<Option<Arc<Runner>>> {
+    RUNNER.get_or_init(|| AsyncMutex::new(None))
+}
+
+/// Hand out the live runner (spawning one if needed) without holding the slot
+/// lock for the whole call — concurrent calls share the process safely because
+/// responses are matched by `id`.
+async fn current_runner() -> Result<Arc<Runner>, AppError> {
+    let mut slot = runner_slot().lock().await;
+    if let Some(runner) = slot.as_ref() {
+        if runner.is_alive() {
+            return Ok(Arc::clone(runner));
+        }
+    }
+    if let Some(stale) = slot.take() {
+        // A dead or wedged process must not keep receiving frames.
+        let _ = tokio::time::timeout(Duration::from_millis(800), stale.kill()).await;
+    }
+    let runner = Runner::spawn()?;
+    *slot = Some(Arc::clone(&runner));
+    Ok(runner)
+}
+
+/// Drop the shared runner after a crash/timeout so the next call respawns it.
+async fn retire_runner(target: &Arc<Runner>) {
+    let mut slot = runner_slot().lock().await;
+    // Only retire the instance that failed; a newer one may already be live.
+    if slot.as_ref().map(|runner| Arc::ptr_eq(runner, target)).unwrap_or(false) {
+        let _ = slot.take();
+        let _ = tokio::time::timeout(Duration::from_millis(800), target.kill()).await;
+    }
 }
 
 #[async_trait]
@@ -325,13 +437,7 @@ impl SpiderRuntime for QuickJsRuntime {
             "script_kind": "auto",
         });
 
-        let mut slot = runner_slot().lock().await;
-        if slot.as_ref().map(|runner| runner.guard.id().is_none()).unwrap_or(true) {
-            *slot = Some(Runner::spawn()?);
-        }
-        let runner = slot
-            .as_mut()
-            .ok_or_else(|| AppError::new(code::INTERNAL, "qjs-runner unavailable"))?;
+        let runner = current_runner().await?;
         let outcome = runner.call(payload, timeout).await;
         if outcome
             .as_ref()
@@ -339,10 +445,7 @@ impl SpiderRuntime for QuickJsRuntime {
             .map(|err| err.code == code::SPIDER_CRASH || err.code == code::SITE_TIMEOUT)
             .unwrap_or(false)
         {
-            // Drop the wedged/dead runner; the next call respawns it.
-            if let Some(mut dead) = slot.take() {
-                dead.guard.kill().await;
-            }
+            retire_runner(&runner).await;
         }
         outcome
     }
@@ -418,9 +521,12 @@ fn proxy_payload_from_js(value: &Value) -> Result<ProxyPayload, AppError> {
 
 pub async fn shutdown() {
     if let Some(slot) = RUNNER.get() {
-        let mut guard = slot.lock().await;
-        if let Some(mut runner) = guard.take() {
-            runner.guard.kill().await;
+        let taken = {
+            let mut guard = slot.lock().await;
+            guard.take()
+        };
+        if let Some(runner) = taken {
+            runner.kill().await;
         }
     }
 }
@@ -441,6 +547,34 @@ mod tests {
             Some(path) => assert!(path.is_file()),
             None => assert!(crate::process::call_timeout() >= Duration::from_millis(100)),
         }
+    }
+
+    /// Frames must be routed by `id`. Regression guard: the old runner read
+    /// "the next line" whatever its id, so two overlapping calls (home page
+    /// sends `homeContent` then `homeVideoContent`) could each receive the
+    /// other's payload — the home page then rendered as empty.
+    #[test]
+    fn response_frames_decode_by_their_own_payload() {
+        let ok = json!({ "id": 7, "ok": true, "result": { "list": [{ "vod_id": "1" }] } });
+        let decoded = decode_response(&ok).expect("ok frame");
+        assert_eq!(decoded["list"][0]["vod_id"], "1");
+
+        let empty = json!({ "id": 8, "ok": true, "result": null });
+        assert_eq!(decode_response(&empty).expect("ok frame"), Value::Null);
+
+        let failed = json!({
+            "id": 9,
+            "ok": false,
+            "error": { "code": "SITE_TIMEOUT", "message": "too slow" }
+        });
+        let err = decode_response(&failed).expect_err("error frame");
+        assert_eq!(err.code, "SITE_TIMEOUT");
+        assert_eq!(err.message, "too slow");
+
+        // A malformed error body must still surface as a crash, not a panic.
+        let malformed = json!({ "id": 10, "ok": false });
+        let err = decode_response(&malformed).expect_err("error frame");
+        assert_eq!(err.code, code::SPIDER_CRASH);
     }
 
     #[test]

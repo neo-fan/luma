@@ -223,16 +223,23 @@ export default function HomePage({
           if (alive) {
             // 空结果不写缓存：下次进入重新拉，也让自动顺延每次都有机会执行。
             // 有内容才缓存，保证返回首页仍能秒开。
-            setHome((result?.list ?? []).length > 0 ? result : null);
+            // 有卡片、或只有分类的源都要留住：DRPY/js 源的推荐流经常是空的
+            // （源侧接口本身不给），分类才是唯一入口。旧逻辑按 list 判空，
+            // 会把 classes 一起丢掉，页面只剩「暂无分类 + 暂无推荐内容」，
+            // 看起来像这个源彻底坏了。
+            const cards = (result?.list ?? []).length;
+            const cats = (result?.classes ?? []).length;
+            setHome(cards > 0 || cats > 0 ? result : null);
             setError("");
             setLoading(false);
           }
-          // 冷启动默认站若只给分类、没有推荐列表（如豆瓣源），自动往后找
-          // 第一个有内容的站并记住，避免首页看起来「没数据」。仅发生在
-          // 用户从未手动选站时；用户主动选的站（哪怕空）一律尊重。
+          // 冷启动默认站若**既没卡片也没分类**，自动往后找第一个真有内容的
+          // 站并记住，避免首页看起来「没数据」。只给分类的源不算空——它的分类
+          // 就是入口。仅发生在用户从未手动选站时；用户主动选的站一律尊重。
           if (
             alive &&
             (result?.list ?? []).length === 0 &&
+            (result?.classes ?? []).length === 0 &&
             isDefaultSite &&
             !userActedRef.current &&
             !fallbackTriedRef.current.has(siteKey)
