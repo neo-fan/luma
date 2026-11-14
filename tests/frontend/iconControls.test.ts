@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readCss } from "./readCss";
 
 const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
@@ -25,7 +26,7 @@ describe("icon-first controls", () => {
   });
 
   it("icon buttons have hover / on / busy / danger states in CSS", () => {
-    const css = read("src/styles.css");
+    const css = readCss();
     expect(css).toContain(".icon-btn {");
     expect(css).toContain(".icon-btn:hover:not(:disabled)");
     expect(css).toContain(".icon-btn.is-on");
@@ -67,7 +68,7 @@ describe("icon-first controls", () => {
     const stage = read("src/components/player/PlayerStage.tsx");
     expect(stage).not.toContain("player-nav");
     expect(stage).not.toContain("‹ 上一集");
-    expect(read("src/styles.css")).not.toContain(".player-nav {");
+    expect(readCss()).not.toContain(".player-nav {");
     // 顶部时间进度不再重复显示（播放器控制栏自带）。
     expect(read("src/components/player/PlayerHeader.tsx")).not.toContain("progressLabel");
     expect(read("src/pages/PlayerPage.tsx")).not.toContain("progressLabel");

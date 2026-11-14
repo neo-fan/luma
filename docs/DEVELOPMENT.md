@@ -186,7 +186,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 ## 7. 常见坑（踩过的，按出现频率）
 
 1. **dev 加载旧 sidecar 副本** → `/proxy` 首次报 `unsupported method: proxy`。`paths::sidecar_roots()` 在 debug 构建优先源码根，避免静默加载 `target/debug/sidecars` 旧副本。
-2. **Vite dev `styles.css` 返回空串** → 整站退化成无样式堆叠。解决：重启 `tauri dev`。
+2. **Vite dev 样式入口（`src/styles/index.css`）返回空串** → 整站退化成无样式堆叠。解决：重启 `tauri dev`。
 3. **Vite 转换缓存让探针连跑旧代码** → 误判"修复无效"。探针开头已加 `Network.setCacheDisabled` + reload `ignoreCache:true` + 拉 `PlayerPage.tsx` 自检特征，确保不把 stale 模块当产品 bug。
 4. **CDP 9222 被残留 luma 占用** → WebView2 起不来；先清残留进程。
 5. **嗅探窗口冲突**：dev 的 `--remote-debugging-port=9222` 会让第二个 WebView2 返 `0x8007139F`；嗅探窗口必须给独立 `data_directory` 且覆盖 `--remote-debugging-port=0`。

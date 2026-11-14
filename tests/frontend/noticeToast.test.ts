@@ -12,20 +12,21 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readCss } from "./readCss";
 
 const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("toast progress line", () => {
   it("outranks sonner's expanded gap bridge", () => {
-    const css = read("src/styles.css");
+    const css = readCss();
     expect(css).toContain("[data-sonner-toast].notice-toast.notice-toast::after");
     // 单类版本会被 sonner 的 (0,2,1) 规则按顺序压掉，不能留。
     expect(css).not.toContain("[data-sonner-toast].notice-toast::after");
   });
 
   it("keeps the line geometry pinned to the toast bottom edge", () => {
-    const css = read("src/styles.css");
+    const css = readCss();
     const start = css.indexOf("[data-sonner-toast].notice-toast.notice-toast::after");
     expect(start).toBeGreaterThan(0);
     const block = css.slice(start, start + 600);

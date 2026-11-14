@@ -1,0 +1,374 @@
+/* ---------- 直播播放页：左换台 / 右观看 ---------- */
+
+/* 直播的核心动作是换台，不是看完一集。布局＝左侧常驻频道目录 + 右侧内容列：
+   右列宽度吃掉剩余空间（minmax(0,1fr)），画面按 16:9 自适应。
+   页面骨架与其它页完全一致（同一个 .page / .page-head / .page-body）：
+   页头（含「直播源」选择器）常驻在滚动区之外，天然吸顶。
+
+   （2026-11-15 用户反馈「直播页面 和其他页面应该保持一致，直播源 吸顶」：
+   之前直播页是自成一体的「工作台」——整页不滚、右列内滚、还改过 1560 宽度
+   与 24px 内边距，和首页/搜索的 1360/36 对不上。） */
+.page--live {
+  --player-width: 100%;
+}
+
+/* 右列是「固定画面 + 可滚动节目单」的工作台：页面本身不滚（与播放页同一
+   思路），滚动只发生在左栏频道列表和节目单列表里，页头（直播源）永远在顶部。
+   宽度 / 内边距 / 页头与其它页保持一致，不再给直播页单独的 1560/24。 */
+.page--live .page-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 18px;
+}
+
+.page--live .live-layout {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.page--live .live-rail {
+  height: 100%;
+}
+
+.live-layout {
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.live-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  /* 右列限高：画面按 16:9 锁死，节目单拿剩下的高度并在内部滚。
+     这里不能给 `overflow-y: auto`——那样节目单展开时 flex 会把 16:9 的画面
+     压扁（2026-11-15 用户反馈「播放被压缩了」）。 */
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 右列两块同宽同边：画面 / 节目单。 */
+.live-layout .player-stage,
+.live-main > .live-epg {
+  width: 100%;
+  margin-inline: 0;
+}
+
+/* 直播页只有画面这一层是「容器」：视频是主体，其余靠发丝线分区。
+   宽高锁 16:9，`flex: 0 0 auto` 禁止被压缩；高度上限 56vh，剩下的高度留给
+   节目单（852 高的窗口下节目单还有 250px 左右，约 5–6 条）。 */
+.live-layout .player-stage {
+  flex: 0 0 auto;
+  width: min(100%, calc(56vh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+  margin-inline: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+}
+
+/* 频道目录还没到时占住右列：否则左侧目录已经铺开、右边一片空白，像加载失败。 */
+.live-main__placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+}
+
+/* 占位框自己已经圈定了范围，里面的空态不再撑高，也不重复画框。 */
+.live-main__placeholder .empty {
+  min-height: 0;
+  padding: 24px 16px;
+}
+
+/* 目录在 .page-body 里吸顶：几百上千个频道在自己的列表里滚，容器高度
+   由 `.page--live .live-rail` 那条 max-height 兜住。 */
+.live-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-right: 10px;
+  border-right: 1px solid var(--border);
+}
+
+.live-rail__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 搜索：整条边框画在 label 上，input 自身透明无边框——聚焦时只亮一层边，
+   不会出现「输入框里再套一个框」的双线。 */
+.live-rail__search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel-sunken);
+  color: var(--faint);
+  transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.live-rail__search:focus-within {
+  border-color: var(--border-strong);
+  color: var(--text-soft);
+}
+
+.live-rail__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+}
+
+.live-rail__input::placeholder {
+  color: var(--faint);
+}
+
+.live-rail__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 0 12px;
+  overscroll-behavior: contain;
+}
+
+.live-rail__hint {
+  margin: 14px 2px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+/* 分组只是一条吸顶小标题（可折叠）：频道连续排下去，不做二级筛选。 */
+/* 分组之间留一口气：几千个台连续排下来时，纯靠标题区分会糊成一片。 */
+.live-rail__group + .live-rail__group {
+  margin-top: 6px;
+}
+
+.live-rail__group-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 2px 6px;
+  border: 0;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-rail__group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-rail__group-num {
+  color: var(--faint);
+  font-weight: var(--fw-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-rail__group-caret {
+  flex: none;
+  color: var(--faint);
+  transform: rotate(180deg);
+  transition: transform var(--dur) var(--ease);
+}
+
+.live-rail__group-title.is-folded .live-rail__group-caret {
+  transform: rotate(0deg);
+}
+
+.live-rail__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.live-rail__item:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.live-rail__item.is-active {
+  background: var(--accent-softer);
+  color: var(--accent-ink);
+  font-weight: var(--fw-semibold);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.live-rail__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-rail__badge {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-regular);
+}
+
+/* 正在播的台：三根跳动的竖条，比文字「正在播放」省地方也更容易扫到。 */
+.live-rail__eq {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+
+.live-rail__eq i {
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform-origin: bottom;
+  animation: live-eq 1s ease-in-out infinite;
+}
+
+.live-rail__eq i:nth-child(1) {
+  height: 6px;
+  animation-delay: -0.2s;
+}
+
+.live-rail__eq i:nth-child(2) {
+  height: 11px;
+  animation-delay: -0.5s;
+}
+
+.live-rail__eq i:nth-child(3) {
+  height: 8px;
+  animation-delay: -0.1s;
+}
+
+@keyframes live-eq {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* 遥控器式换台条：直播里最高频的动作给它一个固定位置。 */
+.live-rail__foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.live-rail__step {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.live-rail__step:hover:not(:disabled) {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.live-rail__step:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.live-rail__pos {
+  flex: 1;
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-rail__pos b {
+  color: var(--text-soft);
+  font-weight: var(--fw-semibold);
+}
+
+.live-rail__pos-sep {
+  margin: 0 3px;
+}
+
+/* 窄窗兜底：目录挪到画面下方，否则 272px 会把画面挤成竖条。 */
+@media (max-width: 1080px) {
+  /* 窄窗回到「滚动区自己滚」：单列堆叠后画面 + 目录 + 节目单必然超过一屏，
+     锁死容器高度会把内容裁掉。 */
+  .page--live .page-body {
+    overflow-y: auto;
+    padding-bottom: 48px;
+  }
+
+  .live-main {
+    overflow: visible;
+  }
+
+  .live-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .live-rail {
+    position: static;
+    order: 2;
+    height: 300px;
+    padding: 10px 0 0;
+    border-right: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+

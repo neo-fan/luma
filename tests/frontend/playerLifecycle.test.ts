@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readCss } from "./readCss";
 
 // tests/frontend -> project root
 const root = resolve(__dirname, "../..");
@@ -56,7 +57,7 @@ describe("player lifecycle contract", () => {
   });
 
   it("status overlay never blocks the controls", () => {
-    const css = read("src/styles.css");
+    const css = readCss();
     const overlay = css.slice(css.indexOf(".player-overlay {"));
     expect(overlay.slice(0, 400)).toContain("pointer-events: none");
     expect(overlay.slice(0, 400)).toContain("background: transparent");
@@ -85,7 +86,7 @@ describe("player lifecycle contract", () => {
     // 隐藏必须用 visibility（媒体继续解码），不能 display:none 或按条件卸载，
     // 否则切回播放页时 hls.js 重新拉流、进度归零。
     expect(host).toContain('active ? "player-host" : "player-host is-idle"');
-    const css = read("src/styles.css");
+    const css = readCss();
     const idle = css.slice(css.indexOf(".player-host.is-idle"));
     expect(idle.slice(0, 300)).toContain("visibility: hidden");
     expect(idle.slice(0, 300)).not.toMatch(/display:\s*none/);

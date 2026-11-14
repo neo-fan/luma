@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readCss } from "./readCss";
 
 // tests/frontend -> project root
 const root = resolve(__dirname, "../..");
@@ -44,7 +45,7 @@ describe("player favourites & history line contract", () => {
     expect(star).toMatch(/fav-star.*is-on/);
     expect(star).toContain("className");
     // 已收藏靠填充表达，样式里要能把描边星变实心。
-    const css = read("src/styles.css");
+    const css = readCss();
     expect(css).toContain(".fav-star.is-on svg");
     expect(css).not.toContain(".btn--fav");
   });

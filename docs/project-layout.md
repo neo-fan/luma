@@ -68,7 +68,13 @@ luma/
 ├── src/                                   # React + TypeScript + Vite
 │   ├── main.tsx  App.tsx  AppShell.tsx    # 入口 / RouterProvider / 布局壳（侧栏·同步·Esc·滚动）
 │   ├── routes.tsx                         # 路由表（8 条）+ 页面包装组件
-│   ├── styles.css
+│   ├── styles/                            # 样式模块，级联顺序由 index.css 的 @import 决定
+│   │   ├── index.css                      # 入口：只有顺序说明与 @import
+│   │   ├── base.css                       # token（:root）/ 字体 / 滚动条
+│   │   ├── layout.css  live.css  chrome.css
+│   │   ├── controls.css  cards.css  feedback.css
+│   │   ├── detail.css  player.css  player-panels.css  command-palette.css
+│   │   └── pages.css  polish.css          # polish 是后置覆盖层，必须排最后
 │   ├── pages/                             # Home/Search/Detail/Player/Live/Favorites/History/Settings
 │   ├── components/                        # 通用控件；player/ 播放页组件；settings/ 设置分区
 │   ├── hooks/                             # usePlayerEngine / usePlayResolution / useEpisodeList /

@@ -1,0 +1,166 @@
+/* Luma — 现代简约设计系统
+ * 一条原则：层级靠「背景明度 + 留白」表达，边框和颜色只做辅助。
+ * 所有 className 与文案都是窗口探针的契约，改样式时不要改选择器名。
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* 字族：Inter 从未加载（无 @font-face / 无外链，一直回退 Segoe UI），声明已移除 */
+  --font-sans: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei UI",
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* 字号 8 阶：10/11.5/12.5/13.5/16/18/20/28/34 一律映射回阶梯 */
+  --fs-2xs: 11px;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-body: 14px;
+  --fs-h3: 15px;
+  --fs-h2: 17px;
+  --fs-h1: 23px;
+  --fs-display: 26px;
+
+  /* 字重 3 档：620/650/700 收敛为 600 */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+
+  /* 色阶：中性石墨（不带蓝调），由暗到亮只抬明度、不改色相——蓝色只留给
+     强调色，界面因此不会「到处都泛蓝」。 */
+  --bg: #0a0a0b;
+  --bg-soft: #0f0f11;
+  --panel: #141416;
+  /* 二级面板（表头/沉底行）：被早期样式引用但从未定义，之前一直走 fallback，
+     两处 rgba 与整套色阶的明度对不上。 */
+  --panel-2: #171719;
+  --panel-hover: #1c1c1f;
+  --panel-raised: #212124;
+  /* 海报占位底：深色主题下纯 panel 与图片边缘混在一起，占位块要更沉一点。 */
+  --panel-sunken: #0e0e10;
+
+  /* ---------- 封面尺寸阶梯（2026-11-14 统一） ----------
+     按「展示目的」定宽度，比例恒 2:3，图片一律 object-fit: cover。
+     三条铁律：
+       1. flex 行里的封面必须 `align-self: flex-start`——默认 stretch 会把高度
+          拉到同列最高，aspect-ratio 直接失效，海报就被拉成长条；
+       2. 容器写 aspect-ratio，不写死 height；宽高由同一个变量推导；
+       3. 网格卡片宽度只设下限，列数随可用宽度自动增加，不会无限拉伸。
+     场景：详情页主视觉 210 / 播放页信息卡 132 / 空态识别 150 / 网格 ≥200。 */
+  --cover-ratio: 2 / 3;
+  --cover-w-hero: 210px;
+  --cover-w-player: 132px;
+  --cover-w-empty: 150px;
+  --cover-w-grid-min: 200px;
+
+  --border: #232326;
+  --border-strong: #35353a;
+
+  --text: #ededef;
+  --text-soft: #c6c6cb;
+  --muted: #8b8b92;
+  /* 极弱辅助文字：原 #5e687b 在 --panel 上只有 3.14:1（AA 需 4.5:1），
+     这类小字（站点名、时间戳、原因说明）必须看得清。提到 #7b8699 = 5.05:1。 */
+  --faint: #78787f;
+
+  /* 与 src-tauri/icons/icon.svg 的品牌渐变同源 */
+  --accent: #5b7cfa;
+  --accent-2: #8b8cf5;
+  --accent-soft: rgba(91, 124, 250, 0.16);
+  --accent-softer: rgba(91, 124, 250, 0.09);
+  --accent-ink: #9fb4ff;
+  /* 压在 --accent 底上的文字色：深墨而非白色（白字仅 3.09:1，AA 不达标）。 */
+  --badge-on-accent: #0b0d12;
+  --ok: #4ade9b;
+  --danger: #ff7b83;
+  /* 收藏星专用金色：与强调色蓝紫区分，见 .fav-star */
+  --star: #f2c14e;
+
+  /* 主按钮的「实心白」：参照 DSH 的黑白设计语言——主操作靠明度对比，
+     不靠品牌色块。强调色（--accent）只保留给焦点环、进度、状态点这类
+     小面积指示，界面主体（按钮 / 侧栏 / 卡片）一律中性灰阶。 */
+  --solid: #e8ecf4;
+  --solid-hover: #f4f7fc;
+  --solid-ink: #0b0d12;
+  /* 图标按钮的悬浮底板：比 --panel-hover 更轻，密排时不糊成一片 */
+  --icon-hover: rgba(233, 237, 245, 0.08);
+  --icon-on: rgba(233, 237, 245, 0.13);
+
+  /* 卡片一律不投影：层级靠「明度 + 发丝线 + 留白」，投影只留给真正的浮层
+     （下拉菜单 / 弹窗 / Toast），否则整页会显得一层层浮起来。 */
+  --shadow-sm: none;
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.42);
+  --shadow-lg: 0 28px 80px rgba(0, 0, 0, 0.6);
+
+  /* 圆角 3 档：6 / 10 / 12 + 胶囊。大圆角会让界面显得「软、圆、糊」，
+     简约风格只保留能包住控件的量级。 */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+  --radius: var(--r-md); /* 兼容早期组件 */
+
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur: 0.18s;
+
+  /* 侧栏收放：宽度与内容让位共用一条曲线，收尾缓停（emphasized
+     decelerate）。刻意没用「前段很陡」的 (0.32, 0.72, 0, 1) —— 那条曲线
+     在 1/4 时间里就走完 78%，观感是「猛拽一下 + 尾巴空等」，反而生硬。
+     这条在 25%/40%/55% 时间点分别推进 38%/69%/86%，全程都有可见变化。 */
+  --sidebar-w: 204px;
+  --sidebar-w-collapsed: 68px;
+  --sidebar-dur: 0.28s;
+  --sidebar-ease: cubic-bezier(0.32, 0.08, 0.18, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  letter-spacing: 0.005em;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: rgba(110, 139, 255, 0.32);
+  color: #fff;
+}
+
+/* 桌面端不留可见滚动条：滚轮 / 触控板 / 拖动仍能滚动（overflow 不变），
+   只是不画那 10px 的轨道条。以前自定义 thumb 在深色界面上像一道割裂的
+   竖线，抢内容注意力；Windows WebView2 走 -webkit，scrollbar-width 覆盖
+   标准/Firefox 系。内容区靠自身留白与卡片边界表达层级，不再依赖滚动条。 */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+

@@ -1,0 +1,202 @@
+/* ---------- 手动换源 / 选集 ---------- */
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-head .section-title {
+  margin: 0;
+}
+
+.detail-source {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--panel);
+  color: var(--text-soft);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-actions--inline {
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+/* 「播放 / 继续播放」是详情页唯一的目标动作：高 40、横向留白更大，图标 18px，
+   在信息区里明显压过 chip 与图标按钮——找按钮不该靠读文字。 */
+.detail-actions--inline .btn--primary {
+  height: 40px;
+  padding: 0 22px;
+  font-size: var(--fs-body);
+  border-radius: var(--r-md);
+  box-shadow: 0 6px 18px -10px rgba(232, 236, 244, 0.5);
+}
+
+.detail-actions--inline .btn--primary svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+
+.detail-actions--inline .btn--primary:hover:not(:disabled) {
+  box-shadow: 0 8px 22px -10px rgba(232, 236, 244, 0.62);
+}
+
+.detail-content.is-clamped {
+  max-height: 84px;
+  overflow: hidden;
+}
+
+.episode.is-active {
+  background: var(--icon-on);
+  border-color: rgba(233, 237, 245, 0.24);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.episode.is-seen {
+  border-color: rgba(110, 139, 255, 0.3);
+}
+
+.episode__flag {
+  display: block;
+  color: var(--ok);
+  font-size: var(--fs-2xs);
+  line-height: 1.2;
+}
+
+.detail-episode-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.detail-episode-tools .input {
+  max-width: 260px;
+}
+
+/* 「上次看到：第N集」比旁边的计数更重要，用正文色而不是 faint。 */
+.detail-episode-tools__seen {
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.player-episodes {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.player-episodes .chip-row {
+  margin-bottom: 14px;
+}
+
+.player-episodes__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.player-episodes__tools .input {
+  max-width: 240px;
+}
+
+.player-episodes__empty {
+  margin: 10px 0 0;
+}
+
+.player-episodes .episode-grid {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* 当前集：右上角一枚状态点（DSH 的 running dot 语义），文字留给读屏。
+   只靠背景色区分选中与「正在播放」不够，点比一行小字更省地方、也不挤集名。 */
+.episode {
+  position: relative;
+}
+
+.episode__now {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(74, 222, 155, 0.14);
+}
+
+/* 只给读屏的文本：视觉上 1px 隐藏，不进布局 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 遮罩点击 / ESC 关闭；列表区独立滚动，头尾固定。 */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 11, 0.72);
+  backdrop-filter: blur(6px);
+  animation: overlay-in var(--dur) var(--ease);
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.source-picker {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 100%);
+  max-height: min(82vh, 760px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-soft);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+

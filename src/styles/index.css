@@ -1,0 +1,36 @@
+/**
+ * 样式入口：按下面的顺序级联。
+ *
+ * 这里的顺序**就是**打包产物里的规则顺序（Vite 会把这些 @import 内联成一个文件），
+ * 后面的模块可以覆盖前面同特异性/同名的规则，所以 `polish.css`（简约设计语言 v2）
+ * 必须留在最后。新增样式请加到对应模块的**末尾**，不要随手调整这里的顺序。
+ */
+@import "./base.css";
+@import "./layout.css";
+@import "./live.css";
+@import "./chrome.css";
+@import "./controls.css";
+@import "./cards.css";
+@import "./feedback.css";
+@import "./detail.css";
+@import "./player.css";
+@import "./player-panels.css";
+@import "./command-palette.css";
+@import "./pages.css";
+@import "./polish.css";
+
+/* 模块索引：
+ *   base.css               设计 token（:root）、字体、滚动条与最底层的基础规则
+ *   layout.css             应用外壳：侧栏、内容区、页面骨架与常驻层
+ *   live.css               直播播放页：左换台 / 右观看
+ *   chrome.css             页头、标题、直播态节目单与频道台标
+ *   controls.css           按钮、输入框、下拉、最近搜索词与分类标签
+ *   cards.css              海报卡片网格与卡片内部结构
+ *   feedback.css           空态 / 加载 / 错误、搜索等待态、toast、确认弹层与分页
+ *   detail.css             详情页
+ *   player.css             播放页与播放器宿主
+ *   player-panels.css      手动换源与选集面板
+ *   command-palette.css    命令面板（cmdk，Ctrl+K）
+ *   pages.css              收藏、设置与 GitHub 加速
+ *   polish.css             简约设计语言 v2：后置覆盖层，必须排在最后
+ */

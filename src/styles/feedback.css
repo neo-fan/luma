@@ -1,0 +1,613 @@
+/* ---------- 空态 / 加载 / 错误 ---------- */
+
+/* 空态：不画虚线框，只做一列居中的图标 + 文案 + 动作。
+   2026-11-15 用户截图指出「整块大虚框 + 大量空白」很丑：虚线框把空态
+   变成页面里最重的一块，反而抢了「这里还没有内容」这个信息本身。
+   现在改成留白构图——图标收进一枚细描边圆底，整体限宽 460px 并垂直居中，
+   视觉重量交给标题，动作按钮是唯一的高饱和点。 */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: clamp(240px, 44vh, 420px);
+  max-width: 460px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.empty__icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--panel);
+  color: var(--faint);
+}
+
+.empty__icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.empty__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-medium);
+}
+
+.empty__desc {
+  margin: 0;
+  max-width: 360px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+}
+
+.empty__action {
+  margin-top: 16px;
+}
+
+/* 路由级错误页的按钮组：并排；窄窗口自动换行，别把按钮挤成一小条。 */
+.route-error__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.spinner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.spinner__ring {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #2a3344;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 页面级加载：垂直水平居中、环形更大、文案更清晰。
+   只作用于 .spinner--center，不动播放器内 / 面板内的内联 spinner。 */
+.spinner--center {
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  min-height: 52vh;
+  padding: 0;
+}
+
+.spinner--center .spinner__ring {
+  width: 34px;
+  height: 34px;
+  border-width: 3px;
+}
+
+.spinner--center .spinner__label {
+  font-size: var(--fs-body);
+  color: var(--text-soft);
+  letter-spacing: 0.01em;
+}
+
+/* ---------- 聚合搜索等待态：进度行 + 骨架网格 ---------- */
+
+/* 进度行：不假装有百分比（后端一次 IPC 扇出、无增量事件）。
+ * 2026-11-15 改版：原来的「长蓝条 + 右对齐两行文案 + 取消」在 1288 宽下
+ * 像一条被拉长的报错横幅；现在收成一行——呼吸点 + 进度文案（可截断）+
+ * 已等待时间 + 取消，底部用一条发丝线与结果区分开。 */
+.search-progress {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-progress__pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  animation: search-progress-pulse 1.4s ease-in-out infinite;
+}
+
+.search-progress__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+}
+
+.search-progress__meta {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes search-progress-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-progress__pulse {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+/* 骨架卡片：与 .vod-grid 同布局，结果到达时位置不跳变。
+ * 扫光复用 vod-skeleton 关键帧（封面加载中那套）。 */
+.sk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--cover-w-grid-min), 1fr));
+  gap: 24px 14px;
+}
+
+.sk-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sk-card__poster {
+  aspect-ratio: var(--cover-ratio);
+  border-radius: var(--r-sm);
+  background: linear-gradient(
+    100deg,
+    var(--panel-sunken) 28%,
+    #1c232e 48%,
+    var(--panel-sunken) 68%
+  );
+  background-size: 220% 100%;
+  animation: vod-skeleton 1.4s linear infinite;
+}
+
+.sk-card__line {
+  height: 12px;
+  border-radius: var(--r-sm);
+  background: var(--panel-sunken);
+}
+
+.sk-card__line--short {
+  width: 55%;
+  height: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-card__poster {
+    animation: none;
+    background: var(--panel-sunken);
+  }
+}
+
+/* ---------- 详情页等待骨架 ----------
+
+   版式与 `.detail-hero` / 剧集格一一对应（左 210px 海报 + 右侧信息 + 操作行，
+   下面线路 chip 与集数格），加载完成时位置不跳变。扫光动画复用
+   `vod-skeleton`，和封面加载中的骨架同一套语言。 */
+
+.sk-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.sk-detail__hero {
+  display: flex;
+  gap: 28px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+
+.sk-detail__poster {
+  flex: 0 0 var(--cover-w-hero);
+  width: var(--cover-w-hero);
+  aspect-ratio: var(--cover-ratio);
+  align-self: flex-start;
+  border-radius: var(--r-sm);
+  background: linear-gradient(
+    100deg,
+    var(--panel-sunken) 28%,
+    #1c232e 48%,
+    var(--panel-sunken) 68%
+  );
+  background-size: 220% 100%;
+  animation: vod-skeleton 1.4s linear infinite;
+}
+
+.sk-detail__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+/* 单行占位：比 .sk-card__line 高一点，贴合详情页的字号梯度。 */
+.sk-line {
+  height: 12px;
+  width: 100%;
+  border-radius: var(--r-sm);
+  /* 骨架块要比卡片底色**亮一档**：用 --panel-sunken 会和 .detail-hero 的
+     --panel 底几乎同色，看起来像脏污而不是「正在填充」。 */
+  background: var(--panel-hover);
+}
+
+.sk-line--title {
+  width: 46%;
+  height: 28px;
+  margin-bottom: 4px;
+}
+
+.sk-line--subtitle {
+  width: 120px;
+  height: 18px;
+  margin-bottom: 6px;
+}
+
+.sk-line--short {
+  width: 62%;
+}
+
+.sk-detail__chips,
+.sk-detail__lines,
+.sk-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sk-pill {
+  height: 24px;
+  width: 74px;
+  border-radius: var(--r-pill);
+  background: var(--panel-hover);
+}
+
+.sk-pill--button {
+  width: 104px;
+  height: 32px;
+  border-radius: var(--r-sm);
+}
+
+.sk-detail__actions {
+  margin-top: 6px;
+}
+
+.sk-detail__section {
+  padding: 0 2px;
+}
+
+.sk-detail__episodes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.sk-episode {
+  height: 36px;
+  border-radius: var(--r-sm);
+  background: var(--panel-hover);
+}
+
+/* 静态块加一层极轻的呼吸：只动透明度（不触发布局/重绘整块），让「占位」
+   读起来是进行中而不是渲染失败留下的灰块。 */
+@keyframes sk-breathe {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.sk-detail .sk-line,
+.sk-detail .sk-pill,
+.sk-detail .sk-episode {
+  animation: sk-breathe 1.8s var(--ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-detail .sk-line,
+  .sk-detail .sk-pill,
+  .sk-detail .sk-episode {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-detail__poster {
+    animation: none;
+    background: var(--panel-sunken);
+  }
+}
+
+.error-bar {
+  display: flex;
+  /* 多行解剖结构（图标 / 文案 / 归因 / 详情 / 动作）从第一行对齐，
+     不再垂直居中——详情展开时整条会变高，居中对齐会让图标飘在半空。 */
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  /* 倒计时线贴底，需要定位上下文；圆角外露的一律裁掉 */
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 123, 131, 0.22);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-sm);
+  background: rgba(255, 123, 131, 0.07);
+  color: #ffb0b5;
+  font-size: var(--fs-sm);
+}
+
+/* 图标与首行文字视觉基线对齐（行高 20 → 顶部留 2px 补偿）。 */
+.error-bar__icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--danger);
+}
+
+.error-bar__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.error-bar__text {
+  margin: 0;
+  font-weight: var(--fw-medium);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+/* 归因行：比主文案弱一档，不抢「哪一步失败了」的注意力。 */
+.error-bar__hint {
+  margin: 0;
+  color: rgba(255, 176, 181, 0.66);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+/* 原始报错折叠：给需要反馈问题的人，不给只想继续用的人。 */
+.error-bar__detail {
+  margin-top: 2px;
+}
+
+.error-bar__detail > summary {
+  width: fit-content;
+  color: rgba(255, 176, 181, 0.62);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  list-style: none;
+}
+
+.error-bar__detail > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* 展开指示用「▸ / ▾」，不依赖系统 marker（WebView2 的三角会带描边）。 */
+.error-bar__detail > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 10px;
+  transition: transform var(--dur) var(--ease);
+}
+
+.error-bar__detail[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.error-bar__raw {
+  margin: 6px 0 0;
+  max-height: 120px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 错误附带的动作（换源 / 去设置）：走按钮层级，与右侧图标动作区分。 */
+.error-bar__extra {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.error-bar__extra .btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--fs-xs);
+}
+
+/* 窄面板（直播左栏 272px）：同一套解剖结构，只收紧留白与字号。 */
+.error-bar--compact {
+  margin-bottom: 10px;
+  padding: 9px 10px 10px;
+  gap: 7px;
+  font-size: var(--fs-xs);
+}
+
+.error-bar--compact .error-bar__icon {
+  transform: scale(0.88);
+  transform-origin: left top;
+}
+
+
+/* 剩余秒数：告诉用户「这条警告会自己走」，而不是等它突然消失。
+   tabular-nums 防数字位数变化时整行文字左右跳。 */
+.notice-countdown {
+  flex: none;
+  min-width: 22px;
+  text-align: right;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 生命线：剩余时长的可视化。秒数与进度由同一个时钟驱动（见
+   useNoticeCountdown），所以「6s + 75%」这类错位不会出现。
+   position:absolute 相对最近的定位祖先（.error-bar / .notice-toast），
+   因此 toast 与页内横幅共用同一份实现，不需要复制规则。 */
+.notice-life {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.45;
+  transition: width 1s linear;
+}
+
+/* ---------- 全局 toast（sonner）：与页内提示同一套生命线 ---------- */
+
+/* sonner 的 toast 默认不是定位上下文，进度线要贴它底边。
+   **不要加 overflow:hidden**：sonner 的图标 / 关闭按钮是贴边定位的，
+   裁溢出会直接把它们吞掉（实测 × 消失）。进度线自己内缩 1px + 收圆角。 */
+[data-sonner-toast].notice-toast {
+  position: relative;
+}
+
+/* 同款 keyframes：宽度从满到零，时长来自 --notice-life（notify.ts 按
+   NOTICE_TTL 注入）。常驻提示注入 0ms，线瞬间走完即不可见。 */
+@keyframes notice-life {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* 类名写两遍是**故意的**：sonner 的样式是运行时用 <style> 追加到 head 的，
+   产物里排在打包好的 <link> 之后；它自己有一条
+   `[data-sonner-toast][data-expanded=true]::after`（gap+1 高的悬停间隙桥，
+   贴在 toast 上方、整宽、无背景）与下面这条**特异性相同 (0,2,1)**，
+   顺序在后就赢，于是进度线被顶成「toast 上方 11px 灰条」（1.0.3 正式包实测）。
+   重复类名把特异性提到 (0,3,1)，从此与样式表先后无关。 */
+[data-sonner-toast].notice-toast.notice-toast::after {
+  content: "";
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: 1px;
+  height: 2px;
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
+  background: currentColor;
+  opacity: 0.45;
+  transform-origin: left center;
+  animation: notice-life var(--notice-life, 4000ms) linear forwards;
+}
+
+.error-bar__actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+  margin-top: -2px;
+}
+
+/* ---------- 确认弹层（替代原生 confirm） ---------- */
+
+.confirm {
+  width: min(420px, 100%);
+  padding: 22px 24px 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-soft);
+  box-shadow: var(--shadow-lg);
+  animation: overlay-in var(--dur) var(--ease);
+}
+
+.confirm__title {
+  margin: 0 0 8px;
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+
+.confirm__message {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.65;
+}
+
+.confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ---------- 分页 ---------- */
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 32px;
+}
+
+.pager__label {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  min-width: 72px;
+  text-align: center;
+}
+
+/* 图标键密排容器：页头右侧成对的换源/刷新、卡片操作区都用它。
+   2px 间距配 32px 热区，既不会挤在一起，也不会因为 8px gap 显得散。 */
+.iconbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+

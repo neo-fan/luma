@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readCss } from "./readCss";
 
 const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
@@ -56,11 +57,11 @@ describe("empty states share one visual language", () => {
     // 初始态 + 无站点 + 无结果，三处都该是 Empty。
     expect(source.match(/<Empty/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
     expect(source).not.toContain("search-hint");
-    expect(read("src/styles.css")).not.toContain(".search-hint");
+    expect(readCss()).not.toContain(".search-hint");
   });
 
   it("keeps the empty illustration as a soft badge, not a dashed box", () => {
-    const css = read("src/styles.css");
+    const css = readCss();
     const block = css.slice(css.indexOf("\n.empty {"));
     const rule = block.slice(0, block.indexOf("}", 0));
     expect(rule).toContain("max-width: 460px");

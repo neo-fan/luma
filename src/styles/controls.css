@@ -1,0 +1,672 @@
+/* ---------- 控件 ---------- */
+
+.btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--panel-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+/* 主操作＝实心浅色块 + 深色字（DSH 的黑白按钮）。之前是蓝紫渐变，一屏
+   出现两个主按钮时整页都在发光；改成中性实心后，主次靠明度就够分辨。 */
+.btn--primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--solid);
+  border-color: transparent;
+  color: var(--solid-ink);
+  font-weight: var(--fw-semibold);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--solid-hover);
+  border-color: transparent;
+  color: var(--solid-ink);
+}
+
+.btn--primary:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+/* 主按钮里的图标比文字重一档，播放三角才立得住 */
+.btn--primary svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.btn--danger {
+  border-color: rgba(255, 123, 131, 0.24);
+  color: #ff9ba0;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: rgba(255, 123, 131, 0.1);
+  border-color: rgba(255, 123, 131, 0.4);
+  color: #ffb9bd;
+}
+
+.btn--sm {
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+}
+
+/* ---------- 图标按钮 ----------
+ * 界面里「不用解释的动作」统一走这里（换源 / 刷新 / 返回 / 倒序 / 删除…），
+ * 文字让位给图形，语义落在 aria-label 与悬浮提示上。
+ * 三种状态靠图标自己表达：hover 亮一档、pressed 换底色（必要时整枚翻转）、
+ * busy 自转。不额外加外框或颜色块，密排一行时才不会显得碎。
+ */
+.icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    transform 0.12s var(--ease);
+}
+
+.icon-btn--md {
+  width: 32px;
+  height: 32px;
+}
+
+.icon-btn--sm {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  transition: transform 0.2s var(--ease);
+}
+
+.icon-btn--sm svg {
+  width: 15px;
+  height: 15px;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--icon-hover);
+  color: var(--text);
+}
+
+.icon-btn:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.icon-btn.is-on {
+  background: var(--icon-on);
+  color: var(--text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.icon-btn--danger:hover:not(:disabled) {
+  background: rgba(255, 123, 131, 0.12);
+  color: var(--danger);
+}
+
+/* 状态用图形方向表达：倒序翻转上下箭头，展开旋转折叠箭头 */
+.icon-btn--flip[aria-pressed="true"] svg {
+  transform: scaleY(-1);
+}
+
+.icon-btn--rotate[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.icon-btn.is-busy svg {
+  animation: icon-spin 0.9s linear infinite;
+}
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 悬浮提示：CSS 气泡，比原生 title 快（0.24s 后出现）且配色跟随主题。
+   靠近容器边缘时由调用方传 tip="none" 退回原生 title，避免被裁切。 */
+.icon-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  z-index: 80;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-soft);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-regular);
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -3px);
+  transition:
+    opacity 0.12s var(--ease),
+    transform 0.12s var(--ease);
+}
+
+.icon-btn[data-tip-pos="up"]::after {
+  top: auto;
+  bottom: calc(100% + 7px);
+  transform: translate(-50%, 3px);
+}
+
+.icon-btn[data-tip]:hover::after,
+.icon-btn[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: 0.24s;
+}
+
+/* 收藏星：单图标按钮，紧贴剧名右侧。
+   状态只靠「描边 → 实心」表达，没有文字，所以热区给到 30px 见方（比 18px
+   的图标大一圈），点击时缩一下给出触感反馈。金色是「星」的通用语义色，
+   与强调色（蓝紫）区分开，一眼能看出是收藏而不是主操作。 */
+.fav-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 热区比图标大一圈（22 → 34），点按仍然好点；两处标题字号 23/26px，
+     22px 的星形实际占 17px，视觉上与片名同量级而不抢戏。 */
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  /* 未收藏用 --muted 而不是 --faint：这是可点的操作入口，不能像装饰文字那么暗 */
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease),
+    transform 0.14s var(--ease);
+}
+
+/* .page-title 是 baseline 对齐，按钮要自己抬到文字中线 */
+.page-title .fav-star {
+  align-self: center;
+}
+
+.fav-star svg {
+  width: 22px;
+  height: 22px;
+}
+
+.fav-star:hover:not(:disabled) {
+  background: var(--panel-hover);
+  color: var(--text-soft);
+}
+
+.fav-star:active:not(:disabled) {
+  transform: scale(0.86);
+}
+
+.fav-star.is-on {
+  color: var(--star);
+}
+
+/* 已收藏：描边保留 + 填充，读起来是「实心星」而不是加粗的描边星 */
+.fav-star.is-on svg {
+  fill: currentColor;
+}
+
+.fav-star:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.input {
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+
+.input:hover {
+  border-color: var(--border-strong);
+}
+
+/* 文本类控件：焦点态取消浏览器默认 :focus-visible outline（与自定义
+   border 叠加会产生“双线感”），改用干净的柔光环 + 微亮背景。 */
+.input:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--panel-hover);
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 0 14px rgba(110, 139, 255, 0.28);
+}
+
+.input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 140px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  outline: none;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  margin-bottom: 10px;
+}
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+/* 输入框外壳：承接 .search-bar 的 flex 槽位（原来由 .input 的 flex:1 承担），
+   让内嵌的清除按钮用绝对定位贴右缘，不挤占输入框自身宽度。 */
+.search-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+}
+
+/* 输入框在 wrap 内撑满宽度（wrap 不是 flex 父，.input 的 flex:1 在此不生效）。 */
+.search-input-wrap .input {
+  width: 100%;
+}
+
+/* 有清除按钮时为右侧留出空间，避免文字被图标压住。 */
+.search-input-wrap.has-clear .input {
+  padding-right: 34px;
+}
+
+/* 输入框内嵌的清除按钮：仅在有关键词时出现，圆点热区、贴右缘垂直居中。 */
+.search-clear {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.search-clear:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+.search-clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 搜索页站点选择：globe 图标触发 + 下拉菜单，贴合图标语言，替代原生 select */
+/* ---------- 通用下拉（AppSelect/SiteSelect 共用视觉） ---------- */
+/* 触发器宽度随文案自适应、320px 封顶（超长省略号）；菜单项选中高亮、禁用置灰。
+   SiteSelect 保留 .site-select* 双类名仅为探针 DOM 契约，样式一律走 .app-select。 */
+.app-select {
+  position: relative;
+}
+
+.app-select__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  max-width: 320px;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1;
+  cursor: pointer;
+  /* 打开态的边框+浅底已足够表达状态，不要浏览器 focus 发光圈。 */
+  outline: none;
+  transition: border-color var(--dur, 0.18s) var(--ease, ease),
+    background var(--dur, 0.18s) var(--ease, ease);
+}
+
+.app-select__trigger:hover {
+  border-color: var(--border-strong);
+}
+
+.app-select__trigger[data-state="open"] {
+  border-color: var(--accent, #3b82f6);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 12%, var(--bg-soft));
+}
+
+.app-select__trigger[data-disabled] {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.app-select__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-select__trigger svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.app-select__menu {
+  z-index: 60;
+  /* 宽度：先跟触发器对齐（Radix 注入 --radix-select-trigger-width），
+     内容更长时再放宽，360px 封顶；位置（贴边翻转/防裁切）与可用高度
+     全部由 Radix popper 管理，不再手写量测 clamp */
+  width: max-content;
+  min-width: var(--radix-select-trigger-width, 0px);
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(var(--radix-select-content-available-height, 360px), 360px);
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+  box-shadow: var(--shadow-md);
+  animation: overlay-in var(--dur) var(--ease);
+}
+
+.app-select__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  /* 高亮态只靠背景（.is-active / [data-highlighted]），绝不出现
+     浏览器默认的 focus 描边。 */
+  outline: none;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.app-select__item:hover:not(:disabled),
+.app-select__item[data-highlighted]:not([data-disabled]) {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.app-select__item.is-disabled,
+.app-select__item[data-disabled] {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.app-select__item.is-active {
+  background: var(--icon-on);
+  color: var(--text);
+}
+
+.app-select__item svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--muted);
+}
+
+.app-select__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-select__tag {
+  margin-left: auto;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+/* ---------- 最近搜索词 ---------- */
+
+.recent-searches {
+  margin: -8px 0 18px;
+}
+
+.recent-searches__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.recent-searches__label {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.recent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.recent-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--panel);
+  /* 不设 overflow:hidden：会裁掉 .recent-chip__remove 靠 padding 撑出的点击热区。 */
+  transition: border-color var(--dur) var(--ease);
+}
+
+.recent-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.recent-chip__word {
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  padding: 5px 4px 5px 12px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.recent-chip__word:hover:not(:disabled) {
+  color: var(--accent-ink);
+}
+
+.recent-chip__word:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.recent-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  /* 热区规格：≥32px 高（audit 实测旧值仅 25×21，误触率高）。
+   * 图标本体仍 12px，靠 padding 撑点击面积。 */
+  padding: 10px 12px 10px 5px;
+  margin: -10px -6px -10px 0;
+  cursor: pointer;
+}
+
+.recent-chip__remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+.recent-chip__remove:hover {
+  color: var(--danger);
+}
+
+/* ---------- 分类标签 ---------- */
+
+.chip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.chip-row--static {
+  margin: 12px 0 14px;
+  gap: 6px;
+}
+
+.chip {
+  padding: 5px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* 选中态：中性高亮（DSH 的「白 10% 叠层」），不用品牌色块——一屏里同时
+   有线路 chip、剧集格、侧栏项三处选中，全染色会让界面发紫。 */
+.chip.is-active {
+  background: var(--icon-on);
+  border-color: rgba(233, 237, 245, 0.24);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+/* 详情页线路 chip 上的「上次」角标：历史记录的线路名命中这一条。 */
+.chip__flag {
+  margin-left: 5px;
+  color: var(--ok);
+  font-size: var(--fs-2xs);
+}
+
+/* 直播频道 chip：inline-flex 包裹按钮，承载多线路徽标。 */
+.live-chip {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 多线路频道上的线路数小徽标（如「3」表示 3 条线路）。 */
+.chip__badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  background: var(--accent, #6e8bff);
+  /* 压 --accent 的文字用深色而非白色：白字只有 3.09:1（AA 需 4.5:1），
+     深墨 #0b0d12 则是 6.29:1。11px 粗体小字尤其要保证可读。 */
+  color: var(--badge-on-accent, #0b0d12);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
+
+.chip--static,
+.chip--muted {
+  cursor: default;
+  color: var(--text-soft);
+  background: var(--panel-raised);
+}
+

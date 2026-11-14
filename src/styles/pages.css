@@ -1,0 +1,667 @@
+/* ---------- 收藏 ---------- */
+
+.fav-item {
+  position: relative;
+}
+
+.fav-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: rgba(11, 13, 18, 0.84);
+  color: var(--text-soft);
+  font-size: var(--fs-h3);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.fav-item:hover .fav-remove,
+.fav-remove:focus-visible {
+  opacity: 1;
+}
+
+.fav-remove:hover:not(:disabled) {
+  background: rgba(255, 123, 131, 0.18);
+  border-color: rgba(255, 123, 131, 0.45);
+  color: var(--danger);
+}
+
+/* 历史 / 收藏卡片的右上角都放了一个动作按钮（× 或星），分辨率徽标必须让位，
+   否则会被压在下面（实测徽标 45px 宽、按钮压掉右侧 23px）。 */
+.fav-item .vod-card__res {
+  right: 42px;
+}
+
+.fav-remove svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* 收藏页的「取消收藏」：卡片右上角的实心金星。
+   历史页仍用 ×（那是「删除记录」），收藏用星是为了说清「这条已经在收藏里」，
+   也跟详情页那颗星保持同一套语言。 */
+.fav-item__unfav {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--r-pill);
+  background: rgba(11, 13, 18, 0.72);
+  backdrop-filter: blur(8px);
+  opacity: 0.92;
+  transition:
+    opacity var(--dur) var(--ease),
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    transform 0.14s var(--ease);
+}
+
+.fav-item__unfav svg {
+  width: 15px;
+  height: 15px;
+}
+
+.fav-item__unfav:hover:not(:disabled) {
+  background: rgba(11, 13, 18, 0.94);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.fav-item__unfav:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 分类无限滚动：底部加载更多 / 到底提示 + 滚动哨兵 */
+.infinite-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 22px 0 8px;
+}
+
+.infinite-sentinel {
+  width: 100%;
+  height: 1px;
+}
+
+/* 历史卡片中央的圆形播放按钮：描边即进度环（灰底轨 + 高亮进度弧）。 */
+.fav-play-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* 与 .vod-card__poster 完全一致，让按钮真正居中在海报正中而非整张卡片 */
+  aspect-ratio: 2 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 包裹层只负责定位，不拦截点击：点海报别处仍走卡片自身的详情跳转 */
+  pointer-events: none;
+  z-index: 2;
+}
+
+.fav-play {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(10, 12, 18, 0.5);
+  backdrop-filter: blur(3px);
+  color: #fff;
+  cursor: pointer;
+  /* 重新开启按钮自身的点击，不被包裹层的 none 影响 */
+  pointer-events: auto;
+  transition:
+    transform var(--dur) var(--ease),
+    background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+.fav-play:hover {
+  transform: scale(1.12);
+  background: rgba(10, 12, 18, 0.68);
+  /* 悬停时一圈 accent 光晕 + 投影，反馈更醒目 */
+  box-shadow:
+    0 0 0 4px rgba(110, 139, 255, 0.2),
+    0 10px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* .fav-play 聚焦态不再描边（全局 focus-visible 已取消）。 */
+
+.fav-play__ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.fav-play__track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 3;
+}
+
+.fav-play__progress {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  /* 从 12 点钟方向起笔，顺时针增长 */
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  transition: stroke-dasharray 0.3s var(--ease);
+}
+
+.fav-play__icon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  transition: transform var(--dur) var(--ease);
+}
+
+.fav-play:hover .fav-play__icon {
+  transform: scale(1.1);
+}
+
+.fav-play__icon svg {
+  width: 26px;
+  height: 26px;
+  /* Lucide 的 play 字形重心偏左，右移 1px 视觉更居中 */
+  transform: translateX(1px);
+}
+
+/* ---------- 设置 ---------- */
+
+.settings-block {
+  margin-bottom: 30px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* section 外面套了 .settings-anchor（承载目录锚点），last-of-type 语义迁移到这里 */
+.settings-anchor:last-of-type .settings-block {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* 左侧吸顶目录（SettingNav）：设置页 7 个 block 纵向超两屏，目录直达 */
+.settings-layout {
+  display: flex;
+  gap: 28px;
+  align-items: flex-start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 0;
+  flex-shrink: 0;
+  width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav__item {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav__item:hover {
+  background: var(--icon-hover);
+  color: var(--text);
+}
+
+.settings-nav__item.is-active {
+  background: var(--icon-on);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+/* .settings-nav__item 聚焦态不再描边（全局 focus-visible 已取消）。 */
+
+.settings-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-anchor {
+  scroll-margin-top: 8px;
+}
+
+/* 订阅自动刷新：一行放「标题 + 状态 / 间隔 / 立即检查」，窄屏时允许换行 */
+.refresh-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.refresh-bar__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.refresh-bar__title {
+  font-size: var(--fs-sm);
+}
+
+.refresh-bar__hint {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.refresh-bar .app-select__trigger {
+  height: 32px;
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+  flex: 0 0 auto;
+}
+
+.config-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.config-item__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.config-item__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-body);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.config-item__tag {
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: var(--fs-2xs);
+}
+
+.config-item__meta {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+/* 订阅检查状态：比来源信息低一级，不与「当前」标签抢注意力 */
+.config-item__refresh {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  opacity: 0.85;
+}
+
+/* 轻提示改由 sonner 提供（Toaster 挂在 App 根部）：右上浮层、4s 自动消失、
+   可关闭、可堆叠，并自带 aria-live 播报。配色通过 toastOptions 对齐 token。 */
+
+/* 导入区的「配置名称」：左侧固定标签，右侧输入 + 提示，窄屏自动换行 */
+.config-name {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 10px;
+}
+
+.config-name__label {
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+}
+
+.config-name__hint {
+  grid-column: 2;
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+}
+
+.config-item__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* 行内重命名：输入框吃掉剩余宽度，按钮不换行 */
+.config-item__rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.config-item__rename .input {
+  min-width: 160px;
+  padding: 6px 10px;
+}
+
+.settings-line {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+}
+
+/* ---------- GitHub 加速 ---------- */
+
+/* 一整张 sheet + 行间发丝线：四个候选是同一组选项，不该各自一张卡 */
+.gh-proxy-list {
+  margin: 14px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.gh-proxy__row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto 76px;
+  align-items: center;
+  gap: 12px;
+  /* 固定行高：note 单行省略已保证内容不超，行高不能再随文字多少浮动 */
+  height: 60px;
+  padding: 0 14px;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+
+.gh-proxy__row + .gh-proxy__row {
+  border-top: 1px solid var(--border);
+}
+
+.gh-proxy__row:hover {
+  background: var(--panel-hover);
+}
+
+/* 当前生效项：左侧一道 accent 竖线，比整行高亮更克制 */
+.gh-proxy__row.is-active {
+  background: var(--accent-softer);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.gh-proxy__row input[type="radio"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.gh-proxy__main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.gh-proxy__label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.gh-proxy__note {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+}
+
+.gh-proxy__prefix {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
+.gh-proxy__probe {
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.gh-proxy__probe.is-ok {
+  color: var(--ok);
+}
+
+.gh-proxy__probe.is-bad {
+  color: var(--danger);
+}
+
+.gh-proxy-custom {
+  display: flex;
+  gap: 8px;
+}
+
+.gh-proxy-custom .input,
+.gh-proxy-custom .btn {
+  height: 36px;
+}
+
+.gh-proxy-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.gh-proxy-foot .btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: var(--fs-xs);
+}
+
+.gh-proxy-foot__stat {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+/* 诊断键值表：左侧标签固定宽，右侧路径可换行，避免长 APPDATA 路径撑破卡片 */
+.settings-kv {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px 14px;
+  margin-bottom: 12px;
+  font-size: var(--fs-xs);
+}
+
+.settings-kv > span {
+  color: var(--muted);
+}
+
+.settings-kv > code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* 站点体检：顶部操作条 + 可滚动清单，全部走 health-* 前缀，避免碰到窗口探针依赖的类 */
+.health-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
+
+.health-summary {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.health-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.health-item {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  font-size: var(--fs-xs);
+}
+
+.health-item__name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-soft);
+}
+
+.health-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.health-item__status {
+  flex: 0 0 auto;
+  padding: 1px 0;
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
+/* 状态色只上文字，底色保持行的 panel：浅色 / 深色主题下都有稳定对比 */
+.health-item__status.is-ok {
+  color: var(--ok);
+}
+
+.health-item__status.is-failed,
+.health-item__status.is-timeout {
+  color: var(--danger);
+}
+
+.health-item__status.is-skipped {
+  color: var(--muted);
+}
+
+.health-item__status.is-disabled {
+  color: var(--faint);
+}
+
+.health-item__took,
+.health-item__count {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.health-item__reason {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--faint);
+}
+
+.health-item__actions {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 窄屏：站名占整行，状态/耗时/原因与操作换行，长文本省略不撑破卡片 */
+@media (max-width: 560px) {
+  .health-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+  }
+
+  .health-item__name {
+    grid-column: 1 / -1;
+  }
+
+  .health-item__actions {
+    grid-row: 2;
+    grid-column: 2;
+  }
+}
+
+.disclaimer {
+  margin: 36px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  text-align: center;
+}
+

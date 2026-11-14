@@ -19,6 +19,7 @@
 
 - 直播频道 header 透传补齐 `src-tauri/src/domain/live/m3u.rs` 的 3 条单测（频道级 ua/referer 保留、无声明不写空字段、同名台先声明者优先）；`src-tauri/src/domain/play.rs` 补 `looks_like_playlist` 的单测（BOM / 前导空白 / 小写 `#extm3u` 认，HTML 与空串不认）。
 - `src/lib/format.ts` 新增 `normalizeEpisodeName` / `sameEpisodeName` 与 `src/lib/format.test.ts` 的对应断言（全角、前导 0、`EP01` 等写法归一）。
+- **样式拆成 13 个模块，入口只留级联顺序**：`src/styles.css` 一个文件 5,124 行 / 588 个类选择器 / 27 段分节横幅，改任何一处都要在五千行里上下找覆盖关系。现在按分节横幅切成 `src/styles/` 下的 `base`（`:root` token、字体、滚动条）/ `layout` / `live` / `chrome` / `controls` / `cards` / `feedback` / `detail` / `player` / `player-panels` / `command-palette` / `pages` / `polish`，入口 `index.css` 只保留按顺序的 `@import`；`polish.css` 是「简约设计语言 v2」的后置覆盖层，**必须最后**。拆分是纯搬运：脚本按行切片并断言「按顺序拼接 == 原文件」，打包产物 67,268 → 67,284 字节，CDP 取 `document.styleSheets` 的规则序列化（599 条 / 80,205 字符）与关键元素计算样式前后完全一致。6 个读源码的样式契约测试改为 `tests/frontend/readCss.ts` 的 `readCss()`（按 `@import` 顺序拼接），新增 `tests/frontend/styleModules.test.ts` 锁住「入口不含规则」「`polish.css` 在最后」；`docs/project-layout.md`、`docs/DEVELOPMENT.md`、`AGENTS.md` 与 `tools/verify/verify_cover_spec.mjs` 的路径说明同步。
 
 ---
 

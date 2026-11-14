@@ -1,0 +1,392 @@
+/* ---------- 布局 ---------- */
+
+/* 侧栏脱离文档流固定在左侧窗口边缘：即使内容区滚动、或将来 .app 被撑高，
+   导航也绝不跟着走。左侧空间由 .app 的 padding-left 让出，与侧栏宽度
+   同曲线、同时长过渡 —— 内容区整体平移让位，不会在收起瞬间跳一格。 */
+.app {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  padding-left: var(--sidebar-w);
+  overflow: hidden;
+  transition: padding-left var(--sidebar-dur) var(--sidebar-ease);
+  will-change: padding-left;
+}
+
+.app.is-sidebar-collapsed {
+  padding-left: var(--sidebar-w-collapsed);
+}
+
+/* 侧栏与画布**同色**：之前用 --bg-soft 比内容区亮一档，在深色窗口里像贴着
+   一条突兀的浅色板子（用户反馈「标题和侧边颜色不协调」），现在只靠 1px 描边
+   与会话高亮区分层级。整块固定，不参与任何滚动。
+   收放只动 width、**不动 padding**：图标所在的那条轴恒定，文字被收窄的
+   宽度自然「挤出」并同步淡出，没有位移抖动。 */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  width: var(--sidebar-w);
+  height: 100vh;
+  height: 100dvh;
+  padding: 22px 12px 16px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  transition: width var(--sidebar-dur) var(--sidebar-ease);
+  will-change: width;
+}
+
+/* 收缩态：只留 68px 图标轨道；文字统一由 .nav__label 系列控制显隐 */
+.sidebar.is-collapsed {
+  width: var(--sidebar-w-collapsed);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 8px;
+  transition: padding var(--sidebar-dur) var(--sidebar-ease);
+}
+
+.brand__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: transparent;
+}
+
+.brand__mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.brand__text {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  /* nowrap：收缩时宽度不足也不换行。一旦换行会撑高 .brand，
+     把下面所有导航项一起顶下去 —— 那才是「动画很脏」的主因。 */
+  white-space: nowrap;
+}
+
+.brand__text small {
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    padding var(--sidebar-dur) var(--sidebar-ease);
+}
+
+/* 图标固定 20px 轨道，收缩时文字隐藏后仍保持垂直居中 */
+.nav__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+
+.nav__icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.nav__label {
+  white-space: nowrap;
+}
+
+/* ---------- 侧栏收放：文字层 ---------- *
+ * 收起时不靠 display:none 或 width:0 一刀切（那会让图标「啪」地瞬移），
+ * 改用 max-width 平滑收拢 + 透明度淡出，文字像被轨道「挤」出去；图标始终
+ * flex-start 不动，收起后自然落在 68px 轨道正中（约 36px，与轨道中心 34px
+ * 仅差 2px，肉眼不可辨），因此去掉了 justify-content:center 的瞬切。
+ * max-width / transform / opacity 都是可平滑动画的属性，不再触发图标位置跳变。 */
+.nav__label,
+.brand__text,
+.sidebar__foot {
+  opacity: 1;
+  transform: translateX(0);
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    opacity 0.18s var(--ease) 0.1s,
+    transform var(--sidebar-dur) var(--sidebar-ease),
+    max-width var(--sidebar-dur) var(--sidebar-ease);
+  will-change: max-width, opacity;
+}
+
+.sidebar.is-collapsed .nav__label,
+.sidebar.is-collapsed .brand__text,
+.sidebar.is-collapsed .sidebar__foot {
+  opacity: 0;
+  transform: translateX(-6px);
+  max-width: 0;
+  pointer-events: none;
+  /* 收起时立刻淡出（0ms），别拖着残影；max-width 与轨道同拍收拢。 */
+  transition:
+    opacity 0.18s var(--ease) 0s,
+    transform var(--sidebar-dur) var(--sidebar-ease),
+    max-width var(--sidebar-dur) var(--sidebar-ease);
+}
+
+/* 收起态（68px 图标轨道）：图标在 44px 高亮块内水平居中。
+   关键：用「可平滑动画的 padding」居中，图标始终 flex-start 不动，绝不切
+   justify-content（那是瞬变属性，内容宽度越过容器阈值时会突跳抖动）。
+   gap 归零避免 10px 留白把图标顶偏右；padding 14→12 与侧栏同拍收拢。 */
+.sidebar.is-collapsed .nav__item {
+  gap: 0;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/* 品牌 logo 同样用 padding 居中（flex-start 不动），与导航项一致，不抖。 */
+.sidebar.is-collapsed .brand {
+  padding: 0 3px;
+}
+
+.nav__item:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+/* 当前页：中性白叠层 + 白色图标（图标即高亮指示），去掉左侧竖条。
+   之前用 --accent-soft 蓝紫底 + 渐变竖条，整条侧栏像被点了色；改中性后
+   焦点只剩「白 10%」的明度差 + 图标态，跟 chip 选中保持一致。 */
+.nav__item.is-active {
+  background: var(--icon-on);
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+.sidebar__bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar__collapse {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.sidebar__collapse:hover {
+  background: var(--panel);
+  color: var(--text-soft);
+}
+
+/* 箭头用同一个图形旋转 180°：点下去方向连续翻转，比换一个 icon 更顺。 */
+.sidebar__collapse .nav__icon svg {
+  transition: transform var(--sidebar-dur) var(--sidebar-ease);
+}
+
+.sidebar.is-collapsed .sidebar__collapse .nav__icon svg {
+  transform: rotate(180deg);
+}
+
+.sidebar__foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 10px 2px;
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  border-top: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+/* build 号：14 位时间戳（yyyyMMddHHmmss）单独一行等宽显示——等宽字体让每次
+   构建的位数对齐，扫一眼就能比对前后端是不是同一个包。 */
+.sidebar__stamp {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+
+/* 调试标记：`tauri dev` 起的窗口与同机安装的正式版版本号完全一样（数据目录
+   不同：Luma-debug / Luma），靠这个胶囊 + 窗口标题的 "(Dev)" 后缀区分。 */
+.sidebar__version {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar__dev {
+  padding: 0 6px;
+  border: 1px solid rgba(91, 124, 250, 0.45);
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+
+/* 收缩态**不动任何 padding**：图标轴（左侧 26px）在收放全程一像素都不移，
+   视觉上就是「右边的墙推过来」，没有横向抖动。轨道 68px 下图标中心 36，
+   与轨道中心 34 只差 2px，肉眼不可辨；为对齐这 2px 去改 padding 反而会
+   在动画中途引入一段横移，得不偿失。 */
+
+/* 内容区本身不滚：滚动发生在每个页面的 `.page-body` 里。
+   这样页头 / 工具栏是**正常文档流**里的一块，天生不动——不需要 sticky、
+   不需要负 margin 抵消内边距、不需要监听滚动改阴影，也不会有「滚到一半
+   内容从页头底下透出来」的层叠问题。 */
+.content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* 直播常驻层的隐藏态用绝对定位铺满，定位基准在这里。 */
+  position: relative;
+}
+
+/* 播放页常驻层：盖在内容区之上、侧栏（z-index 40）之下，自己负责滚动。
+   切到其它页面时只切 visibility 不卸载——display:none / 卸载都会让 hls.js
+   重新拉流，回到播放页等于重播（用户需求是「后台继续播、随时切回」）。 */
+.player-host {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--sidebar-w);
+  z-index: 30;
+  /* 与普通页面同一套骨架：宿主层不滚，滚动交给 .page-body，播放页的
+     返回 / 收藏 / 换源栏也不会被滚动带走。 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  overscroll-behavior: contain;
+}
+
+.app.is-sidebar-collapsed .player-host {
+  left: var(--sidebar-w-collapsed);
+}
+
+.player-host.is-idle {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* 直播常驻层：挂在 AppShell 的 .content 里（与普通页面同一套骨架）。
+   切到别的页面时只切 visibility，DOM 与 ArtPlayer 实例都还在——音频继续播，
+   回到 /live 还是同一条流，不用重新拉流。隐藏态保持整块尺寸（绝对定位铺满），
+   否则播放器会按 0×0 重置排版，切回来画面要重算一遍。 */
+.live-host {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.live-host.is-idle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.page {
+  /* 页面骨架：padding 内边距 + 固定区（页头/工具栏）+ 滚动区（.page-body）。
+     所有页面共用这一套，单页只覆盖变量或头部高度，不再各自拼布局。 */
+  --page-pad-t: 30px;
+  --page-pad-x: 36px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: var(--page-pad-t) var(--page-pad-x) 0;
+}
+
+/* 唯一滚动区：内容再长也只滚这一块，页头与工具栏固定不动。 */
+.page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 底部留白放在滚动体内：放在 .page 上会把滚动区顶短，最后一行永远
+     差一截才滚到底。 */
+  padding-bottom: 64px;
+}
+
+.page--player {
+  --player-max-h: 80vh;
+  --player-width: min(100%, calc(var(--player-max-h) * 16 / 9));
+  --page-pad-x: 28px;
+  max-width: 1600px;
+  padding-inline: 28px;
+}
+
+.page--player .page-body {
+  padding-bottom: 36px;
+}
+
+/* 播放页按画面宽度收口：页头之外的每一块都跟播放器左右对齐。 */
+.page--player .page-body > * {
+  width: var(--player-width);
+  margin-inline: auto;
+}
+

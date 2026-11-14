@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readCss } from "./readCss";
 
 const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
@@ -59,7 +60,7 @@ describe("one open-source icon set for the whole app", () => {
   });
 
   it("filled favourite state still wins over Lucide's fill=none", () => {
-    const css = read("src/styles.css");
+    const css = readCss();
     expect(css).toContain(".fav-star.is-on svg");
     expect(css).toContain("fill: currentColor");
   });

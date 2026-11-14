@@ -1,0 +1,219 @@
+/* ---------- 卡片网格 ---------- */
+
+.vod-grid {
+  display: grid;
+  /* 列宽只设下限、上限交给可用宽度均分（1fr）：列数按 `min + 列距` 自动增加，
+   * 所以卡片始终落在 200~215px 之间，不会无限拉伸；行尾也不会再剩几十像素死角。
+   * 之前写死 max 260px 时，1440 窗口扣掉滚动条后只放得下 4 列，
+   * 右侧白白空出约 80px（2026-11-14 用户截图指出的空隙）。 */
+  grid-template-columns: repeat(auto-fill, minmax(var(--cover-w-grid-min), 1fr));
+  /* 宽屏提密度：列距收窄到 14px，行距保持 24px 与纵向呼吸一致 */
+  gap: 24px 14px;
+}
+
+/* 聚合一次可能出 200+ 张卡片：离屏卡片跳过布局与绘制，进入视口再渲染。
+ * 只影响渲染，不影响 DOM 查询，窗口探针仍能看到全部 .vod-card。
+ *
+ * `contain-intrinsic-size` 的值必须是**真实卡高**，否则浏览器按错误高度占位布局，
+ * `loading="lazy"` 的图片会按错误位置判定「是否已进入视口」——视口内的图被判为
+ * 「还没到」而不加载，用户看到的就是滚动时大片灰块；同时滚动条长度随真实高度
+ * 二次渲染而跳动（实测 scrollH 波动 129px）。
+ * 真实卡高 = 海报 2:3 比例（列宽约 222px 时 333px）+ 标题行 ≈ 363px。
+ * 用 `auto 364px`：364px 是首次占位，`auto` 让浏览器记住上次渲染的真实尺寸，
+ * 标题换行/副标题出现时高度不同也能自适应。
+ * 修正后实测：4 屏视口 pending 合计 29 → 0，scrollH 波动 129px → 0px。
+ * 列宽随窗口变化时卡高也变，这个值只是首帧占位，`auto` 会立刻接管。 */
+.vod-grid > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 364px;
+}
+
+.vod-card {
+  display: flex;
+  flex-direction: column;
+  /* 卡片有时是 .vod-grid 的直接子项（首页/搜索），有时裹在 .fav-item 里
+   * （收藏/历史）。按钮默认按内容宽度收缩，没有封面图时整列就会变窄、
+   * 高度参差不齐；显式撑满才能让两种结构都对上网格。 */
+  width: 100%;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vod-card__poster {
+  position: relative;
+  width: 100%;
+  aspect-ratio: var(--cover-ratio);
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  border: 1px solid transparent;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+.vod-card:hover .vod-card__poster {
+  transform: translateY(-3px);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.vod-card__poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 加载中的骨架：扫光提示「正在取图」。
+ * 上游图床经常要几秒（实测 /image p50 129ms、max 5.2s），没有这层提示，
+ * 用户看到的就是一片纯色块，分不清「在加载」还是「本来就没图」。
+ * 骨架必须与「加载失败」的首字占位明显区分——前者有扫光动画且没有字，
+ * 后者是静止的大号首字。
+ *
+ * 2026-11-15：去掉骨架中央的转圈。一圈亮蓝压在每张卡上，观感像「坏图 /
+ * 播放器报错」，一屏十几张同时转更吵；扫光本身已经足够表达「在取图」。 */
+.vod-card__skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    var(--panel-sunken) 28%,
+    rgba(255, 255, 255, 0.055) 48%,
+    var(--panel-sunken) 68%
+  );
+  background-size: 220% 100%;
+  animation: vod-skeleton 1.4s linear infinite;
+}
+
+@keyframes vod-skeleton {
+  to {
+    background-position: -120% 0;
+  }
+}
+
+/* 减弱动效偏好下停止扫光，保留静态底色（不制造持续重绘）。 */
+@media (prefers-reduced-motion: reduce) {
+  .vod-card__skeleton {
+    animation: none;
+    background: var(--panel-sunken);
+  }
+}
+
+.vod-card__ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  background: linear-gradient(160deg, #1a202c, #12161e);
+}
+
+/* 加载失败：用片名首字做锚点，明确区分「有片名但没图」与「源就没给图」。 */
+.vod-card__ph--failed {
+  color: var(--muted);
+  font-size: var(--fs-display);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.02em;
+  background: linear-gradient(160deg, #1a202c, #12161e);
+}
+
+.vod-card__badge {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 20px);
+  padding: 3px 9px;
+  border-radius: var(--r-sm);
+  background: rgba(8, 10, 15, 0.76);
+  backdrop-filter: blur(4px);
+  color: #f1f1f6;
+  font-size: var(--fs-2xs);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 播放过的分辨率（历史 / 收藏卡片）：右上角，与左下角的备注徽标错开。 */
+.vod-card__res {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 2px 7px;
+  border-radius: var(--r-sm);
+  background: rgba(8, 10, 15, 0.72);
+  backdrop-filter: blur(4px);
+  color: rgba(241, 241, 246, 0.92);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* 封面底部的信息条（历史页）：两行小字压在渐变压暗层上。
+ * 放在封面里而不是标题下面 —— 标题行只留片名，长片名不再被副标题挤成两截。
+ * pointer-events:none 保证点封面任一处都等于点卡片（父级 button 的点击区）。 */
+.vod-card__meta {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 28px 10px 9px;
+  background: linear-gradient(
+    180deg,
+    rgba(6, 8, 12, 0) 0%,
+    rgba(6, 8, 12, 0.82) 38%,
+    rgba(6, 8, 12, 0.96) 100%
+  );
+  text-align: left;
+  pointer-events: none;
+}
+
+.vod-card__meta-line {
+  overflow: hidden;
+  color: #f2f4f9;
+  font-size: var(--fs-2xs);
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* 海报底部常有源站自带的白字/水印，纯靠渐变压暗不够，补一层投影保证可读。 */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* 第二行是辅助信息（线路 / 时间），压暗一档，视觉上不跟集数抢 */
+.vod-card__meta-line--dim {
+  color: rgba(238, 241, 247, 0.82);
+  font-size: var(--fs-2xs);
+}
+
+/* 有信息条时角标让到左上：底部留给信息条，右上角是删除键。 */
+.vod-card--meta .vod-card__badge {
+  top: 8px;
+  bottom: auto;
+}
+
+.vod-card__title {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.vod-card__sub {
+  margin-top: -4px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+

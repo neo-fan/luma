@@ -1,0 +1,149 @@
+/* ---------- 详情 ---------- */
+
+.detail-hero {
+  display: flex;
+  gap: 28px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.detail-poster {
+  flex: 0 0 var(--cover-w-hero);
+  width: var(--cover-w-hero);
+  aspect-ratio: var(--cover-ratio);
+  align-self: flex-start;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: #12161e;
+}
+
+.detail-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.detail-info {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 剧名 + 收藏星同一行：星紧贴片名右侧，垂直居中于标题行。 */
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detail-title {
+  margin: 0;
+  font-size: var(--fs-display);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.detail-line {
+  margin: 2px 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.detail-content {
+  margin: 14px 0 0;
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.section {
+  margin-top: 28px;
+}
+
+.section-title {
+  margin: 0 0 12px;
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+
+/* 直播分组标题后的「展开全部 N 个 / 收起」内联链接。 */
+.section-title__more {
+  margin-left: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent, #3b82f6);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.section-title__more:hover {
+  text-decoration: underline;
+}
+
+/* 直播分组吸顶标签栏：单组视图下在分组间快速切换，避免全部分组堆成一长页。 */
+.group-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  /* 34+ 分组折行铺开，全部可见；横向滚动条没有可视提示，
+   * 用户不知道右边还有分组（audit 实测曾溢出到 2542px）。 */
+  flex-wrap: wrap;
+  padding: 12px 0;
+  margin-bottom: 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.group-tabs .chip {
+  flex: none;
+}
+
+/* 分组标签上的频道数小字。 */
+.chip__count {
+  margin-left: 6px;
+  font-size: var(--fs-2xs);
+  opacity: 0.6;
+}
+
+.episode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 8px;
+}
+
+.episode {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  text-align: center;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.episode:hover {
+  background: var(--accent-soft);
+  border-color: rgba(110, 139, 255, 0.42);
+  color: var(--accent-ink);
+}
+
