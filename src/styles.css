@@ -2628,6 +2628,26 @@ textarea {
   font-size: var(--fs-sm);
 }
 
+/* 提示层在场时，把 ArtPlayer 自带的加载指示收起来。
+   `.art-loading` 里是 50×50 的方点阵 svg（`preserveAspectRatio` 居中于画面），
+   我们的 `.player-status__pulse` 是 72×72 的呼吸光环，两者同在中点——实测
+   中心差 16px、矩形大面积相交，视觉上就是两坨转圈叠着（11-14 用户反馈）。
+   提示消失后状态类移除，ArtPlayer 恢复默认行为（正常缓冲时仍由它显示 loading）。
+   特异性 (0,4,0) > ArtPlayer 的 `.art-video-player.art-loading-show .art-loading`，
+   不依赖注入顺序。 */
+.player-stage.is-busy .player-art .art-loading,
+.player-stage.is-error .player-art .art-loading {
+  display: none;
+}
+
+/* 中央大播放键（`.art-state`）同理：它和光环同在中点，这两段状态下点它没有
+   意义（地址还没拿到 / 正在换线），留着只会让提示层下面透出一个三角。
+   只动 `.art-state`，底部控制栏（暂停 / 刷新 / 全屏）完全不受影响。 */
+.player-stage.is-busy .player-art.art-mask-show .art-state,
+.player-stage.is-error .player-art.art-mask-show .art-state {
+  display: none;
+}
+
 /* 解析中 / 不可播放时的提示层：绝对定位盖在常驻容器之上，不改动它的 DOM。 */
 /* 加载 / 异常提示只在画面中间占一小块，不铺黑底、不遮挡控制栏。
    pointer-events:none 让鼠标事件穿透到下面的 ArtPlayer 控件（暂停/刷新/全屏

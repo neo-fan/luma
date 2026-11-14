@@ -102,8 +102,18 @@ export default function PlayerStage({
         : `已等待 ${waited}s…`
       : "";
 
+  /**
+   * 提示层在场时给舞台打状态标：ArtPlayer 自带的 loading（`.art-loading`）里是
+   * 50×50 的方点阵 svg，同样居中，会和我们 72×72 的光环叠成一坨（11-14 用户
+   * 反馈「加载提示和播放器加载 icon 重合」）。用类名而不是 CSS `:has()`，与项目
+   * 其他状态修饰保持一致，也避免依赖选择器支持度。
+   */
+  const stageClass = active
+    ? `player-stage ${active.busy ? "is-busy" : "is-error"}`
+    : "player-stage";
+
   return (
-    <div className="player-stage">
+    <div className={stageClass}>
       <div ref={containerRef} className="player-art" />
 
       {active ? (

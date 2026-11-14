@@ -23,6 +23,8 @@ docs/verification-config.md
 # ---- 编译产物（三类，各自唯一位置，均可重建）----
 # ① 前端：Vite 产出，tauri.conf.json 的 frontendDist 指向 ../dist
 dist/
+# tsc 增量构建缓存（`tsc -b` 在仓库根落一份，可重建）
+*.tsbuildinfo
 # ② Rust：Cargo 在每个 crate 根下产出 target/，含 debug/ release/ bundle/
 #    注意：根 target/ 不会出现（非 workspace），无需忽略。
 src-tauri/target/
