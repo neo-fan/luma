@@ -57,17 +57,40 @@ pub(crate) fn refresh_due(interval_hours: u32, checked_at: Option<u64>, now_ms: 
     }
 }
 
-/// failure line to every aggregate search. JS sources used to be blocked here
-/// too, but the qjs-runner now implements ESM loading + `assets://` resources
-/// (see `docs/js-support.md`), so `quickjs` joins cms/python as a runnable
-/// runtime. Blocked rows stay intact in `imported` so a policy change can be
-/// re-derived without losing the user's original config.
+/// 运行态禁用原因：返回 `Some` 的站点在 fan-out / 播放 / 前端一律不参与。
+///
+/// 目前两类：jar（Android dex，Win x64 无解，见 `docs/ARCHITECTURE.md`）和
+/// 「相对地址没解析出来」（粘贴文本 / 本地文件导入，见 `unresolved_relative`）。
+/// JS 源曾经也被一刀切封禁，qjs-runner 支持 ESM + `assets://` 之后已放开
+/// （见 `docs/js-support.md`）。被封的站点行在 `imported` 里原样保留，策略变化
+/// 可以重新派生，不丢用户配置。
 pub(crate) fn blocked_reason(site: &Value) -> Option<&'static str> {
+    if unresolved_relative(site) {
+        return Some(RELATIVE_BLOCK_REASON);
+    }
     match site.get("runtime").and_then(Value::as_str) {
         Some("jvm") => Some("jar 源为 Android dex，Windows 端暂不支持"),
         _ => None,
     }
 }
+
+/// 相对地址（`./py/x.py`、`../lib/x.m3u`、`/jar/x.jar`）只能相对配置来源 URL
+/// 解析。粘贴文本 / 本地文件导入没有 base，`resolve_ref` 会原样留下，运行态再去
+/// 抓就成了 `fetch ./py/douban.py failed` —— 用户只看到「首页内容加载失败」。
+/// 这类站点在运行态统一标成禁用并给出原因，导入原件一个字段都不动（重新从 URL
+/// 导入可以恢复）。分隔条 / 空 api 不算。
+fn unresolved_relative(site: &Value) -> bool {
+    let api = site.get("api").and_then(Value::as_str).unwrap_or("").trim();
+    if api.is_empty() {
+        return false;
+    }
+    api.starts_with("./") || api.starts_with("../") || api.starts_with('/')
+}
+
+/// 相对地址被封禁的原因（站点体检 / 导入提示直接展示这句）。
+pub(crate) const RELATIVE_BLOCK_REASON: &str =
+    "相对地址只有从 URL 导入的配置才能解析，请改用「导入 URL」";
+
 
 /// Reasons written by an *older* blocking policy. A row still carrying one of
 /// these is stale: the policy no longer blocks that runtime, so a restart must

@@ -1,6 +1,7 @@
 use super::*;
 use super::derive::*;
 use super::naming::*;
+use super::normalize::normalize_config;
 use serde_json::json;
 
     fn snapshot(id: &str, keys: &[&str]) -> ConfigSnapshot {
@@ -159,6 +160,51 @@ use serde_json::json;
         assert_eq!(runtime.headers, imported.headers);
         // Re-deriving from the same import is idempotent (no stacked policy).
         assert_eq!(derive_runtime(&imported).sites, runtime.sites);
+    }
+
+    /// 粘贴文本（origin=inline）没有 base URL，`./py/douban.py` 这类相对地址
+    /// 解析不出来；运行态必须把它标成禁用并给原因，否则首页只会显示
+    /// `fetch ./py/douban.py failed`。从 URL 导入同一份配置时必须能解析。
+    #[test]
+    fn relative_api_blocks_only_when_origin_has_no_base() {
+        let raw = json!({
+            "name": "盒子",
+            "sites": [
+                {"key": "py_rel", "name": "豆瓣[py]", "type": 3, "api": "./py/douban.py"},
+                {"key": "cms_abs", "name": "绝对", "type": 1, "api": "https://h/api.php/provide/vod"}
+            ]
+        });
+        let find = |snap: &ConfigSnapshot, key: &str| -> Value {
+            snap.sites
+                .iter()
+                .find(|site| site.get("key").and_then(Value::as_str) == Some(key))
+                .expect("site present")
+                .clone()
+        };
+
+        let inline: ConfigSnapshot =
+            serde_json::from_value(normalize_config(&raw, "inline").expect("normalize inline"))
+                .expect("inline snapshot");
+        let runtime = derive_runtime(&inline);
+        assert_eq!(find(&runtime, "py_rel").get("enabled").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            find(&runtime, "py_rel").get("disabledReason").and_then(Value::as_str),
+            Some(RELATIVE_BLOCK_REASON)
+        );
+        assert_eq!(find(&runtime, "cms_abs").get("enabled").and_then(Value::as_bool), Some(true));
+        // 导入原件一个字段都不改：相对地址原样保留，改从 URL 导入还能救回来。
+        assert_eq!(find(&inline, "py_rel").get("api").and_then(Value::as_str), Some("./py/douban.py"));
+
+        let remote: ConfigSnapshot =
+            serde_json::from_value(normalize_config(&raw, "https://ghfast.top/mirror/box.json").expect("normalize url"))
+                .expect("remote snapshot");
+        let runtime = derive_runtime(&remote);
+        assert_eq!(
+            find(&runtime, "py_rel").get("api").and_then(Value::as_str),
+            Some("https://ghfast.top/mirror/py/douban.py")
+        );
+        assert_eq!(find(&runtime, "py_rel").get("enabled").and_then(Value::as_bool), Some(true));
+        assert!(find(&runtime, "py_rel").get("disabledReason").is_none());
     }
 
     #[test]

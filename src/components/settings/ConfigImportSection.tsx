@@ -45,12 +45,23 @@ export default function ConfigImportSection({
       });
       onImported(snapshot);
       // configImport 返回的是运行配置（导入原件在后端单独保留）；把主动
-      // 屏蔽的数量报出来，用户才知道为什么站点比原始 json 里少。
+      // 屏蔽的数量和原因报出来，用户才知道为什么站点比原始 json 里少。
+      // 原因不止 jar 一种（还有「相对地址只能从 URL 导入」），所以不再写死文案，
+      // 直接把后端给的原因去重后展示。
       const usable = snapshot.sites.filter((site) => site.enabled).length;
       const blocked = snapshot.sites.filter((site) => site.disabledReason).length;
+      const reasons = [
+        ...new Set(
+          snapshot.sites
+            .map((site) => site.disabledReason)
+            .filter((reason): reason is string => Boolean(reason)),
+        ),
+      ];
       onNotice(
         `已导入「${snapshot.name}」，${usable} 个可用站点` +
-          (blocked > 0 ? `；已屏蔽 ${blocked} 个不支持的 jar 源` : ""),
+          (blocked > 0
+            ? `；已屏蔽 ${blocked} 个站点（${reasons.join("；")}）`
+            : ""),
       );
       log.info("config imported", {
         id: snapshot.id,
