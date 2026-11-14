@@ -115,7 +115,14 @@ luma/
     ├── prepare_runtime.py                 # 重建 jre/python-embed 等产物；含 Python 依赖安装 + .pth 修正
     ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
     ├── javap_conserve.py                  # jar 符号守恒检查（T-20）
-    └── probe_*.mjs / diag_*.mjs / audit_*.mjs / verify_*.mjs / run_probes.mjs   # CDP 窗口探针与一键回归
+    ├── inspect_config.py                  # 离线解码配置（图种 / 方言），只读不发网络
+    ├── check.py                           # 离线一键回归（7 项门禁）
+    ├── run_probes.mjs                     # 窗口探针一键回归（唯一入口）
+    ├── bundle_report.mjs                  # 前端体积对比
+    ├── probes/                            # 窗口探针：probe_*.mjs（50 个，按功能命名）
+    ├── diag/                              # 一次性排障：diag_*.mjs + dump_state.mjs
+    ├── verify/                            # 严格验收：verify_*.mjs（带断言与截图）
+    └── audit/                             # DOM/布局取证与全站扫描：audit_*.mjs、scan_*.mjs、scan_sources.py
 ```
 
 ## 3. Rust 后端分层（2026-11-11 物理归档）
@@ -138,7 +145,7 @@ luma/
 | 前端源码 | `src/` | React + TypeScript + Vite |
 | Rust 宿主源码 | `src-tauri/src/{infra,domain}/` | 命令、进程管理、proxy、运行时，按层归档 |
 | sidecar 源码 | `sidecars/{py,java,qjs-runner}/` | 入库；二进制产物目录见 §1 |
-| 验收脚本与 stub | `tests/e2e/`、`tools/probe_*.mjs` | 分阶段断言 + CDP 窗口探针 |
+| 验收脚本与 stub | `tests/e2e/`、`tools/probes/probe_*.mjs` | 分阶段断言 + CDP 窗口探针 |
 | 前端单测 | 纯函数放被测模块同目录 `*.test.ts`；跨模块契约放 `tests/frontend/` | 两种位置各司其职，跨模块契约不塞回 `src/` |
 | 离线工具 | `tools/` | 不参与构建、不发网络请求的开发辅助脚本（`prepare_runtime.py` 例外，参与随包运行时准备） |
 | 机制说明与专项报告 | `docs/`，文件名 ASCII kebab | 如 `js-support.md`、`size-report.md`；结论性长文不写进 `AGENTS.md`，只在其中留摘要与指针 |

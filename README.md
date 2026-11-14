@@ -157,7 +157,7 @@ src-tauri/          Rust 宿主（infra/ 底座 + domain/ 业务，#[path] 映�
 sidecars/           Python 适配层 · Java SpiderRunner · qjs-runner · 随包 js 资源
 contracts/          归一化契约唯一真源（TS / Rust / Python 三端校验）
 tests/              e2e 阶段断言 · 兼容检查 · 前端跨模块单测 · fixture
-tools/              离线回归（check.py）· 运行时准备 · CDP 探针
+tools/              离线回归（check.py）· 运行时准备 · CDP 探针（probes/ diag/ verify/ audit/）
 docs/               架构 · 开发 · 维护 · 发布 · 目录约定 · JS 支持 · 体积
 ```
 

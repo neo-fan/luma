@@ -16,7 +16,7 @@
 | `sidecars/py/main.py` | `VERSION` | Python sidecar `ping` 返回值 |
 | `README.md` / `CHANGELOG.md` | 版本号 | 文档一致性 |
 
-**不要再硬编码版本号到探针**。`tools/probe_settings_logs.mjs` 从 `../package.json` 动态读 `EXPECTED_VERSION`，并按 `formatVersion()` 规则派生 `DISPLAY_VERSION`。UI 展示层 `src/lib/version.ts::formatVersion()` 把 prerelease 缩写成 `.a/.b/.rc`，正式版原样显示。
+**不要再硬编码版本号到探针**。`tools/probes/probe_settings_logs.mjs` 从 `../../package.json` 动态读 `EXPECTED_VERSION`，并按 `formatVersion()` 规则派生 `DISPLAY_VERSION`。UI 展示层 `src/lib/version.ts::formatVersion()` 把 prerelease 缩写成 `.a/.b/.rc`，正式版原样显示。
 
 一键核对：
 

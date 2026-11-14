@@ -65,8 +65,8 @@ $env:NO_PROXY = 'localhost,127.0.0.1'
 - **target 选择**：Vite 调试页是 `webSocketDebuggerUrl` 对应 `port=1420` 且 `path` 为空的那个；播放页只按 `location.hash` 判断是否"在播放页"（常驻 `player-host` 层隐藏但仍留 DOM，取 video 用 `checkVisibility`）。
 - **9222 被残留进程占用** → WebView2 起不来，先确认 `(Get-Process luma).Count -eq 0`。
 - 常用 CDP 工具（需 dev 窗口 + Vite 在跑）：
-  - `node tools/audit_ui.mjs` / `node tools/audit_player_layout.mjs`：DOM/布局取证；
-  - `node tools/probe_*.mjs`：各功能窗口探针。
+  - `node tools/audit/audit_ui.mjs` / `node tools/audit/audit_player_layout.mjs`：DOM/布局取证；
+  - `node tools/probes/probe_*.mjs`：各功能窗口探针。
 
 ### 3.2 Rust 后端
 
@@ -140,7 +140,7 @@ node tools/run_probes.mjs --only=flv,history
 node tools/run_probes.mjs --list          # 列出全部探针及其标签
 ```
 
-探针脚本分类（tools/ 下）：`probe_*` 约 50 个、`verify_*` 8 个、`diag_*` 7 个、`scan_*` 2 个、`audit_*` 若干；多数依赖 `run_probes.mjs` 拉起的应用 + Vite，仅 `run_probes.mjs` 及各 `verify_*` 有 usage 头注释，其余看脚本顶部 docstring。
+探针按用途分目录（都在 `tools/` 下）：`probes/` 50 个功能探针、`verify/` 8 个严格验收、`diag/` 7 个一次性排障、`audit/` 4 个（DOM/布局取证 + 全站扫描）。多数依赖 `run_probes.mjs` 拉起的应用 + Vite；`tools/run_probes.mjs` 是唯一入口，其余脚本顶部有 usage 头注释。
 
 > 探针依赖桩服务 fixture（`strict_home` / `header_probe` 等）与临时内联配置，会自清理、不污染真实配置；`probe_ui` 会切到桩配置，默认不跑。
 >
