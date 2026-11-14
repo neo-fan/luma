@@ -578,6 +578,31 @@ export function usePlayerEngine({
                 if (disposed) {
                   return;
                 }
+                log.warn("flv error", { siteKey, vodId, detail });
+                /**
+                 * 直播 FLV 断流几乎总是「先 EOF 再重连」：mpegts 抛
+                 * `UnrecoverableEarlyEof` 的那一刻，缓冲里往往还有几秒画面在正常
+                 * 解码（实测 1920×1080 / readyState 4 还在播）。此时直接挂
+                 * 「播放失败」与用户看到的事实相反，所以给一个观察窗：画面还在
+                 * 走就交给看门狗（它按证据判死），真停住了才报错换线。
+                 */
+                if (siteKey === "live") {
+                  const startedAt = video.currentTime;
+                  window.setTimeout(() => {
+                    if (disposed || videoRef.current !== video) {
+                      return;
+                    }
+                    const stopped = video.paused
+                      ? video.readyState < 2
+                      : video.currentTime <= startedAt + 0.2;
+                    if (!stopped) {
+                      return;
+                    }
+                    setVideoError(`FLV 播放中断：${detail}`);
+                    void switchOrFailoverRef.current();
+                  }, 4_000);
+                  return;
+                }
                 setVideoError(`FLV 播放失败：${detail}`);
                 void switchOrFailoverRef.current();
               });

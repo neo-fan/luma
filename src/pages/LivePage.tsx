@@ -16,6 +16,8 @@ import { getLiveLine, setLiveLine } from "../lib/liveMemory";
 import { readLiveChannel, rememberLiveChannel } from "../lib/liveChannels";
 import { getEpgUrl } from "../lib/epgSettings";
 import { EXTERNAL_PLAY_ENABLED } from "../lib/features";
+import { notify } from "../lib/notify";
+import { noticeTtl } from "../lib/notice";
 import { resolutionBadge, resolutionDetail } from "../lib/resolution";
 import type { VideoMeta } from "../lib/resolution";
 import { api, errorMessage } from "../lib/invoke";
@@ -46,6 +48,11 @@ export default function LivePage({ lives }: LivePageProps) {
   const [pick, setPick] = useState<{ name: string; line: number } | null>(null);
 
   const [videoError, setVideoError] = useState("");
+  /**
+   * 结论性错误（这个频道的所有线路都试过了）：常驻到用户换台。
+   * 它本身就是「该你操作了」的指令，8s 后自己消失等于把唯一的出口藏起来。
+   */
+  const [fatalError, setFatalError] = useState("");
   const [slowNotice, setSlowNotice] = useState("");
   const [switchTip, setSwitchTip] = useState("");
   /** 自动换线路进行中：这段时间不铺红色错误条（有希望自愈）。 */
@@ -119,14 +126,24 @@ export default function LivePage({ lives }: LivePageProps) {
   const reloadRef = useRef<(() => void) | null>(null);
   reloadRef.current = () => {
     setVideoError("");
+    setFatalError("");
     setSwitchTip("");
     reload();
   };
 
   /** 本频道这一轮已经试过的线路：避免「A→B→A」来回切。 */
   const triedRef = useRef<Set<number>>(new Set());
+  /** 单线路「判死」的延迟结论计时器：期间出画就撤回，见 `switchOrFailover`。 */
+  const verdictTimer = useRef<number | null>(null);
   /** 自动换线的落点计算要读最新状态，用 ref 承接（内核只拿一个函数）。 */
   const switchOrFailoverRef = useRef<() => Promise<void>>(async () => {});
+
+  const clearVerdict = useCallback(() => {
+    if (verdictTimer.current !== null) {
+      window.clearTimeout(verdictTimer.current);
+      verdictTimer.current = null;
+    }
+  }, []);
 
   const selectLine = useCallback(
     (name: string, next: number, total: number) => {
@@ -137,6 +154,7 @@ export default function LivePage({ lives }: LivePageProps) {
       setLiveLine(sourceKey, name, idx);
       rememberLiveChannel(sourceKey, { name, line: idx });
       setVideoError("");
+      setFatalError("");
       setSwitchTip("");
       setPick({ name, line: idx });
     },
@@ -157,7 +175,19 @@ export default function LivePage({ lives }: LivePageProps) {
     const tried = triedRef.current;
     tried.add(lineIdx);
     if (total <= 1) {
-      setVideoError("该频道暂时无法播放，可以换一个频道。");
+      // 只有一条线路时没有可换的目标，但**一次 error 不构成结论**：直播分片
+      // 瞬时 5xx、hls 抖动都会先抛 error 再自愈——用户实测过「画面已经在放
+      // 1080P，顶上却挂着『该频道暂时无法播放』」。等 4s，期间恢复就撤回。
+      clearVerdict();
+      verdictTimer.current = window.setTimeout(() => {
+        verdictTimer.current = null;
+        const video = videoRef.current;
+        // readyState>=2 = 已有当前帧数据（哪怕用户暂停着），说明线路是通的。
+        if (video && video.readyState >= 2) {
+          return;
+        }
+        setVideoError("该频道暂时无法播放，可以换一个频道。");
+      }, 4_000);
       return;
     }
     for (let step = 1; step < total; step += 1) {
@@ -166,14 +196,15 @@ export default function LivePage({ lives }: LivePageProps) {
         continue;
       }
       setRecovering(true);
-      // 顺序不能反：`selectLine` 会清掉提示条（它默认由用户操作触发），
-      // 先切再写文案，用户才看得到这次是被自动换过去的。
+      // 自动换线是「后台已经帮你做了」的事件，不是页面状态：走全局 toast，
+      // 不占顶部横幅（那条位置留给需要用户处置的错误）。
       selectLine(channel.name, idx, total);
-      setSwitchTip(`线路 ${lineIdx + 1} 无法播放，已自动切到线路 ${idx + 1}/${total}`);
+      notify.warn(`线路 ${lineIdx + 1} 无法播放，已自动切到线路 ${idx + 1}/${total}`);
       return;
     }
     setRecovering(false);
-    setVideoError("该频道的所有线路都无法播放，请换一个频道。");
+    setFatalError("该频道的所有线路都无法播放，请换一个频道。");
+    setVideoError("");
   };
 
   /* 换频道：重置「试过的线路」与内核闸门；同一频道换线路只重置闸门。 */
@@ -181,14 +212,40 @@ export default function LivePage({ lives }: LivePageProps) {
     triedRef.current.clear();
     failoverStarted.current = false;
     lineSwitchStarted.current = false;
+    clearVerdict();
     setRecovering(false);
-  }, [channel?.name]);
+  }, [channel?.name, clearVerdict]);
 
   useEffect(() => {
     failoverStarted.current = false;
     lineSwitchStarted.current = false;
+    clearVerdict();
     setVideoMeta({ width: 0, height: 0 });
-  }, [lineIdx, playUrl]);
+  }, [lineIdx, playUrl, clearVerdict]);
+
+  useEffect(() => clearVerdict, [clearVerdict]);
+
+  /**
+   * 出画即撤回错误：`videoWidth > 0` 说明已经有画面，此时「无法播放」这类
+   * 上一轮的判决必然过期。慢提示同理，一并收掉。
+   */
+  useEffect(() => {
+    if (videoMeta.width > 0) {
+      clearVerdict();
+      setVideoError("");
+      setFatalError("");
+      setSlowNotice("");
+    }
+  }, [videoMeta.width, clearVerdict]);
+
+  /** 「解析来自某解析器」这类附带说明是告知，按统一时长表走。 */
+  useEffect(() => {
+    if (!switchTip) {
+      return;
+    }
+    const timer = window.setTimeout(() => setSwitchTip(""), noticeTtl("info"));
+    return () => window.clearTimeout(timer);
+  }, [switchTip]);
 
   usePlayerEngine({
     containerRef,
@@ -346,10 +403,16 @@ export default function LivePage({ lives }: LivePageProps) {
       </header>
 
       {switchTip ? <p className="tip">{switchTip}</p> : null}
-      {videoError && !recovering ? <ErrorBar message={videoError} /> : null}
+      {/* 两类错误分开：
+          · tone="warn"＝「此刻这条线路这一下不行」，画面可能已在别的线路上
+            播着，8s 带倒计时自动收起（时长见 lib/notice.ts）；
+          · 默认 tone="error"＝「该频道所有线路都试过了」，这是要用户动手的
+            结论，常驻到换台为止。 */}
+      {videoError && !recovering ? <ErrorBar message={videoError} lifetime="timed" /> : null}
       {channel && resolveError && !recovering ? (
-        <ErrorBar message={`播放地址解析失败：${resolveError}`} />
+        <ErrorBar message={`播放地址解析失败：${resolveError}`} lifetime="timed" />
       ) : null}
+      {fatalError && !recovering ? <ErrorBar message={fatalError} /> : null}
 
       <div className="live-layout">
         <LiveChannelRail

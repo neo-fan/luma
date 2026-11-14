@@ -2289,6 +2289,9 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  /* 倒计时线贴底，需要定位上下文；圆角外露的一律裁掉 */
+  position: relative;
+  overflow: hidden;
   margin-bottom: 16px;
   padding: 10px 14px;
   border: 1px solid rgba(255, 123, 131, 0.22);
@@ -2297,6 +2300,63 @@ textarea {
   background: rgba(255, 123, 131, 0.07);
   color: #ffb0b5;
   font-size: var(--fs-sm);
+}
+
+/* 剩余秒数：告诉用户「这条警告会自己走」，而不是等它突然消失。
+   tabular-nums 防数字位数变化时整行文字左右跳。 */
+.notice-countdown {
+  flex: none;
+  min-width: 22px;
+  text-align: right;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 生命线：剩余时长的可视化。秒数与进度由同一个时钟驱动（见
+   useNoticeCountdown），所以「6s + 75%」这类错位不会出现。
+   position:absolute 相对最近的定位祖先（.error-bar / .notice-toast），
+   因此 toast 与页内横幅共用同一份实现，不需要复制规则。 */
+.notice-life {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.45;
+  transition: width 1s linear;
+}
+
+/* ---------- 全局 toast（sonner）：与页内提示同一套生命线 ---------- */
+
+/* sonner 的 toast 默认不是定位上下文，进度线要贴它底边。 */
+[data-sonner-toast].notice-toast {
+  position: relative;
+  overflow: hidden;
+}
+
+/* 同款 keyframes：宽度从满到零，时长来自 --notice-life（notify.ts 按
+   NOTICE_TTL 注入）。常驻提示注入 0ms，线瞬间走完即不可见。 */
+@keyframes notice-life {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+[data-sonner-toast].notice-toast::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.45;
+  transform-origin: left center;
+  animation: notice-life var(--notice-life, 4000ms) linear forwards;
 }
 
 .error-bar__text {

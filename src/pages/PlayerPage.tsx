@@ -1004,9 +1004,12 @@ export default function PlayerPage({
       />
 
       {switchTip ? <p className="tip">{switchTip}</p> : null}
-      {videoError && !recovering ? <ErrorBar message={videoError} /> : null}
+      {/* 与直播页同一口径：播放失败/解析失败是「这一下这条线路不行」的时效
+          结论（自动换源可能已经把你救回来了），8s 带倒计时收起；hover 面板
+          上时倒计时冻结。真正要用户决策的错误由 PlayerStage 面板常驻呈现。 */}
+      {videoError && !recovering ? <ErrorBar message={videoError} lifetime="timed" /> : null}
       {resolveError && !recovering ? (
-        <ErrorBar message={`播放地址解析失败：${resolveError}`} />
+        <ErrorBar message={`播放地址解析失败：${resolveError}`} lifetime="timed" />
       ) : null}
 
       {stageNode}

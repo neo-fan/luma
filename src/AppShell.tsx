@@ -14,7 +14,9 @@ import Spinner from "./components/Spinner";
 import NavIcon from "./components/NavIcon";
 import CommandPalette from "./components/CommandPalette";
 import PlayerHost from "./components/player/PlayerHost";
-import { Toaster, toast } from "sonner";
+import { Toaster } from "sonner";
+import { notify } from "./lib/notify";
+import { NOTICE_TTL } from "./lib/notice";
 import { usableHomeSites } from "./lib/format";
 import { api, errorMessage } from "./lib/invoke";
 import { pageCache } from "./lib/pageCache";
@@ -236,7 +238,7 @@ export default function AppShell() {
           return;
         }
         handleImported(outcome.snapshot);
-        toast.success(`「${outcome.name}」订阅已自动更新：${outcome.enabled} 个可用站点`);
+        notify.success(`「${outcome.name}」订阅已自动更新：${outcome.enabled} 个可用站点`);
         log.info("config auto refreshed", {
           id: outcome.configId,
           sites: outcome.sites,
@@ -429,7 +431,7 @@ export default function AppShell() {
       <Toaster
         theme="dark"
         position="top-right"
-        duration={4000}
+        duration={NOTICE_TTL.info}
         closeButton
         toastOptions={{
           style: {
