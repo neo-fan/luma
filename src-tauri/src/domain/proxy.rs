@@ -7,12 +7,13 @@
 //! `LUMA_PROXY_ALLOW_LOCAL=1` is set (development and stub tests only).
 
 use crate::error::{code, AppError};
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{RawQuery, State};
 use axum::http::{HeaderMap, HeaderName, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
+use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -331,22 +332,99 @@ async fn handle_proxy(
             .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"));
     }
 
-    let mut builder = Response::builder().status(status);
-    for name in DOWNSTREAM {
-        if let Some(value) = upstream.headers().get(name) {
-            if let Ok(text) = value.to_str() {
-                builder = builder.header(name, text);
+    // 伪装分片剥离：先把头部 2KB 读出来看是不是「PNG 头 + TS 负载」。
+    // 带 Range 的请求（hls.js 直取字节段）不碰，避免把偏移算错。
+    //
+    // 注意：`bytes_stream()` 会拿走 `upstream` 的所有权，所以响应头必须在
+    // 建流之前抓完。
+    let carried: Vec<(&'static str, String)> = DOWNSTREAM
+        .iter()
+        .filter_map(|name| {
+            upstream
+                .headers()
+                .get(*name)
+                .and_then(|value| value.to_str().ok())
+                .map(|text| (*name, text.to_string()))
+        })
+        .collect();
+    let wants_range = headers.contains_key("range");
+    let mut upstream_stream = upstream.bytes_stream();
+    let mut head: Vec<u8> = Vec::new();
+    let mut stripped = false;
+    if !wants_range {
+        const PEEK: usize = 2048;
+        while head.len() < PEEK {
+            match upstream_stream.next().await {
+                Some(Ok(chunk)) => head.extend_from_slice(&chunk),
+                Some(Err(err)) => {
+                    return deny(StatusCode::BAD_GATEWAY, &format!("upstream body failed: {err}"))
+                }
+                None => break,
             }
+        }
+        if let Some(offset) = disguised_ts_offset(&head) {
+            tracing::info!(
+                url = %target,
+                offset,
+                peeked = head.len(),
+                "stripped disguised prefix from media segment"
+            );
+            head.drain(..offset);
+            stripped = true;
         }
     }
 
-    let stream = upstream.bytes_stream();
+    let mut builder = Response::builder().status(status);
+    for (name, value) in carried {
+        // 剥离后长度/字节段全变了，这些头必须丢弃（cache 的 etag 也不再可信）。
+        if stripped && matches!(name, "content-length" | "content-range" | "accept-ranges" | "etag")
+        {
+            continue;
+        }
+        builder = builder.header(name, value);
+    }
+    if stripped {
+        builder = builder.header("content-type", "video/mp2t");
+    }
+
+    // 回放已读头部，再接上游剩余流；`head` 为空时等价于原样透传。
+    let body_stream = stream::once(async move { Ok::<Bytes, reqwest::Error>(Bytes::from(head)) })
+        .chain(upstream_stream);
     builder
         .header("access-control-allow-origin", "*")
         .header("access-control-expose-headers", "*")
         .header("x-tvbox-proxy", "1")
-        .body(Body::from_stream(stream))
+        .body(Body::from_stream(body_stream))
         .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"))
+}
+
+/// 网盘 CDN 的防盗链伪装：分片本体前挂一个 1×1 PNG，真实数据从 IEND 之后开始。
+///
+/// 2026-11-14 实测 py_bubuzhuiju 的 PAN1 / NBY 线路：分片是 112 字节 PNG 头
+/// （`IHDR` 1×1、`IEND` 在 offset 112）+ 完整 MPEG-TS（offset 120 起是 0x47
+/// 同步字节）。Fongmi 用 ExoPlayer，它的 `TsExtractor` 会扫描同步字节自动跳过
+/// 垃圾前缀；hls.js 不会跳，从第 0 字节按 TS 解析必然 `fragParsingError`。
+/// 这里在反代层把前缀剥掉，让 webview 侧看到干净的 TS。
+///
+/// 只认「PNG 签名 + IEND 在前 1KB + 其后连续三个 0x47」这一种形态，真图片
+/// （海报）不会误判：它们的 IEND 在文件尾部，且后面没有 TS 同步字节。
+fn disguised_ts_offset(buffer: &[u8]) -> Option<usize> {
+    const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    const TS_PACKET: usize = 188;
+    if buffer.len() < 256 || !buffer.starts_with(&PNG_MAGIC) {
+        return None;
+    }
+    let iend = buffer.windows(4).position(|w| w == b"IEND")?;
+    // IEND 数据段结构：4 字节长度 + "IEND" + 4 字节 CRC。
+    let start = iend + 8;
+    if start + 3 * TS_PACKET > buffer.len() {
+        return None;
+    }
+    (start..=buffer.len() - 3 * TS_PACKET).find(|&offset| {
+        buffer[offset] == 0x47
+            && buffer[offset + TS_PACKET] == 0x47
+            && buffer[offset + 2 * TS_PACKET] == 0x47
+    })
 }
 
 /// Decode a percent-encoded fragment (TVBox embeds URL-encoded header values,
@@ -975,5 +1053,53 @@ mod tests {
         let preview = preview_text(text, 12);
         assert!(!preview.contains('\n'), "{preview}");
         assert!(preview.chars().count() <= 12, "{preview}");
+    }
+
+    /// 造一段「1×1 PNG 头 + n 个 TS 包」的伪装分片（PAN1/NBY 线路的真实形态）。
+    fn disguised_segment() -> Vec<u8> {
+        let mut png: Vec<u8> = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+        png.extend_from_slice(&[0, 0, 0, 13]); // IHDR 长度
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]); // 1×1 RGBA
+        png.extend_from_slice(&[0x1f, 0x15, 0xc4, 0x89]); // IHDR CRC
+        png.extend_from_slice(&[0, 0, 0, 0]); // IEND 长度
+        png.extend_from_slice(b"IEND");
+        png.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]); // IEND CRC
+        let prefix = png.len();
+        let mut out = png;
+        for i in 0..6 {
+            out.push(0x47); // 同步字节
+            out.extend(std::iter::repeat(0x20u8).take(187));
+            out[prefix + i * 188] = 0x47;
+        }
+        out
+    }
+
+    #[test]
+    fn disguised_ts_offset_strips_png_prefix() {
+        let body = disguised_segment();
+        let offset = disguised_ts_offset(&body).expect("should detect disguise");
+        assert_eq!(body[offset], 0x47);
+        assert_eq!(offset, body.windows(4).position(|w| w == b"IEND").unwrap() + 8);
+    }
+
+    #[test]
+    fn disguised_ts_offset_ignores_real_png_and_plain_ts() {
+        // 真实海报：PNG 签名 + IEND 在尾部，后面没有 TS 同步字节。
+        let mut poster: Vec<u8> = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+        poster.extend_from_slice(&[0u8; 600]);
+        poster.extend_from_slice(b"IEND");
+        poster.extend_from_slice(&[0u8; 4]);
+        assert!(disguised_ts_offset(&poster).is_none());
+
+        // 干净 TS：没有 PNG 签名。
+        let mut ts = vec![0x47u8; 1024];
+        for i in 1..1024 {
+            ts[i] = 0x20;
+        }
+        for k in (0..1024).step_by(188) {
+            ts[k] = 0x47;
+        }
+        assert!(disguised_ts_offset(&ts).is_none());
     }
 }

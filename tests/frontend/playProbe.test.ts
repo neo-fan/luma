@@ -66,4 +66,54 @@ describe("probePlayable", () => {
     });
     await expect(probePlayable("http://127.0.0.1:9978/proxy?url=z", "hls")).resolves.toBe(false);
   });
+
+  /**
+   * 占位图假流：清单是合法 #EXTM3U，但分片是 1×1 透明 PNG（实测 PAN1/NBY）。
+   * 只校验清单头会把死线路判活，用户先看十几秒转圈才被看门狗判死。
+   */
+  it("rejects a manifest whose first segment is a placeholder image", async () => {
+    let call = 0;
+    g.fetch = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        return { ok: true, status: 200, text: async () => "#EXTM3U\n#EXTINF:22,\nseg0.ts\n" };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => "image/png" },
+        body: { cancel: async () => {} },
+      };
+    });
+    await expect(probePlayable("http://127.0.0.1:9978/proxy?url=x", "hls")).resolves.toBe(false);
+  });
+
+  it("accepts a manifest whose first segment is real MPEG-TS", async () => {
+    let call = 0;
+    g.fetch = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        return { ok: true, status: 200, text: async () => "#EXTM3U\n#EXTINF:6,\nseg0.ts\n" };
+      }
+      return {
+        ok: true,
+        status: 206,
+        headers: { get: () => "video/mp2t" },
+        body: { cancel: async () => {} },
+      };
+    });
+    await expect(probePlayable("http://127.0.0.1:9978/proxy?url=x", "hls")).resolves.toBe(true);
+  });
+
+  it("rejects a manifest whose first segment 404s", async () => {
+    let call = 0;
+    g.fetch = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        return { ok: true, status: 200, text: async () => "#EXTM3U\n#EXTINF:6,\nseg0.ts\n" };
+      }
+      return { ok: false, status: 404, headers: { get: () => null }, body: { cancel: async () => {} } };
+    });
+    await expect(probePlayable("http://127.0.0.1:9978/proxy?url=x", "hls")).resolves.toBe(false);
+  });
 });
