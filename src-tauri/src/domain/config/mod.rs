@@ -1,14 +1,14 @@
 //! Configuration import and snapshot store (spec T-05).
 //!
-//! Parsing/decrypt/normalization stay in `sidecars/py`; this module only
-//! fetches payloads, forwards them to the adapter and keeps snapshots.
+//! 解密、JSONC 清洗、归一化与多仓合并都在本模块内完成（decrypt / normalize）；
+//! 这里只负责取载荷、走完流程、落快照。曾经这三步是 sidecar 往返，导入排在
+//! 爬虫队列后面时会撞 15s 超时（见 1.0.2 与 1.0.3 的变更记录）。
 
-use crate::bridge;
 use crate::db::{ConfigWrite, Db};
 use crate::error::{code, AppError};
 use crate::ghproxy;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -645,10 +645,12 @@ pub async fn gh_proxy_test() -> Vec<ghproxy::ProbeResult> {
 // ---- 子模块 ---------------------------------------------------------------
 // 命令层留在本文件（Tauri 的 `generate_handler!` 需要宏在同一模块作用域，
 // 跨模块 re-export 会把 `__cmd__*` 宏漏掉）；子模块只放实现与 DTO。
+mod decrypt;
 mod derive;
 mod github;
 mod import;
 mod naming;
+mod normalize;
 mod refresh;
 
 pub(crate) use derive::blocked_reason;

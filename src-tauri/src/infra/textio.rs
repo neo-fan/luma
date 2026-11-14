@@ -75,6 +75,25 @@ pub fn read_file(path: &Path) -> std::io::Result<String> {
     Ok(decode(&std::fs::read(path)?))
 }
 
+/// 百分号解码后的字节 → 字符串：只做 UTF-8 与 GB18030 两档，解不出来就返回
+/// `None` 让调用方保留原始字符串。
+///
+/// 这里刻意不认 BOM：URL 片段里的 `%FF%FE` 是坏字节，不是 UTF-16 文本，把它
+/// 当 BOM 吞掉会静默丢内容（`proxy::tests` 有一条用例守着这个边界）。
+pub fn decode_relaxed(bytes: &[u8]) -> Option<String> {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return Some(text.to_string());
+    }
+    let (text, _, had_errors) = GB18030.decode(bytes);
+    // GB18030 太能「解」了：`%FF%FE` 会解成空串，坏字节会解成 U+FFFD。
+    // 这两种都不算成功，交回原始字符串比静默吞掉更诚实。
+    if had_errors || text.is_empty() || text.contains('\u{fffd}') {
+        None
+    } else {
+        Some(text.into_owned())
+    }
+}
+
 /// 从 `text/html; charset=gbk` 这类头里抽出 charset 值。
 pub fn charset_from_content_type(content_type: &str) -> Option<String> {
     content_type.split(';').find_map(|part| {
@@ -155,6 +174,7 @@ mod tests {
         let text = decode(&[0x81, 0x81, 0xFF]);
         assert!(text.contains('\u{fffd}') || !text.is_empty());
     }
+
 
     #[test]
     fn empty_input_is_empty_string() {

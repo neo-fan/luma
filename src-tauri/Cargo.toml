@@ -37,6 +37,13 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # 这里自己收字节再按 BOM → UTF-8 → 声明 → GB18030 的顺序洗，规则集中在
 # `infra/textio.rs`，测试也一起放在那里。
 encoding_rs = "0.8"
+# 配置快照 id = sha1(origin)[..12]，与旧 Python 适配层一致（换算法会让所有
+# 已导入配置换 id，收藏与历史全部对不上）。
+sha1 = "0.10"
+base64 = "0.22"
+flate2 = "1"
+# importedAt 用 RFC3339；只借用来格式化，不碰时区数据库。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 url = "2"

@@ -287,7 +287,7 @@ pub(super) fn percent_decode(input: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    crate::textio::decode(&out)
+    crate::textio::decode_relaxed(&out).unwrap_or_else(|| input.to_string())
 }
 
 /// Parse a TVBox `vod_pic` that may carry inline request headers.

@@ -1,6 +1,7 @@
 use super::*;
 use super::derive::*;
 use super::naming::*;
+use serde_json::json;
 
     fn snapshot(id: &str, keys: &[&str]) -> ConfigSnapshot {
         let sites: Vec<Value> = keys
@@ -596,12 +597,16 @@ use super::naming::*;
         );
     }
 
-    /// 导入预算必须比爬虫的默认预算宽：1.0.2 之前两者都是 15s，导入刚好排在
-    /// 一个占满 worker 的爬虫调用后面时，用户只会看到「config.decrypt exceeded
-    /// 15000ms」，一点余量都没有。
+    /// 导入链路必须**不**依赖 sidecar 预算：1.0.2 之前解密/归一化都是适配层调用，
+    /// 导入排在一个占满 worker 的爬虫调用后面就只剩一句「config.decrypt exceeded
+    /// 15000ms」。2026-11-14 把这三步搬进 Rust 后，导入是纯计算，这里守住「不再
+    /// 回到 sidecar」这个前提。
     #[test]
-    fn config_budget_is_wider_than_the_spider_default() {
-        assert!(super::import::CONFIG_CALL_TIMEOUT > crate::process::DEFAULT_CALL_TIMEOUT);
+    fn import_path_stays_in_process() {
+        let source = std::fs::read_to_string("src/domain/config/import.rs").unwrap_or_default();
+        assert!(!source.contains("config.decrypt\""), "import must not call the adapter");
+        assert!(!source.contains("config.normalize\""));
+        assert!(!source.contains("config.mergeRepos\""));
     }
 
     #[test]

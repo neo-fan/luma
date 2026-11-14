@@ -10,12 +10,15 @@
 
 ### 修复
 
+- **没有导入配置时进入「直播」页白屏**：`src/routes.tsx` 的 `LivePageRoute` 用 `useAppStore((s) => s.cache?.lives ?? [])` 取直播源，`cache` 为 null 时选择器每次渲染都返回一个新数组，zustand 的 `Object.is` 比较永远判「变了」，于是无限重渲染直到 React 抛 `Maximum update depth exceeded`。改为 `selectLives` + 模块级 `EMPTY_LIVES` 常量（与站点选择器的 `EMPTY_SITES` 同法），并补 3 条单测锁住「空 cache 时引用恒定」。
 - **导入报 `malformed frame: Expecting property name enclosed in double quotes: line 1 column 8189`**：Python 适配层的 stdin/stdout 在 Windows 上默认按**系统 ANSI 代码页**解码（中文系统是 cp936/GBK），宿主写入的 UTF-8 帧被按 GBK 解码，中文站名处字节错位，`json.loads` 在 ~8 KiB 处失败。1.0.1 时这类坏帧被静默丢弃，表现为「`config.decrypt exceeded 15000ms`」；1.0.2 补上坏帧回帧后，同一个根因才以 `malformed frame` 现形。现场日志特征：`config decrypt bytes=31255 took_ms=2 ok=false` 紧跟一条 `INTERNAL / malformed frame`。
 - 适配层启动即把 `stdin` / `stdout` / `stderr` 固定为 UTF-8（`reconfigure`），并把 `PYTHONUTF8` / `PYTHONIOENCODING` 写入环境变量，让 `pyspider` 派生的子进程继承；宿主 spawn sidecar 时也注入这两个变量（新增 `Guarded::spawn_with_env`），解释器从启动就是 UTF-8 模式。
 - `sidecars/py/pyrun.py` 改成按字节读写（`json.load(sys.stdin.buffer)` + `sys.stdout.buffer.write(..., "utf-8")`），彻底不依赖 locale；JVM runner 早已显式用 UTF-8，无需改动。
 
 ### 工程
 
+- **配置解密与归一化搬进 Rust**：`config.decrypt` / `config.normalize` / `config.mergeRepos` 以前每次导入都要绕一趟 sidecar（排队、序列化、超时预算都在这条链上），现在是进程内的纯函数调用 —— 新增 `src-tauri/src/domain/config/decrypt.rs`（明文/图片马/XOR/base64/gzip/数字前缀/JSONC 清洗）与 `normalize.rs`（别名、相对地址解析、headers 表、lives/parses、多仓合并），`import.rs` 只剩取字节、解密、归一化三步。真实 `box.json` 导入实测 144 ms（直连）／562 ms（走加速），101 站点 / 17 直播 / 21 解析。两条往字节里塞字符的路径（`strip_jsonc`、`drop_trailing_commas`）改成按字符走，否则中文站名会被拆成替换符。
+- **外部文本一律洗成 UTF-8 再进内存**：新增 `src-tauri/src/infra/textio.rs`（BOM → 严格 UTF-8 → `Content-Type` 声明 charset → GB18030 兜底 → 宽松解码），接入配置拉取、配置文件读取、Python 源码快照、qjs 引擎脚本、反代 m3u8 与百分号解码、诊断导出。`reqwest` 不带 `charset` 特性，`Response::text()` 恒按 UTF-8 硬解，中文圈配置（GBK/BOM）以前会整份变问号。
 - `tests/e2e/adapter_isolation.py` 增至 **14 项**：新增「`PYTHONIOENCODING=gbk` / `cp936` 下 14 KB 中文配置仍能原样解出」两条。用修复前的 `main.py` 跑这两条必失败（乱码或拆帧错位），修复后全绿。
 - 版本号五处同步至 `1.0.3`（`package.json` 为唯一来源）。
 
