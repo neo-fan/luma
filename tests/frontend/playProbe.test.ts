@@ -6,7 +6,7 @@
  * 死线路当成可用线路切过去，hls.js 拿到 JSON 后报 manifestParsingError。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { probePlayable } from "../../src/lib/playProbe";
+import { probeLineVerdict, probePlayable } from "../../src/lib/playProbe";
 
 const g = globalThis as unknown as Record<string, unknown>;
 
@@ -115,5 +115,43 @@ describe("probePlayable", () => {
       return { ok: false, status: 404, headers: { get: () => null }, body: { cancel: async () => {} } };
     });
     await expect(probePlayable("http://127.0.0.1:9978/proxy?url=x", "hls")).resolves.toBe(false);
+  });
+});
+
+/**
+ * 三态判定：播放页「卡住要不要换走」只认 `dead`。
+ *
+ * 2026-11-14 用户实测：某条线路 20 秒后才出画，却被旧的「12 秒静默即判死」
+ * 跳到了别的源。时间不是证据——超时只说明「还没回话」，必须归 unknown。
+ */
+describe("probeLineVerdict", () => {
+  it("says dead only when the source clearly refuses", async () => {
+    stubFetch(async () => ({ ok: false, status: 403, text: async () => "" }));
+    await expect(probeLineVerdict("http://x/proxy?url=a", "hls")).resolves.toBe("dead");
+  });
+
+  it("says ok for a real manifest", async () => {
+    stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => "#EXTM3U\n#EXTINF:4,\nseg.ts\n",
+    }));
+    await expect(probeLineVerdict("http://x/proxy?url=a", "hls")).resolves.toBe("ok");
+  });
+
+  it("says unknown when the request is aborted by our own timeout", async () => {
+    stubFetch(async () => {
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      throw error;
+    });
+    await expect(probeLineVerdict("http://x/proxy?url=a", "hls", 50)).resolves.toBe("unknown");
+  });
+
+  it("says unknown on a transient connection failure", async () => {
+    stubFetch(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    await expect(probeLineVerdict("http://x/proxy?url=a", "hls", 50)).resolves.toBe("unknown");
   });
 });

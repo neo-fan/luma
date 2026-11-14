@@ -28,7 +28,8 @@ import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { registerPlayer, stopActivePlayer } from "../lib/playerRegistry";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
-import { describeHlsError } from "../lib/playErrors";
+import { describeHlsError, isTimingFailure } from "../lib/playErrors";
+import { probeLineVerdict } from "../lib/playProbe";
 import { readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import type { VideoMeta } from "../lib/resolution";
 import type { PlayResolved } from "../types/tvbox";
@@ -146,6 +147,13 @@ export interface UsePlayerEngineArgs {
    * 的浮层都必须挂进这个节点。
    */
   onPlayerRoot?: (root: HTMLDivElement | null) => void;
+  /**
+   * 「还没出画但确实在加载」的软提示（null = 撤掉）。
+   *
+   * 与 `setVideoError` 严格分开：错误条是红底、语义是「坏了」；慢源只是慢，
+   * 不该出现红色错误条，更不该触发换线。文案由内核按实际等待秒数生成。
+   */
+  onSlowNotice?: (text: string | null) => void;
   setVideoError: Dispatch<SetStateAction<string>>;
 }
 
@@ -170,10 +178,14 @@ export function usePlayerEngine({
   vodId,
   onVideoMeta,
   onPlayerRoot,
+  onSlowNotice,
   setVideoError,
 }: UsePlayerEngineArgs): void {
   /** 控制栏「下一集」按钮的 DOM：mounted 时拿到，供禁用态同步用。 */
   const nextButtonRef = useRef<HTMLElement | null>(null);
+  /** 软提示回调放 ref：它的身份每次渲染都会变，不能进内核 effect 的依赖。 */
+  const slowNoticeRef = useRef(onSlowNotice);
+  slowNoticeRef.current = onSlowNotice;
 
   /**
    * 剧集列表是异步到的：播放器实例创建时 lines 可能还是空的，到达 / 切到最后一集
@@ -313,6 +325,33 @@ export function usePlayerEngine({
      * 分辨率以 `<video>` 解码出来的 `videoWidth/videoHeight` 为准。
      */
     let declaredHeight = 0;
+    /**
+     * 最近一次「确认源还在动」的时刻。
+     *
+     * 停顿判定不能只看 `<video>` 的 `progress`：hls.js 走 MSE，数据是 JS 推
+     * 进去的，首个大分片（9MB+ 的 AES-128 源）下载期缓冲毫无变化，`progress`
+     * 一次都不发——旧实现 12 秒一到就判死跳走，而实测这类源 18 秒能正常出画。
+     * 因此把 hls 自己的加载事件（清单 / 子清单 / 分片 / 缓冲）也当作生命信号。
+     */
+    let lastAliveAt = Date.now();
+    /**
+     * 软提示只在「显示中」才发撤除信号：`timeupdate` 每秒会来好几次，每条都
+     * 调一次上层 setState 虽然会被 React 合并，但白跑一遍 render 没必要。
+     */
+    let slowNoticeShown = false;
+    const showSlowNotice = (text: string) => {
+      slowNoticeShown = true;
+      slowNoticeRef.current?.(text);
+    };
+    const clearSlowNotice = () => {
+      if (slowNoticeShown) {
+        slowNoticeShown = false;
+        slowNoticeRef.current?.(null);
+      }
+    };
+    const noteAlive = () => {
+      lastAliveAt = Date.now();
+    };
     const art = new Artplayer({
       container,
       url: resolved.proxyUrl,
@@ -372,7 +411,21 @@ export function usePlayerEngine({
             }
             return;
           }
-          const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+          // 时间预算按「首个分片可能要下 20 秒」设定（AES-128 大分片实测
+          // 11.8s，慢时更久），fatal 型超时改由看门狗复核——默认 10s 的
+          // manifestLoadingTimeOut 会把能播的慢源直接判成 fatal。
+          const hls = new Hls({
+            enableWorker: true,
+            lowLatencyMode: true,
+            manifestLoadingTimeOut: 20_000,
+            manifestLoadingMaxRetry: 3,
+            manifestLoadingRetryDelay: 1_000,
+            levelLoadingTimeOut: 20_000,
+            levelLoadingMaxRetry: 3,
+            fragLoadingTimeOut: siteKey === "live" ? 20_000 : 45_000,
+            fragLoadingMaxRetry: 4,
+            fragLoadingRetryDelay: 1_000,
+          });
           hls.loadSource(url);
           hls.attachMedia(video);
           // hls-control 插件约定从 art.hls 读 levels / currentLevel。
@@ -386,6 +439,18 @@ export function usePlayerEngine({
             hls.destroy();
           };
           instance.on("destroy", () => teardownDecoders?.());
+          // 生命信号：清单、子清单、分片任何一步真实拿到数据都算「源在动」，
+          // 即便此刻还没凑够一帧解码（冷启大分片就是这个状态）。
+          const noteHlsAlive = () => {
+            if (!disposed) {
+              noteAlive();
+            }
+          };
+          hls.on(Hls.Events.MANIFEST_LOADING, noteHlsAlive);
+          hls.on(Hls.Events.MANIFEST_LOADED, noteHlsAlive);
+          hls.on(Hls.Events.LEVEL_LOADED, noteHlsAlive);
+          hls.on(Hls.Events.FRAG_LOADED, noteHlsAlive);
+          hls.on(Hls.Events.FRAG_BUFFERED, noteHlsAlive);
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (disposed) {
               return;
@@ -449,6 +514,13 @@ export function usePlayerEngine({
               details: String(data.details ?? ""),
               type: String(data.type ?? ""),
             });
+            if (isTimingFailure(data.details)) {
+              // 只是「等太久」：不换源、不报红条，交给看门狗复核。
+              // 复核拿到明确失败（HTTP 错误 / 内容不是 m3u8）才跳。
+              // 刻意**不** noteAlive：这只是「没等到」，不是「有数据在流动」，
+              // 记成生命信号会让反复超时的死线永远逃过看门狗。
+              return;
+            }
             setVideoError(`HLS 播放失败：${reason}，正在换源`);
             void switchOrFailoverRef.current();
           });
@@ -500,6 +572,8 @@ export function usePlayerEngine({
               );
               player.attachMediaElement(video);
               player.load();
+              // 生命信号：FLV 的加载完成事件，避免「分片在灌但缓冲还没长」被误判。
+              player.on("LOADING_COMPLETE", noteAlive);
               player.on(mpegts.Events.ERROR, (_type: string, detail: string) => {
                 if (disposed) {
                   return;
@@ -709,39 +783,138 @@ export function usePlayerEngine({
     // 死 CDN 会让 hls.js 无限重试却不触发 fatal，画面永远停在 00:00。
     // 但「慢」不等于「死」：单分片 9MB+ 的 AES-128 源冷启拉首个分片实测
     // 11.8s（多多影院 ZJ4K），固定 12s 一刀切会把能播的线判死跳走——用户
-    // 看到「后台在下载、有声音没画面」却被换线。改成**静默窗口** watchdog：
-    // <video> 的 progress / loadeddata 事件（缓冲有新数据就触发）重置计时，
-    // 12s 内既没有新数据、readyState 又没到位才判死。真死 CDN 没有任何
-    // 事件，仍会在 12s 被抓到；慢源只要在持续下载就一直活着。
-    const STALL_QUIET_MS = 12_000;
-    let stallTimer: number | undefined;
-    const armStallTimer = () => {
-      window.clearTimeout(stallTimer);
-      stallTimer = window.setTimeout(() => {
-        if (!BUILTIN_KINDS.includes(resolved.kind)) {
-          return;
-        }
-        if (video.readyState >= 2 || failoverStarted.current || lineSwitchStarted.current) {
-          return;
-        }
-        setVideoError("当前线路长时间无法加载，正在尝试其它线路…");
-        void switchOrFailoverRef.current();
-      }, STALL_QUIET_MS);
+    // 看到「后台在下载、有声音没画面」却被换线。
+    //
+    // 2026-11-14 再收紧一轮判决标准：**时间不是证据**。上一版把 12s 静默当
+    // 判死条件，结果用户碰到的是「再等十几秒就出画」的源，被误杀跳走。现在
+    // 静默只用来触发一次**独立复核**（直接探清单 + 首个分片），只有复核给出
+    // 明确失败（HTTP 错误 / 内容不是 m3u8 / 分片是占位图）才换线；
+    // 超时或说不出所以然（unknown）一律继续等，把决定权留给用户。
+    const STALL_QUIET_MS = 20_000;
+    /** 两次复核的间隔：慢源上别把源站打成 DDOS，也别重复刷提示。 */
+    const STALL_RECHECK_MS = 20_000;
+    const STALL_TICK_MS = 4_000;
+    /**
+     * 连续多少次「复核也拿不到任何响应」才算确认失效。
+     *
+     * 单次超时永远不是证据（慢源冷启必然超时）；但同一个地址、连续三次、
+     * 跨 60 秒都连一个字节都拿不到，就不是「慢」了——吊死型 CDN 只有这样
+     * 才能和慢源区分开。明确失败（4xx / 非 m3u8 / 占位图）一次就够。
+     */
+    const STALL_UNRESPONSIVE_LIMIT = 3;
+    let probeBusy = false;
+    let lastProbeAt = 0;
+    let watchStopped = false;
+    let unresponsiveProbes = 0;
+    /** 收尾：停止看门狗、报原因、交棒给换线/换源链路。 */
+    const giveUpLine = (message: string, stage: string) => {
+      watchStopped = true;
+      log.warn(stage, {
+        siteKey,
+        vodId,
+        quietMs: Date.now() - lastAliveAt,
+        unresponsiveProbes,
+      });
+      setVideoError(message);
+      void switchOrFailoverRef.current();
     };
-    const onMediaAlive = () => {
-      if (video.readyState >= 2) {
-        // 已经能进入播放状态：watchdog 彻底退场。
-        window.clearTimeout(stallTimer);
+    const stallCheck = () => {
+      if (watchStopped) {
         return;
       }
-      armStallTimer();
+      if (video.readyState >= 2) {
+        // 已经能进入播放状态：watchdog 彻底退场，软提示也撤掉。
+        watchStopped = true;
+        clearSlowNotice();
+        return;
+      }
+      if (failoverStarted.current || lineSwitchStarted.current) {
+        return;
+      }
+      const quiet = Date.now() - lastAliveAt;
+      if (quiet < STALL_QUIET_MS) {
+        return;
+      }
+      if (probeBusy || Date.now() - lastProbeAt < STALL_RECHECK_MS) {
+        return;
+      }
+      probeBusy = true;
+      lastProbeAt = Date.now();
+      void probeLineVerdict(resolved.proxyUrl, resolved.kind, 12_000)
+        .then((verdict) => {
+          probeBusy = false;
+          if (watchStopped || video.readyState >= 2) {
+            return;
+          }
+          if (failoverStarted.current || lineSwitchStarted.current) {
+            return;
+          }
+          if (verdict === "dead") {
+            // 明确失败（HTTP 错误 / 内容不是 m3u8 / 分片是占位图）：一次即判死。
+            giveUpLine("当前线路已确认无法加载，正在切换…", "stall probe dead");
+            return;
+          }
+          if (verdict === "ok") {
+            // 清单和分片都拿得到 → 只是慢，继续等（这也是 life signal）。
+            unresponsiveProbes = 0;
+            noteAlive();
+            log.info("stall probe alive but slow", {
+              siteKey,
+              vodId,
+              quietMs: Date.now() - lastAliveAt,
+            });
+            return;
+          }
+          // unknown：还是没回话。累计到阈值前一律继续等，绝不跳走。
+          unresponsiveProbes += 1;
+          log.info("stall probe inconclusive", {
+            siteKey,
+            vodId,
+            unresponsiveProbes,
+            quietMs: Date.now() - lastAliveAt,
+          });
+          if (unresponsiveProbes >= STALL_UNRESPONSIVE_LIMIT) {
+            giveUpLine("当前线路多次无响应，正在切换…", "stall probe unresponsive");
+          }
+        })
+        .catch(() => {
+          probeBusy = false;
+        });
     };
-    armStallTimer();
+    // 媒体侧的生命信号：缓冲有增长、元数据到位、开始播放都算活着。
+    // `waiting` / `stalled` 不算——它们恰恰是「卡住」的表现，不能重置计时。
+    const onMediaAlive = () => {
+      noteAlive();
+    };
+    const watchTimer = window.setInterval(stallCheck, STALL_TICK_MS);
+    /**
+     * 「在动，只是慢」的等待提示：只报事实（等了多久），不参与任何判决。
+     *
+     * 与看门狗解耦的原因：数据在缓慢流动时（progress 一直在发）看门狗根本不会
+     * 触发，但用户仍然面对黑屏；反过来看门狗又绝不能因为「等得久」就换源。
+     * 两件事各管一头，8s 起显示，出画即撤。
+     */
+    const loadStartedAt = Date.now();
+    const hintTimer = window.setInterval(() => {
+      if (video.readyState >= 2) {
+        clearSlowNotice();
+        return;
+      }
+      const waited = Math.round((Date.now() - loadStartedAt) / 1000);
+      if (waited >= 8) {
+        showSlowNotice(`正在加载画面…已等待 ${waited}s`);
+      }
+    }, 2_000);
     video.addEventListener("progress", onMediaAlive);
     video.addEventListener("loadeddata", onMediaAlive);
+    video.addEventListener("loadedmetadata", onMediaAlive);
+    video.addEventListener("playing", onMediaAlive);
+    video.addEventListener("timeupdate", onMediaAlive);
 
     return () => {
-      window.clearTimeout(stallTimer);
+      window.clearInterval(watchTimer);
+      window.clearInterval(hintTimer);
+      clearSlowNotice();
       window.clearTimeout(rateReplay);
       if (volumeTrailing !== null) {
         window.clearTimeout(volumeTrailing);
@@ -749,6 +922,9 @@ export function usePlayerEngine({
       video.removeEventListener("error", onError);
       video.removeEventListener("progress", onMediaAlive);
       video.removeEventListener("loadeddata", onMediaAlive);
+      video.removeEventListener("loadedmetadata", onMediaAlive);
+      video.removeEventListener("playing", onMediaAlive);
+      video.removeEventListener("timeupdate", onMediaAlive);
       video.removeEventListener("volumechange", persistVolume);
       video.removeEventListener("ratechange", persistRate);
       video.removeEventListener("loadedmetadata", reportMeta);

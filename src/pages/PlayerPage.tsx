@@ -105,6 +105,14 @@ export default function PlayerPage({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const [videoError, setVideoError] = useState("");
+  /**
+   * 「还没出画，但源确实在响应」的软提示。
+   *
+   * 与 `videoError` 严格分开：慢源只该看到中性的加载文案，不该看到红色错误条
+   * ——更不该因为它慢就被自动换走（2026-11-14 用户实测：多等十几秒能出画，
+   * 却被 12 秒定时器判死跳到别的源）。
+   */
+  const [slowNotice, setSlowNotice] = useState("");
   const [switchTip, setSwitchTip] = useState("");
   /** 本次挂载是否已从 sessionStorage 恢复过一次性提示。 */
   const tipRestored = useRef(false);
@@ -166,15 +174,16 @@ export default function PlayerPage({
   }, [liveLinesArr, liveLine]);
 
   // 地址解析编排：playUrl → PlayResolved（effect 体与依赖数组原样保留在 hook 内）。
-  const { resolved, resolving, stage, reloading, resolveError, reload } = usePlayResolution({
-    siteKey,
-    playUrl,
-    playFrom,
-    liveUa,
-    vodId,
-    setSwitchTip,
-    setVideoError,
-  });
+  const { resolved, resolving, stage, reloading, resolveError, resolveRetryable, reload } =
+    usePlayResolution({
+      siteKey,
+      playUrl,
+      playFrom,
+      liveUa,
+      vodId,
+      setSwitchTip,
+      setVideoError,
+    });
 
   /**
    * 续播起点：再次打开同一影片时从历史 positionMs 跳过去；刷新重建时由
@@ -701,11 +710,16 @@ export default function PlayerPage({
     if (!active || resolving || !resolveError || ledgerHasUrl(ledgerKey, playUrl)) {
       return;
     }
+    // 「源还没答完」（冷启动 / 忙时超预算）不是线路坏了：保留这条线路，
+    // 让用户点刷新重试。用户实测过再等十几秒就能出画，自动换走反而丢掉它。
+    if (resolveRetryable) {
+      return;
+    }
     ledgerMarkUrl(ledgerKey, playUrl);
     setRecovering(true);
     setSwitchTip("当前线路无法解析，正在尝试其它线路…");
     void switchOrFailoverRef.current().finally(() => setRecovering(false));
-  }, [active, resolving, resolveError, playUrl, ledgerKey]);
+  }, [active, resolving, resolveError, resolveRetryable, playUrl, ledgerKey]);
 
   /**
    * 播放内核：ArtPlayer + hls.js / mpegts.js + 偏好记忆 + stalled watchdog +
@@ -732,6 +746,7 @@ export default function PlayerPage({
     vodId,
     onVideoMeta: setVideoMeta,
     onPlayerRoot: setPlayerRoot,
+    onSlowNotice: (text) => setSlowNotice(text ?? ""),
     setVideoError,
   });
 
@@ -1068,7 +1083,9 @@ export default function PlayerPage({
         reloading={reloading}
         playable={playable}
         recovering={recovering}
+        slowText={slowNotice}
         resolveError={resolveError}
+        retryable={resolveRetryable}
         containerRef={containerRef}
       />
       <PlayerResolution

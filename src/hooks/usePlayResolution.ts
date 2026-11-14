@@ -40,6 +40,13 @@ export interface PlayResolution {
   /** 刷新中：与首次解析不同，旧播放器实例与控件必须保持可见可用。 */
   reloading: boolean;
   resolveError: string;
+  /**
+   * 解析失败的**原因属于「没定论」**（源侧冷启动 / 忙时超过预算还没答）。
+   *
+   * 与「源明确说这条线路不能用」严格区分：调用方据此**不得自动换源**——
+   * 用户实测过「再等一会儿就能加载」的源，被换线跳走反而丢了能播的线路。
+   */
+  resolveRetryable: boolean;
   setResolved: Dispatch<SetStateAction<PlayResolved | null>>;
   /**
    * 重新走一遍 playerContent → resolve_play，并把 resolved 换成一个新对象，
@@ -83,6 +90,7 @@ export function usePlayResolution({
   const [resolving, setResolving] = useState(true);
   const [stage, setStage] = useState<"parsing" | "connecting" | null>(null);
   const [resolveError, setResolveError] = useState("");
+  const [resolveRetryable, setResolveRetryable] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const reload = useCallback(() => setReloadNonce((value) => value + 1), []);
@@ -119,6 +127,8 @@ export function usePlayResolution({
     let alive = true;
     let capReject: ((err: Error) => void) | null = null;
     let capTimer: ReturnType<typeof setTimeout> | null = null;
+    /** 本次失败是否只是「源还没答完」——决定上层能不能自动换源。 */
+    let slowTimeout = false;
     const run = async () => {
       if (soft) {
         setReloading(true);
@@ -133,6 +143,7 @@ export function usePlayResolution({
         setResolved(null);
       }
       setResolveError("");
+      setResolveRetryable(false);
       setVideoError("");
       try {
         // 硬上限兜底：单点超时是 playerContent 15s + sniff 15s，35s 已是余量，
@@ -168,6 +179,9 @@ export function usePlayResolution({
         }
         if (target.timedOut) {
           // 慢失败必须先说清楚：这不是「网盘 token」，重试就能好。
+          // 同时标记成「无定论」：上层不许因为这一条自动换源（用户实测：
+          // 再等十几秒就能出画，换走了反而把能播的线路丢掉）。
+          slowTimeout = true;
           throw new Error(
             "源响应超时（首次加载源侧冷启动较慢），已保留当前线路，点刷新可重试",
           );
@@ -196,6 +210,7 @@ export function usePlayResolution({
         }
       } catch (err) {
         if (alive) {
+          setResolveRetryable(slowTimeout);
           setResolveError(errorMessage(err));
           log.warn("resolve failed", {
             siteKey,
@@ -232,6 +247,7 @@ export function usePlayResolution({
     stage,
     reloading,
     resolveError,
+    resolveRetryable,
     setResolved,
     reload,
   };

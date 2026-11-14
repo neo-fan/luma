@@ -15,7 +15,20 @@
  * 因此 hls 探活分两步：先认清单，再认**首个分片的 Content-Type**——
  * 占位图（`image/*`）与 HTML 错误页一律判死；TS（`video/mp2t`）、fMP4、
  * `application/octet-stream` 以及无法判定（超时/无 header）都视为正常，避免误杀。
+ *
+ * ⚠️ 「能播 / 不能播」是二元的，但**时间不是证据**：慢源冷启首字节要到
+ * 12–20 秒，超时只说明「此刻还没回」，不能据此把线路判死。所以本模块对外
+ * 提供三态判定（`LineVerdict`）：
+ *
+ * - `dead`    明确失败：HTTP 4xx/5xx、清单不是 m3u8、分片是占位图/HTML；
+ * - `ok`      明确成功：状态与内容都对得上；
+ * - `unknown` 证据不足：请求超时、连接被中断、反代自身还没就绪。
+ *
+ * 播放页的「线路卡住要不要换」只认 `dead`；`unknown` 一律继续等，把决定权
+ * 留给用户（实测「走马上任」某些 4K 线路冷启 18 秒，被 12 秒定时器误杀）。
  */
+export type LineVerdict = "ok" | "dead" | "unknown";
+
 const BAD_SEGMENT_TYPE = /^(?:image\/|text\/html)/i;
 
 /**
@@ -25,45 +38,51 @@ const BAD_SEGMENT_TYPE = /^(?:image\/|text\/html)/i;
  * 往返。刻意不带 `Range`：反代要读到分片头部才能剥离「PNG 头 + TS」伪装，
  * 带 Range 会让它把剥离后的长度算错（实测 PAN1 线路）。
  */
-async function firstSegmentLooksReal(
+async function firstSegmentVerdict(
   manifest: string,
   baseUrl: string,
   signal: AbortSignal,
-): Promise<boolean> {
+): Promise<LineVerdict> {
   const first = manifest
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find((line) => line.length > 0 && !line.startsWith("#"));
   if (!first) {
     // 没有分片的清单交给 hls.js 自己报错，别在这里判死。
-    return true;
+    return "ok";
   }
   let segmentUrl: string;
   try {
     segmentUrl = new URL(first, baseUrl).toString();
   } catch {
-    return true;
+    return "ok";
   }
   try {
     const response = await fetch(segmentUrl, { signal });
     void response.body?.cancel?.().catch(() => {});
     if (!(response.ok || response.status === 405 || response.status === 416)) {
       // 分片 403/404 = 防盗链或已过期，这条线路同样不可用。
-      return false;
+      return "dead";
     }
     const type = response.headers?.get?.("content-type") ?? "";
-    return !BAD_SEGMENT_TYPE.test(type);
+    return BAD_SEGMENT_TYPE.test(type) ? "dead" : "ok";
   } catch {
     // 被总超时中断 / 取头失败：证据不足，不误杀，交给播放器与看门狗。
-    return true;
+    return "unknown";
   }
 }
 
-export async function probePlayable(
+/**
+ * 探一条线路的「明确状态」。
+ *
+ * `timeoutMs` 默认 5s：这个函数还兼任换线候选的筛选器（要快），所以默认值
+ * 保持紧凑；播放页里「只是慢」的复查会显式传更长的超时（12s）。
+ */
+export async function probeLineVerdict(
   proxyUrl: string,
   kind: string,
   timeoutMs = 5000,
-): Promise<boolean> {
+): Promise<LineVerdict> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -73,20 +92,36 @@ export async function probePlayable(
       signal: controller.signal,
     });
     if (!(response.ok || response.status === 405 || response.status === 416)) {
-      return false;
+      return "dead";
     }
     if (kind !== "hls") {
-      return true;
+      return "ok";
     }
     const text = await response.text();
     // HLS 规范要求首行是 #EXTM3U；JSON / HTML 错误页一律判死。
     if (!/^\s*#EXTM3U/.test(text)) {
-      return false;
+      return "dead";
     }
-    return await firstSegmentLooksReal(text, proxyUrl, controller.signal);
+    return await firstSegmentVerdict(text, proxyUrl, controller.signal);
   } catch {
-    return false;
+    // 超时 / 连接中断 / 反代未就绪：全都只是「还没回话」，不构成线路失效的证据。
+    return "unknown";
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+/**
+ * 布尔版：只回答「能不能确定可播」。
+ *
+ * 换线候选的筛选口径，`unknown` 一律按不可用处理——切线路要求「确定能出流」，
+ * 赌一条没回话的地址没有意义。注意这与播放页的「卡住要不要换走」是**两个
+ * 相反方向**的判断：那边只认 `dead`，绝不用超时当证据。
+ */
+export async function probePlayable(
+  proxyUrl: string,
+  kind: string,
+  timeoutMs = 5000,
+): Promise<boolean> {
+  return (await probeLineVerdict(proxyUrl, kind, timeoutMs)) === "ok";
 }

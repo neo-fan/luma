@@ -10,8 +10,16 @@ interface PlayerStageProps {
   reloading?: boolean;
   /** 自动换线路进行中（有希望自愈，不铺满错误面板）。 */
   recovering?: boolean;
+  /**
+   * 内核报告的「慢但在动」文案（已含等待秒数，空串 = 没有）。
+   *
+   * 只用来顶一块中性加载态：慢源不该出现红色错误条，也不该被自动换走。
+   */
+  slowText?: string;
   playable: boolean;
   resolveError: string;
+  /** 解析失败的成因是「源还没答完」（可重试），标题别提成「无法解析」。 */
+  retryable?: boolean;
   /** ArtPlayer 挂载点：必须绑到 .player-art 这个空 div 本身，不能换成组件根。 */
   containerRef: RefObject<HTMLDivElement>;
 }
@@ -33,8 +41,10 @@ export default function PlayerStage({
   stage = null,
   reloading = false,
   recovering = false,
+  slowText = "",
   playable,
   resolveError,
+  retryable = false,
   containerRef,
 }: PlayerStageProps) {
   // 慢源冷启动实测能到 18s：光转圈会被当成卡死，超过 4s 就把已等待秒数报出来，
@@ -68,10 +78,21 @@ export default function PlayerStage({
         : !playable
           ? {
               busy: false,
-              title: resolveError ? "无法解析播放地址" : EXTERNAL_PLAY_FALLBACK.title,
+              title: resolveError
+                ? retryable
+                  ? "源响应较慢，暂未拿到播放地址"
+                  : "无法解析播放地址"
+                : EXTERNAL_PLAY_FALLBACK.title,
               desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
             }
           : null;
+
+  /**
+   * 播放实例已建立、但迟迟没有出画时的兜底态：解析/换源都有自己的忙态文案，
+   * 这里补的是「地址没问题、源就是慢」这一档。不带红色、不换线。
+   */
+  const active =
+    status ?? (slowText ? { busy: true, title: "正在加载画面…", desc: slowText } : null);
 
   // 等待提示只挂在「正在等源」的三种忙态上，错误面板不显示。
   const slowHint =
@@ -85,19 +106,19 @@ export default function PlayerStage({
     <div className="player-stage">
       <div ref={containerRef} className="player-art" />
 
-      {status ? (
+      {active ? (
         <div className="player-overlay" aria-live="polite">
           {/* 等待态用「呼吸光环 + 旋转弧」占据画面正中，文字压在下方：纯转圈
               在小窗口里太轻，用户会以为没在动；错误态才用卡片承载长文案。 */}
-          <div className={status.busy ? "player-status is-busy" : "player-status is-error"}>
-            {status.busy ? (
+          <div className={active.busy ? "player-status is-busy" : "player-status is-error"}>
+            {active.busy ? (
               <span className="player-status__pulse" aria-hidden="true">
                 <span className="player-status__ring" />
                 <span className="player-status__dot" />
               </span>
             ) : null}
-            <p className="player-status__title">{status.title}</p>
-            {status.desc ? <p className="player-status__desc">{status.desc}</p> : null}
+            <p className="player-status__title">{active.title}</p>
+            {active.desc ? <p className="player-status__desc">{active.desc}</p> : null}
             {slowHint ? <p className="player-status__desc">{slowHint}</p> : null}
           </div>
         </div>
