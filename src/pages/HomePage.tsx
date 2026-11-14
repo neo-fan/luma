@@ -7,6 +7,7 @@ import SiteSelect from "../components/SiteSelect";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { notify } from "../lib/notify";
 import { leafClasses } from "../lib/categories";
 import { usableHomeSites } from "../lib/format";
 import { usePageState } from "../lib/usePageState";
@@ -39,7 +40,10 @@ export async function findHomeSiteWithList(
   if (from < 0) {
     return null;
   }
-  for (const candidate of candidates.slice(from + 1, from + 1 + AUTO_FALLBACK_LIMIT)) {
+  for (const candidate of candidates.slice(
+    from + 1,
+    from + 1 + AUTO_FALLBACK_LIMIT,
+  )) {
     if (!isAlive()) {
       return null;
     }
@@ -94,7 +98,10 @@ export default function HomePage({
   navigate,
 }: HomePageProps) {
   // 首页推荐内容按站点保留，返回首页时直接出结果；站点 key 变化时自然失效。
-  const [home, setHome] = usePageState<HomeResult | null>(`home:${siteKey}:data`, null);
+  const [home, setHome] = usePageState<HomeResult | null>(
+    `home:${siteKey}:data`,
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
@@ -102,11 +109,14 @@ export default function HomePage({
    * 分类直接切换底下这张网格，不再 push 一个二级页面：选中态、页码跨
    * 「看详情 → 返回」保留，和原 CategoryPage 的体验一致。
    */
-  const [selection, setSelection] = usePageState<CategorySelection>("home:category:v1", {
-    siteKey,
-    tid: "",
-    page: 1,
-  });
+  const [selection, setSelection] = usePageState<CategorySelection>(
+    "home:category:v1",
+    {
+      siteKey,
+      tid: "",
+      page: 1,
+    },
+  );
   const activeTid = selection.siteKey === siteKey ? selection.tid : "";
   /**
    * 分类无限滚动：累积已加载的多页，向下滚动到底自动拉下一页。
@@ -129,15 +139,26 @@ export default function HomePage({
   const userActedRef = useRef(false);
   /** 本轮自动顺延已试过的站，避免 onSiteChange 前后反复试探同一站。 */
   const fallbackTriedRef = useRef<Set<string>>(new Set());
+  /**
+   * 本次 reload 是不是**用户点刷新**引起的（而不是切站 / 自动顺延）。
+   * 只用于决定要不要在完成后回一句「已刷新」——刷新是用户主动发起、
+   * 结果却可能与上一屏完全一样（CMS 推荐位是固定的），没有确认就等于
+   * 「按钮没反应」。
+   */
+  const manualRefreshRef = useRef(false);
 
   const site = sites.find((item) => item.key === siteKey);
   // CMS 的父级分类（有子分类）在 `ac=videolist&t=<父级>` 上返回空列表，
   // 只展示叶子分类，避免用户点进一个永远为空、分页也永远禁用的类目。
-  const classes = leafClasses(home?.classes?.length ? home.classes : site?.categories ?? []);
+  const classes = leafClasses(
+    home?.classes?.length ? home.classes : (site?.categories ?? []),
+  );
   const list = home?.list ?? [];
   /** 空结果不算有效缓存：只有真正拉到列表才阻止重复请求。 */
   const hasList = list.length > 0;
-  const selectedSite = sites.some((item) => item.key === draftSite) ? draftSite : siteKey;
+  const selectedSite = sites.some((item) => item.key === draftSite)
+    ? draftSite
+    : siteKey;
 
   // 新策略只屏蔽 jvm（Android dex/jar）源，quickjs 已解禁。
   // 旧 localStorage 缓存没有 disabledReason：这里按 runtime 兜一层，
@@ -146,14 +167,18 @@ export default function HomePage({
     sites
       .filter(
         (item) =>
-          Boolean(item.disabledReason) || item.runtime === "jvm" || item.enabled === false,
+          Boolean(item.disabledReason) ||
+          item.runtime === "jvm" ||
+          item.enabled === false,
       )
       .map((item) => item.key),
   );
   const blockedHints = new Map(
     sites.map((item) => [
       item.key,
-      Boolean(item.disabledReason) || item.runtime === "jvm" ? "已屏蔽" : "已禁用",
+      Boolean(item.disabledReason) || item.runtime === "jvm"
+        ? "已屏蔽"
+        : "已禁用",
     ]),
   );
 
@@ -232,6 +257,14 @@ export default function HomePage({
             setHome(cards > 0 || cats > 0 ? result : null);
             setError("");
             setLoading(false);
+            if (manualRefreshRef.current) {
+              manualRefreshRef.current = false;
+              notify.success(
+                cards > 0
+                  ? `已刷新 · ${cards} 个内容`
+                  : "已刷新 · 该站点没有推荐内容",
+              );
+            }
           }
           // 冷启动默认站若**既没卡片也没分类**，自动往后找第一个真有内容的
           // 站并记住，避免首页看起来「没数据」。只给分类的源不算空——它的分类
@@ -298,7 +331,8 @@ export default function HomePage({
       setCatLoading(false);
       return;
     }
-    const pagesLoaded = selection.siteKey === siteKey ? Math.max(1, selection.page) : 1;
+    const pagesLoaded =
+      selection.siteKey === siteKey ? Math.max(1, selection.page) : 1;
     let alive = true;
     setCatItems([]);
     setCatNext(1);
@@ -364,7 +398,9 @@ export default function HomePage({
         setCatHasMore(morePages(result, page));
         // 持久化已加载页数，返回详情后从缓存瞬间补回、滚动位置不丢。
         setSelection((prev) =>
-          prev.siteKey === siteKey ? { ...prev, tid: activeTid, page: page + 1 } : prev,
+          prev.siteKey === siteKey
+            ? { ...prev, tid: activeTid, page: page + 1 }
+            : prev,
         );
       } catch (err) {
         setCatError(errorMessage(err));
@@ -390,12 +426,23 @@ export default function HomePage({
       try {
         const result = await api.category(siteKey, activeTid, 1, true);
         if (alive) {
-          setCatItems(result.list ?? []);
+          const items = result.list ?? [];
+          setCatItems(items);
           setCatNext(2);
           setCatHasMore(morePages(result, 1));
           setSelection((prev) =>
-            prev.siteKey === siteKey ? { ...prev, tid: activeTid, page: 1 } : prev,
+            prev.siteKey === siteKey
+              ? { ...prev, tid: activeTid, page: 1 }
+              : prev,
           );
+          if (manualRefreshRef.current) {
+            manualRefreshRef.current = false;
+            notify.success(
+              items.length > 0
+                ? `已刷新 · ${items.length} 个内容`
+                : "已刷新 · 该分类暂无内容",
+            );
+          }
         }
       } catch (err) {
         if (alive) {
@@ -437,10 +484,15 @@ export default function HomePage({
 
   const selectCategory = (tid: string) => {
     const next = String(tid);
-    setSelection({ siteKey, tid: String(activeTid) === next ? "" : next, page: 1 });
+    setSelection({
+      siteKey,
+      tid: String(activeTid) === next ? "" : next,
+      page: 1,
+    });
   };
   /** 刷新的是「当前看得见的那张网格」：分类态刷分类，推荐态刷首页。 */
   const refreshVisible = () => {
+    manualRefreshRef.current = true;
     if (isCategory) {
       setCatReload((value) => value + 1);
     } else {
@@ -487,6 +539,7 @@ export default function HomePage({
 
   return (
     <section className="page">
+      {/* 页头 + 分类 chip 在滚动区之外：滚多长的网格都能换站 / 刷新 / 切分类。 */}
       <header className="page-head">
         <div className="page-head__main">
           <h1 className="page-title">首页</h1>
@@ -526,9 +579,15 @@ export default function HomePage({
               <button
                 key={item.type_id}
                 type="button"
-                className={activeTid === item.type_id ? "chip is-active" : "chip"}
+                className={
+                  activeTid === item.type_id ? "chip is-active" : "chip"
+                }
                 aria-pressed={activeTid === item.type_id}
-                title={item.parentName ? `${item.parentName} / ${item.type_name}` : item.type_name}
+                title={
+                  item.parentName
+                    ? `${item.parentName} / ${item.type_name}`
+                    : item.type_name
+                }
                 onClick={() => selectCategory(item.type_id)}
               >
                 {item.type_name || item.type_id}
@@ -538,45 +597,56 @@ export default function HomePage({
         </div>
       ) : null}
 
-      <AsyncBoundary
-        loading={busy}
-        error={shownError ? `${isCategory ? "分类" : "首页"}加载失败：${shownError}` : ""}
-        isEmpty={shownList.length === 0}
-        loadingLabel={isCategory ? "正在加载分类内容…" : "正在加载首页内容…"}
-        emptyTitle={isCategory ? "该分类暂无内容" : "该站点暂无推荐内容"}
-        emptyDescription={isCategory ? "换个分类或站点试试。" : "可以换一个站点，或直接使用搜索。"}
-        onRetry={refreshVisible}
-      >
-        <div className="vod-grid">
-          {shownList.map((vod, index) => (
-            <VodCard
-              key={`${vod.vod_id}-${index}`}
-              title={vod.vod_name}
-              pic={vod.vod_pic}
-              remarks={vod.vod_remarks}
-              onOpen={() =>
-                navigate({
-                  name: "detail",
-                  siteKey,
-                  vodId: String(vod.vod_id),
-                  title: vod.vod_name,
-                })
-              }
-            />
-          ))}
-        </div>
-      </AsyncBoundary>
+      <div className="page-body">
+        <AsyncBoundary
+          loading={busy}
+          error={shownError}
+          errorTitle={isCategory ? "分类内容加载失败" : "首页内容加载失败"}
+          isEmpty={shownList.length === 0}
+          loadingLabel={isCategory ? "正在加载分类内容…" : "正在加载首页内容…"}
+          emptyTitle={isCategory ? "该分类暂无内容" : "该站点暂无推荐内容"}
+          emptyDescription={
+            isCategory
+              ? "换个分类或站点试试。"
+              : "可以换一个站点，或直接使用搜索。"
+          }
+          onRetry={refreshVisible}
+        >
+          <div className="vod-grid">
+            {shownList.map((vod, index) => (
+              <VodCard
+                key={`${vod.vod_id}-${index}`}
+                title={vod.vod_name}
+                pic={vod.vod_pic}
+                remarks={vod.vod_remarks}
+                onOpen={() =>
+                  navigate({
+                    name: "detail",
+                    siteKey,
+                    vodId: String(vod.vod_id),
+                    title: vod.vod_name,
+                  })
+                }
+              />
+            ))}
+          </div>
+        </AsyncBoundary>
 
-      {isCategory ? (
-        <div className="infinite-foot">
-          {catLoadingMore ? <Spinner label="正在加载更多…" /> : null}
-          {!catHasMore && catItems.length > 0 ? (
-            <p className="tip">已经到底啦，没有更多内容了</p>
-          ) : null}
-          {/* 滚动哨兵：进入视口前 400px 自动拉下一页；已无更多时不再触发 */}
-          <div ref={sentinelRef} className="infinite-sentinel" aria-hidden="true" />
-        </div>
-      ) : null}
+        {isCategory ? (
+          <div className="infinite-foot">
+            {catLoadingMore ? <Spinner label="正在加载更多…" /> : null}
+            {!catHasMore && catItems.length > 0 ? (
+              <p className="tip">已经到底啦，没有更多内容了</p>
+            ) : null}
+            {/* 滚动哨兵：进入视口前 400px 自动拉下一页；已无更多时不再触发 */}
+            <div
+              ref={sentinelRef}
+              className="infinite-sentinel"
+              aria-hidden="true"
+            />
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }

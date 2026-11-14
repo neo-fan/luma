@@ -102,7 +102,10 @@ export default function SettingsPage({
       ),
     },
     { id: "s-diagnostic", node: <DiagnosticSection reload={reload} /> },
-    { id: "s-history", node: <HistorySection onError={setError} onNotice={setNotice} /> },
+    {
+      id: "s-history",
+      node: <HistorySection onError={setError} onNotice={setNotice} />,
+    },
   ];
 
   // 目录高亮跟随滚动：观察每个 block，视口上部 1/3 命中谁就点亮谁。
@@ -132,40 +135,44 @@ export default function SettingsPage({
         <h1 className="page-title">设置</h1>
       </header>
 
-      {error ? <ErrorBar message={error} /> : null}
-      {notice ? <p className="tip tip--ok">{notice}</p> : null}
+      <div className="page-body">
+        {error ? <ErrorBar message={error} /> : null}
+        {notice ? <p className="tip tip--ok">{notice}</p> : null}
 
-      <div className="settings-layout">
-        <nav className="settings-nav" aria-label="设置目录">
-          {SECTIONS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={
-                activeId === item.id ? "settings-nav__item is-active" : "settings-nav__item"
-              }
-              onClick={() =>
-                document.getElementById(item.id)?.scrollIntoView({
-                  behavior: "smooth",
-                  block: "start",
-                })
-              }
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label="设置目录">
+            {SECTIONS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={
+                  activeId === item.id
+                    ? "settings-nav__item is-active"
+                    : "settings-nav__item"
+                }
+                onClick={() =>
+                  document.getElementById(item.id)?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                  })
+                }
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
 
-        <div className="settings-main">
-          {blocks.map((block) => (
-            <section key={block.id} id={block.id} className="settings-anchor">
-              {block.node}
-            </section>
-          ))}
+          <div className="settings-main">
+            {blocks.map((block) => (
+              <section key={block.id} id={block.id} className="settings-anchor">
+                {block.node}
+              </section>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <p className="disclaimer">本软件为播放框架，不提供任何片源。</p>
+        <p className="disclaimer">本软件为播放框架，不提供任何片源。</p>
+      </div>
     </section>
   );
 }

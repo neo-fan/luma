@@ -157,6 +157,14 @@ fn same_vod(a: &VodRef, b: &VodRef) -> bool {
     a.site_key == b.site_key && a.vod_id == b.vod_id
 }
 
+/** 片名归一化：全半角空格、大小写差异都算同一部片。空名不参与合并。 */
+pub fn same_title(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.trim().chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase();
+    let left = norm(a);
+    let right = norm(b);
+    !left.is_empty() && left == right
+}
+
 impl LibraryStore {
     pub fn load(db: Arc<Db>) -> Result<Self, AppError> {
         let favorites = db
@@ -204,7 +212,10 @@ impl LibraryStore {
         // Commit first: the DB owns the state, the Vec mirrors it.
         let added = self.db.toggle_favorite(&row)?;
         let mut guard = self.favorites.write().unwrap_or_else(|p| p.into_inner());
-        guard.retain(|item| !same_vod(&item.vod, &vod));
+        // 与 db 层同口径：按片名剔除，换源后的旧条目不能留在缓存里。
+        guard.retain(|item| {
+            !(same_title(&item.vod.name, &vod.name) || same_vod(&item.vod, &vod))
+        });
         if added {
             guard.push(FavoriteItem {
                 vod,
@@ -219,6 +230,12 @@ impl LibraryStore {
         guard
             .iter()
             .any(|item| item.vod.site_key == site_key && item.vod.vod_id == vod_id)
+    }
+
+    /// 按片名判断（换源后仍能认出同一部片），供前端星标状态对齐。
+    pub fn is_favorite_by_title(&self, name: &str) -> bool {
+        let guard = self.favorites.read().unwrap_or_else(|p| p.into_inner());
+        guard.iter().any(|item| same_title(&item.vod.name, name))
     }
 
     /// 补收藏条目的元数据（老记录没有封面）。返回是否命中一行。
@@ -422,6 +439,34 @@ mod tests {
         let reopened = LibraryStore::at(dir.clone());
         assert!(reopened.is_favorite("stub_json", "2"));
         assert!(!reopened.is_favorite("stub_json", "1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同一部片换源后 site_key + vod_id 全变：收藏必须仍只有一条，
+    /// 且在任一源点星标都是「取消」而不是又插一条同名记录。
+    #[test]
+    fn favorite_dedupes_by_title_across_sites() {
+        let dir = temp_dir("fav-title");
+        let store = LibraryStore::at(dir.clone());
+        let first = sample("1");
+        assert!(store.toggle_favorite(first.clone()).unwrap());
+        assert!(store.is_favorite_by_title("Sample"));
+
+        let other_site = VodRef {
+            site_key: "another_site".into(),
+            vod_id: "999".into(),
+            ..first.clone()
+        };
+        // 换源后再点一次星标 = 取消，而不是新增。
+        assert!(!store.toggle_favorite(other_site).unwrap());
+        assert!(store.list_favorites().is_empty());
+        assert!(!store.is_favorite_by_title("Sample"));
+
+        // 空片名不能互相吞并，退回复合键。
+        let blank = |id: &str| VodRef { name: String::new(), vod_id: id.into(), ..first.clone() };
+        assert!(store.toggle_favorite(blank("a")).unwrap());
+        assert!(store.toggle_favorite(blank("b")).unwrap());
+        assert_eq!(store.list_favorites().len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

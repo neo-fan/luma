@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Navigate } from "../lib/nav";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import Empty from "../components/Empty";
@@ -7,13 +14,21 @@ import FavStar from "../components/FavStar";
 import Icon from "../components/Icon";
 import IconButton from "../components/IconButton";
 import SourcePicker from "../components/SourcePicker";
-import Spinner from "../components/Spinner";
-import { formatDuration, parsePlayLines, plainText, toVodRef } from "../lib/format";
+import DetailSkeleton from "../components/DetailSkeleton";
+import {
+  formatDuration,
+  parsePlayLines,
+  plainText,
+  sameTitle,
+  toVodRef,
+} from "../lib/format";
 import type { Episode, PlayLine } from "../lib/format";
 import { findPlayableSource } from "../lib/crossSourceRecovery";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { pageCache } from "../lib/pageCache";
+import { notify } from "../lib/notify";
 import { recallCard } from "../lib/cardIndex";
+import { classifyFailure } from "../lib/failureReason";
 import { noDetailSources } from "../lib/noDetailSource";
 import { usePageState } from "../lib/usePageState";
 import { prefetchSources } from "../lib/sourceCache";
@@ -74,7 +89,10 @@ export default function DetailPage({
   // 直连会被防盗链挡成 403。
   const emptyCardImage = useProxiedImage(emptyCard?.vod_pic);
   const [lineIndex, setLineIndex] = usePageState(`${detailKey}:line`, 0);
-  const [episodeQuery, setEpisodeQuery] = usePageState(`${detailKey}:query`, "");
+  const [episodeQuery, setEpisodeQuery] = usePageState(
+    `${detailKey}:query`,
+    "",
+  );
   const [reverse, setReverse] = usePageState(`${detailKey}:reverse`, false);
   const [expanded, setExpanded] = usePageState(`${detailKey}:expanded`, false);
 
@@ -126,10 +144,11 @@ export default function DetailPage({
   const [reload, setReload] = useState(0);
   const [favorite, setFavorite] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
-  const [favTip, setFavTip] = useState("");
   const [showSources, setShowSources] = useState(false);
   // 空详情（发现/推荐型源）时自动按片名去其它源找可播放版本的状态。
-  const [fallback, setFallback] = useState<"idle" | "searching" | "none">("idle");
+  const [fallback, setFallback] = useState<"idle" | "searching" | "none">(
+    "idle",
+  );
   const fallbackCancelRef = useRef(false);
   const [recoveryNotice] = useState(() => pendingRecoveryNotice);
   // dev StrictMode 会把 useState 初始化器跑两次：不能在初始化器里清空，否则
@@ -156,7 +175,12 @@ export default function DetailPage({
       fallbackCancelRef.current = false;
       try {
         // 列表/搜索已给出的片名用于空详情自愈：旧 vod_id 失效时按名回查。
-        const list = await api.detail(siteKey, vodId, reload > 0, (title || "").trim());
+        const list = await api.detail(
+          siteKey,
+          vodId,
+          reload > 0,
+          (title || "").trim(),
+        );
         if (!alive) {
           return;
         }
@@ -178,8 +202,11 @@ export default function DetailPage({
           setFallback("searching");
           void (async () => {
             try {
-              const result = await findPlayableSource(word, sites, siteKey, () =>
-                alive && !fallbackCancelRef.current,
+              const result = await findPlayableSource(
+                word,
+                sites,
+                siteKey,
+                () => alive && !fallbackCancelRef.current,
               );
               if (!alive || fallbackCancelRef.current) {
                 return;
@@ -196,8 +223,7 @@ export default function DetailPage({
               }
               const found = result.found;
               skipCrossSource.add(`${found.siteKey}:${found.vodId}`);
-              pendingRecoveryNotice =
-                `《${word}》在当前源没有播放列表，已切换到「${found.siteName || found.siteKey}」`;
+              pendingRecoveryNotice = `《${word}》在当前源没有播放列表，已切换到「${found.siteName || found.siteKey}」`;
               log.info("detail recovered from another source", {
                 from: siteKey,
                 to: found.siteKey,
@@ -205,7 +231,12 @@ export default function DetailPage({
                 probed: result.probed,
               });
               navigate(
-                { name: "detail", siteKey: found.siteKey, vodId: found.vodId, title: found.vodName },
+                {
+                  name: "detail",
+                  siteKey: found.siteKey,
+                  vodId: found.vodId,
+                  title: found.vodName,
+                },
                 true,
               );
             } catch (err) {
@@ -260,7 +291,10 @@ export default function DetailPage({
       return;
     }
     // 详情首屏的 detailContent 先落地，再启动后台全站检索，避免抢首个请求。
-    const timer = window.setTimeout(() => prefetchSources(prefetchTitle, sites), 1200);
+    const timer = window.setTimeout(
+      () => prefetchSources(prefetchTitle, sites),
+      1200,
+    );
     return () => window.clearTimeout(timer);
   }, [prefetchTitle, sites]);
 
@@ -273,7 +307,14 @@ export default function DetailPage({
       try {
         const list = await api.favoritesList();
         if (alive) {
-          setFavorite(list.some((item) => item.siteKey === siteKey && item.vodId === vodId));
+          // 收藏按片名记录：换源后 siteKey/vodId 全变，但星标仍应是「已收藏」。
+          setFavorite(
+            list.some(
+              (item) =>
+                sameTitle(item.name, vod?.vod_name || title) ||
+                (item.siteKey === siteKey && item.vodId === vodId),
+            ),
+          );
         }
       } catch {
         if (alive) {
@@ -287,7 +328,9 @@ export default function DetailPage({
           // 才能把上一次（可能来自别的源）的进度接上。
           const byTitle = (title ?? "").trim();
           setResume(
-            (byTitle ? history.find((item) => item.name?.trim() === byTitle) : null) ??
+            (byTitle
+              ? history.find((item) => item.name?.trim() === byTitle)
+              : null) ??
               history.find(
                 (item) => item.siteKey === siteKey && item.vodId === vodId,
               ) ??
@@ -321,12 +364,16 @@ export default function DetailPage({
 
   /** 集数多时（动辄上百集）提供名称/序号过滤与倒序，index 保留原序号。 */
   const episodes = useMemo(() => {
-    const list = (line?.episodes ?? []).map((episode, index) => ({ episode, index }));
+    const list = (line?.episodes ?? []).map((episode, index) => ({
+      episode,
+      index,
+    }));
     const word = episodeQuery.trim().toLowerCase();
     const filtered = word
       ? list.filter(
           ({ episode, index }) =>
-            episode.name.toLowerCase().includes(word) || String(index + 1) === word,
+            episode.name.toLowerCase().includes(word) ||
+            String(index + 1) === word,
         )
       : list;
     return reverse ? filtered.slice().reverse() : filtered;
@@ -344,7 +391,11 @@ export default function DetailPage({
     // resumeReady 是关键闸门：pageCache 命中时 lines 几乎立刻就有，而历史是
     // 另一次 IPC。不等它的话，第一次 effect 会在 resume 尚为 null 时就把
     // 「已定位」标记写上，历史随后到达也再也不会定位（实测复现）。
-    if (lines.length === 0 || !resumeReady || autoLineRef.current === detailKey) {
+    if (
+      lines.length === 0 ||
+      !resumeReady ||
+      autoLineRef.current === detailKey
+    ) {
       return;
     }
     autoLineRef.current = detailKey;
@@ -374,7 +425,9 @@ export default function DetailPage({
         ? [preferred, ...lines.filter((item) => item !== preferred)]
         : lines;
       for (const item of order) {
-        const index = item.episodes.findIndex((episode) => episode.url === resume.playUrl);
+        const index = item.episodes.findIndex(
+          (episode) => episode.url === resume.playUrl,
+        );
         if (index >= 0) {
           return { line: item, episode: item.episodes[index], index };
         }
@@ -412,13 +465,18 @@ export default function DetailPage({
       return;
     }
     setFavBusy(true);
-    setFavTip("");
     try {
       const next = await api.favoritesToggle(toVodRef(siteKey, siteName, vod));
       setFavorite(next);
-      setFavTip(next ? "已加入收藏" : "已取消收藏");
+      // 事件型反馈走全局 toast：不再往页面里插一行 `.tip` 把内容顶下去。
+      if (next) {
+        notify.success("已加入收藏");
+      } else {
+        notify.info("已取消收藏");
+      }
     } catch (err) {
-      setFavTip(`收藏操作失败：${errorMessage(err)}`);
+      notify.error("收藏失败，请重试");
+      log.warn("favorite toggle failed", { message: errorMessage(err) });
     } finally {
       setFavBusy(false);
     }
@@ -429,7 +487,12 @@ export default function DetailPage({
     fallbackCancelRef.current = true;
     setShowSources(false);
     navigate(
-      { name: "detail", siteKey: option.siteKey, vodId: option.vodId, title: option.vodName },
+      {
+        name: "detail",
+        siteKey: option.siteKey,
+        vodId: option.vodId,
+        title: option.vodName,
+      },
       true,
     );
   };
@@ -446,7 +509,11 @@ export default function DetailPage({
             </span>
           </div>
         </header>
-        <Spinner label="正在加载详情…" />
+        <div className="page-body">
+          {/* 骨架复刻真实版式：从收藏 / 历史点进来时，等待期间就能看出
+              「马上出现的是海报 + 简介 + 剧集」，而不是一片空白里转个圈。 */}
+          <DetailSkeleton />
+        </div>
       </section>
     );
   }
@@ -468,7 +535,11 @@ export default function DetailPage({
     // 卡片回填后，标题优先用卡片片名（`title` 只在从列表点进来时才有，
     // 收藏/历史直链进详情时只剩卡片这一条线索）。
     const cardTitle = (emptyCard?.vod_name || title || "").trim();
-    const emptyMeta = [emptyCard?.vod_remarks, emptyCard?.vod_year, emptyCard?.type_name]
+    const emptyMeta = [
+      emptyCard?.vod_remarks,
+      emptyCard?.vod_year,
+      emptyCard?.type_name,
+    ]
       .filter((item): item is string => Boolean(item && String(item).trim()))
       .join(" · ");
     return (
@@ -477,79 +548,100 @@ export default function DetailPage({
           <IconButton name="back" label="返回" onClick={onBack} />
           <IconButton name="swap" label="换源" onClick={openSources} />
         </header>
-        {error ? (
-          <ErrorBar message={`详情加载失败：${error}`} onRetry={retry} />
-        ) : (
-          <div
-            className={emptyCard ? "detail-empty detail-empty--card" : "detail-empty"}
-            role="status"
-          >
-            {emptyCard && emptyCardImage.src ? (
-              <div className="detail-empty__poster">
-                <img
-                  src={emptyCardImage.src}
-                  alt={emptyCard.vod_name || ""}
-                  onError={emptyCardImage.onError}
-                />
-              </div>
-            ) : null}
-            <div className="detail-empty__body">
-              <p className="detail-empty__title">
-                {cardTitle
-                  ? `《${cardTitle}》`
-                  : known
-                    ? `「${siteName || siteKey}」不提供播放列表`
-                    : "当前源没有返回影片详情"}
-              </p>
-              {emptyMeta ? <p className="detail-empty__meta">{emptyMeta}</p> : null}
-              <p className="detail-empty__desc">
-                {emptyCard
-                  ? `「${siteName || siteKey}」是榜单/推荐型源：能给出片名、海报和评分，但没有影片详情与播放地址。想看这部片，换一个有片源的站点即可。`
-                  : known
-                    ? "这类源只提供榜单/推荐（海报、评分、片名），点任何影片都不会有剧集，换片也一样。"
-                    : "可能是影片 id 失效或站点临时波动，也可能是这个源只做发现/推荐。"}
-              </p>
-              {fallback === "searching" || fallback === "none" ? (
-                <p className="detail-empty__hint">
-                  {fallback === "searching"
-                    ? `正在按片名从其它源查找${cardTitle ? `《${cardTitle}》` : ""}的可播放版本，找到后会自动切换…`
-                    : "已按片名在其它源查找，暂时没有找到可播放的版本。"}
-                </p>
-              ) : null}
-              <div className="detail-empty__actions">
-                {cardTitle ? (
-                  <button
-                    type="button"
-                    className="btn btn--primary btn--sm"
-                    onClick={() => navigate({ name: "search", keyword: cardTitle })}
-                  >
-                    全站搜索此片
-                  </button>
+        <div className="page-body">
+          {error ? (
+            <ErrorBar
+              message="详情加载失败"
+              hint={classifyFailure(undefined, error).label}
+              detail={error}
+              onRetry={retry}
+            />
+          ) : (
+            /* 居中容器：空态是这一屏唯一的内容，贴左上角会显得「页面没渲染完」；
+               垂直居中后上下留白对称，视线自然落在海报与下一步动作上。 */
+            <div className="detail-empty-wrap">
+              <div
+                className={
+                  emptyCard ? "detail-empty detail-empty--card" : "detail-empty"
+                }
+                role="status"
+              >
+                {emptyCard && emptyCardImage.src ? (
+                  <div className="detail-empty__poster">
+                    <img
+                      src={emptyCardImage.src}
+                      alt={emptyCard.vod_name || ""}
+                      onError={emptyCardImage.onError}
+                    />
+                  </div>
                 ) : null}
-                <button
-                  type="button"
-                  className={`btn btn--sm ${cardTitle ? "btn--ghost" : "btn--primary"}`}
-                  onClick={openSources}
-                >
-                  换源
-                </button>
-                <button type="button" className="btn btn--ghost btn--sm" onClick={retry}>
-                  重试
-                </button>
+                <div className="detail-empty__body">
+                  <p className="detail-empty__title">
+                    {cardTitle
+                      ? `《${cardTitle}》`
+                      : known
+                        ? `「${siteName || siteKey}」不提供播放列表`
+                        : "当前源没有返回影片详情"}
+                  </p>
+                  {emptyMeta ? (
+                    <p className="detail-empty__meta">{emptyMeta}</p>
+                  ) : null}
+                  <p className="detail-empty__desc">
+                    {emptyCard
+                      ? `「${siteName || siteKey}」是榜单/推荐型源：能给出片名、海报和评分，但没有影片详情与播放地址。想看这部片，换一个有片源的站点即可。`
+                      : known
+                        ? "这类源只提供榜单/推荐（海报、评分、片名），点任何影片都不会有剧集，换片也一样。"
+                        : "可能是影片 id 失效或站点临时波动，也可能是这个源只做发现/推荐。"}
+                  </p>
+                  {fallback === "searching" || fallback === "none" ? (
+                    <p className="detail-empty__hint">
+                      {fallback === "searching"
+                        ? `正在按片名从其它源查找${cardTitle ? `《${cardTitle}》` : ""}的可播放版本，找到后会自动切换…`
+                        : "已按片名在其它源查找，暂时没有找到可播放的版本。"}
+                    </p>
+                  ) : null}
+                  <div className="detail-empty__actions">
+                    {cardTitle ? (
+                      <button
+                        type="button"
+                        className="btn btn--primary btn--sm"
+                        onClick={() =>
+                          navigate({ name: "search", keyword: cardTitle })
+                        }
+                      >
+                        全站搜索此片
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={`btn btn--sm ${cardTitle ? "btn--ghost" : "btn--primary"}`}
+                      onClick={openSources}
+                    >
+                      换源
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      onClick={retry}
+                    >
+                      重试
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        )}
-        {showSources ? (
-          <SourcePicker
-            title={title || ""}
-            currentSiteKey={siteKey}
-            currentSiteName={siteName}
-            sites={sites}
-            onPick={pickSource}
-            onClose={() => setShowSources(false)}
-          />
-        ) : null}
+          )}
+          {showSources ? (
+            <SourcePicker
+              title={title || ""}
+              currentSiteKey={siteKey}
+              currentSiteName={siteName}
+              sites={sites}
+              onPick={pickSource}
+              onClose={() => setShowSources(false)}
+            />
+          ) : null}
+        </div>
       </section>
     );
   }
@@ -579,13 +671,20 @@ export default function DetailPage({
             当前源：{siteName || siteKey}
           </span>
           {cacheLabel ? (
-            <span className="page-meta" title="播放列表来自本次会话的缓存，点刷新可强制重新拉取">
+            <span
+              className="page-meta"
+              title="播放列表来自本次会话的缓存，点刷新可强制重新拉取"
+            >
               {cacheLabel}
             </span>
           ) : null}
         </div>
         <div className="iconbar">
-          <IconButton name="swap" label="换源" onClick={() => setShowSources(true)} />
+          <IconButton
+            name="swap"
+            label="换源"
+            onClick={() => setShowSources(true)}
+          />
           <IconButton
             name="refresh"
             label="刷新"
@@ -596,181 +695,216 @@ export default function DetailPage({
         </div>
       </header>
 
-      {recoveryNotice ? <p className="tip tip--ok">{recoveryNotice}</p> : null}
-      {favTip ? <p className="tip">{favTip}</p> : null}
-      {site?.changeable === false ? (
-        <p className="tip">该源声明 changeable=0（不建议作为换源目标）；按片名跨源查找仍会进行，手动换源也可用。</p>
-      ) : null}
-
-      <div className="detail-hero">
-        <div className="detail-poster">
-          {heroImage.src && !heroImage.broken ? (
-            <img src={heroImage.src} alt={vod.vod_name} referrerPolicy="no-referrer" onError={heroImage.onError} />
-          ) : (
-            <span className="vod-card__ph">{vod.vod_pic ? "无封面" : ""}</span>
-          )}
-        </div>
-        <div className="detail-info">
-          <div className="detail-title-row">
-            <h1 className="detail-title">{vod.vod_name || "未命名"}</h1>
-            <FavStar on={favorite} busy={favBusy} onToggle={() => void toggleFavorite()} />
-          </div>
-          {chips.length > 0 ? (
-            <div className="chip-row chip-row--static">
-              {chips.map((chip, index) => (
-                <span className="chip chip--static" key={`${chip}-${index}`}>
-                  {chip}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {vod.vod_director ? (
-            <p className="detail-line">导演：{plainText(vod.vod_director)}</p>
-          ) : null}
-          {vod.vod_actor ? (
-            <p className="detail-line">主演：{plainText(vod.vod_actor)}</p>
-          ) : null}
-          <p
-            ref={contentRef}
-            className={expanded ? "detail-content is-expanded" : "detail-content is-clamped"}
-          >
-            {description}
+      <div className="page-body">
+        {recoveryNotice ? (
+          <p className="tip tip--ok">{recoveryNotice}</p>
+        ) : null}
+        {site?.changeable === false ? (
+          <p className="tip">
+            该源声明
+            changeable=0（不建议作为换源目标）；按片名跨源查找仍会进行，手动换源也可用。
           </p>
-          <div className="detail-actions detail-actions--inline">
-            {overflowing || expanded ? (
-              <IconButton
-                name="chevron"
-                label={expanded ? "收起简介" : "展开简介"}
-                expanded={expanded}
-                className="icon-btn--rotate"
-                onClick={() => setExpanded((value) => !value)}
+        ) : null}
+
+        <div className="detail-hero">
+          <div className="detail-poster">
+            {heroImage.src && !heroImage.broken ? (
+              <img
+                src={heroImage.src}
+                alt={vod.vod_name}
+                referrerPolicy="no-referrer"
+                onError={heroImage.onError}
               />
-            ) : null}
-            {/* 按钮只留动作本身：线路有 chip 的「上次」角标、集数有剧集格的「上次看到」，
-                进度这类细节放 hover 提示里，不占按钮文案。 */}
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={!quickPlay}
-              onClick={() => quickPlay && playEpisode(quickPlay.line, quickPlay.episode)}
-              title={
-                resume && quickPlay
-                  ? `上次看到：${resume.episodeName || `第 ${quickPlay.index + 1} 集`} · ${formatDuration(resume.positionMs ?? 0)}`
-                  : undefined
-              }
-            >
-              <Icon name="play" />
-              {resume && quickPlay ? "继续播放" : "播放第 1 集"}
-            </button>
+            ) : (
+              <span className="vod-card__ph">
+                {vod.vod_pic ? "无封面" : ""}
+              </span>
+            )}
           </div>
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-head">
-          <h2 className="section-title">播放线路</h2>
-          <span className="page-meta">
-            {/* 与播放页选集面板同口径：各线路是独立剧集表，不做跨线路累加。 */}
-            {lines.length} 条线路 · 当前线路 {line?.episodes.length ?? 0} 集
-          </span>
-        </div>
-        {lines.length === 0 ? (
-          <Empty title="暂无可播放剧集" description="该影片没有提供播放地址，可试试手动换源。" />
-        ) : (
-          <>
-            {/* `chip-row--lines` 是给探针/脚本的稳定锚点：分类 chip 也在这页
-                用 `.chip-row .chip`，早先的探针因此把「2026」「大陆」当成线路点。 */}
-            <div className="chip-row chip-row--lines">
-              {lines.map((item, index) => (
-                <button
-                  key={`${item.name}-${index}`}
-                  type="button"
-                  className={index === lineIndex ? "chip is-active" : "chip"}
-                  data-line={item.name}
-                  onClick={() => setLineIndex(index)}
-                  title={
-                    resume?.playFrom === item.name
-                      ? `${item.episodes.length} 集 · 上次观看的线路`
-                      : `${item.episodes.length} 集`
-                  }
-                >
-                  {item.name}（{item.episodes.length}）
-                  {resume?.playFrom === item.name ? (
-                    <span className="chip__flag">上次</span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-
-            <div className="detail-episode-tools">
-              <input
-                className="input"
-                type="text"
-                value={episodeQuery}
-                placeholder="筛选剧集名称 / 集号"
-                aria-label="筛选剧集"
-                onChange={(event) => setEpisodeQuery(event.target.value)}
+          <div className="detail-info">
+            <div className="detail-title-row">
+              <h1 className="detail-title">{vod.vod_name || "未命名"}</h1>
+              <FavStar
+                on={favorite}
+                busy={favBusy}
+                onToggle={() => void toggleFavorite()}
               />
-              <IconButton
-                name="sort"
-                label={reverse ? "正序" : "倒序"}
-                pressed={reverse}
-                className="icon-btn--flip"
-                onClick={() => setReverse((value) => !value)}
-              />
-              <span className="page-meta">显示 {episodes.length} 集</span>
-              {/* 线路与集名都落到「上次那集」时给出显式提示：剧集多时高亮
-                  那格通常在可视区外，光靠 `is-seen` 角标会让人以为没记住。 */}
-              {resume?.episodeName && resume.playFrom === line?.name ? (
-                <span className="page-meta detail-episode-tools__seen">
-                  上次看到：{resume.episodeName}
-                </span>
-              ) : null}
             </div>
-
-            {line ? (
-              <div className="episode-grid">
-                {episodes.map(({ episode, index }) => {
-                  // 地址可能被源换过 CDN，地址匹配不上时用「同线路 + 同集名」兜底。
-                  const seen = resume
-                    ? resume.playUrl === episode.url ||
-                      (!!resume.episodeName &&
-                        resume.playFrom === line.name &&
-                        resume.episodeName === episode.name)
-                    : false;
-                  return (
-                    <button
-                      key={`${episode.url}-${index}`}
-                      type="button"
-                      className={seen ? "episode is-seen" : "episode"}
-                      onClick={() => playEpisode(line, episode)}
-                      title={episode.name}
-                    >
-                      {episode.name}
-                      {seen ? <span className="episode__flag">上次看到</span> : null}
-                    </button>
-                  );
-                })}
+            {chips.length > 0 ? (
+              <div className="chip-row chip-row--static">
+                {chips.map((chip, index) => (
+                  <span className="chip chip--static" key={`${chip}-${index}`}>
+                    {chip}
+                  </span>
+                ))}
               </div>
             ) : null}
-            {episodes.length === 0 ? (
-              <Empty title="没有匹配的剧集" description="换个名称或集号再试。" />
+            {vod.vod_director ? (
+              <p className="detail-line">导演：{plainText(vod.vod_director)}</p>
             ) : null}
-          </>
-        )}
-      </div>
+            {vod.vod_actor ? (
+              <p className="detail-line">主演：{plainText(vod.vod_actor)}</p>
+            ) : null}
+            <p
+              ref={contentRef}
+              className={
+                expanded
+                  ? "detail-content is-expanded"
+                  : "detail-content is-clamped"
+              }
+            >
+              {description}
+            </p>
+            <div className="detail-actions detail-actions--inline">
+              {overflowing || expanded ? (
+                <IconButton
+                  name="chevron"
+                  label={expanded ? "收起简介" : "展开简介"}
+                  expanded={expanded}
+                  className="icon-btn--rotate"
+                  onClick={() => setExpanded((value) => !value)}
+                />
+              ) : null}
+              {/* 按钮只留动作本身：线路有 chip 的「上次」角标、集数有剧集格的「上次看到」，
+                进度这类细节放 hover 提示里，不占按钮文案。 */}
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={!quickPlay}
+                onClick={() =>
+                  quickPlay && playEpisode(quickPlay.line, quickPlay.episode)
+                }
+                title={
+                  resume && quickPlay
+                    ? `上次看到：${resume.episodeName || `第 ${quickPlay.index + 1} 集`} · ${formatDuration(resume.positionMs ?? 0)}`
+                    : undefined
+                }
+              >
+                <Icon name="play" />
+                {resume && quickPlay ? "继续播放" : "播放第 1 集"}
+              </button>
+            </div>
+          </div>
+        </div>
 
-      {showSources ? (
-        <SourcePicker
-          title={title || vod.vod_name}
-          currentSiteKey={siteKey}
-          currentSiteName={siteName}
-          sites={sites}
-          notice={site?.changeable === false ? "当前源禁止自动换源，手动切换仍由你决定。" : undefined}
-          onPick={pickSource}
-          onClose={() => setShowSources(false)}
-        />
-      ) : null}
+        <div className="section">
+          <div className="section-head">
+            <h2 className="section-title">播放线路</h2>
+            <span className="page-meta">
+              {/* 与播放页选集面板同口径：各线路是独立剧集表，不做跨线路累加。 */}
+              {lines.length} 条线路 · 当前线路 {line?.episodes.length ?? 0} 集
+            </span>
+          </div>
+          {lines.length === 0 ? (
+            <Empty
+              title="暂无可播放剧集"
+              description="该影片没有提供播放地址，可试试手动换源。"
+            />
+          ) : (
+            <>
+              {/* `chip-row--lines` 是给探针/脚本的稳定锚点：分类 chip 也在这页
+                用 `.chip-row .chip`，早先的探针因此把「2026」「大陆」当成线路点。 */}
+              <div className="chip-row chip-row--lines">
+                {lines.map((item, index) => (
+                  <button
+                    key={`${item.name}-${index}`}
+                    type="button"
+                    className={index === lineIndex ? "chip is-active" : "chip"}
+                    data-line={item.name}
+                    onClick={() => setLineIndex(index)}
+                    title={
+                      resume?.playFrom === item.name
+                        ? `${item.episodes.length} 集 · 上次观看的线路`
+                        : `${item.episodes.length} 集`
+                    }
+                  >
+                    {item.name}（{item.episodes.length}）
+                    {resume?.playFrom === item.name ? (
+                      <span className="chip__flag">上次</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+
+              <div className="detail-episode-tools">
+                <input
+                  className="input"
+                  type="text"
+                  value={episodeQuery}
+                  placeholder="筛选剧集名称 / 集号"
+                  aria-label="筛选剧集"
+                  onChange={(event) => setEpisodeQuery(event.target.value)}
+                />
+                <IconButton
+                  name="sort"
+                  label={reverse ? "正序" : "倒序"}
+                  pressed={reverse}
+                  className="icon-btn--flip"
+                  onClick={() => setReverse((value) => !value)}
+                />
+                <span className="page-meta">显示 {episodes.length} 集</span>
+                {/* 线路与集名都落到「上次那集」时给出显式提示：剧集多时高亮
+                  那格通常在可视区外，光靠 `is-seen` 角标会让人以为没记住。 */}
+                {resume?.episodeName && resume.playFrom === line?.name ? (
+                  <span className="page-meta detail-episode-tools__seen">
+                    上次看到：{resume.episodeName}
+                  </span>
+                ) : null}
+              </div>
+
+              {line ? (
+                <div className="episode-grid">
+                  {episodes.map(({ episode, index }) => {
+                    // 地址可能被源换过 CDN，地址匹配不上时用「同线路 + 同集名」兜底。
+                    const seen = resume
+                      ? resume.playUrl === episode.url ||
+                        (!!resume.episodeName &&
+                          resume.playFrom === line.name &&
+                          resume.episodeName === episode.name)
+                      : false;
+                    return (
+                      <button
+                        key={`${episode.url}-${index}`}
+                        type="button"
+                        className={seen ? "episode is-seen" : "episode"}
+                        onClick={() => playEpisode(line, episode)}
+                        title={episode.name}
+                      >
+                        {episode.name}
+                        {seen ? (
+                          <span className="episode__flag">上次看到</span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {episodes.length === 0 ? (
+                <Empty
+                  title="没有匹配的剧集"
+                  description="换个名称或集号再试。"
+                />
+              ) : null}
+            </>
+          )}
+        </div>
+
+        {showSources ? (
+          <SourcePicker
+            title={title || vod.vod_name}
+            currentSiteKey={siteKey}
+            currentSiteName={siteName}
+            sites={sites}
+            notice={
+              site?.changeable === false
+                ? "当前源禁止自动换源，手动切换仍由你决定。"
+                : undefined
+            }
+            onPick={pickSource}
+            onClose={() => setShowSources(false)}
+          />
+        ) : null}
+      </div>
     </section>
   );
 }

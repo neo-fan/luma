@@ -210,3 +210,14 @@ describe("plainText", () => {
     expect(plainText("   ")).toBe("");
   });
 });
+
+describe("sameTitle", () => {
+  it("按片名判定同一部片（忽略空白与大小写）", async () => {
+    const { sameTitle } = await import("./format");
+    expect(sameTitle("今 天是太阳雨", "今天是太阳雨")).toBe(true);
+    expect(sameTitle("Fallen Angels", "fallenangels")).toBe(true);
+    expect(sameTitle("今天是太阳雨", "后会无期")).toBe(false);
+    expect(sameTitle("", "")).toBe(false);
+    expect(sameTitle(undefined, "今天是太阳雨")).toBe(false);
+  });
+});

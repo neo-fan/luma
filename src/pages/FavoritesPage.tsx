@@ -7,6 +7,8 @@ import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { usePageState } from "../lib/usePageState";
+import { sameTitle } from "../lib/format";
+import { notify } from "../lib/notify";
 import type { FavoriteItem, HistoryItem, VodRef } from "../types/tvbox";
 
 interface FavoritesPageProps {
@@ -114,7 +116,16 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
     };
     try {
       await api.favoritesToggle(ref);
-      setItems((list) => list.filter((one) => !(one.siteKey === item.siteKey && one.vodId === item.vodId)));
+      setItems((list) =>
+        list.filter(
+          (one) =>
+            !(
+              sameTitle(one.name, item.name) ||
+              (one.siteKey === item.siteKey && one.vodId === item.vodId)
+            ),
+        ),
+      );
+      notify.info("已取消收藏");
     } catch (err) {
       setError(`取消收藏失败：${errorMessage(err)}`);
     } finally {
@@ -128,66 +139,67 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
         <h1 className="page-title">收藏</h1>
         <span className="page-meta">共 {items.length} 条</span>
       </header>
-
-      <AsyncBoundary
-        loading={loading}
-        error={error}
-        isEmpty={items.length === 0}
-        loadingLabel="正在加载收藏…"
-        emptyTitle="还没有收藏任何影片"
-        emptyDescription="在影片详情页点右上角的星标即可加入收藏。"
-        onRetry={() => setReload((value) => value + 1)}
-        emptyAction={
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => navigate({ name: "home" })}
-          >
-            去逛逛
-          </button>
-        }
-      >
-        <div className="vod-grid">
-          {items.map((item) => (
-            <div className="fav-item" key={`${item.siteKey}-${item.vodId}`}>
-              <PlayButton
-                label="播放"
-                onPlay={() =>
-                  navigate({
-                    name: "detail",
-                    siteKey: item.siteKey,
-                    vodId: item.vodId,
-                    title: item.name,
-                  })
-                }
-              />
-              <VodCard
-                title={item.name}
-                pic={item.pic}
-                remarks={item.remarks}
-                resolution={resolutions[`${item.siteKey}:${item.vodId}`]}
-                sub={item.siteName}
-                onOpen={() =>
-                  navigate({
-                    name: "detail",
-                    siteKey: item.siteKey,
-                    vodId: item.vodId,
-                    title: item.name,
-                  })
-                }
-              />
-              {/* 已收藏用实心金星表示，点它即取消——和详情页那颗星是同一套语言，
+      <div className="page-body">
+        <AsyncBoundary
+          loading={loading}
+          error={error}
+          isEmpty={items.length === 0}
+          loadingLabel="正在加载收藏…"
+          emptyTitle="还没有收藏任何影片"
+          emptyDescription="在影片详情页点右上角的星标即可加入收藏。"
+          onRetry={() => setReload((value) => value + 1)}
+          emptyAction={
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => navigate({ name: "home" })}
+            >
+              去逛逛
+            </button>
+          }
+        >
+          <div className="vod-grid">
+            {items.map((item) => (
+              <div className="fav-item" key={`${item.siteKey}-${item.vodId}`}>
+                <PlayButton
+                  label="播放"
+                  onPlay={() =>
+                    navigate({
+                      name: "detail",
+                      siteKey: item.siteKey,
+                      vodId: item.vodId,
+                      title: item.name,
+                    })
+                  }
+                />
+                <VodCard
+                  title={item.name}
+                  pic={item.pic}
+                  remarks={item.remarks}
+                  resolution={resolutions[`${item.siteKey}:${item.vodId}`]}
+                  sub={item.siteName}
+                  onOpen={() =>
+                    navigate({
+                      name: "detail",
+                      siteKey: item.siteKey,
+                      vodId: item.vodId,
+                      title: item.name,
+                    })
+                  }
+                />
+                {/* 已收藏用实心金星表示，点它即取消——和详情页那颗星是同一套语言，
                   比一个「×」更能说明「这条已经在收藏里」。 */}
-              <FavStar
-                on
-                busy={busyKey === `${item.siteKey}-${item.vodId}`}
-                onToggle={() => void remove(item)}
-                className="fav-item__unfav"
-              />
-            </div>
-          ))}
-        </div>
-      </AsyncBoundary>
+                <FavStar
+                  on
+                  busy={busyKey === `${item.siteKey}-${item.vodId}`}
+                  onToggle={() => void remove(item)}
+                  className="fav-item__unfav"
+                />
+              </div>
+            ))}
+          </div>
+        </AsyncBoundary>
+      </div>
     </section>
   );
 }

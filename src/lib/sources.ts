@@ -13,6 +13,8 @@ import type { ResultPage, Site, SpiderRequest } from "../types/tvbox";
 
 /** `spider_invoke({ siteKey: "all" })` 返回的单站结果行。 */
 export interface AggregateRow {
+  /** 由 `SpiderRequest.streamId` 回带；缺省 = 旧后端/其它来源，调用方按代次过滤。 */
+  streamId?: string;
   siteKey: string;
   ok: boolean;
   data?: ResultPage;
@@ -133,7 +135,9 @@ export function collectSourceOptions(
   }
 
   return [...best.values()].sort(
-    (a, b) => b.matchScore - a.matchScore || a.siteName.localeCompare(b.siteName, "zh-CN"),
+    (a, b) =>
+      b.matchScore - a.matchScore ||
+      a.siteName.localeCompare(b.siteName, "zh-CN"),
   );
 }
 
@@ -215,7 +219,9 @@ export function pickMatchingEpisode(
     }
     const number = episodeNumber(name);
     if (number !== null) {
-      const byNumber = all.find((item) => episodeNumber(item.episode.name) === number);
+      const byNumber = all.find(
+        (item) => episodeNumber(item.episode.name) === number,
+      );
       if (byNumber) {
         return byNumber;
       }

@@ -10,6 +10,7 @@ import {
   ArrowDownUp,
   ArrowLeftRight,
   Check,
+  CircleAlert,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -41,7 +42,8 @@ export type IconName =
   | "play"
   | "search"
   | "globe"
-  | "pencil";
+  | "pencil"
+  | "alert";
 
 const ICONS: Record<IconName, LucideIcon> = {
   back: ChevronLeft,
@@ -62,6 +64,8 @@ const ICONS: Record<IconName, LucideIcon> = {
   /** 搜索页「全部站点」：globe 比文字更贴合图标语言，且避免原生 select 风格突兀。 */
   globe: Globe,
   pencil: Pencil,
+  /** 错误提示的引导图标：圆底感叹号比三角警告更"提示"、更少惊吓感。 */
+  alert: CircleAlert,
 };
 
 export default function Icon({
@@ -76,6 +80,10 @@ export default function Icon({
 }) {
   const Glyph = ICONS[name];
   return (
-    <Glyph {...ICON_PROPS} {...(size ? { size } : null)} className={className} />
+    <Glyph
+      {...ICON_PROPS}
+      {...(size ? { size } : null)}
+      className={className}
+    />
   );
 }

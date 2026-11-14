@@ -406,22 +406,43 @@ impl Db {
     /// Returns `true` when the row ended up favourited. The existence check and
     /// the mutation share one transaction, so two rapid toggles cannot both see
     /// the same old state.
+    ///
+    /// **收藏按片名**：同一部片换到别的源后 `site_key + vod_id` 全变了，
+    /// 用复合主键判重会让星标显示「未收藏」、再点一次又多出一行同名收藏。
+    /// 与 `upsert_history` 同口径：以 `name` 为业务身份，`site_key/vod_id`
+    /// 退化为「最近一次是从哪个源收藏的」定位信息。
     pub fn toggle_favorite(&self, row: &FavoriteRow) -> Result<bool, AppError> {
         self.with("toggle favourite", |conn| {
             let tx = conn.transaction()?;
-            let exists = tx
-                .query_row(
+            let name = row.name.trim();
+            let exists = if name.is_empty() {
+                // 源没给片名时退回原来的复合键，绝不能把空名互相合并。
+                tx.query_row(
                     "SELECT 1 FROM favorites WHERE site_key = ?1 AND vod_id = ?2",
                     params![row.site_key, row.vod_id],
                     |_| Ok(()),
                 )
                 .optional()?
-                .is_some();
+                .is_some()
+            } else {
+                tx.query_row(
+                    "SELECT 1 FROM favorites WHERE name = ?1",
+                    params![name],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some()
+            };
             if exists {
-                tx.execute(
-                    "DELETE FROM favorites WHERE site_key = ?1 AND vod_id = ?2",
-                    params![row.site_key, row.vod_id],
-                )?;
+                // 连「同名但来自其它源」的历史收藏一起清掉，避免重复条目。
+                if name.is_empty() {
+                    tx.execute(
+                        "DELETE FROM favorites WHERE site_key = ?1 AND vod_id = ?2",
+                        params![row.site_key, row.vod_id],
+                    )?;
+                } else {
+                    tx.execute("DELETE FROM favorites WHERE name = ?1", params![name])?;
+                }
             } else {
                 tx.execute(
                     "INSERT INTO favorites

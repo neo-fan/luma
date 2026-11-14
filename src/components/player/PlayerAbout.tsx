@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useProxiedImage } from "../../hooks/useProxiedImage";
 import IconButton from "../IconButton";
 import { plainText } from "../../lib/format";
@@ -19,8 +19,14 @@ interface PlayerAboutProps {
   onPlayExternal?: () => void;
 }
 
-const CLAMP_AT = 160;
-
+/**
+ * 简介折叠：按**实际是否溢出**决定要不要给展开按钮，不按字数猜。
+ *
+ * 以前用 `description.length > 160` 判断：中文 160 字在宽屏上可能只有两行、
+ * 根本没超过 clamp 的 84px，按钮却照样出现——点了 `aria-expanded` 变了、
+ * 画面纹丝不动，用户自然认为「展开逻辑失效」。行数与容器宽度、字号、中英混排
+ * 都有关，只能量 DOM：`scrollHeight > clientHeight` 才是真溢出。
+ */
 /**
  * 播放器下方的影片信息卡：海报 + 片名 + 年份/地区/类型 + 导演主演 + 简介，
  * 换源 / 外部播放（开关打开时）放在卡片操作区。详情拿不到时只显示片名与站点，不留白板。
@@ -37,12 +43,32 @@ export default function PlayerAbout({
 }: PlayerAboutProps) {
   const poster = useProxiedImage(vod?.vod_pic);
   const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const contentRef = useRef<HTMLParagraphElement | null>(null);
+
   const title = vod?.vod_name?.trim() || fallbackName || "未命名";
   const chips = [vod?.vod_year, vod?.vod_area, vod?.type_name, vod?.vod_remarks]
     .map((item) => item?.trim())
     .filter((item): item is string => Boolean(item));
   const description = plainText(vod?.vod_content);
   const hasPoster = Boolean(poster.src) && !poster.broken;
+
+  useLayoutEffect(() => {
+    // 展开态不重新测量，否则「已展开」时 scrollHeight === clientHeight，
+    // 按钮会当场消失、再也收不回去；保留上一次测得的 true 即可。
+    if (expanded) {
+      return;
+    }
+    const el = contentRef.current;
+    if (!el) {
+      return;
+    }
+    const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 2);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [description, expanded]);
 
   return (
     <section className="player-about">
@@ -69,7 +95,11 @@ export default function PlayerAbout({
               <IconButton name="swap" label="换源" onClick={onSwitchSource} />
             ) : null}
             {onPlayExternal ? (
-              <IconButton name="external" label="外部播放" onClick={onPlayExternal} />
+              <IconButton
+                name="external"
+                label="外部播放"
+                onClick={onPlayExternal}
+              />
             ) : null}
           </div>
         </div>
@@ -105,10 +135,15 @@ export default function PlayerAbout({
 
         {description ? (
           <>
-            <p className={expanded ? "detail-content" : "detail-content is-clamped"}>
+            <p
+              ref={contentRef}
+              className={
+                expanded ? "detail-content" : "detail-content is-clamped"
+              }
+            >
               {description}
             </p>
-            {description.length > CLAMP_AT ? (
+            {overflowing || expanded ? (
               <IconButton
                 name="chevron"
                 label={expanded ? "收起简介" : "展开简介"}

@@ -2,15 +2,19 @@ import type { ReactNode } from "react";
 import Empty from "./Empty";
 import ErrorBar from "./ErrorBar";
 import Spinner from "./Spinner";
+import { classifyFailure } from "../lib/failureReason";
 
 interface AsyncBoundaryProps {
   /** 正在首次加载（此时通常还没有数据）。 */
   loading: boolean;
   /**
-   * 错误文案；非空时在顶栏展示 ErrorBar（非阻塞——若已有数据，下方内容照常渲染）。
+   * 原始错误文案（一般是 `errorMessage(err)`，可能含完整 URL / 解析器
+   * 行列号）。组件用 `classifyFailure` 归类：**界面只出归因，原文折叠**。
    * 传空串即不展示。
    */
   error?: string;
+  /** 错误主文案：说清是哪一步失败（默认「加载失败」）。 */
+  errorTitle?: string;
   /** 没有可展示的数据（初始加载、空结果、加载失败都算）。 */
   isEmpty: boolean;
   loadingLabel?: string;
@@ -24,6 +28,8 @@ interface AsyncBoundaryProps {
   emptyAction?: ReactNode;
   /** 错误重试回调；传了才显示重试按钮。 */
   onRetry?: () => void;
+  /** 错误附带动作（如「换个站点」）。 */
+  errorAction?: ReactNode;
   /** 错误栏是否带复制按钮（默认 true）。 */
   errorCopyable?: boolean;
   children: ReactNode;
@@ -38,10 +44,15 @@ interface AsyncBoundaryProps {
  *   2. 首次加载且空 → 居中 Spinner
  *   3. 已结束且空 → 空态
  *   4. 有数据（!isEmpty）→ children
+ *
+ * 错误文案在这里统一「归类 + 折叠原文」：调用方照旧只传 `errorMessage(err)`，
+ * 不必各自判断哪些报错能露脸——以前漏一处就会出现
+ * `fetch https://… failed` 直出界面。
  */
 export default function AsyncBoundary({
   loading,
   error,
+  errorTitle = "加载失败",
   isEmpty,
   loadingLabel = "加载中…",
   skeleton,
@@ -49,19 +60,32 @@ export default function AsyncBoundary({
   emptyDescription,
   emptyAction,
   onRetry,
+  errorAction,
   errorCopyable = true,
   children,
 }: AsyncBoundaryProps) {
+  const reason = error ? classifyFailure(undefined, error) : null;
   return (
     <>
-      {error ? (
-        <ErrorBar message={error} onRetry={onRetry} copyable={errorCopyable} />
+      {reason ? (
+        <ErrorBar
+          message={errorTitle}
+          hint={reason.kind === "unknown" ? undefined : reason.label}
+          detail={reason.raw}
+          onRetry={onRetry}
+          actions={errorAction}
+          copyable={errorCopyable}
+        />
       ) : null}
-      {!error && loading && isEmpty ? (
-        skeleton ?? <Spinner center label={loadingLabel} />
-      ) : null}
+      {!error && loading && isEmpty
+        ? (skeleton ?? <Spinner center label={loadingLabel} />)
+        : null}
       {!error && !loading && isEmpty ? (
-        <Empty title={emptyTitle} description={emptyDescription} action={emptyAction} />
+        <Empty
+          title={emptyTitle}
+          description={emptyDescription}
+          action={emptyAction}
+        />
       ) : null}
       {!isEmpty ? children : null}
     </>

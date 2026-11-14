@@ -117,6 +117,21 @@ export function formatDuration(ms: number): string {
     : `${pad(minutes)}:${pad(seconds)}`;
 }
 
+/**
+ * 片名归一化：去掉所有空白 + 统一大小写，用于「同一部片」判定。
+ * 收藏/历史按片名记录（换源后 siteKey+vodId 全变），空名一律不算同一部，
+ * 否则没片名的源会互相吞并。
+ */
+export function sameTitle(
+  a: string | undefined,
+  b: string | undefined,
+): boolean {
+  const norm = (value: string | undefined) =>
+    (value ?? "").replace(/\s+/g, "").toLowerCase();
+  const left = norm(a);
+  return left.length > 0 && left === norm(b);
+}
+
 /** VodInfo → 收藏 / 历史所需的 VodRef。 */
 export function toVodRef(
   siteKey: string,
@@ -154,8 +169,14 @@ export function canFailover(site?: { changeable?: boolean }): boolean {
  */
 export function usableHomeSites<T extends object>(sites: T[]): T[] {
   return sites.filter((site) => {
-    const item = site as { runtime?: string; enabled?: boolean; disabledReason?: string };
-    return item.enabled !== false && item.runtime !== "jvm" && !item.disabledReason;
+    const item = site as {
+      runtime?: string;
+      enabled?: boolean;
+      disabledReason?: string;
+    };
+    return (
+      item.enabled !== false && item.runtime !== "jvm" && !item.disabledReason
+    );
   });
 }
 

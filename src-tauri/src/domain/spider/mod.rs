@@ -93,6 +93,10 @@ pub struct SpiderRequest {
     /// 仅 `siteKey = "all"` 且 method = searchContent 时生效。
     #[serde(default)]
     pub stream: Option<bool>,
+    /// 本次聚合的代次标识，原样回带在 `search-chunk` 事件里。前端改词重搜时
+    /// 两轮聚合会重叠，靠它把上一轮的迟到 chunk 挡在新结果之外。
+    #[serde(default)]
+    pub stream_id: Option<String>,
 }
 
 /// Spec 7.3 trait; implementations must be stateless and cheap to clone.
@@ -296,6 +300,7 @@ pub async fn spider_invoke(
             &request.args,
             timeout,
             streaming.then(|| &app),
+            request.stream_id.clone(),
         )
         .await;
     }
@@ -343,6 +348,7 @@ async fn aggregate(
     args: &[Value],
     timeout: Duration,
     streaming: Option<&tauri::AppHandle>,
+    stream_id: Option<String>,
 ) -> Result<Value, AppError> {
     let sites: Vec<Value> = state
         .all_sites()
@@ -434,7 +440,12 @@ async fn aggregate(
             Ok(Some(joined)) => match joined {
                 Ok((site_key, Ok(data))) => {
                     ok += 1;
-                    let row = json!({ "siteKey": site_key, "ok": true, "data": data });
+                    let row = json!({
+                        "siteKey": site_key,
+                        "ok": true,
+                        "data": data,
+                        "streamId": stream_id,
+                    });
                     if let Some(app) = streaming {
                         let _ = tauri::Emitter::emit(app, "search-chunk", &row);
                     }
@@ -446,6 +457,7 @@ async fn aggregate(
                         "siteKey": site_key,
                         "ok": false,
                         "error": { "code": err.code, "message": err.message },
+                        "streamId": stream_id,
                     });
                     if let Some(app) = streaming {
                         let _ = tauri::Emitter::emit(app, "search-chunk", &row);

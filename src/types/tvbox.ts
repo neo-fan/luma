@@ -129,6 +129,12 @@ export interface SpiderRequest {
    * 前端陆续上屏；最终 IPC 返回值仍是完整聚合（真相源）。
    */
   stream?: boolean;
+  /**
+   * 本次搜索的代次标识。后端原样回带在 `search-chunk` 事件里，前端据此
+   * 丢弃上一轮仍在飞的结果——「搜索中改词重搜」时两轮 IPC 会重叠，
+   * 没有这个标识，旧词的站点结果会混进新词的结果列表。
+   */
+  streamId?: string;
 }
 
 /** HTTP 拉取请求（7.1） */
@@ -290,7 +296,6 @@ export interface HomeResult {
   list: VodInfo[];
   filters: ResultPage["filters"];
 }
-
 
 /** 直播源（lives[] 条目，7.x） */
 export interface LiveSource {

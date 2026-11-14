@@ -50,6 +50,7 @@ tvbox/
 │
 ├── docs/
 │   ├── project-layout.md                  # 本文档（目录/产物/编码权威）
+│   ├── DEVELOPMENT.md                     # 开发调试指南（环境/四端调试/日志/回归/常见坑）
 │   ├── verification-config.md             # 抓取记录（含真实地址，不入库）
 │   ├── verification-report.md             # 真实配置形态验证报告
 │   ├── site-compat-report.md              # 全站兼容性扫描结论（101 站点逐站）

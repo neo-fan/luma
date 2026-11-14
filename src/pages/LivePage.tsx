@@ -63,7 +63,8 @@ export default function LivePage({ lives }: LivePageProps) {
   const { flat, sourceKey, source } = catalog;
 
   const channel = useMemo(
-    () => (pick ? flat.find((item) => item.name === pick.name) ?? null : null),
+    () =>
+      pick ? (flat.find((item) => item.name === pick.name) ?? null) : null,
     [flat, pick],
   );
 
@@ -89,39 +90,59 @@ export default function LivePage({ lives }: LivePageProps) {
       return;
     }
     const remembered = readLiveChannel(sourceKey);
-    const hit = remembered ? flat.find((item) => item.name === remembered.name) : null;
+    const hit = remembered
+      ? flat.find((item) => item.name === remembered.name)
+      : null;
     const next = hit ?? flat[0];
     const line = hit
-      ? Math.min(Math.max(remembered?.line ?? 0, 0), Math.max(next.lines.length - 1, 0))
+      ? Math.min(
+          Math.max(remembered?.line ?? 0, 0),
+          Math.max(next.lines.length - 1, 0),
+        )
       : 0;
     setPick({ name: next.name, line });
   }, [flat, sourceKey, pick]);
 
   const lines = channel?.lines ?? [];
-  const lineIdx = Math.min(Math.max(pick?.line ?? 0, 0), Math.max(lines.length - 1, 0));
+  const lineIdx = Math.min(
+    Math.max(pick?.line ?? 0, 0),
+    Math.max(lines.length - 1, 0),
+  );
   const playUrl = lines[lineIdx] ?? "";
 
   /* ---------- 播放器 ---------- */
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const lastMediaRef = useRef<{ positionMs: number; durationMs?: number }>({ positionMs: 0 });
+  const lastMediaRef = useRef<{ positionMs: number; durationMs?: number }>({
+    positionMs: 0,
+  });
   const mpvTried = useRef(false);
   const failoverStarted = useRef(false);
   const lineSwitchStarted = useRef(false);
   const liveLineRef = useRef<LiveLineControl | null>(null);
   const [playerRoot, setPlayerRoot] = useState<HTMLDivElement | null>(null);
-  const [videoMeta, setVideoMeta] = useState<VideoMeta>({ width: 0, height: 0 });
+  const [videoMeta, setVideoMeta] = useState<VideoMeta>({
+    width: 0,
+    height: 0,
+  });
 
-  const { resolved, resolving, stage, reloading, resolveError, resolveRetryable, reload } =
-    usePlayResolution({
-      siteKey: "live",
-      playUrl,
-      liveUa: source?.ua,
-      vodId: channel?.name ?? "",
-      setSwitchTip,
-      setVideoError,
-    });
+  const {
+    resolved,
+    resolving,
+    stage,
+    reloading,
+    resolveError,
+    resolveRetryable,
+    reload,
+  } = usePlayResolution({
+    siteKey: "live",
+    playUrl,
+    liveUa: source?.ua,
+    vodId: channel?.name ?? "",
+    setSwitchTip,
+    setVideoError,
+  });
 
   const reloadRef = useRef<(() => void) | null>(null);
   reloadRef.current = () => {
@@ -199,7 +220,9 @@ export default function LivePage({ lives }: LivePageProps) {
       // 自动换线是「后台已经帮你做了」的事件，不是页面状态：走全局 toast，
       // 不占顶部横幅（那条位置留给需要用户处置的错误）。
       selectLine(channel.name, idx, total);
-      notify.warn(`线路 ${lineIdx + 1} 无法播放，已自动切到线路 ${idx + 1}/${total}`);
+      notify.warn(
+        `线路 ${lineIdx + 1} 无法播放，已自动切到线路 ${idx + 1}/${total}`,
+      );
       return;
     }
     setRecovering(false);
@@ -303,7 +326,10 @@ export default function LivePage({ lives }: LivePageProps) {
   const playChannel = useCallback(
     (next: LiveChannel) => {
       const remembered = getLiveLine(sourceKey, next.name);
-      const idx = Math.min(Math.max(remembered, 0), Math.max(next.lines.length - 1, 0));
+      const idx = Math.min(
+        Math.max(remembered, 0),
+        Math.max(next.lines.length - 1, 0),
+      );
       if (pick && pick.name === next.name && pick.line === idx) {
         // 点正在播的台 = 重连一次：用户遇到卡顿时最自然的动作就是再点一下。
         reloadRef.current?.();
@@ -339,7 +365,8 @@ export default function LivePage({ lives }: LivePageProps) {
       ? {
           lines: channel.lines,
           index: lineIdx,
-          onPick: (index: number) => selectLine(channel.name, index, channel.lines.length),
+          onPick: (index: number) =>
+            selectLine(channel.name, index, channel.lines.length),
         }
       : null;
 
@@ -379,6 +406,7 @@ export default function LivePage({ lives }: LivePageProps) {
 
   return (
     <section className="page page--live">
+      {/* 页头在滚动区之外：换源 / 看频道数不会因为滚列表而消失。 */}
       <header className="page-head">
         <div className="page-head__main">
           <h1 className="page-title">直播</h1>
@@ -390,84 +418,104 @@ export default function LivePage({ lives }: LivePageProps) {
               options={lives.map((item, index) => ({
                 value: String(index),
                 label:
-                  (item.name || `源 ${index + 1}`) + (catalog.listable[index] ? "" : "（无列表）"),
+                  (item.name || `源 ${index + 1}`) +
+                  (catalog.listable[index] ? "" : "（无列表）"),
                 disabled: !catalog.listable[index],
                 disabledHint: catalog.listable[index] ? undefined : "无列表",
               }))}
             />
           ) : null}
           <span className="page-meta">
-            {flat.length > 0 ? `${flat.length} 个频道` : catalog.loading ? "读取中…" : "—"}
+            {flat.length > 0
+              ? `${flat.length} 个频道`
+              : catalog.loading
+                ? "读取中…"
+                : "—"}
           </span>
         </div>
       </header>
-
-      {switchTip ? <p className="tip">{switchTip}</p> : null}
-      {/* 两类错误分开：
+      <div className="page-body">
+        {switchTip ? <p className="tip">{switchTip}</p> : null}
+        {/* 两类错误分开：
           · tone="warn"＝「此刻这条线路这一下不行」，画面可能已在别的线路上
             播着，8s 带倒计时自动收起（时长见 lib/notice.ts）；
           · 默认 tone="error"＝「该频道所有线路都试过了」，这是要用户动手的
             结论，常驻到换台为止。 */}
-      {videoError && !recovering ? <ErrorBar message={videoError} lifetime="timed" /> : null}
-      {channel && resolveError && !recovering ? (
-        <ErrorBar message={`播放地址解析失败：${resolveError}`} lifetime="timed" />
-      ) : null}
-      {fatalError && !recovering ? <ErrorBar message={fatalError} /> : null}
+        {videoError && !recovering ? (
+          <ErrorBar message={videoError} lifetime="timed" />
+        ) : null}
+        {channel && resolveError && !recovering ? (
+          <ErrorBar
+            message={`播放地址解析失败：${resolveError}`}
+            lifetime="timed"
+          />
+        ) : null}
+        {fatalError && !recovering ? <ErrorBar message={fatalError} /> : null}
 
-      <div className="live-layout">
-        <LiveChannelRail
-          groups={catalog.groups}
-          loading={catalog.loading}
-          error={catalog.error}
-          onRefresh={catalog.refresh}
-          currentName={channel?.name ?? ""}
-          onPick={playChannel}
-          onStep={step}
-          position={position}
-          total={flat.length}
-        />
+        <div className="live-layout">
+          <LiveChannelRail
+            groups={catalog.groups}
+            loading={catalog.loading}
+            error={catalog.error}
+            onRefresh={catalog.refresh}
+            currentName={channel?.name ?? ""}
+            onPick={playChannel}
+            onStep={step}
+            position={position}
+            total={flat.length}
+          />
 
-        <div className="live-main">
-          {channel ? (
-            <>
-              <PlayerStage
-                resolving={resolving}
-                stage={stage}
-                reloading={reloading}
-                playable={playable}
-                recovering={recovering}
-                slowText={slowNotice}
-                resolveError={resolveError}
-                retryable={resolveRetryable}
-                containerRef={containerRef}
-              />
-              <PlayerResolution
-                host={playerRoot}
-                label={resolutionBadge(videoMeta)}
-                detail={resolutionDetail(videoMeta.width, videoMeta.height)}
-              />
-              <LiveChannelBar
-                channelName={channel.name}
-                program={nowProgram}
-                lineCount={channel.lines.length}
-                lineIndex={lineIdx}
-                onPickLine={(index) => selectLine(channel.name, index, channel.lines.length)}
-                onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
-              />
-              <LiveEpgPanel channelName={channel.name} onNow={setNowProgram} />
-            </>
-          ) : catalog.loading ? (
-            <div className="live-main__placeholder">
-              <Spinner label="正在读取频道…" />
-            </div>
-          ) : (
-            <div className="live-main__placeholder">
-              <Empty
-                title="没有可播放的频道"
-                description="换一个直播源，或点左侧的刷新重新拉取列表。"
-              />
-            </div>
-          )}
+          <div className="live-main">
+            {channel ? (
+              <>
+                <PlayerStage
+                  resolving={resolving}
+                  stage={stage}
+                  reloading={reloading}
+                  playable={playable}
+                  recovering={recovering}
+                  slowText={slowNotice}
+                  resolveError={resolveError}
+                  retryable={resolveRetryable}
+                  containerRef={containerRef}
+                />
+                <PlayerResolution
+                  host={playerRoot}
+                  label={resolutionBadge(videoMeta)}
+                  detail={resolutionDetail(videoMeta.width, videoMeta.height)}
+                />
+                <LiveChannelBar
+                  channelName={channel.name}
+                  program={nowProgram}
+                  lineCount={channel.lines.length}
+                  lineIndex={lineIdx}
+                  onPickLine={(index) =>
+                    selectLine(channel.name, index, channel.lines.length)
+                  }
+                  onPlayExternal={
+                    EXTERNAL_PLAY_ENABLED
+                      ? () => void playExternal()
+                      : undefined
+                  }
+                />
+                <LiveEpgPanel
+                  channelName={channel.name}
+                  onNow={setNowProgram}
+                />
+              </>
+            ) : catalog.loading ? (
+              <div className="live-main__placeholder">
+                <Spinner label="正在读取频道…" />
+              </div>
+            ) : (
+              <div className="live-main__placeholder">
+                <Empty
+                  title="没有可播放的频道"
+                  description="换一个直播源，或点左侧的刷新重新拉取列表。"
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </section>

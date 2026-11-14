@@ -7,7 +7,7 @@ import PlayerStage from "../components/player/PlayerStage";
 import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
 import PlayerResolution from "../components/player/PlayerResolution";
-import { parsePlayLines, toVodRef } from "../lib/format";
+import { parsePlayLines, sameTitle, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
@@ -26,11 +26,16 @@ import {
   ledgerSuccess,
   markAutoNav,
 } from "../lib/failoverLedger";
-import { resolutionBadge, resolutionDetail, resolutionFromVideo } from "../lib/resolution";
+import {
+  resolutionBadge,
+  resolutionDetail,
+  resolutionFromVideo,
+} from "../lib/resolution";
 import type { VideoMeta } from "../lib/resolution";
 
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
+import { notify } from "../lib/notify";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
 import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
@@ -83,7 +88,9 @@ export default function PlayerPage({
   /** ArtPlayer 托管原生 <video>；换源、兜底、历史逻辑仍基于它。 */
   const videoRef = useRef<HTMLVideoElement | null>(null);
   /** 卸载时 ArtPlayer 会清掉 src，进度必须独立留一份快照。 */
-  const lastMediaRef = useRef<{ positionMs: number; durationMs?: number }>({ positionMs: 0 });
+  const lastMediaRef = useRef<{ positionMs: number; durationMs?: number }>({
+    positionMs: 0,
+  });
   /** ArtPlayer 挂载点；实例会在这个容器里生成真正的 <video>。 */
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -124,7 +131,10 @@ export default function PlayerPage({
    * 也是全屏请求的对象，角标 portal 进它才能在满屏时仍然可见。
    */
   const [playerRoot, setPlayerRoot] = useState<HTMLDivElement | null>(null);
-  const [videoMeta, setVideoMeta] = useState<VideoMeta>({ width: 0, height: 0 });
+  const [videoMeta, setVideoMeta] = useState<VideoMeta>({
+    width: 0,
+    height: 0,
+  });
 
   /**
    * 自动换线路过程中为 true：这段时间画面上的红色错误条先不渲。
@@ -140,15 +150,22 @@ export default function PlayerPage({
   const [favBusy, setFavBusy] = useState(false);
 
   // 地址解析编排：playUrl → PlayResolved（effect 体与依赖数组原样保留在 hook 内）。
-  const { resolved, resolving, stage, reloading, resolveError, resolveRetryable, reload } =
-    usePlayResolution({
-      siteKey,
-      playUrl,
-      playFrom,
-      vodId,
-      setSwitchTip,
-      setVideoError,
-    });
+  const {
+    resolved,
+    resolving,
+    stage,
+    reloading,
+    resolveError,
+    resolveRetryable,
+    reload,
+  } = usePlayResolution({
+    siteKey,
+    playUrl,
+    playFrom,
+    vodId,
+    setSwitchTip,
+    setVideoError,
+  });
 
   /**
    * 续播起点：再次打开同一影片时从历史 positionMs 跳过去；刷新重建时由
@@ -176,7 +193,12 @@ export default function PlayerPage({
         const sameEpisode =
           hit?.playUrl === playUrl ||
           Boolean(hit?.episodeName && hit.episodeName === episodeName);
-        if (!alive || !hit?.positionMs || hit.positionMs <= 3000 || !sameEpisode) {
+        if (
+          !alive ||
+          !hit?.positionMs ||
+          hit.positionMs <= 3000 ||
+          !sameEpisode
+        ) {
           return;
         }
         // 刷新路径已写入更准确的当前进度，别被异步到达的历史覆盖。
@@ -203,7 +225,9 @@ export default function PlayerPage({
   const reloadRef = useRef<(() => void) | null>(null);
   reloadRef.current = () => {
     // 重新解析会重建实例；把当前进度留给新实例，刷新后不回到片头。
-    resumeMsRef.current = Math.round((videoRef.current?.currentTime ?? 0) * 1000);
+    resumeMsRef.current = Math.round(
+      (videoRef.current?.currentTime ?? 0) * 1000,
+    );
     setVideoError("");
     reload();
   };
@@ -245,7 +269,8 @@ export default function PlayerPage({
       if (killed) {
         stopped = true;
         lastReviveAt.current = Date.now();
-        resumeMsRef.current = lastMediaRef.current.positionMs || resumeMsRef.current;
+        resumeMsRef.current =
+          lastMediaRef.current.positionMs || resumeMsRef.current;
         reload();
         return;
       }
@@ -290,7 +315,13 @@ export default function PlayerPage({
     if (!vodName.trim()) {
       return null;
     }
-    return { vod_id: vodId, vod_name: vodName, vod_pic: "", vod_play_from: "", vod_play_url: "" };
+    return {
+      vod_id: vodId,
+      vod_name: vodName,
+      vod_pic: "",
+      vod_play_from: "",
+      vod_play_url: "",
+    };
   }, [vod, vodId, vodName]);
 
   /**
@@ -326,7 +357,14 @@ export default function PlayerPage({
       try {
         const list = await api.favoritesList();
         if (alive) {
-          setFavorite(list.some((item) => item.siteKey === siteKey && item.vodId === vodId));
+          // 收藏按片名记录：自动换源后 siteKey/vodId 都变了，星标仍要认得同一部片。
+          setFavorite(
+            list.some(
+              (item) =>
+                sameTitle(item.name, vod?.vod_name || vodName) ||
+                (item.siteKey === siteKey && item.vodId === vodId),
+            ),
+          );
         }
       } catch {
         if (alive) {
@@ -350,9 +388,15 @@ export default function PlayerPage({
       setFavorite(next);
       // 加收藏时详情还没到（没有封面）：等详情回来补，别让收藏列表留空图。
       favNeedsCover.current = next && !favRef.pic;
-      setSwitchTip(next ? "已加入收藏" : "已取消收藏");
+      if (next) {
+        notify.success("已加入收藏");
+      } else {
+        notify.info("已取消收藏");
+      }
     } catch (err) {
-      setVideoError(`收藏操作失败：${errorMessage(err)}`);
+      // 收藏失败不是播放错误，别再往画面里插红色 error bar。
+      notify.error("收藏失败，请重试");
+      log.warn("favorite toggle failed", { message: errorMessage(err) });
     } finally {
       setFavBusy(false);
     }
@@ -369,7 +413,10 @@ export default function PlayerPage({
       return;
     }
     // 首帧解析优先：播放起来后再补换源候选，避免与 resolve_play 争用 sidecar。
-    const timer = window.setTimeout(() => prefetchSources(vodName, sites), 5000);
+    const timer = window.setTimeout(
+      () => prefetchSources(vodName, sites),
+      5000,
+    );
     return () => window.clearTimeout(timer);
     // sites 由 App 以稳定引用传入；length 覆盖「配置还在异步加载」时从历史
     // / 收藏直接进播放页的情况，站点到达后再补一次预取判定。
@@ -421,7 +468,11 @@ export default function PlayerPage({
       signal: AbortSignal,
     ): Promise<boolean> => {
       try {
-        const target = await resolveEpisodeTarget(key, candidate.line, candidate.url);
+        const target = await resolveEpisodeTarget(
+          key,
+          candidate.line,
+          candidate.url,
+        );
         if (target.unresolvable || signal.aborted) {
           // 网盘 token 类线路：源自己都不认，别浪费一次 resolve_play。
           return false;
@@ -468,13 +519,19 @@ export default function PlayerPage({
         method: "searchContent",
         args: [name, false, 1],
         timeoutMs: 6000,
-      })) as { results?: { siteKey: string; ok: boolean; data?: ResultPage }[] };
+      })) as {
+        results?: { siteKey: string; ok: boolean; data?: ResultPage }[];
+      };
 
       const candidates = (agg.results ?? [])
         .filter((item) => item.ok && item.data)
         .flatMap((item) =>
           (item.data?.list ?? [])
-            .filter((vod) => vod.vod_name && (vod.vod_name.includes(name) || name.includes(vod.vod_name)))
+            .filter(
+              (vod) =>
+                vod.vod_name &&
+                (vod.vod_name.includes(name) || name.includes(vod.vod_name)),
+            )
             .slice(0, 1)
             .map((vod) => ({ siteKey: item.siteKey, vod })),
         )
@@ -483,7 +540,10 @@ export default function PlayerPage({
       for (const candidate of candidates.slice(0, 8)) {
         ledgerMarkSite(ledgerKey, candidate.siteKey);
         try {
-          const detail = await api.detail(candidate.siteKey, String(candidate.vod.vod_id));
+          const detail = await api.detail(
+            candidate.siteKey,
+            String(candidate.vod.vod_id),
+          );
           const vod = detail[0];
           if (!vod) {
             continue;
@@ -492,20 +552,33 @@ export default function PlayerPage({
           // 第一个候选常是分享页；把同片前几条线路都探一遍再决定。
           // 线路名与剧集成对保留：跨站同样要先过 playerContent。
           const ordered = nextLines
-            .flatMap((line) => line.episodes.map((episode) => ({ line: line.name, episode })))
+            .flatMap((line) =>
+              line.episodes.map((episode) => ({ line: line.name, episode })),
+            )
             .sort((a, b) => {
               // 同名剧集优先；同集之间按线路健康度排（最近解开的排前面）。
               const sameEpisode =
-                Number(b.episode.name === episodeName) - Number(a.episode.name === episodeName);
+                Number(b.episode.name === episodeName) -
+                Number(a.episode.name === episodeName);
               if (sameEpisode !== 0) {
                 return sameEpisode;
               }
-              return lineRank(candidate.siteKey, a.line) - lineRank(candidate.siteKey, b.line);
+              return (
+                lineRank(candidate.siteKey, a.line) -
+                lineRank(candidate.siteKey, b.line)
+              );
             });
           const candidatesOfSite = ordered
-            .filter(({ episode }) => Boolean(episode.url) && !ledgerHasUrl(ledgerKey, episode.url))
+            .filter(
+              ({ episode }) =>
+                Boolean(episode.url) && !ledgerHasUrl(ledgerKey, episode.url),
+            )
             .slice(0, 8)
-            .map(({ line, episode }) => ({ line, name: episode.name, url: episode.url }));
+            .map(({ line, episode }) => ({
+              line,
+              name: episode.name,
+              url: episode.url,
+            }));
           // 并发探活：第一个能播的立刻返回。串行时「每条失败线路 2–5 秒」会
           // 让用户对着转圈等十几秒，实际只有一条是通的。
           const picked = await firstPlayable(
@@ -581,8 +654,11 @@ export default function PlayerPage({
         const detail = await api.detail(siteKey, vodId);
         const vod = detail[0];
         if (vod) {
-          episodes = parsePlayLines(vod.vod_play_from, vod.vod_play_url).flatMap(
-            (line) => line.episodes.map((episode) => ({ line: line.name, episode })),
+          episodes = parsePlayLines(
+            vod.vod_play_from,
+            vod.vod_play_url,
+          ).flatMap((line) =>
+            line.episodes.map((episode) => ({ line: line.name, episode })),
           );
         }
       } catch {
@@ -592,10 +668,14 @@ export default function PlayerPage({
 
     // 先试同名剧集（同一集的不同线路），再退而求其次试其它集。
     const ordered = [...episodes]
-      .filter(({ episode }) => Boolean(episode.url) && !ledgerHasUrl(ledgerKey, episode.url))
+      .filter(
+        ({ episode }) =>
+          Boolean(episode.url) && !ledgerHasUrl(ledgerKey, episode.url),
+      )
       .sort((a, b) => {
         const sameEpisode =
-          Number(b.episode.name === episodeName) - Number(a.episode.name === episodeName);
+          Number(b.episode.name === episodeName) -
+          Number(a.episode.name === episodeName);
         if (sameEpisode !== 0) {
           return sameEpisode;
         }
@@ -603,7 +683,11 @@ export default function PlayerPage({
         return lineRank(siteKey, a.line) - lineRank(siteKey, b.line);
       })
       .slice(0, 12)
-      .map(({ line, episode }) => ({ line, name: episode.name, url: episode.url }));
+      .map(({ line, episode }) => ({
+        line,
+        name: episode.name,
+        url: episode.url,
+      }));
 
     // 并发探活（首个成功即中止其余）：串行时「布布追剧 → 走马上任」第 3 集要
     // 16 秒才出画，用户以为坏了；现在是最快那条线路的耗时。
@@ -636,7 +720,16 @@ export default function PlayerPage({
       true,
     );
     return true;
-  }, [episodeName, lines, navigate, playUrl, siteKey, vodId, vodName, ledgerKey]);
+  }, [
+    episodeName,
+    lines,
+    navigate,
+    playUrl,
+    siteKey,
+    vodId,
+    vodName,
+    ledgerKey,
+  ]);
 
   /** 线路切换失败后的兜底：整站找同名影片。 */
   const switchOrFailover = useCallback(async () => {
@@ -644,7 +737,9 @@ export default function PlayerPage({
     // 「一直在切换」的无限横跳；现在最多 4 次，之后把控制权交还用户。
     if (ledgerBudget(ledgerKey) <= 0) {
       setSwitchTip("");
-      setVideoError("已自动尝试多条线路和多个源仍无法播放，请手动切换线路或换一集。");
+      setVideoError(
+        "已自动尝试多条线路和多个源仍无法播放，请手动切换线路或换一集。",
+      );
       return;
     }
     const switched = await tryNextLine();
@@ -659,7 +754,13 @@ export default function PlayerPage({
   switchOrFailoverRef.current = switchOrFailover;
 
   useEffect(() => {
-    if (!active || resolving || resolveError || !resolved || resolved.kind !== "page") {
+    if (
+      !active ||
+      resolving ||
+      resolveError ||
+      !resolved ||
+      resolved.kind !== "page"
+    ) {
       return;
     }
     if (ledgerHasUrl(ledgerKey, playUrl)) {
@@ -679,7 +780,12 @@ export default function PlayerPage({
    * 又回到同一条」的循环；跳转次数有上限，预算用完就停下报错交还用户。
    */
   useEffect(() => {
-    if (!active || resolving || !resolveError || ledgerHasUrl(ledgerKey, playUrl)) {
+    if (
+      !active ||
+      resolving ||
+      !resolveError ||
+      ledgerHasUrl(ledgerKey, playUrl)
+    ) {
       return;
     }
     // 「源还没答完」（冷启动 / 忙时超预算）不是线路坏了：保留这条线路，
@@ -744,7 +850,10 @@ export default function PlayerPage({
      */
     let knownResolution = resolutionFromVideo(video);
     /** 卸载时 ArtPlayer 已清掉 src，最后一次写入用快照，不重读 currentTime。 */
-    const write = async (force: boolean, snapshot?: { positionMs: number; durationMs?: number }) => {
+    const write = async (
+      force: boolean,
+      snapshot?: { positionMs: number; durationMs?: number },
+    ) => {
       const now = Date.now();
       if (!force && now - lastWrite < 5000) {
         return;
@@ -762,10 +871,13 @@ export default function PlayerPage({
         episodeName: historyLabelRef.current.episodeName,
         playFrom: historyLabelRef.current.playFrom,
         resolution: knownResolution,
-        positionMs: snapshot?.positionMs ?? Math.round(video.currentTime * 1000),
+        positionMs:
+          snapshot?.positionMs ?? Math.round(video.currentTime * 1000),
         durationMs:
           snapshot?.durationMs ??
-          (Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : undefined),
+          (Number.isFinite(video.duration)
+            ? Math.round(video.duration * 1000)
+            : undefined),
         updatedAt: now,
       };
       try {
@@ -835,7 +947,10 @@ export default function PlayerPage({
       const next = currentLine.episodes[episodeIndex + 1];
       // navigate 会重建本页，[siteKey, playUrl] effect 会清空 switchTip；提示必须
       // 像手动换源那样经 sessionStorage 带过去一次，否则用户永远看不到。
-      window.sessionStorage.setItem("luma:autoSwitch", `已自动播放下一集：${next?.name ?? ""}`);
+      window.sessionStorage.setItem(
+        "luma:autoSwitch",
+        `已自动播放下一集：${next?.name ?? ""}`,
+      );
       const target = lines[lineIndex];
       if (!target) {
         return;
@@ -1003,51 +1118,64 @@ export default function PlayerPage({
         onToggleFavorite={() => void toggleFavorite()}
       />
 
-      {switchTip ? <p className="tip">{switchTip}</p> : null}
-      {/* 与直播页同一口径：播放失败/解析失败是「这一下这条线路不行」的时效
+      <div className="page-body">
+        {switchTip ? <p className="tip">{switchTip}</p> : null}
+        {/* 与直播页同一口径：播放失败/解析失败是「这一下这条线路不行」的时效
           结论（自动换源可能已经把你救回来了），8s 带倒计时收起；hover 面板
           上时倒计时冻结。真正要用户决策的错误由 PlayerStage 面板常驻呈现。 */}
-      {videoError && !recovering ? <ErrorBar message={videoError} lifetime="timed" /> : null}
-      {resolveError && !recovering ? (
-        <ErrorBar message={`播放地址解析失败：${resolveError}`} lifetime="timed" />
-      ) : null}
+        {videoError && !recovering ? (
+          <ErrorBar message={videoError} lifetime="timed" />
+        ) : null}
+        {resolveError && !recovering ? (
+          <ErrorBar
+            message={`播放地址解析失败：${resolveError}`}
+            lifetime="timed"
+          />
+        ) : null}
 
-      {stageNode}
-      {/* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。 */}
-      <PlayerAbout
-        vod={vod}
-        fallbackName={vodName}
-        siteKey={siteKey}
-        siteName={siteName}
-        lineName={currentLine?.name}
-        episodeLabel={nowEpisode || undefined}
-        onSwitchSource={() => setShowSources(true)}
-        onPlayExternal={EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined}
-      />
-
-      {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
-      {lines.length > 0 ? (
-        <EpisodePanel
-          lines={lines}
-          panelLine={panelLine}
-          lineIndex={lineIndex}
-          episodeIndex={episodeIndex}
-          setPanelLine={setPanelLine}
-          goToEpisode={goToEpisode}
+        {stageNode}
+        {/* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。 */}
+        <PlayerAbout
+          vod={vod}
+          fallbackName={vodName}
+          siteKey={siteKey}
+          siteName={siteName}
+          lineName={currentLine?.name}
+          episodeLabel={nowEpisode || undefined}
+          onSwitchSource={() => setShowSources(true)}
+          onPlayExternal={
+            EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined
+          }
         />
-      ) : null}
 
-      {showSources ? (
-        <SourcePicker
-          title={vodName}
-          currentSiteKey={siteKey}
-          currentSiteName={siteName}
-          sites={sites}
-          notice={allowFailover ? undefined : "当前源禁止自动换源，手动切换仍由你决定。"}
-          onPick={pickSource}
-          onClose={() => setShowSources(false)}
-        />
-      ) : null}
+        {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
+        {lines.length > 0 ? (
+          <EpisodePanel
+            lines={lines}
+            panelLine={panelLine}
+            lineIndex={lineIndex}
+            episodeIndex={episodeIndex}
+            setPanelLine={setPanelLine}
+            goToEpisode={goToEpisode}
+          />
+        ) : null}
+
+        {showSources ? (
+          <SourcePicker
+            title={vodName}
+            currentSiteKey={siteKey}
+            currentSiteName={siteName}
+            sites={sites}
+            notice={
+              allowFailover
+                ? undefined
+                : "当前源禁止自动换源，手动切换仍由你决定。"
+            }
+            onPick={pickSource}
+            onClose={() => setShowSources(false)}
+          />
+        ) : null}
+      </div>
     </section>
   );
 }

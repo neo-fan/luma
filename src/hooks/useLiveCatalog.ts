@@ -8,7 +8,8 @@
  *   - **容器型源**（只有 channels 没有 url）本地展开，不发网络请求。
  */
 import { useEffect, useMemo, useState } from "react";
-import { api, errorMessage } from "../lib/invoke";
+import { classifyFailure, type FailureReason } from "../lib/failureReason";
+import { api, toAppError } from "../lib/invoke";
 import {
   expandChannels,
   isListableSource,
@@ -53,7 +54,8 @@ function restoreIndex(lives: LiveSource[]): number {
   const remembered = readSourceKey();
   if (remembered) {
     const hit = lives.findIndex(
-      (item, index) => liveSourceKey(item, index) === remembered && isListableSource(item),
+      (item, index) =>
+        liveSourceKey(item, index) === remembered && isListableSource(item),
     );
     if (hit >= 0) {
       return hit;
@@ -75,17 +77,27 @@ export interface LiveCatalog {
   /** 全部分组按顺序首尾相连：上一台 / 下一台与「第 N 台」计数都用它。 */
   flat: LiveChannel[];
   loading: boolean;
-  error: string;
+  /**
+   * 加载失败的原因（已归类）。`null` = 没有错误。
+   *
+   * 这里**不存字符串**：直播源是用户自己填/导入的地址，报错原文里带着
+   * 完整 URL（`fetch https://raw.githubusercontent.com/… failed`）。字符串
+   * 状态一旦被直接渲染，界面就变成日志；交给 `classifyFailure` 归类后，
+   * 界面只说「地址不可达」，原文折叠进技术详情。
+   */
+  error: FailureReason | null;
   switchSource: (index: number) => void;
   /** 刷新：穿透缓存重新下载并解析 m3u。 */
   refresh: () => void;
 }
 
 export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
-  const [sourceIndex, setSourceIndex] = useState<number>(() => restoreIndex(lives));
+  const [sourceIndex, setSourceIndex] = useState<number>(() =>
+    restoreIndex(lives),
+  );
   const [groups, setGroups] = useState<LiveGroup[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<FailureReason | null>(null);
   /** 递增即重新下载；0 表示「优先用缓存」。 */
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -116,7 +128,7 @@ export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
     }
     const cached = peekLiveGroups(sourceKey);
     setGroups(cached ?? []);
-    setError("");
+    setError(null);
     setLoading(!cached && Boolean(source?.url));
   }, [sourceKey, source?.url]);
 
@@ -144,14 +156,23 @@ export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
       const local = normalizeGroups(expandChannels(source));
       primeLiveGroups(sourceKey, local);
       setGroups(local);
-      setError(local.length === 0 ? "该直播源是分组容器，没有可直接播放的地址。" : "");
+      setError(
+        local.length === 0
+          ? {
+              kind: "disabled",
+              label: "该直播源是分组容器，没有可直接播放的地址",
+              hint: "在配置里展开子源，或换一个直播源",
+              raw: "",
+            }
+          : null,
+      );
       setLoading(false);
       return;
     }
 
     let alive = true;
     setLoading(true);
-    setError("");
+    setError(null);
     void api
       .liveParse(source.url, source.ua, reloadToken > 0)
       .then((result) => {
@@ -163,8 +184,9 @@ export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
       })
       .catch((err) => {
         if (alive) {
+          const appError = toAppError(err);
           setGroups([]);
-          setError(`直播列表加载失败：${errorMessage(err)}`);
+          setError(classifyFailure(appError.code, appError.message));
         }
       })
       .finally(() => {
@@ -177,7 +199,10 @@ export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
     };
   }, [source, sourceKey, reloadToken]);
 
-  const flat = useMemo(() => groups.flatMap((group) => group.channels), [groups]);
+  const flat = useMemo(
+    () => groups.flatMap((group) => group.channels),
+    [groups],
+  );
 
   return {
     lives,

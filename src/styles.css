@@ -39,6 +39,21 @@
   /* 海报占位底：深色主题下纯 panel 与图片边缘混在一起，占位块要更沉一点。 */
   --panel-sunken: #0e0e10;
 
+  /* ---------- 封面尺寸阶梯（2026-11-14 统一） ----------
+     按「展示目的」定宽度，比例恒 2:3，图片一律 object-fit: cover。
+     三条铁律：
+       1. flex 行里的封面必须 `align-self: flex-start`——默认 stretch 会把高度
+          拉到同列最高，aspect-ratio 直接失效，海报就被拉成长条；
+       2. 容器写 aspect-ratio，不写死 height；宽高由同一个变量推导；
+       3. 网格卡片只在 220~260 之间变化（浏览密度），绝不无限拉伸。
+     场景：详情页主视觉 210 / 播放页信息卡 132 / 空态识别 150 / 网格 220~260。 */
+  --cover-ratio: 2 / 3;
+  --cover-w-hero: 210px;
+  --cover-w-player: 132px;
+  --cover-w-empty: 150px;
+  --cover-w-grid-min: 220px;
+  --cover-w-grid-max: 260px;
+
   --border: #232326;
   --border-strong: #35353a;
 
@@ -412,10 +427,16 @@ textarea {
    与轨道中心 34 只差 2px，肉眼不可辨；为对齐这 2px 去改 padding 反而会
    在动画中途引入一段横移，得不偿失。 */
 
+/* 内容区本身不滚：滚动发生在每个页面的 `.page-body` 里。
+   这样页头 / 工具栏是**正常文档流**里的一块，天生不动——不需要 sticky、
+   不需要负 margin 抵消内边距、不需要监听滚动改阴影，也不会有「滚到一半
+   内容从页头底下透出来」的层叠问题。 */
 .content {
   flex: 1;
   min-width: 0;
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 播放页常驻层：盖在内容区之上、侧栏（z-index 40）之下，自己负责滚动。
@@ -428,7 +449,11 @@ textarea {
   bottom: 0;
   left: var(--sidebar-w);
   z-index: 30;
-  overflow-y: auto;
+  /* 与普通页面同一套骨架：宿主层不滚，滚动交给 .page-body，播放页的
+     返回 / 收藏 / 换源栏也不会被滚动带走。 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--bg);
   overscroll-behavior: contain;
 }
@@ -443,33 +468,45 @@ textarea {
 }
 
 .page {
+  /* 页面骨架：padding 内边距 + 固定区（页头/工具栏）+ 滚动区（.page-body）。
+     所有页面共用这一套，单页只覆盖变量或头部高度，不再各自拼布局。 */
+  --page-pad-t: 30px;
+  --page-pad-x: 36px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   max-width: 1360px;
   margin: 0 auto;
-  padding: 30px 36px 64px;
+  padding: var(--page-pad-t) var(--page-pad-x) 0;
 }
 
-/* 播放器按视口高度限宽后，下方信息卡 / 选集 / 节目单再铺满 `.page` 全宽就会
-   左右不对齐。统一用 `--player-width` 收口，让整页内容跟播放器左右边界对齐。
+/* 唯一滚动区：内容再长也只滚这一块，页头与工具栏固定不动。 */
+.page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 底部留白放在滚动体内：放在 .page 上会把滚动区顶短，最后一行永远
+     差一截才滚到底。 */
+  padding-bottom: 64px;
+}
 
-   2026-11 调整（用户反馈「播放页两边留白太多」）：原先是 64vh 高度上限 +
-   `.page` 的 1360 阅读上限，1280 宽的窗口下画面只有 910px，两侧白掉 80 多像素。
-   播放页不是长文页，不该套用阅读宽度：把上限放宽到 1600，视口高度占比提到
-   80vh，并收窄左右内边距，绝大多数窗口下画面会直接铺满内容区（宽度先满，
-   高度由 16:9 自适应；只有超宽屏才会触发 80vh 反推的宽度上限）。 */
 .page--player {
   --player-max-h: 80vh;
   --player-width: min(100%, calc(var(--player-max-h) * 16 / 9));
+  --page-pad-x: 28px;
   max-width: 1600px;
   padding-inline: 28px;
+}
+
+.page--player .page-body {
   padding-bottom: 36px;
 }
 
-.page--player > .page-head,
-.page--player > .tip,
-.page--player > .error-bar,
-.page--player > .player-stage,
-.page--player > .player-about,
-.page--player > .player-episodes {
+/* 播放页按画面宽度收口：页头之外的每一块都跟播放器左右对齐。 */
+.page--player .page-body > * {
   width: var(--player-width);
   margin-inline: auto;
 }
@@ -483,10 +520,32 @@ textarea {
    右侧留一大片空、左侧目录却挤着，看起来就是「没对齐」。） */
 .page--live {
   --player-width: 100%;
-  /* 画面高度交给列宽决定：这里解除 80vh 的限高，否则窄列里会上下压扁。 */
-  --player-max-h: 100vh;
+  /* 画面高度交给列宽决定：这里解除 80vh 的限高，否则窄列里会上下压扁。
+     节目单默认收起后，画面按 82vh 撑满（1280×800 下约 660 高，接近满屏
+     16:9）；展开节目单时右列自己滚，不会反过来压缩画面。 */
+  --player-max-h: 82vh;
+  --page-pad-x: 24px;
   max-width: 1560px;
   padding-inline: 24px;
+  /* 直播是**工作台**不是长文：页头（换源）＋左栏频道目录＋右侧画面
+     三块各自固定，整页不滚动。滚动只发生在内部两块（频道列表 / 右列）。 */
+  padding-bottom: 0;
+}
+
+/* 直播页的滚动区不滚，改成「填满剩余高度的布局容器」：滚动交给里面的
+   频道列表与右列，页头和左栏搜索框、遥控换台条都钉在视口里。 */
+.page--live .page-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 18px;
+}
+
+.page--live .live-layout {
+  flex: 1;
+  min-height: 0;
+  /* 两列等高：左栏目录跟着视口走，右列自己滚。 */
+  align-items: stretch;
 }
 
 .live-layout {
@@ -500,6 +559,10 @@ textarea {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* 右列自己滚：画面 / 信息条 / 节目单依次排下去，滚轮只影响这一列，
+     左栏频道目录和顶部换源栏不动。 */
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* 右列三块同宽同边：画面 / 频道信息条 / 节目单。 */
@@ -530,13 +593,13 @@ textarea {
   border-radius: var(--r-md);
 }
 
-/* 目录常驻整屏高：几百上千个频道本来就该一滚到底，容器高度不随内容缩水。 */
+/* 目录常驻整屏高：几百上千个频道本来就该一滚到底，容器高度不随内容缩水。
+   整页不滚之后不需要 sticky——高度就是布局行高，列表在内部滚。 */
 .live-rail {
-  position: sticky;
-  top: 10px;
   display: flex;
   flex-direction: column;
-  height: min(calc(100vh - 132px), 780px);
+  height: 100%;
+  min-height: 0;
   padding-right: 10px;
   border-right: 1px solid var(--border);
 }
@@ -791,6 +854,17 @@ textarea {
 
 /* 窄窗兜底：目录挪到画面下方，否则 272px 会把画面挤成竖条。 */
 @media (max-width: 1080px) {
+  /* 窄窗回到「滚动区自己滚」：单列堆叠后画面 + 目录 + 节目单必然超过一屏，
+     锁死容器高度会把内容裁掉。 */
+  .page--live .page-body {
+    overflow-y: auto;
+    padding-bottom: 48px;
+  }
+
+  .live-main {
+    overflow: visible;
+  }
+
   .live-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -916,10 +990,52 @@ textarea {
   gap: 6px;
 }
 
-.live-epg__title {
+/* 节目单标题行兼折叠开关：整行可点，hover 才提亮，静止时和普通小标题一样。 */
+.live-epg__head {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-epg__name {
+  flex: none;
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+
+/* 收起态的「现在在播」：一行内省略，右侧箭头固定可见。 */
+.live-epg__now {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.live-epg__caret {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  transition: transform var(--dur) var(--ease);
+}
+
+.live-epg__head:hover .live-epg__caret {
+  color: var(--text-soft);
+}
+
+.live-epg.is-expanded .live-epg__caret {
+  transform: rotate(180deg);
 }
 
 /* 节目单时间轴：左列时间（右对齐等宽数字）+ 右侧内容列，内容列左侧一条竖线
@@ -929,8 +1045,10 @@ textarea {
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
-  max-height: 320px;
+  /* 展开态自身滚动：整天节目 30+ 条，交给列表内滚，不推高整列。 */
+  max-height: min(46vh, 420px);
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .epg-item {
@@ -1024,34 +1142,70 @@ textarea {
 }
 
 /* 空详情说明（发现/榜单型源）：中性提示，不是错误，所以不用红条。 */
+/* 详情缺失态：不是「一个小提示卡」，而是这一屏的**主体内容**。
+   以前是 640px 的小卡片贴在左上角，右边留一整片黑，看起来像页面没渲染完；
+   现在铺满内容宽、海报放大到 150px、字号提到正文级，视觉权重和真实详情页
+   的 hero 一致——用户一眼就知道「这一屏就是这样，不是坏了」。 */
+/* 空态是这一屏唯一的内容：贴左上角会像「页面没渲染完」，上下左右都居中，
+   视线自然落在海报与下一步动作上。 */
+.detail-empty-wrap {
+  display: flex;
+  align-items: center;
+  min-height: 100%;
+}
+
+.detail-empty-wrap > .detail-empty {
+  margin-inline: auto;
+}
+
 .detail-empty {
-  max-width: 640px;
-  margin: 4px 0 16px;
-  padding: 16px 18px;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 0 20px;
+  padding: 26px 28px;
   border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   background: var(--panel);
 }
 
 .detail-empty__title {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   color: var(--text);
-  font-size: var(--fs-h3);
+  font-size: var(--fs-h1);
   font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
 }
 
 .detail-empty__desc {
   margin: 0;
-  color: var(--muted);
-  font-size: var(--fs-sm);
-  line-height: 1.7;
+  /* 说明给到正文级字号与 62ch 行宽：这段是用户判断「要不要换源」的唯一依据，
+     13px 灰字读起来像免责声明。 */
+  max-width: 62ch;
+  color: var(--text-soft);
+  font-size: var(--fs-body);
+  line-height: 1.75;
 }
 
 .detail-empty__actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 18px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+/* 空态里的主按钮与详情页播放按钮同规格：这是这一屏唯一的目标动作。 */
+.detail-empty__actions .btn--primary {
+  height: 40px;
+  padding: 0 20px;
+  font-size: var(--fs-body);
+}
+
+.detail-empty__actions .btn--primary svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
 }
 
 /**
@@ -1061,15 +1215,16 @@ textarea {
  */
 .detail-empty--card {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 24px;
   align-items: start;
-  max-width: 720px;
+  max-width: 900px;
 }
 
 .detail-empty__poster {
-  width: 104px;
-  aspect-ratio: 2 / 3;
+  width: var(--cover-w-empty);
+  aspect-ratio: var(--cover-ratio);
+  align-self: start;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
@@ -1089,17 +1244,19 @@ textarea {
 
 /* 评分/年份比标题低一级：用户第一眼要确认「点的是这部片」。 */
 .detail-empty__meta {
-  margin: 0 0 8px;
+  margin: 0 0 12px;
   color: var(--muted);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   letter-spacing: 0.01em;
 }
 
 /* 自动跨源兜底的进度：单独一行，别和静态说明粘成一句话。 */
 .detail-empty__hint {
-  margin: 8px 0 0;
+  margin: 14px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--accent);
   color: var(--accent-ink);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 
@@ -1866,7 +2023,11 @@ textarea {
 
 .vod-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* 封面不是弹性素材：列宽在 220~260 之间，宽屏只增加列数、不拉伸海报。 */
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(var(--cover-w-grid-min), var(--cover-w-grid-max))
+  );
   /* 宽屏提密度：列距收窄到 14px，行距保持 24px 与纵向呼吸一致 */
   gap: 24px 14px;
 }
@@ -1905,7 +2066,7 @@ textarea {
 .vod-card__poster {
   position: relative;
   width: 100%;
-  aspect-ratio: 2 / 3;
+  aspect-ratio: var(--cover-ratio);
   overflow: hidden;
   border-radius: var(--r-md);
   background: var(--panel);
@@ -2243,7 +2404,10 @@ textarea {
  * 扫光复用 vod-skeleton 关键帧（封面加载中那套）。 */
 .sk-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(var(--cover-w-grid-min), var(--cover-w-grid-max))
+  );
   gap: 24px 14px;
 }
 
@@ -2254,7 +2418,7 @@ textarea {
 }
 
 .sk-card__poster {
-  aspect-ratio: 2 / 3;
+  aspect-ratio: var(--cover-ratio);
   border-radius: var(--r-sm);
   background: linear-gradient(
     100deg,
@@ -2284,11 +2448,161 @@ textarea {
   }
 }
 
+/* ---------- 详情页等待骨架 ----------
+
+   版式与 `.detail-hero` / 剧集格一一对应（左 210px 海报 + 右侧信息 + 操作行，
+   下面线路 chip 与集数格），加载完成时位置不跳变。扫光动画复用
+   `vod-skeleton`，和封面加载中的骨架同一套语言。 */
+
+.sk-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.sk-detail__hero {
+  display: flex;
+  gap: 28px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+
+.sk-detail__poster {
+  flex: 0 0 var(--cover-w-hero);
+  width: var(--cover-w-hero);
+  aspect-ratio: var(--cover-ratio);
+  align-self: flex-start;
+  border-radius: var(--r-sm);
+  background: linear-gradient(
+    100deg,
+    var(--panel-sunken) 28%,
+    #1c232e 48%,
+    var(--panel-sunken) 68%
+  );
+  background-size: 220% 100%;
+  animation: vod-skeleton 1.4s linear infinite;
+}
+
+.sk-detail__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+/* 单行占位：比 .sk-card__line 高一点，贴合详情页的字号梯度。 */
+.sk-line {
+  height: 12px;
+  width: 100%;
+  border-radius: var(--r-sm);
+  /* 骨架块要比卡片底色**亮一档**：用 --panel-sunken 会和 .detail-hero 的
+     --panel 底几乎同色，看起来像脏污而不是「正在填充」。 */
+  background: var(--panel-hover);
+}
+
+.sk-line--title {
+  width: 46%;
+  height: 28px;
+  margin-bottom: 4px;
+}
+
+.sk-line--subtitle {
+  width: 120px;
+  height: 18px;
+  margin-bottom: 6px;
+}
+
+.sk-line--short {
+  width: 62%;
+}
+
+.sk-detail__chips,
+.sk-detail__lines,
+.sk-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sk-pill {
+  height: 24px;
+  width: 74px;
+  border-radius: var(--r-pill);
+  background: var(--panel-hover);
+}
+
+.sk-pill--button {
+  width: 104px;
+  height: 32px;
+  border-radius: var(--r-sm);
+}
+
+.sk-detail__actions {
+  margin-top: 6px;
+}
+
+.sk-detail__section {
+  padding: 0 2px;
+}
+
+.sk-detail__episodes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.sk-episode {
+  height: 36px;
+  border-radius: var(--r-sm);
+  background: var(--panel-hover);
+}
+
+/* 静态块加一层极轻的呼吸：只动透明度（不触发布局/重绘整块），让「占位」
+   读起来是进行中而不是渲染失败留下的灰块。 */
+@keyframes sk-breathe {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.sk-detail .sk-line,
+.sk-detail .sk-pill,
+.sk-detail .sk-episode {
+  animation: sk-breathe 1.8s var(--ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-detail .sk-line,
+  .sk-detail .sk-pill,
+  .sk-detail .sk-episode {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-detail__poster {
+    animation: none;
+    background: var(--panel-sunken);
+  }
+}
+
 .error-bar {
   display: flex;
-  align-items: center;
+  /* 多行解剖结构（图标 / 文案 / 归因 / 详情 / 动作）从第一行对齐，
+     不再垂直居中——详情展开时整条会变高，居中对齐会让图标飘在半空。 */
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   /* 倒计时线贴底，需要定位上下文；圆角外露的一律裁掉 */
   position: relative;
   overflow: hidden;
@@ -2301,6 +2615,107 @@ textarea {
   color: #ffb0b5;
   font-size: var(--fs-sm);
 }
+
+/* 图标与首行文字视觉基线对齐（行高 20 → 顶部留 2px 补偿）。 */
+.error-bar__icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--danger);
+}
+
+.error-bar__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.error-bar__text {
+  margin: 0;
+  font-weight: var(--fw-medium);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+/* 归因行：比主文案弱一档，不抢「哪一步失败了」的注意力。 */
+.error-bar__hint {
+  margin: 0;
+  color: rgba(255, 176, 181, 0.66);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+/* 原始报错折叠：给需要反馈问题的人，不给只想继续用的人。 */
+.error-bar__detail {
+  margin-top: 2px;
+}
+
+.error-bar__detail > summary {
+  width: fit-content;
+  color: rgba(255, 176, 181, 0.62);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  list-style: none;
+}
+
+.error-bar__detail > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* 展开指示用「▸ / ▾」，不依赖系统 marker（WebView2 的三角会带描边）。 */
+.error-bar__detail > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 10px;
+  transition: transform var(--dur) var(--ease);
+}
+
+.error-bar__detail[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.error-bar__raw {
+  margin: 6px 0 0;
+  max-height: 120px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 错误附带的动作（换源 / 去设置）：走按钮层级，与右侧图标动作区分。 */
+.error-bar__extra {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.error-bar__extra .btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--fs-xs);
+}
+
+/* 窄面板（直播左栏 272px）：同一套解剖结构，只收紧留白与字号。 */
+.error-bar--compact {
+  margin-bottom: 10px;
+  padding: 9px 10px 10px;
+  gap: 7px;
+  font-size: var(--fs-xs);
+}
+
+.error-bar--compact .error-bar__icon {
+  transform: scale(0.88);
+  transform-origin: left top;
+}
+
 
 /* 剩余秒数：告诉用户「这条警告会自己走」，而不是等它突然消失。
    tabular-nums 防数字位数变化时整行文字左右跳。 */
@@ -2329,10 +2744,11 @@ textarea {
 
 /* ---------- 全局 toast（sonner）：与页内提示同一套生命线 ---------- */
 
-/* sonner 的 toast 默认不是定位上下文，进度线要贴它底边。 */
+/* sonner 的 toast 默认不是定位上下文，进度线要贴它底边。
+   **不要加 overflow:hidden**：sonner 的图标 / 关闭按钮是贴边定位的，
+   裁溢出会直接把它们吞掉（实测 × 消失）。进度线自己内缩 1px + 收圆角。 */
 [data-sonner-toast].notice-toast {
   position: relative;
-  overflow: hidden;
 }
 
 /* 同款 keyframes：宽度从满到零，时长来自 --notice-life（notify.ts 按
@@ -2349,20 +2765,15 @@ textarea {
 [data-sonner-toast].notice-toast::after {
   content: "";
   position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 100%;
+  left: 1px;
+  right: 1px;
+  bottom: 1px;
   height: 2px;
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
   background: currentColor;
   opacity: 0.45;
   transform-origin: left center;
   animation: notice-life var(--notice-life, 4000ms) linear forwards;
-}
-
-.error-bar__text {
-  min-width: 0;
-  flex: 1;
-  word-break: break-word;
 }
 
 .error-bar__actions {
@@ -2370,6 +2781,7 @@ textarea {
   flex: none;
   gap: 4px;
   align-items: center;
+  margin-top: -2px;
 }
 
 /* ---------- 确认弹层（替代原生 confirm） ---------- */
@@ -2442,9 +2854,10 @@ textarea {
 }
 
 .detail-poster {
-  flex: 0 0 210px;
-  width: 210px;
-  aspect-ratio: 2 / 3;
+  flex: 0 0 var(--cover-w-hero);
+  width: var(--cover-w-hero);
+  aspect-ratio: var(--cover-ratio);
+  align-self: flex-start;
   overflow: hidden;
   border-radius: var(--r-md);
   background: #12161e;
@@ -2830,9 +3243,11 @@ textarea {
 }
 
 .player-about__poster {
-  flex: 0 0 132px;
-  width: 132px;
-  aspect-ratio: 2 / 3;
+  flex: 0 0 var(--cover-w-player);
+  width: var(--cover-w-player);
+  aspect-ratio: var(--cover-ratio);
+  /* 关键：flex 行默认 stretch 会把海报拉成 132×276，比例全毁。 */
+  align-self: flex-start;
   overflow: hidden;
   border-radius: var(--r-md);
   background: #12161e;
@@ -3095,8 +3510,28 @@ textarea {
 }
 
 .detail-actions--inline {
-  margin-top: 14px;
+  margin-top: 16px;
   flex-wrap: wrap;
+}
+
+/* 「播放 / 继续播放」是详情页唯一的目标动作：高 40、横向留白更大，图标 18px，
+   在信息区里明显压过 chip 与图标按钮——找按钮不该靠读文字。 */
+.detail-actions--inline .btn--primary {
+  height: 40px;
+  padding: 0 22px;
+  font-size: var(--fs-body);
+  border-radius: var(--r-md);
+  box-shadow: 0 6px 18px -10px rgba(232, 236, 244, 0.5);
+}
+
+.detail-actions--inline .btn--primary svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+
+.detail-actions--inline .btn--primary:hover:not(:disabled) {
+  box-shadow: 0 8px 22px -10px rgba(232, 236, 244, 0.62);
 }
 
 .detail-content.is-clamped {
@@ -4575,13 +5010,17 @@ button:focus:not(:focus-visible) {
   box-shadow: 0 0 0 3px var(--accent-softer);
 }
 
-.btn {
+/* 这一段是 DSH 风格的统一覆盖。**必须排除主按钮**：`.btn--primary` 与
+   `.btn` 特异性相同（都是 0,1,0），这里写在后面就会把主按钮的实心底色
+   整条清成 transparent——结果详情页的「播放第 1 集」变成一行裸文字，
+   用户只能靠猜知道它是按钮。 */
+.btn:not(.btn--primary) {
   border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-soft);
 }
 
-.btn:hover:not(:disabled) {
+.btn:not(.btn--primary):hover:not(:disabled) {
   background: var(--panel-hover);
   border-color: var(--border-strong);
   color: var(--text);

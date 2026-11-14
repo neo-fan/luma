@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ChannelLogo from "./ChannelLogo";
+import Icon from "./Icon";
 import { api, errorMessage } from "../lib/invoke";
 import { getEpgUrl } from "../lib/epgSettings";
 import type { EpgResult } from "../types/tvbox";
@@ -62,6 +63,14 @@ export default function LiveEpgPanel({
   onNow,
 }: LiveEpgPanelProps) {
   const [data, setData] = useState<EpgResult | null>(null);
+  /**
+   * 默认收起。
+   *
+   * 直播的主体是画面：整天节目单展开时高度能顶到 400px，把 16:9 的画面挤成
+   * 一条；而「现在在播什么」这一条信息 90% 的时候已经够了。收起态在标题行
+   * 直接显示当前节目，想看后面还有什么再展开——只占一行，想开就开。
+   */
+  const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   /** 节目列表容器：加载完要把「正在播」那条滚到视野中间。 */
@@ -139,35 +148,54 @@ export default function LiveEpgPanel({
   }
 
   return (
-    <div className="live-epg">
-      <h2 className="section-title live-epg__title">
+    <div
+      className={expanded ? "live-epg is-expanded" : "live-epg is-collapsed"}
+    >
+      {/* 标题行就是折叠开关：收起时把「正在播」写在这一行里，信息不丢；
+          展开后让位给完整时间轴。 */}
+      <button
+        type="button"
+        className="live-epg__head"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+        title={expanded ? "收起节目单" : "展开完整节目单"}
+      >
         <ChannelLogo name={channelName} size={20} />
-        节目单 · {channelName}
-      </h2>
+        <span className="live-epg__name">节目单 · {channelName}</span>
+        {!expanded && nowTitle ? (
+          <span className="live-epg__now">{nowTitle}</span>
+        ) : null}
+        <Icon name="chevron" size={14} className="live-epg__caret" />
+      </button>
       {loading ? <p className="settings-line">加载节目单…</p> : null}
       {error ? <p className="tip tip--err">{error}</p> : null}
       {!loading && !error && data ? (
         data.programs.length === 0 ? (
           <p className="settings-line">未找到该频道的节目单数据。</p>
-        ) : (
+        ) : expanded ? (
           <ul className="epg-list" ref={listRef}>
             {data.programs.map((program, index) => {
               const now = isOnAir(program);
               return (
-                <li key={`${program.start}-${index}`} className={now ? "epg-item is-now" : "epg-item"}>
+                <li
+                  key={`${program.start}-${index}`}
+                  className={now ? "epg-item is-now" : "epg-item"}
+                >
                   <span className="epg-time">{formatTime(program.start)}</span>
                   <div className="epg-body">
                     <span className="epg-title">
                       {program.title}
                       {now ? <span className="epg-now">正在播出</span> : null}
                     </span>
-                    {program.desc ? <span className="epg-desc">{program.desc}</span> : null}
+                    {program.desc ? (
+                      <span className="epg-desc">{program.desc}</span>
+                    ) : null}
                   </div>
                 </li>
               );
             })}
           </ul>
-        )
+        ) : null
       ) : null}
     </div>
   );

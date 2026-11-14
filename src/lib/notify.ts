@@ -23,7 +23,11 @@ interface NotifyOptions {
   description?: string;
 }
 
-function push(tone: NoticeTone, text: string, options: NotifyOptions = {}): void {
+function push(
+  tone: NoticeTone,
+  text: string,
+  options: NotifyOptions = {},
+): void {
   const ttl = options.ttlMs ?? noticeTtl(tone);
   const key = `${tone}:${text}`;
   const now = Date.now();
@@ -37,10 +41,13 @@ function push(tone: NoticeTone, text: string, options: NotifyOptions = {}): void
     duration: number;
     className: string;
     description?: string;
+    closeButton: boolean;
     style: CSSProperties;
   } = {
     // sonner: Infinity = 不自动关闭
     duration: ttl > 0 ? ttl : Infinity,
+    // 会自动消失的告知类不给 ×；常驻错误必须留一个手动关闭入口。
+    closeButton: ttl === 0,
     className: "notice-toast",
     description: options.description,
     style: {
@@ -62,7 +69,9 @@ function push(tone: NoticeTone, text: string, options: NotifyOptions = {}): void
 
 export const notify = {
   info: (text: string, options?: NotifyOptions) => push("info", text, options),
-  success: (text: string, options?: NotifyOptions) => push("success", text, options),
+  success: (text: string, options?: NotifyOptions) =>
+    push("success", text, options),
   warn: (text: string, options?: NotifyOptions) => push("warn", text, options),
-  error: (text: string, options?: NotifyOptions) => push("error", text, options),
+  error: (text: string, options?: NotifyOptions) =>
+    push("error", text, options),
 };

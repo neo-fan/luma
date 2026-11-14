@@ -15,7 +15,7 @@
         "label": "main",
         "title": "Luma",
         "theme": "Dark",
-        "backgroundColor": "#0b0d12",
+        "backgroundColor": "#0a0a0b",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

@@ -33,12 +33,7 @@ import {
   formatVersion,
   readableBuildTime,
 } from "./lib/version";
-import {
-  navBack,
-  registerNav,
-  viewToLocation,
-  type View,
-} from "./lib/nav";
+import { navBack, registerNav, viewToLocation, type View } from "./lib/nav";
 import { useAppStore, useSiteState } from "./stores/appStore";
 import type { ConfigSnapshot, LiveSource } from "./types/tvbox";
 
@@ -120,7 +115,9 @@ export default function AppShell() {
   // 恢复要等一帧：详情页缓存命中是同步直出，但布局撑开 scrollHeight 需要 rAF。
   useLayoutEffect(() => {
     const idx =
-      typeof window.history.state?.idx === "number" ? window.history.state.idx : 0;
+      typeof window.history.state?.idx === "number"
+        ? window.history.state.idx
+        : 0;
     currentIdxRef.current = idx;
     const el = contentRef.current;
     if (!el) {
@@ -174,7 +171,12 @@ export default function AppShell() {
       }
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName ?? "";
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target?.isContentEditable
+      ) {
         return;
       }
       if (document.querySelector(".source-picker")) {
@@ -238,7 +240,9 @@ export default function AppShell() {
           return;
         }
         handleImported(outcome.snapshot);
-        notify.success(`「${outcome.name}」订阅已自动更新：${outcome.enabled} 个可用站点`);
+        notify.success(
+          `「${outcome.name}」订阅已自动更新：${outcome.enabled} 个可用站点`,
+        );
         log.info("config auto refreshed", {
           id: outcome.configId,
           sites: outcome.sites,
@@ -254,7 +258,9 @@ export default function AppShell() {
       })
       .catch((err) => {
         // 老后端 / 无事件权限时退化为「只在设置页手动检查」，不打断启动。
-        log.warn("config-refreshed listen failed", { message: errorMessage(err) });
+        log.warn("config-refreshed listen failed", {
+          message: errorMessage(err),
+        });
       });
     return () => {
       alive = false;
@@ -287,7 +293,9 @@ export default function AppShell() {
         });
         // 记住的首页站若不在当前 active 配置的可用站里（换配置/重导入/
         // 站点被屏蔽），清掉它，让首页回退到默认站并重新自动顺延。
-        const usableKeys = new Set(usableHomeSites(snapshot.sites).map((s) => s.key));
+        const usableKeys = new Set(
+          usableHomeSites(snapshot.sites).map((s) => s.key),
+        );
         const current = useAppStore.getState().preferredSite;
         if (current && !usableKeys.has(current)) {
           setPreferredSite("");
@@ -326,123 +334,152 @@ export default function AppShell() {
    * `siteKey="live"` 会话属于脏数据，不能再出现在这个入口里——点进去是
    * 一个没有直播分支的点播页，只会黑屏。
    */
-  const vodSession = playSession && playSession.siteKey !== "live" ? playSession : null;
-  const navItems = vodSession ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.key !== "player");
+  const vodSession =
+    playSession && playSession.siteKey !== "live" ? playSession : null;
+  const navItems = vodSession
+    ? NAV_ITEMS
+    : NAV_ITEMS.filter((item) => item.key !== "player");
 
   return (
     <ConfigActionsContext.Provider
-      value={{ onImported: handleImported, onConfigRemoved: handleConfigRemoved }}
+      value={{
+        onImported: handleImported,
+        onConfigRemoved: handleConfigRemoved,
+      }}
     >
       <div className={sidebarCollapsed ? "app is-sidebar-collapsed" : "app"}>
-      <aside className={sidebarCollapsed ? "sidebar is-collapsed" : "sidebar"}>
-        <div className="brand">
-          <span className="brand__mark">
-            <img src="/icon.svg" alt="" />
-          </span>
-          <span className="brand__text">
-            Luma
-            <small>TVBox 兼容</small>
-          </span>
-        </div>
-        <nav className="nav">
-          {navItems.map((item) => {
-            // 「播放」不是固定路径：它指向当前会话的播放页，随时切回来继续播。
-            const loc =
-              item.key === "player" && vodSession
-                ? {
-                    pathname: `/player/${encodeURIComponent(vodSession.siteKey)}/${encodeURIComponent(vodSession.vodId)}`,
-                    search: "",
-                  }
-                : viewToLocation({ name: item.key as NavKey });
-            return (
-              <button
-                key={item.key}
-                type="button"
-                className={section === item.key ? "nav__item is-active" : "nav__item"}
-                onClick={() => {
-                  // 侧栏是「平级切换」：替换当前历史条目（与旧 resetTo 语义一致）。
-                  saveScroll();
-                  rNav(loc.pathname + loc.search, { replace: true });
-                }}
-                // 收缩后文字隐藏，靠 title / aria-label 保持可读与可访问。
-                title={item.label}
-                aria-label={item.label}
-              >
-                <span className="nav__icon">
-                  <NavIcon name={item.key} />
-                </span>
-                <span className="nav__label">{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-        <div className="sidebar__bottom">
-          <button
-            type="button"
-            className="sidebar__collapse"
-            onClick={toggleSidebar}
-            aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-            title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-          >
-            <span className="nav__icon">
-              <NavIcon name="collapse" />
+        <aside
+          className={sidebarCollapsed ? "sidebar is-collapsed" : "sidebar"}
+        >
+          <div className="brand">
+            <span className="brand__mark">
+              <img src="/icon.svg" alt="" />
             </span>
-            <span className="nav__label">{sidebarCollapsed ? "展开" : "收起"}</span>
-          </button>
-          <div className="sidebar__foot">
-            <span>version: {versionLabel}</span>
-            <span className="sidebar__stamp" title={readableBuildTime(BUILD_TIME) || "构建时间戳"}>
-              build: {BUILD_STAMP || "unknown"}
+            <span className="brand__text">
+              Luma
+              <small>TVBox 兼容</small>
             </span>
           </div>
-        </div>
-      </aside>
-      {/* 路由内容：播放页常驻在下方独立层里，这里只渲染其它页面。停在播放
+          <nav className="nav">
+            {navItems.map((item) => {
+              // 「播放」不是固定路径：它指向当前会话的播放页，随时切回来继续播。
+              const loc =
+                item.key === "player" && vodSession
+                  ? {
+                      pathname: `/player/${encodeURIComponent(vodSession.siteKey)}/${encodeURIComponent(vodSession.vodId)}`,
+                      search: "",
+                    }
+                  : viewToLocation({ name: item.key as NavKey });
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={
+                    section === item.key ? "nav__item is-active" : "nav__item"
+                  }
+                  onClick={() => {
+                    // 侧栏是「平级切换」：替换当前历史条目（与旧 resetTo 语义一致）。
+                    saveScroll();
+                    rNav(loc.pathname + loc.search, { replace: true });
+                  }}
+                  // 收缩后文字隐藏，靠 title / aria-label 保持可读与可访问。
+                  title={item.label}
+                  aria-label={item.label}
+                >
+                  <span className="nav__icon">
+                    <NavIcon name={item.key} />
+                  </span>
+                  <span className="nav__label">{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+          <div className="sidebar__bottom">
+            <button
+              type="button"
+              className="sidebar__collapse"
+              onClick={toggleSidebar}
+              aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+              title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            >
+              <span className="nav__icon">
+                <NavIcon name="collapse" />
+              </span>
+              <span className="nav__label">
+                {sidebarCollapsed ? "展开" : "收起"}
+              </span>
+            </button>
+            <div className="sidebar__foot">
+              <span>version: {versionLabel}</span>
+              <span
+                className="sidebar__stamp"
+                title={readableBuildTime(BUILD_TIME) || "构建时间戳"}
+              >
+                build: {BUILD_STAMP || "unknown"}
+              </span>
+            </div>
+          </div>
+        </aside>
+        {/* 路由内容：播放页常驻在下方独立层里，这里只渲染其它页面。停在播放
           路由时也要保留 Outlet 挂载——它是首页/搜索等页面的滚动与状态容器。 */}
-      <main className="content" ref={contentRef}>
-        <Suspense
-          fallback={
-            <section className="page">
-              <Spinner label="正在打开页面…" />
-            </section>
-          }
-        >
-          <Outlet />
-        </Suspense>
-      </main>
-      {/* 播放器常驻层：切页不卸载，视频继续播（需求：播放页独立导航 + 后台播放）。 */}
-      {vodSession ? <PlayerHost session={vodSession} active={isPlayerRoute} /> : null}
-      <CommandPalette
-        open={paletteOpen}
-        onOpenChange={setPaletteOpen}
-        navigate={(view) => {
-          saveScroll();
-          const loc = viewToLocation(view);
-          rNav(loc.pathname + loc.search, { replace: true, state: loc.state });
-        }}
-        sites={sites}
-        homeSite={preferredSite}
-        onPickHomeSite={(siteKey) => {
-          setPreferredSite(siteKey);
-          saveScroll();
-          rNav("/", { replace: true });
-        }}
-      />
-      <Toaster
-        theme="dark"
-        position="top-right"
-        duration={NOTICE_TTL.info}
-        closeButton
-        toastOptions={{
-          style: {
-            background: "var(--panel-raised)",
-            color: "var(--text)",
-            border: "1px solid var(--border-strong)",
-            fontFamily: "var(--font-sans)",
-            fontSize: "var(--fs-sm)",
-          },
-        }}
-      />
+        <main className="content" ref={contentRef}>
+          <Suspense
+            fallback={
+              <section className="page">
+                <Spinner label="正在打开页面…" />
+              </section>
+            }
+          >
+            <Outlet />
+          </Suspense>
+        </main>
+        {/* 播放器常驻层：切页不卸载，视频继续播（需求：播放页独立导航 + 后台播放）。 */}
+        {vodSession ? (
+          <PlayerHost session={vodSession} active={isPlayerRoute} />
+        ) : null}
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          navigate={(view) => {
+            saveScroll();
+            const loc = viewToLocation(view);
+            rNav(loc.pathname + loc.search, {
+              replace: true,
+              state: loc.state,
+            });
+          }}
+          sites={sites}
+          homeSite={preferredSite}
+          onPickHomeSite={(siteKey) => {
+            setPreferredSite(siteKey);
+            saveScroll();
+            rNav("/", { replace: true });
+          }}
+        />
+        <Toaster
+          theme="dark"
+          /* 右下角：右上角是每页的页头工具条（换源 / 刷新 / 收藏 / 搜索），
+             toast 浮在那儿会直接盖住操作，用户只能等 4 秒。 */
+          position="bottom-right"
+          duration={NOTICE_TTL.info}
+          /* 告知类 4s 自动消失：再给一个 × 是纯噪音，还容易被圆角裁掉。
+             只有「常驻、需要用户处置」的 error toast 才由 notify.ts 单独开 closeButton。 */
+          /* sonner 默认 expand=false：多条提示叠成一摞，后面几条被压得只露
+             一条边、文字全被裁掉（看起来像「显示不全」的残影）。全部展开，
+             同时最多 3 条，超出由 sonner 排队，条条完整可读。 */
+          expand
+          visibleToasts={3}
+          gap={10}
+          toastOptions={{
+            style: {
+              background: "var(--panel-raised)",
+              color: "var(--text)",
+              border: "1px solid var(--border-strong)",
+              fontFamily: "var(--font-sans)",
+              fontSize: "var(--fs-sm)",
+            },
+          }}
+        />
       </div>
     </ConfigActionsContext.Provider>
   );

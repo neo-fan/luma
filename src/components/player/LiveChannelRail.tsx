@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ChannelLogo from "../ChannelLogo";
+import ErrorBar from "../ErrorBar";
 import Icon from "../Icon";
 import IconButton from "../IconButton";
 import type { LiveChannel, LiveGroup } from "../../types/tvbox";
+import type { FailureReason } from "../../lib/failureReason";
 
 interface LiveChannelRailProps {
   groups: LiveGroup[];
   loading: boolean;
-  error: string;
+  /** 已归类的失败原因；渲染交给 ErrorBar（界面不出原始报错）。 */
+  error: FailureReason | null;
   /** 重新拉取 m3u（穿透列表缓存）。 */
   onRefresh: () => void;
   /** 当前正在播的频道名：用于高亮与自动滚动。 */
@@ -59,7 +62,9 @@ export default function LiveChannelRail({
     return groups
       .map((group) => ({
         ...group,
-        channels: group.channels.filter((item) => item.name.toLowerCase().includes(pattern)),
+        channels: group.channels.filter((item) =>
+          item.name.toLowerCase().includes(pattern),
+        ),
       }))
       .filter((group) => group.channels.length > 0);
   }, [groups, pattern]);
@@ -76,7 +81,9 @@ export default function LiveChannelRail({
     if (!scroller) {
       return;
     }
-    const node = scroller.querySelector<HTMLElement>(".live-rail__item.is-active");
+    const node = scroller.querySelector<HTMLElement>(
+      ".live-rail__item.is-active",
+    );
     if (!node) {
       return;
     }
@@ -112,12 +119,25 @@ export default function LiveChannelRail({
             onChange={(event) => setKeyword(event.target.value)}
           />
         </label>
-        <IconButton name="refresh" label="刷新频道列表" busy={loading} onClick={onRefresh} />
+        <IconButton
+          name="refresh"
+          label="刷新频道列表"
+          busy={loading}
+          onClick={onRefresh}
+        />
       </div>
 
       <div className="live-rail__scroll" ref={scrollerRef}>
         {loading ? <p className="live-rail__hint">正在读取频道…</p> : null}
-        {error ? <p className="tip tip--err">{error}</p> : null}
+        {error ? (
+          <ErrorBar
+            size="compact"
+            message="直播源加载失败"
+            hint={error.label}
+            detail={error.raw || undefined}
+            onRetry={onRefresh}
+          />
+        ) : null}
         {!loading && !error && visible.length === 0 ? (
           <p className="live-rail__hint">
             {pattern ? "没有匹配的频道。" : "这个源里没有可播放的频道。"}
@@ -129,14 +149,24 @@ export default function LiveChannelRail({
             <div className="live-rail__group" key={group.name}>
               <button
                 type="button"
-                className={folded ? "live-rail__group-title is-folded" : "live-rail__group-title"}
+                className={
+                  folded
+                    ? "live-rail__group-title is-folded"
+                    : "live-rail__group-title"
+                }
                 aria-expanded={!folded}
                 onClick={() => toggleGroup(group.name)}
                 title={folded ? "展开分组" : "折叠分组"}
               >
                 <span className="live-rail__group-name">{group.name}</span>
-                <span className="live-rail__group-num">{group.channels.length}</span>
-                <Icon name="chevron" size={12} className="live-rail__group-caret" />
+                <span className="live-rail__group-num">
+                  {group.channels.length}
+                </span>
+                <Icon
+                  name="chevron"
+                  size={12}
+                  className="live-rail__group-caret"
+                />
               </button>
               {folded
                 ? null
@@ -146,12 +176,20 @@ export default function LiveChannelRail({
                       <button
                         key={`${group.name}::${channel.name}`}
                         type="button"
-                        className={active ? "live-rail__item is-active" : "live-rail__item"}
+                        className={
+                          active
+                            ? "live-rail__item is-active"
+                            : "live-rail__item"
+                        }
                         aria-current={active ? "true" : undefined}
                         title={channel.name}
                         onClick={() => onPick(channel)}
                       >
-                        <ChannelLogo name={channel.name} logo={channel.logo} size={22} />
+                        <ChannelLogo
+                          name={channel.name}
+                          logo={channel.logo}
+                          size={22}
+                        />
                         <span className="live-rail__name">{channel.name}</span>
                         {active ? (
                           <span className="live-rail__eq" aria-hidden="true">
@@ -160,7 +198,9 @@ export default function LiveChannelRail({
                             <i />
                           </span>
                         ) : channel.lines.length > 1 ? (
-                          <span className="live-rail__badge">{channel.lines.length} 路</span>
+                          <span className="live-rail__badge">
+                            {channel.lines.length} 路
+                          </span>
                         ) : null}
                       </button>
                     );

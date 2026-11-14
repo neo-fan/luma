@@ -95,7 +95,9 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
     try {
       await api.historyRemove(item.siteKey, item.vodId);
       setItems((list) =>
-        list.filter((one) => !(one.siteKey === item.siteKey && one.vodId === item.vodId)),
+        list.filter(
+          (one) => !(one.siteKey === item.siteKey && one.vodId === item.vodId),
+        ),
       );
       log.info("history removed", { siteKey: item.siteKey, vodId: item.vodId });
     } catch (err) {
@@ -146,92 +148,100 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
           />
         ) : null}
       </header>
+      <div className="page-body">
+        <AsyncBoundary
+          loading={loading}
+          error={error}
+          isEmpty={shown.length === 0}
+          loadingLabel="正在加载观看历史…"
+          emptyTitle="还没有观看记录"
+          emptyDescription="播放任意影片后，这里会记录进度，方便下次接着看。"
+          onRetry={() => setReload((value) => value + 1)}
+          emptyAction={
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => navigate({ name: "home" })}
+            >
+              去逛逛
+            </button>
+          }
+        >
+          <div className="vod-grid">
+            {shown.map((item) => {
+              const key = `${item.siteKey}-${item.vodId}`;
+              // 线路名与集数名来自播放页写入：换过源 / 换过线路后，
+              // 用户能一眼看出上次是从哪条线看到第几集 —— 这些压在封面底部，
+              // 标题行只留片名（见 historyCoverMeta 的注释）。
+              const meta = historyCoverMeta(item);
+              // 已看进度（百分比）：拿不到时长时记为 0，按钮只显示灰底轨。
+              const watched =
+                item.durationMs && item.durationMs > 0
+                  ? Math.min(
+                      100,
+                      Math.round(
+                        ((item.positionMs ?? 0) / item.durationMs) * 100,
+                      ),
+                    )
+                  : 0;
+              return (
+                <div className="fav-item" key={key}>
+                  <PlayButton
+                    percent={watched}
+                    label={
+                      watched > 0 ? `继续播放（已看 ${watched}%）` : "播放"
+                    }
+                    onPlay={() =>
+                      navigate({
+                        name: "detail",
+                        siteKey: item.siteKey,
+                        vodId: item.vodId,
+                        title: item.name,
+                      })
+                    }
+                  />
+                  <VodCard
+                    title={item.name}
+                    pic={item.pic}
+                    remarks={item.remarks}
+                    resolution={item.resolution || undefined}
+                    coverMeta={meta}
+                    hint={historySubtitle(item)}
+                    onOpen={() =>
+                      navigate({
+                        name: "detail",
+                        siteKey: item.siteKey,
+                        vodId: item.vodId,
+                        title: item.name,
+                      })
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="fav-remove"
+                    title="删除这条历史"
+                    aria-label="删除这条历史"
+                    disabled={busyKey === key}
+                    onClick={() => void remove(item)}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </AsyncBoundary>
 
-      <AsyncBoundary
-        loading={loading}
-        error={error}
-        isEmpty={shown.length === 0}
-        loadingLabel="正在加载观看历史…"
-        emptyTitle="还没有观看记录"
-        emptyDescription="播放任意影片后，这里会记录进度，方便下次接着看。"
-        onRetry={() => setReload((value) => value + 1)}
-        emptyAction={
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => navigate({ name: "home" })}
-          >
-            去逛逛
-          </button>
-        }
-      >
-        <div className="vod-grid">
-          {shown.map((item) => {
-            const key = `${item.siteKey}-${item.vodId}`;
-            // 线路名与集数名来自播放页写入：换过源 / 换过线路后，
-            // 用户能一眼看出上次是从哪条线看到第几集 —— 这些压在封面底部，
-            // 标题行只留片名（见 historyCoverMeta 的注释）。
-            const meta = historyCoverMeta(item);
-            // 已看进度（百分比）：拿不到时长时记为 0，按钮只显示灰底轨。
-            const watched =
-              item.durationMs && item.durationMs > 0
-                ? Math.min(100, Math.round(((item.positionMs ?? 0) / item.durationMs) * 100))
-                : 0;
-            return (
-              <div className="fav-item" key={key}>
-                <PlayButton
-                  percent={watched}
-                  label={watched > 0 ? `继续播放（已看 ${watched}%）` : "播放"}
-                  onPlay={() =>
-                    navigate({
-                      name: "detail",
-                      siteKey: item.siteKey,
-                      vodId: item.vodId,
-                      title: item.name,
-                    })
-                  }
-                />
-                <VodCard
-                  title={item.name}
-                  pic={item.pic}
-                  remarks={item.remarks}
-                  resolution={item.resolution || undefined}
-                  coverMeta={meta}
-                  hint={historySubtitle(item)}
-                  onOpen={() =>
-                    navigate({
-                      name: "detail",
-                      siteKey: item.siteKey,
-                      vodId: item.vodId,
-                      title: item.name,
-                    })
-                  }
-                />
-                <button
-                  type="button"
-                  className="fav-remove"
-                  title="删除这条历史"
-                  aria-label="删除这条历史"
-                  disabled={busyKey === key}
-                  onClick={() => void remove(item)}
-                >
-                  <Icon name="close" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </AsyncBoundary>
-
-      <ConfirmDialog
-        open={confirmClear}
-        title="清空观看历史"
-        message={`确定清空 ${items.length} 条观看历史吗？此操作不可恢复。`}
-        confirmText="清空"
-        danger
-        onConfirm={() => void doClearAll()}
-        onCancel={() => setConfirmClear(false)}
-      />
+        <ConfirmDialog
+          open={confirmClear}
+          title="清空观看历史"
+          message={`确定清空 ${items.length} 条观看历史吗？此操作不可恢复。`}
+          confirmText="清空"
+          danger
+          onConfirm={() => void doClearAll()}
+          onCancel={() => setConfirmClear(false)}
+        />
+      </div>
     </section>
   );
 }
