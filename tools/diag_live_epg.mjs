@@ -61,10 +61,13 @@ const step = await evaluate(`(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const waitFor = async (fn, ms) => { const end = Date.now() + ms; while (Date.now() < end) { const v = fn(); if (v) return v; await sleep(250); } return null; };
   location.hash = '#/live';
-  const card = await waitFor(() => [...document.querySelectorAll('.section .chip')]
+  // 直播页已收敛为播放页：频道在左栏 .live-rail__item（旧版是列表页的 .chip）。
+  const card = await waitFor(() => [...document.querySelectorAll('.live-rail__item')]
     .find((c) => (c.textContent || '').includes(${JSON.stringify(CHANNEL)})), 30000);
   if (!card) return 'NO_CHANNEL';
-  card.click();
+  if (!card.classList.contains('is-active')) {
+    card.click();
+  }
   return 'CLICKED';
 })()`);
 console.log("[step]", step);
