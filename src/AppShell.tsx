@@ -29,12 +29,12 @@ import { clearCoverAttempts } from "./lib/coverBackfill";
 import { log } from "./lib/logger";
 import {
   APP_VERSION,
-  BUILD_STAMP,
   BUILD_TIME,
   formatVersion,
   IS_DEV_BUILD,
   readableBuildTime,
 } from "./lib/version";
+import { currentStartedAt, loadStartedAt, unifiedBuildStamp } from "./lib/appInfo";
 import { navBack, registerNav, viewToLocation, type View } from "./lib/nav";
 import { useAppStore, useSiteState, selectLives } from "./stores/appStore";
 import type { ConfigSnapshot, LiveSource } from "./types/tvbox";
@@ -107,6 +107,22 @@ export default function AppShell() {
 
   /** 全局命令面板（Ctrl+K）。 */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /**
+   * 统一 build 号：宿主本次启动时刻（见 `lib/appInfo.ts`）。前端不再自报构建
+   * 时间——dev 下 Vite 与 cargo 的构建时刻必然不同，两处数字永远对不上。
+   */
+  const [startedAt, setStartedAt] = useState(currentStartedAt);
+  useEffect(() => {
+    let alive = true;
+    void loadStartedAt().then((value) => {
+      if (alive && value) {
+        setStartedAt(value);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const location = useLocation();
   const rNav = useNavigate();
@@ -449,9 +465,9 @@ export default function AppShell() {
               </span>
               <span
                 className="sidebar__stamp"
-                title={readableBuildTime(BUILD_TIME) || "构建时间戳"}
+                title={readableBuildTime(startedAt || BUILD_TIME) || "构建时间戳"}
               >
-                build: {BUILD_STAMP || "unknown"}
+                build: {unifiedBuildStamp(startedAt) || "unknown"}
               </span>
             </div>
           </div>

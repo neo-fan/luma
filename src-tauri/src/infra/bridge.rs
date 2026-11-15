@@ -107,6 +107,10 @@ pub(crate) fn spawn_stdio(
             ("PYTHONUTF8", "1"),
             ("PYTHONIOENCODING", "utf-8"),
             ("LUMA_ADAPTER_LOG", adapter_log.as_str()),
+            // 版本单一来源是 package.json，Cargo / tauri.conf 由 build.rs 与
+            // tauri.conf 的路径引用绑定到它；sidecar 运行时靠这里注入，避免
+            // 适配层自己再抄一份版本号（见 `sidecars/py/main.py::VERSION`）。
+            ("LUMA_VERSION", env!("CARGO_PKG_VERSION")),
         ],
     )?;
     let pid = guarded.id().unwrap_or(0);

@@ -59,7 +59,30 @@ def force_utf8_stdio() -> None:
 
 force_utf8_stdio()
 
-VERSION = "1.0.4"
+def _read_version() -> str:
+    """版本号只有一处：仓库根 `package.json`。
+
+    宿主拉起适配层时注入 `LUMA_VERSION`（`infra/bridge.rs`，值取 cargo 包版本，
+    构建期由 `build.rs` 断言与 `package.json` 一致）；离线直接跑适配层（离线测试、
+    审计工具）没有宿主注入，回退读 `package.json`，最后才用 `0.0.0`。不要再抄一份
+    字面量版本号，`tools/version_check.py` 会盯着这里。
+    """
+    injected = os.environ.get("LUMA_VERSION", "").strip()
+    if injected:
+        return injected
+    here = Path(__file__).resolve()
+    for base in (here.parents[2], here.parent):
+        try:
+            payload = json.loads((base / "package.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        version = payload.get("version")
+        if isinstance(version, str) and version.strip():
+            return version.strip()
+    return "0.0.0"
+
+
+VERSION = _read_version()
 _write_lock = threading.Lock()
 _cancel_lock = threading.Lock()
 _cancelled: set[str] = set()

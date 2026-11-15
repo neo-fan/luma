@@ -23,7 +23,7 @@
 | 阶段断言 | `python tests/acceptance/p0.py` ~ `p3.py` | stub + 运行中的应用 | 改 sidecar / 打包后 |
 | 真实配置 | 导入 → 搜索 → 详情 → 播放 | 外网 | 源兼容结论（外网抖动不算回归） |
 
-`check.py` 覆盖：契约、Python 兼容、py 框架、语法编译、前端单测、Rust 单测、运行时产物体检。加 `--full` 会额外跑 `pnpm build`。
+`check.py` 覆盖：契约、版本一致性、Python 兼容、py 框架、语法编译、前端单测、Rust 单测、运行时产物体检。加 `--full` 会额外跑 `pnpm build`。
 
 新增/调整用例前先看 `docs/TESTING.md`：单测（`src/**`、Rust 内联）/ 离线检查（`tests/offline/`）/ 阶段验收（`tests/acceptance/`）/ 窗口探针（`tools/`）的边界与命令都在那一份里，加进 `check.py` 要同步本表与那里的清单。
 
