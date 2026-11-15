@@ -18,7 +18,7 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 |---|---|
 | 版本 | `1.0.4`（`package.json` 唯一来源；同步清单见 `docs/RELEASING.md` §1） |
 | 交付物 | `src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe` |
-| 回归基线 | `python tools/check.py` 8/8；`pnpm test` 379（49 个文件）；`cargo test --lib` 157 passed / 1 ignored |
+| 回归基线 | `python tools/check.py` 8/8；`pnpm test` 402（51 个文件）；`cargo test --lib` 162 passed / 1 ignored |
 | 窗口探针 | `node tools/run_probes.mjs --list`（需要 debug 窗口 + CDP 9222） |
 | 发布状态 | **本地私有，暂不发布**：无 remote、未 push；`LICENSE` 是占位（All rights reserved），不要当成已开源 |
 
