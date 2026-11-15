@@ -19,6 +19,7 @@
 - **直播频道级 UA / Referer 被丢掉**：M3U 的 `#EXTINF` 里可以带 `http-user-agent` / `http-referer`（suxuang 这类源有 42 条声明），Rust 侧以前只读 `tvg-*` 与 `group-title`，广播出去没有这两个字段；咪咕系的央视/卫视不带 UA 一律 404。现在解析进 `LiveChannel.ua` / `referer`（同名频道以先声明的为准；没声明时不出现空字段），`resolvePlay` 按「频道级 → 直播源级」兜底。
 - **起播与换台时的一声爆音 / 串音**：`<video>` 在 `playing` 之前音量就已经被 ArtPlayer 恢复成它自己缓存的 100%，MSE 源起播首帧还有一次采样跳变；直播换台时旧实例是「拖着一小段缓冲直接 `pause()` + `removeAttribute("src")` + `load()`」，音频设备上会留一声「咔」。现在新实例一律静音（`muted = true`、`volume = 0`）等 `playing` 后 200ms 淡入到记忆音量，硬停前先把 `muted` 置真再停；淡入期间不落盘音量偏好（否则「0」会被写成用户设置），连点换台没走完淡入时卸载也不补写。CDP 页面内记录器实测：点播起播 `volumechange` 逐帧 0.006 → 0.5（约 230ms、12 帧），`playing` 之前没有未静音的大音量；直播换台旧实例 `emptied` 时 `muted: true`；音量偏好保持 0.5。新增 `tests/frontend/playerAudioFade.test.ts`（4 条）锁住静音起播、淡入曲线、硬停顺序与不落盘。
 - **直播地址被判成网页、白等 15 秒嗅探**：`http://…/live.php?id=CCTV1` 这种路径里没有 `.m3u8`，`classify` 判成 `page`，直接进第 4 级隐藏 WebView2 嗅探；服务器对默认 UA 返回 404 HTML，于是等满 15 秒后报「该地址无法在内置播放器中播放」。现在 `resolve_play` 在嗅探前先用「配置级 headers + 默认值」发一次 4 秒 GET，只读前 8 KiB，首行是 `#EXTM3U` 就按 HLS 处理，并采用**重定向后的最终地址**（分片多为相对路径）。同一地址实测：带 `aliplayer` UA 时 194 ms 拿到 `#EXTM3U`（302 到咪咕 CDN），不带 UA 仍是 15.4 秒 + 404。
+- **封面一直闪（占位 → 骨架 → 图 反复切换）**：取图链路有三处会闪。①代理端口只存在异步 `proxy_status` 里，每张新卡首帧只能先渲染占位符，等 Promise 回来再换成 `<img>`；②已解码过的图重挂载时会重新进 `loading`，骨架再闪一次；③骨架是扫光动画，聚合搜索一屏十几张同时扫光，观感就是「一直在闪」。现在把代理端口缓存进 `cachedProxyBase`（渲染期同步拼地址，新建卡片首帧就带 `<img>`）、`LOADED_SRC` 记下已解码的地址（重挂载直接跳过骨架）、`RESOLVED_SRC` 上限 400 → 1200（一次聚合搜索能出 300+ 张卡，超上限会把已解析项挤掉、回头再看时重新闪），骨架改成静态底色、删掉扫光动画。CDP 实测（搜索 12 秒）：卡片新增 270 张、因重挂载产生的 `cardRemoved` 为 0、占位符闪现（`phAdded`）只在代理端口就绪前出现 8 次，骨架计算样式 `animation-name: none`。新增 `tests/frontend/imageCache.test.ts`（4 条）锁住同步端口、已解码跳过、缓存上限与静态骨架。
 
 ### 工程
 
@@ -31,6 +32,8 @@
 - 新增 `tests/frontend/playerAudioFade.test.ts`（4 条）与 `tests/frontend/playPage.test.ts`（4 条）源码契约；前端用例 367 → 375（46 → 48 个文件）。
 - **交互态收尾（占位色 / 按压 / 滚动吸附）**：封面无图占位、详情与播放页海报底、加载 spinner 环、骨架高光里还残留 `#1a202c` / `#12161e` / `#1c232e` / `#2a3344` 四个写死蓝灰，统一换成 `--panel-raised` / `--panel-sunken` / `--border-strong`；补上点击反馈（`.chip`、`.live-rail__item`、`.episode`、`.settings-nav__item`、`.source-item` 的 `:active` 只换底色明度、不位移，符合「交互靠明度」的设计语言 v2）；首页分类单行滚动加 `scroll-snap-type: x proximity`，键盘/触控板横滚不会把半个分类词切在边缘。CDP 用 `Input.dispatchKeyEvent` 连按 Tab 巡检首页 14 个停靠点，焦点环统一为 `2px var(--accent)` + `offset 2px`。
 - **综艺 / 短剧的长集名在选集格子里被左右同时裁掉**：`.episode` 是固定列宽 + 居中单行，`20260515特别企划` 这类 10+ 字显示成 `0260515特别企划`（省略号也在被裁的一侧，看不到）。折两行会把整行网格撑得高低不齐，所以改成单行**左对齐**裁切，指针悬停或键盘聚焦时把内容横向滚到末尾露出整个集名、移开 / 失焦回位；抽成 `src/components/EpisodeButton.tsx`，详情页与播放页选集区共用，完整集名仍在 `title` 里。CDP 实测「歌手2026」详情页（电影天堂 / 81937，86 集）：格子高度统一 34px、30 条集名超宽、悬停后 `scrollLeft == scrollWidth - clientWidth`、移开回 0。新增 `tests/frontend/episodeScroll.test.ts`（3 条）锁住滚动行为、两处调用点与「单行 + 可横向滚动」的 CSS。
+
+- 封面取图缓存补齐：`src/hooks/useProxiedImage.ts` 增加 `cachedProxyBase` / `LOADED_SRC`（`RESOLVED_SRC` 与`LOADED_SRC` 各 1200 条），骨架去掉动画；新增 `tests/frontend/imageCache.test.ts`（4 条）；前端用例 375 → 379（48 → 49 个文件）。
 
 ---
 

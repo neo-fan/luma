@@ -35,7 +35,7 @@ python tools/check.py
 
 `check.py` 串行执行并汇总：契约校验、Python 兼容、py 框架、适配层车道隔离、`py_compile`、前端单测、`cargo test --lib`、`prepare_runtime.py --check`。任一失败即非零退出。
 
-**当前基线（1.0.4）**：`python tools/check.py` **8/8 全绿**；其中 `pnpm test` 375/375（48 个文件）、`cargo test --lib` 157 passed / 1 ignored、`py_compat_check` 37/37、`adapter_isolation` 14/14、`contract_check` 8 类型 + 7 方法对齐、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
+**当前基线（1.0.4）**：`python tools/check.py` **8/8 全绿**；其中 `pnpm test` 379/379（49 个文件）、`cargo test --lib` 157 passed / 1 ignored、`py_compat_check` 37/37、`adapter_isolation` 14/14、`contract_check` 8 类型 + 7 方法对齐、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
 
 ### 2.2 窗口回归（需要 debug 窗口）
 

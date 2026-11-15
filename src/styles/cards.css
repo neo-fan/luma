@@ -69,39 +69,17 @@
   display: block;
 }
 
-/* 加载中的骨架：扫光提示「正在取图」。
- * 上游图床经常要几秒（实测 /image p50 129ms、max 5.2s），没有这层提示，
- * 用户看到的就是一片纯色块，分不清「在加载」还是「本来就没图」。
- * 骨架必须与「加载失败」的首字占位明显区分——前者有扫光动画且没有字，
- * 后者是静止的大号首字。
+/* 加载中的骨架：一块安静的底色，图片到了直接替换。
  *
- * 2026-11-15：去掉骨架中央的转圈。一圈亮蓝压在每张卡上，观感像「坏图 /
- * 播放器报错」，一屏十几张同时转更吵；扫光本身已经足够表达「在取图」。 */
+ * 2026-11-15 两轮收敛：
+ *  1. 去掉中央的蓝色转圈（一圈亮蓝压在每张卡上像「坏图 / 播放器报错」）；
+ *  2. 去掉扫光动画——聚合搜索一次会同时挂上十几个「在取图」的格子，扫光
+ *     在整屏上连成一片，观感就是封面一直在闪。加载中的信息由「这块底色在、
+ *     图还没出现」表达即可，图片解码完成后由 <img> 覆盖，不需要动效抢戏。 */
 .vod-card__skeleton {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    100deg,
-    var(--panel-sunken) 28%,
-    rgba(255, 255, 255, 0.055) 48%,
-    var(--panel-sunken) 68%
-  );
-  background-size: 220% 100%;
-  animation: vod-skeleton 1.4s linear infinite;
-}
-
-@keyframes vod-skeleton {
-  to {
-    background-position: -120% 0;
-  }
-}
-
-/* 减弱动效偏好下停止扫光，保留静态底色（不制造持续重绘）。 */
-@media (prefers-reduced-motion: reduce) {
-  .vod-card__skeleton {
-    animation: none;
-    background: var(--panel-sunken);
-  }
+  background: var(--panel-sunken);
 }
 
 .vod-card__ph {
