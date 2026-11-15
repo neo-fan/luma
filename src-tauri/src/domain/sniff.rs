@@ -207,6 +207,41 @@ pub async fn sniff(
     sniff_with_headers(app, page_url, &[], timeout).await
 }
 
+/// 隐藏嗅探窗必须静音。
+///
+/// 社区源的分享页大多「进页面就自动播放」：嗅探窗 `visible(false)` 看不见，
+/// 但 WebView2 里的 `<video>` 照样出声，用户看到的是主播放器黑屏、却有声音。
+/// 这里在页面脚本之前注入：新出现的 `video/audio` 一律 `muted` + `volume=0`，
+/// 并监听 `play` 兜底（部分播放器会用 MSE 重建元素）。
+const MUTE_MEDIA_SCRIPT: &str = r#"
+(function () {
+  var muted = new WeakSet();
+  function mute(el) {
+    if (!el || muted.has(el)) return;
+    muted.add(el);
+    try { el.muted = true; el.volume = 0; el.defaultMuted = true; } catch (e) {}
+  }
+  function scan(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll("video,audio").forEach(mute);
+  }
+  document.addEventListener("play", function (e) { mute(e.target); }, true);
+  document.addEventListener("loadedmetadata", function (e) { mute(e.target); }, true);
+  var observer = new MutationObserver(function (records) {
+    records.forEach(function (record) {
+      record.addedNodes.forEach(function (node) {
+        if (node && node.nodeType === 1) {
+          if (node.tagName === "VIDEO" || node.tagName === "AUDIO") mute(node);
+          scan(node);
+        }
+      });
+    });
+  });
+  observer.observe(document.documentElement || document, { childList: true, subtree: true });
+  scan(document);
+})();
+"#;
+
 /// Load `page_url` in a hidden WebView and return the first media URL it asks
 /// for. `headers` follow the `resolve_play` precedence (spider-explicit first,
 /// config host rules next, defaults last) and are sanitised by
@@ -253,6 +288,9 @@ pub async fn sniff_with_headers(
         .skip_taskbar(true)
         .data_directory(data_dir)
         .additional_browser_args("--remote-debugging-port=0")
+        // 页面自动播放时嗅探窗是隐藏的，音频却会漏到系统混音器里（用户看到
+        // 「主播放器黑屏、却有声音」）。初始化脚本在页面脚本之前执行。
+        .initialization_script(MUTE_MEDIA_SCRIPT)
         .build()
         .map_err(|err| {
             eprintln!("[sniff] window build failed: {err}");
@@ -325,6 +363,16 @@ pub async fn sniff_with_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mute_script_silences_every_media_element() {
+        // 嗅探窗不可见，页面自动播放的声音会漏出去：脚本必须同时处理
+        // 已有元素（scan）与后续插入（MutationObserver + play 事件）。
+        assert!(MUTE_MEDIA_SCRIPT.contains("muted = true"));
+        assert!(MUTE_MEDIA_SCRIPT.contains("volume = 0"));
+        assert!(MUTE_MEDIA_SCRIPT.contains("MutationObserver"));
+        assert!(MUTE_MEDIA_SCRIPT.contains("querySelectorAll(\"video,audio\")"));
+    }
 
     #[test]
     fn accepts_stream_entries_but_not_segments() {
