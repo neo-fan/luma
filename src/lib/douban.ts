@@ -110,6 +110,17 @@ export function normalizeDoubanMeta(raw: unknown): DoubanMeta | null {
   };
 }
 
+/** 10000 以上换成「x.x 万人评价」，一行放得下。 */
+export function formatVotes(count: number): string {
+  if (!Number.isFinite(count) || count <= 0) {
+    return "";
+  }
+  if (count >= 10000) {
+    return `${(count / 10000).toFixed(1).replace(/\.0$/, "")} 万人评价`;
+  }
+  return `${Math.round(count)} 人评价`;
+}
+
 /**
  * 按片名取豆瓣信息；拿不到就是 `null`（**永不 reject**）。
  *

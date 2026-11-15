@@ -346,47 +346,58 @@ describe("douban ui contract", () => {
     expect(invoke).toContain("doubanMeta(");
   });
 
-  it("mounts the block on the detail page only, after the hero", () => {
+  it("prefers douban metadata on the detail page and keeps source as fallback", () => {
     const detail = read("src/pages/DetailPage.tsx");
-    expect(detail).toContain("fetchDoubanMeta(doubanTitle");
-    expect(detail).toContain(
-      "<DoubanMetaBlock meta={doubanMeta} posterFallback={!vod?.vod_pic} />",
-    );
-    // 拿不到就不挂载：不是空壳区块。
-    expect(detail).toContain("{doubanMeta ? (");
+    // 豆瓣命中时用豆瓣的评分 / 年份 / 类型 / 导演 / 主演 / 简介。
+    expect(detail).toContain("const meta = doubanMeta;");
+    expect(detail).toContain("`★ ${meta.rating.toFixed(1)}");
+    expect(detail).toContain("meta.genres.join");
+    expect(detail).toContain("meta.directors.join");
+    expect(detail).toContain("meta.actors.join");
+    expect(detail).toContain("plainText(meta?.intro)");
+    // 源站只保留播放状态（更新到第几集），播放线路 / 剧集仍来自源站。
+    expect(detail).toContain("vod.vod_remarks?.trim()");
+    // 独立的豆瓣块已并入 hero，不再单独渲染。
+    expect(detail).not.toContain("DoubanMetaBlock");
+    expect(detail).not.toContain("douban-meta");
     // 等详情落地再问一次（年份到位才有消歧能力，也保证一次访问只发一次）。
     expect(detail).toContain("if (!doubanReady || !doubanTitle)");
-    // 区块在「播放线路」之前。
-    expect(detail.indexOf("<DoubanMetaBlock")).toBeLessThan(
-      detail.indexOf("播放线路</h2>"),
-    );
-    // 首页/搜索页不预取豆瓣。
+    // 海报：源站优先，源站没有/坏了才用豆瓣兜底。
+    expect(detail).toContain("heroImage.src && !heroImage.broken ? heroImage : doubanImage");
+  });
+
+  it("lets the player info card use douban too, with source fallback", () => {
+    const about = read("src/components/player/PlayerAbout.tsx");
+    expect(about).toContain("douban?: DoubanMeta | null;");
+    expect(about).toContain("formatVotes");
+    expect(about).toContain("douban.genres.join");
+    expect(about).toContain("plainText(douban?.intro) || plainText(vod?.vod_content)");
+    const page = read("src/pages/PlayerPage.tsx");
+    expect(page).toContain("fetchDoubanMeta(name");
+    expect(page).toContain("douban={doubanMeta}");
+  });
+
+  it("lazily falls back to douban covers for history and favorites only", () => {
+    const card = read("src/components/VodCard.tsx");
+    expect(card).toContain("doubanTitle?: string;");
+    expect(card).toContain("new IntersectionObserver(");
+    // 懒加载：进视口才请求，且只在源站没有封面时。
+    expect(card).toContain("const needsDouban = Boolean(doubanTitle) && (!sourcePic || sourceBroken);");
+    expect(card).toContain("void fetchDoubanMeta(doubanTitle, doubanYear || undefined)");
+    for (const page of [
+      "src/pages/HistoryPage.tsx",
+      "src/pages/FavoritesPage.tsx",
+    ]) {
+      expect(read(page)).toContain("doubanTitle={item.name}");
+    }
+    // 搜索 / 首页只用源站数据，不为了封面打豆瓣。
     for (const page of [
       "src/pages/HomePage.tsx",
       "src/pages/SearchPage.tsx",
-      "src/pages/FavoritesPage.tsx",
     ]) {
       expect(read(page)).not.toContain("fetchDoubanMeta");
-      expect(read(page)).not.toContain("DoubanMetaBlock");
+      expect(read(page)).not.toContain("doubanTitle=");
     }
-  });
-
-  it("renders rating, people, chips, poster fallback and a clamped intro", () => {
-    const block = read("src/components/DoubanMetaBlock.tsx");
-    expect(block).toContain("formatVotes");
-    expect(block).toContain("万人评价");
-    expect(block).toContain("暂无评分");
-    expect(block).toContain("useProxiedImage");
-    expect(block).toContain("posterFallback");
-    expect(block).toContain("aria-expanded");
-    expect(block).toContain("is-clamped");
-    expect(block).toContain('label="导演"');
-    expect(block).toContain('label="主演"');
-    expect(block).toContain('label="类型"');
-    // 不写内联样式（样式集中在 src/styles）。
-    expect(block).not.toContain("style={{");
-    // 没有 loading / 空态占位文案。
-    expect(block).not.toContain("加载中");
   });
 
   it("adds a douban section to settings between epg and proxy", () => {
@@ -416,23 +427,12 @@ describe("douban styles contract", () => {
     return source.slice(index);
   };
 
-  it("keeps the detail rules at the end of detail.css using tokens", () => {
+  it("keeps no standalone douban block styles in detail.css", () => {
     const css = read("src/styles/detail.css");
-    const section = tail(css, "/* ---------- 豆瓣信息补全 ---------- */");
-    expect(section).toContain(".douban-meta {");
-    expect(section).toContain(".douban-meta__poster");
-    expect(section).toContain(".douban-meta__intro.is-clamped");
-    expect(section).toContain("max-height: calc(1.7em * 3)");
-    // 新增规则在既有规则之后（末尾追加，不插队）。
-    expect(css.indexOf(".douban-meta {")).toBeGreaterThan(
-      css.indexOf(".episode-grid"),
-    );
-    // 无硬编码颜色：颜色只许来自 base.css token。
-    expect(section).not.toMatch(/#[0-9a-f]{3,8}\b/i);
-    expect(section).not.toMatch(/\brgba?\(/);
-    expect(section).toContain("var(--star)");
-    expect(section).toContain("var(--panel-sunken)");
-    expect(section).toContain("var(--cover-ratio)");
+    // 豆瓣信息并入 hero 后，独立的 `.douban-meta` 区块连同样式一起删掉；
+    // 设置页的 `.douban-settings` 仍在 pages.css 里。
+    expect(css).not.toContain(".douban-meta");
+    expect(css).not.toContain("豆瓣信息补全");
   });
 
   it("keeps the settings rules at the end of pages.css using tokens", () => {
@@ -455,7 +455,6 @@ describe("douban styles contract", () => {
     // 豆瓣样式只进已有模块，不新增 @import（新增会改变级联顺序）。
     expect(index).not.toContain("douban");
     const css = readCss();
-    expect(css).toContain(".douban-meta__rating");
     expect(css).toContain(".douban-settings__switch-label");
   });
 });

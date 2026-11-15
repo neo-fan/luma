@@ -38,6 +38,8 @@ import { log } from "../lib/logger";
 import { notify } from "../lib/notify";
 import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
+import { fetchDoubanMeta } from "../lib/douban";
+import type { DoubanMeta } from "../lib/douban";
 import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
@@ -309,6 +311,31 @@ export default function PlayerPage({
     episodeName: currentLine?.episodes[episodeIndex]?.name || episodeName,
     playFrom: currentLine?.name || playFrom || "",
   };
+
+  /**
+   * 豆瓣补全：播放页和详情页同一口径——命中就替掉源站的元数据，源站只负责
+   * 播放线路与兜底。片名/年份到位后问一次；`fetchDoubanMeta` 自带去重与缓存，
+   * 从详情页进来时基本是命中缓存，不会再打豆瓣。
+   */
+  const [doubanMeta, setDoubanMeta] = useState<DoubanMeta | null>(null);
+  useEffect(() => {
+    const name = (vod?.vod_name || vodName || "").trim();
+    if (!name) {
+      setDoubanMeta(null);
+      return;
+    }
+    let alive = true;
+    void fetchDoubanMeta(name, vod?.vod_year?.trim() || undefined).then(
+      (meta) => {
+        if (alive && meta) {
+          setDoubanMeta(meta);
+        }
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [vod?.vod_name, vod?.vod_year, vodName]);
 
   /** 收藏需要完整 vod（封面 / 备注）；详情还没到时用路由参数兜底，先收藏不误事。 */
   const favVod = useMemo<VodInfo | null>(() => {
@@ -1175,6 +1202,7 @@ export default function PlayerPage({
           siteName={siteName}
           lineName={currentLine?.name}
           episodeLabel={nowEpisode || undefined}
+          douban={doubanMeta}
           onSwitchSource={() => setShowSources(true)}
           onPlayExternal={
             EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined

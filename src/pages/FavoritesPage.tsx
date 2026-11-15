@@ -180,6 +180,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
                   remarks={item.remarks}
                   resolution={resolutions[`${item.siteKey}:${item.vodId}`]}
                   sub={item.siteName}
+                  doubanTitle={item.name}
                   onOpen={() =>
                     navigate({
                       name: "detail",

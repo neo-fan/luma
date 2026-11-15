@@ -2,6 +2,8 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { useProxiedImage } from "../../hooks/useProxiedImage";
 import IconButton from "../IconButton";
 import { plainText } from "../../lib/format";
+import { formatVotes } from "../../lib/douban";
+import type { DoubanMeta } from "../../lib/douban";
 import type { VodInfo } from "../../types/tvbox";
 
 interface PlayerAboutProps {
@@ -13,6 +15,8 @@ interface PlayerAboutProps {
   /** 当前线路名，展示成「正在播放：线路 · 第 N 集」。 */
   lineName?: string;
   episodeLabel?: string;
+  /** 豆瓣补全结果：命中时元数据用豆瓣，源站只负责播放链路。 */
+  douban?: DoubanMeta | null;
   /** 直播频道没有「换源」概念，传 undefined 即不渲染该按钮。 */
   onSwitchSource?: () => void;
   /** 外部播放开关关闭时由调用方传 undefined，按钮整体不渲染。 */
@@ -38,19 +42,45 @@ export default function PlayerAbout({
   siteName,
   lineName,
   episodeLabel,
+  douban,
   onSwitchSource,
   onPlayExternal,
 }: PlayerAboutProps) {
-  const poster = useProxiedImage(vod?.vod_pic);
+  const sourcePoster = useProxiedImage(vod?.vod_pic);
+  // 源站海报优先；源站没给（或取图失败）时用豆瓣海报兜底。
+  const doubanPoster = useProxiedImage(douban?.pic);
+  const poster =
+    sourcePoster.src && !sourcePoster.broken ? sourcePoster : doubanPoster;
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   const contentRef = useRef<HTMLParagraphElement | null>(null);
 
   const title = vod?.vod_name?.trim() || fallbackName || "未命名";
-  const chips = [vod?.vod_year, vod?.vod_area, vod?.type_name, vod?.vod_remarks]
-    .map((item) => item?.trim())
-    .filter((item): item is string => Boolean(item));
-  const description = plainText(vod?.vod_content);
+  /**
+   * 豆瓣命中时元数据以豆瓣为准（与详情页同一口径）：评分 / 年份 / 类型 /
+   * 导演 / 主演 / 简介都用豆瓣；`vod_remarks` 是播放状态（更新到第几集），
+   * 只有源站知道，继续保留。豆瓣缺席时逐项回退源站字段。
+   */
+  const votes = douban && douban.ratingCount > 0 ? formatVotes(douban.ratingCount) : "";
+  const chips = douban
+    ? [
+        douban.rating > 0
+          ? `★ ${douban.rating.toFixed(1)}${votes ? ` · ${votes}` : ""}`
+          : "",
+        douban.year,
+        douban.genres.join(" · "),
+        vod?.vod_remarks?.trim() ?? "",
+      ].filter((item): item is string => Boolean(item))
+    : [vod?.vod_year, vod?.vod_area, vod?.type_name, vod?.vod_remarks]
+        .map((item) => item?.trim())
+        .filter((item): item is string => Boolean(item));
+  const director = douban?.directors.length
+    ? douban.directors.join(" / ")
+    : plainText(vod?.vod_director);
+  const actors = douban?.actors.length
+    ? douban.actors.join(" / ")
+    : plainText(vod?.vod_actor);
+  const description = plainText(douban?.intro) || plainText(vod?.vod_content);
   const hasPoster = Boolean(poster.src) && !poster.broken;
 
   useLayoutEffect(() => {
@@ -126,12 +156,10 @@ export default function PlayerAbout({
           </div>
         ) : null}
 
-        {vod?.vod_director ? (
-          <p className="detail-line">导演：{plainText(vod.vod_director)}</p>
+        {director ? (
+          <p className="detail-line">导演：{director}</p>
         ) : null}
-        {vod?.vod_actor ? (
-          <p className="detail-line">主演：{plainText(vod.vod_actor)}</p>
-        ) : null}
+        {actors ? <p className="detail-line">主演：{actors}</p> : null}
 
         {description ? (
           <>

@@ -1,5 +1,6 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useProxiedImage } from "../hooks/useProxiedImage";
+import { fetchDoubanMeta } from "../lib/douban";
 
 interface VodCardProps {
   title: string;
@@ -21,6 +22,15 @@ interface VodCardProps {
   coverMeta?: string[];
   /** 悬停提示，缺省用片名；历史页塞完整的「线路 · 集数 · 站点 · 进度 · 时间」。 */
   hint?: string;
+  /**
+   * 源站没给封面（或取图失败）时，按片名去豆瓣要一张。
+   *
+   * 只有历史 / 收藏页传这两个字段：那两张表的封面常常是空的，而豆瓣一定有。
+   * 首页 / 搜索 / 分类的卡片不传——列表数据本身就带封面，不该为了封面去打
+   * 豆瓣（用户明确要求搜索列表只用源站数据，避免频繁请求豆瓣）。
+   */
+  doubanTitle?: string;
+  doubanYear?: string;
   onOpen: () => void;
 }
 
@@ -37,6 +47,8 @@ function sameCard(a: VodCardProps, b: VodCardProps): boolean {
     a.resolution === b.resolution &&
     a.sub === b.sub &&
     a.hint === b.hint &&
+    a.doubanTitle === b.doubanTitle &&
+    a.doubanYear === b.doubanYear &&
     // coverMeta 每次渲染都是新数组，用内容比较而不是引用比较。
     (a.coverMeta?.join("\u0001") ?? "") === (b.coverMeta?.join("\u0001") ?? "")
   );
@@ -51,12 +63,71 @@ const VodCard = memo(function VodCard({
   sub,
   coverMeta,
   hint,
+  doubanTitle,
+  doubanYear,
   onOpen,
 }: VodCardProps) {
+  const rootRef = useRef<HTMLButtonElement | null>(null);
+  const [doubanPic, setDoubanPic] = useState("");
+  /** 卡片进入过视口才发豆瓣请求：懒加载，翻不到的地方一个请求都不发。 */
+  const [inView, setInView] = useState(false);
+
   // TVBox `vod_pic` may carry inline @header suffix; route through the local
   // /image proxy so the Rust host can inject them (WebView2 <img> cannot).
+  const sourcePic = pic?.trim() ?? "";
+  const source = useProxiedImage(sourcePic || undefined);
+  const sourceBroken = source.broken;
+  const needsDouban = Boolean(doubanTitle) && (!sourcePic || sourceBroken);
+
+  useEffect(() => {
+    if (!needsDouban || inView) {
+      return;
+    }
+    const node = rootRef.current;
+    if (!node) {
+      return;
+    }
+    if (typeof IntersectionObserver === "undefined") {
+      setInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      // 提前一屏开始要：滚到时封面基本已经在路上。
+      { rootMargin: "320px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [needsDouban, inView]);
+
+  useEffect(() => {
+    if (!inView || doubanPic || !needsDouban || !doubanTitle) {
+      return;
+    }
+    let alive = true;
+    void fetchDoubanMeta(doubanTitle, doubanYear || undefined).then((meta) => {
+      const next = meta?.pic?.trim() || "";
+      if (alive && next) {
+        setDoubanPic(next);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [inView, doubanPic, needsDouban, doubanTitle, doubanYear]);
+
+  // 源站封面能用就用源站的；没有或取图失败时才落到豆瓣海报。
+  const useDouban = Boolean(doubanPic) && (!sourcePic || sourceBroken);
+  const poster = useProxiedImage(
+    useDouban ? doubanPic : sourcePic || undefined,
+  );
   const { src: cover, broken, loading, onError: handleError, onLoad: handleLoad } =
-    useProxiedImage(pic);
+    poster;
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
   const handleOpen = useCallback(() => onOpenRef.current(), []);
@@ -69,6 +140,7 @@ const VodCard = memo(function VodCard({
       type="button"
       className={meta.length > 0 ? "vod-card vod-card--meta" : "vod-card"}
       onClick={handleOpen}
+      ref={rootRef}
       title={hint ?? title}
     >
       <div className="vod-card__poster">

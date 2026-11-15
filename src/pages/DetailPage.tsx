@@ -16,7 +16,6 @@ import Icon from "../components/Icon";
 import IconButton from "../components/IconButton";
 import SourcePicker from "../components/SourcePicker";
 import DetailSkeleton from "../components/DetailSkeleton";
-import DoubanMetaBlock from "../components/DoubanMetaBlock";
 import {
   formatDuration,
   parsePlayLines,
@@ -26,7 +25,7 @@ import {
 } from "../lib/format";
 import type { Episode, PlayLine } from "../lib/format";
 import { findPlayableSource } from "../lib/crossSourceRecovery";
-import { fetchDoubanMeta } from "../lib/douban";
+import { fetchDoubanMeta, formatVotes } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { pageCache } from "../lib/pageCache";
@@ -127,15 +126,6 @@ export default function DetailPage({
     setOverflowing(isOver);
   }, []);
 
-  useLayoutEffect(() => {
-    measureDescription();
-  }, [vod?.vod_content, expanded, siteKey, vodId, measureDescription]);
-
-  useEffect(() => {
-    window.addEventListener("resize", measureDescription);
-    return () => window.removeEventListener("resize", measureDescription);
-  }, [measureDescription]);
-
   // 瞬时状态不缓存：刷新序号每次挂载归零，保证回退一定走缓存。
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -169,6 +159,9 @@ export default function DetailPage({
    * 三者对界面是同一种状态：整块不渲染。
    */
   const [doubanMeta, setDoubanMeta] = useState<DoubanMeta | null>(null);
+  // 豆瓣命中后，元数据以豆瓣为准；源站的海报仍是第一优先（播放链路知道得更
+  // 早、也更贴近这部片在源站的样子），只有源站没给封面时才用豆瓣海报兜底。
+  const doubanImage = useProxiedImage(doubanMeta?.pic);
 
   useEffect(() => {
     // reload>0 是用户点了刷新图标；此时忽略缓存强制拉取最新播放列表。
@@ -393,6 +386,16 @@ export default function DetailPage({
       alive = false;
     };
   }, [doubanReady, doubanTitle, doubanYear]);
+
+  // 简介可能来自豆瓣（命中时）也可能来自源站（兜底），两者都要重新量溢出高度。
+  useLayoutEffect(() => {
+    measureDescription();
+  }, [vod?.vod_content, doubanMeta?.intro, expanded, siteKey, vodId, measureDescription]);
+
+  useEffect(() => {
+    window.addEventListener("resize", measureDescription);
+    return () => window.removeEventListener("resize", measureDescription);
+  }, [measureDescription]);
 
   const lines = useMemo(
     () => parsePlayLines(vod?.vod_play_from, vod?.vod_play_url),
@@ -684,14 +687,37 @@ export default function DetailPage({
     );
   }
 
-  const chips = [
-    vod.vod_year,
-    vod.vod_area,
-    vod.type_name,
-    vod.vod_remarks,
-  ].filter((item): item is string => Boolean(item && item.trim()));
+  /**
+   * 豆瓣命中后，详情信息以豆瓣为准（用户定调：详情 / 播放页用豆瓣，源只负责
+   * 播放线路与兜底）。豆瓣缺席时才逐项回退源站。
+   * `vod_remarks`（全 N 集 / 更新到第几集）属于播放状态而不是元数据，继续用
+   * 源站的：豆瓣不知道这部片在当前源更新到了哪。
+   */
+  const meta = doubanMeta;
+  const votes = meta && meta.ratingCount > 0 ? formatVotes(meta.ratingCount) : "";
+  const chips = meta
+    ? [
+        meta.rating > 0
+          ? `★ ${meta.rating.toFixed(1)}${votes ? ` · ${votes}` : ""}`
+          : "",
+        meta.year,
+        meta.genres.join(" · "),
+        vod.vod_remarks?.trim() || "",
+      ].filter((item): item is string => Boolean(item))
+    : [vod.vod_year, vod.vod_area, vod.type_name, vod.vod_remarks].filter(
+        (item): item is string => Boolean(item && item.trim()),
+      );
   const site = sites.find((item) => item.key === siteKey);
-  const description = plainText(vod.vod_content) || "暂无简介";
+  const director = meta?.directors.length
+    ? meta.directors.join(" / ")
+    : plainText(vod.vod_director);
+  const actors = meta?.actors.length
+    ? meta.actors.join(" / ")
+    : plainText(vod.vod_actor);
+  const description =
+    plainText(meta?.intro) || plainText(vod.vod_content) || "暂无简介";
+  // 源站海报优先；源站没给（或取图失败）时用豆瓣海报兜底。
+  const heroCover = heroImage.src && !heroImage.broken ? heroImage : doubanImage;
   const cacheAge = pageCache.age(detailKey);
   const cacheLabel =
     cacheAge === undefined
@@ -746,16 +772,16 @@ export default function DetailPage({
 
         <div className="detail-hero">
           <div className="detail-poster">
-            {heroImage.src && !heroImage.broken ? (
+            {heroCover.src && !heroCover.broken ? (
               <img
-                src={heroImage.src}
+                src={heroCover.src}
                 alt={vod.vod_name}
                 referrerPolicy="no-referrer"
-                onError={heroImage.onError}
+                onError={heroCover.onError}
               />
             ) : (
               <span className="vod-card__ph">
-                {vod.vod_pic ? "无封面" : ""}
+                {vod.vod_pic || meta?.pic ? "无封面" : ""}
               </span>
             )}
           </div>
@@ -777,12 +803,10 @@ export default function DetailPage({
                 ))}
               </div>
             ) : null}
-            {vod.vod_director ? (
-              <p className="detail-line">导演：{plainText(vod.vod_director)}</p>
+            {director ? (
+              <p className="detail-line">导演：{director}</p>
             ) : null}
-            {vod.vod_actor ? (
-              <p className="detail-line">主演：{plainText(vod.vod_actor)}</p>
-            ) : null}
+            {actors ? <p className="detail-line">主演：{actors}</p> : null}
             <p
               ref={contentRef}
               className={
@@ -825,11 +849,7 @@ export default function DetailPage({
           </div>
         </div>
 
-        {/* 豆瓣补全块：只有拿到数据才存在（拿不到连空壳都不占位）。
-            海报只在源站没给 `vod_pic` 时才由豆瓣兜底，不跟源站抢封面。 */}
-        {doubanMeta ? (
-          <DoubanMetaBlock meta={doubanMeta} posterFallback={!vod?.vod_pic} />
-        ) : null}
+        {/* 豆瓣信息已并入上面的 hero（命中时替换源站元数据），不再单独占一块。 */}
 
         <div className="section">
           <div className="section-head">

@@ -209,6 +209,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
                     resolution={item.resolution || undefined}
                     coverMeta={meta}
                     hint={historySubtitle(item)}
+                    doubanTitle={item.name}
                     onOpen={() =>
                       navigate({
                         name: "detail",
