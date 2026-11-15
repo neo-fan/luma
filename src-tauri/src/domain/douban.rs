@@ -7,12 +7,13 @@
 //!
 //! ## 数据来源（2026-11-15 实测）
 //!
-//! 1. `https://movie.douban.com/j/subject_suggest?q=<片名>`：候选列表，带
-//!    `id` / `title` / `year` / `img`，用来做「标题规范化 + 年份优先」匹配。
+//! 1. `https://movie.douban.com/subject_search?search_text=<片名>`：搜索页
+//!    内嵌 `__DATA__`，候选主源（带 `id` / `title` / `year` / 海报）。
+//!    `subject_suggest` 对无 cookie 请求恒返回 `[]`，只作兜底。
 //! 2. `https://m.douban.com/rexxar/api/v2/{tv|movie}/<id>?ck=&for_mobile=1`：
 //!    详情主源（简介 / 评分 / 评价人数 / 海报 / 导演 / 演员 / 类型）。TV 条目只
 //!    能用 `tv` 路径：`movie` 对 TV 会 301 到 `tv`（多一次往返），而 `tv` 对电影
-//!    直接 404，所以先试 `tv` 再回落 `movie`。
+//!    直接 404。首次先试 `tv` 再回落 `movie`，命中路径按 id 记忆 1 小时。
 //! 3. `https://movie.douban.com/j/subject_abstract?subject_id=<id>`：降级源，
 //!    只有评分 / 导演 / 演员 / 类型，没有简介、评价人数和海报。
 //!
@@ -75,6 +76,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// 结果缓存：详情页前进/后退、同一部剧换集都会重复问同一个片名。
 const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
+/// 负结果（查无此片）缓存：比成功短，但必须显著长于前端轮询节奏，
+/// 否则头图轮播会把同一个查不到的片名每圈重跑一条完整搜索链。
+const NEG_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const CACHE_CAP: usize = 128;
 
 /// 豆瓣搜索有频率限制：几十张海报同时进视口会一次性发出几十个搜索请求，
@@ -952,34 +956,18 @@ fn cool_down_douban() {
     }
 }
 
-/// 候选搜索：老接口 `subject_suggest` → 搜索页 `__DATA__` → 移动端搜索接口。
+/// 候选搜索：搜索页 `__DATA__` → 老接口 `subject_suggest` → 移动端搜索接口。
 ///
-/// 2026-11-15 实测：`subject_suggest` 对无 cookie 请求恒返回 `[]`；
-/// `m.douban.com/rexxar/api/v2/search/subjects` 很快会变成 `need_login` 403；
-/// 搜索页 `subject_search` 仍稳定返回明文结果，因此放在第二顺位。
+/// 2026-11-15 实测：`subject_suggest` 对无 cookie 请求恒返回 `[]`，放在首跳
+/// 等于每条补全链白跑一次往返，因此降为兜底；`subject_search` 稳定返回明文
+/// 结果，作主源。`m.douban.com/rexxar/api/v2/search/subjects` 很快会变成
+/// `need_login` 403，只作最后兜底。
 async fn search_candidates(kind: ProxyKind, prefix: &str, title: &str) -> Vec<SuggestItem> {
     if douban_cooling() {
         tracing::debug!(title, "douban search skipped during cooldown");
         return Vec::new();
     }
     pace_douban().await;
-
-    let target = format!(
-        "https://movie.douban.com/j/subject_suggest?q={}",
-        percent_encode(title)
-    );
-    match get_json(kind, prefix, &target).await {
-        Ok(body) => {
-            let items = parse_suggest(&body);
-            if !items.is_empty() {
-                return items;
-            }
-            tracing::warn!(title, "douban suggest returned no subjects");
-        }
-        Err(err) => {
-            tracing::warn!(code = %err.code, error = %err.message, "douban suggest failed");
-        }
-    }
 
     let target = format!(
         "https://movie.douban.com/subject_search?search_text={}",
@@ -1015,6 +1003,23 @@ async fn search_candidates(kind: ProxyKind, prefix: &str, title: &str) -> Vec<Su
     }
 
     let target = format!(
+        "https://movie.douban.com/j/subject_suggest?q={}",
+        percent_encode(title)
+    );
+    match get_json(kind, prefix, &target).await {
+        Ok(body) => {
+            let items = parse_suggest(&body);
+            if !items.is_empty() {
+                return items;
+            }
+            tracing::warn!(title, "douban suggest returned no subjects");
+        }
+        Err(err) => {
+            tracing::warn!(code = %err.code, error = %err.message, "douban suggest failed");
+        }
+    }
+
+    let target = format!(
         "https://m.douban.com/rexxar/api/v2/search/subjects?q={}",
         percent_encode(title)
     );
@@ -1027,13 +1032,65 @@ async fn search_candidates(kind: ProxyKind, prefix: &str, title: &str) -> Vec<Su
     }
 }
 
-/// 详情：先 `tv` 再 `movie`，都不行退到 `subject_abstract`。
+/// rexxar 路径记忆：电影条目 `tv` 必 404、TV 条目 `movie` 会 301，首次探测
+/// 后记住正确路径，同一 id 的后续补全直奔命中路径；双路径都明确 404 的记
+/// 「无详情」，直接走 abstract。只记明确结论，网络失败/限流不入记忆。
+const DETAIL_PATH_TTL: Duration = Duration::from_secs(60 * 60);
+const DETAIL_PATH_CAP: usize = 256;
+
+#[derive(Clone, Copy)]
+enum DetailPath {
+    Tv,
+    Movie,
+    Unavailable,
+}
+
+fn detail_paths() -> &'static Mutex<HashMap<String, (Instant, DetailPath)>> {
+    static PATHS: OnceLock<Mutex<HashMap<String, (Instant, DetailPath)>>> = OnceLock::new();
+    PATHS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn detail_path_hint(id: &str) -> Option<DetailPath> {
+    let guard = detail_paths().lock().ok()?;
+    let (at, path) = guard.get(id)?;
+    if at.elapsed() > DETAIL_PATH_TTL {
+        return None;
+    }
+    Some(*path)
+}
+
+fn remember_detail_path(id: &str, path: DetailPath) {
+    let Ok(mut guard) = detail_paths().lock() else {
+        return;
+    };
+    if guard.len() >= DETAIL_PATH_CAP {
+        guard.retain(|_, (at, _)| at.elapsed() <= DETAIL_PATH_TTL);
+    }
+    guard.insert(id.to_string(), (Instant::now(), path));
+}
+
+fn forget_detail_path(id: &str) {
+    if let Ok(mut guard) = detail_paths().lock() {
+        guard.remove(id);
+    }
+}
+
+/// 详情：按路径记忆直奔 `tv` / `movie`（未探测过则先 tv 后 movie），
+/// 都不行退到 `subject_abstract`。
 async fn fetch_detail(kind: ProxyKind, prefix: &str, id: &str) -> Option<Value> {
     if douban_cooling() {
         tracing::debug!(id, "douban detail skipped during cooldown");
         return None;
     }
-    for path in ["tv", "movie"] {
+    let hint = detail_path_hint(id);
+    let paths: &[&str] = match hint {
+        Some(DetailPath::Tv) => &["tv"],
+        Some(DetailPath::Movie) => &["movie"],
+        Some(DetailPath::Unavailable) => &[],
+        None => &["tv", "movie"],
+    };
+    let mut not_found = 0usize;
+    for path in paths {
         pace_douban().await;
         let target = format!(
             "https://m.douban.com/rexxar/api/v2/{path}/{}?ck=&for_mobile=1",
@@ -1042,14 +1099,32 @@ async fn fetch_detail(kind: ProxyKind, prefix: &str, id: &str) -> Option<Value> 
         match get_json(kind, prefix, &target).await {
             Ok(value) => {
                 if value.get("title").is_some() {
+                    remember_detail_path(
+                        id,
+                        if *path == "tv" {
+                            DetailPath::Tv
+                        } else {
+                            DetailPath::Movie
+                        },
+                    );
                     return Some(value);
                 }
                 tracing::warn!(id, path, "douban rexxar returned an empty subject");
             }
             Err(err) => {
+                if err.message.contains("HTTP 404") {
+                    not_found += 1;
+                }
                 tracing::warn!(id, path, code = %err.code, error = %err.message, "douban rexxar failed");
             }
         }
+    }
+    if hint.is_none() && not_found == 2 {
+        // 双路径都明确 404：这个 id 没有 rexxar 详情，下次直接 abstract。
+        remember_detail_path(id, DetailPath::Unavailable);
+    } else if hint.is_some() && not_found == paths.len() && !paths.is_empty() {
+        // 记住的路径失效（条目变更等）：清掉记忆，下次重新双路径探测。
+        forget_detail_path(id);
     }
     let target = format!(
         "https://movie.douban.com/j/subject_abstract?subject_id={}",
@@ -1125,7 +1200,7 @@ pub async fn fetch(req: &DoubanMetaRequest) -> Result<Option<DoubanMeta>, AppErr
         .map(str::to_string);
     let key = cache_key(&title, year.as_deref());
     if let Some(hit) = cache_get(&key) {
-        return Ok(Some(hit));
+        return Ok(hit);
     }
     if douban_cooling() {
         tracing::debug!(title, "douban meta skipped during cooldown");
@@ -1135,10 +1210,11 @@ pub async fn fetch(req: &DoubanMetaRequest) -> Result<Option<DoubanMeta>, AppErr
     let items = search_candidates(kind, &prefix, &title).await;
     let Some(item) = pick_candidate(&items, &title, year.as_deref()) else {
         tracing::info!(title = %title, candidates = items.len(), "douban: no matching subject");
+        cache_put(key, None);
         return Ok(None);
     };
     let meta = build_meta(kind, &prefix, item, year.as_deref()).await;
-    cache_put(key, &meta);
+    cache_put(key, Some(meta.clone()));
     Ok(Some(meta))
 }
 
@@ -1164,7 +1240,8 @@ pub async fn douban_meta(
 
 struct Cached {
     at: Instant,
-    meta: DoubanMeta,
+    /// `None` = 负结果（查无此片），用更短的 NEG_CACHE_TTL。
+    meta: Option<DoubanMeta>,
 }
 
 fn cache() -> &'static Mutex<HashMap<String, Cached>> {
@@ -1176,29 +1253,33 @@ fn cache_key(title: &str, year: Option<&str>) -> String {
     format!("{}|{}", normalize_title(title), year.unwrap_or(""))
 }
 
-fn cache_get(key: &str) -> Option<DoubanMeta> {
+fn entry_fresh(entry: &Cached) -> bool {
+    let ttl = if entry.meta.is_some() {
+        CACHE_TTL
+    } else {
+        NEG_CACHE_TTL
+    };
+    entry.at.elapsed() <= ttl
+}
+
+/// 外层 `None` = 未命中；内层 `None` = 命中一条负结果。
+fn cache_get(key: &str) -> Option<Option<DoubanMeta>> {
     let guard = cache().lock().ok()?;
     let hit = guard.get(key)?;
-    if hit.at.elapsed() > CACHE_TTL {
+    if !entry_fresh(hit) {
         return None;
     }
     Some(hit.meta.clone())
 }
 
-fn cache_put(key: String, meta: &DoubanMeta) {
+fn cache_put(key: String, meta: Option<DoubanMeta>) {
     let Ok(mut guard) = cache().lock() else {
         return;
     };
     if guard.len() >= CACHE_CAP {
-        guard.retain(|_, entry| entry.at.elapsed() <= CACHE_TTL);
+        guard.retain(|_, entry| entry_fresh(entry));
     }
-    guard.insert(
-        key,
-        Cached {
-            at: Instant::now(),
-            meta: meta.clone(),
-        },
-    );
+    guard.insert(key, Cached { at: Instant::now(), meta });
 }
 
 #[cfg(test)]
@@ -1556,9 +1637,13 @@ mod tests {
             cache_key("庆余年（第二季）", Some("2019")),
             "同剧不同季共用一个键"
         );
-        cache_put(key.clone(), &meta());
-        assert_eq!(cache_get(&key).expect("hit"), meta());
+        cache_put(key.clone(), Some(meta()));
+        assert_eq!(cache_get(&key).expect("hit").expect("positive"), meta());
         assert!(cache_get(&cache_key("三体", Some("2023"))).is_none());
+        // 负结果同样入缓存：轮播/详情页重复问同一个查不到的片名不再走网络。
+        let neg_key = cache_key("查无此片", None);
+        cache_put(neg_key.clone(), None);
+        assert_eq!(cache_get(&neg_key).expect("negative hit"), None);
         clear_cache();
     }
 

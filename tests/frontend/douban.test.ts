@@ -329,8 +329,10 @@ describe("douban fetch contract", () => {
     expect(source).toContain("inflight.get(key)");
     // 缓存键必须带代理模式：切换代理后下一次请求要重新走。
     expect(source).toContain("${proxyType}\\u0000${custom}");
-    // 没命中的只留一分钟：豆瓣被限流时不能把「暂时没有」记成永久没有。
-    expect(source).toContain("const MISS_TTL_MS = 60_000;");
+    // 负结果留 5 分钟（对齐 Rust NEG_CACHE_TTL）：头图 6.5s 轮播会把查不到
+    // 的片名每圈重跑全链，1 分钟太短；限流冷却期 Rust 不入缓存，前端最多
+    // 多记 2 分钟，可接受。
+    expect(source).toContain("const MISS_TTL_MS = 5 * 60_000;");
     expect(source).toContain("const HIT_TTL_MS = 10 * 60_000;");
     // 同时在途数量有限，避免一屏海报把豆瓣打到限流。
     expect(source).toContain("const MAX_PARALLEL = 2;");

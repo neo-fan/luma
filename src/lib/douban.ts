@@ -38,9 +38,11 @@ export interface DoubanMeta {
 
 /** 进程内缓存的条数上限：一次浏览几十部片，200 条足够且不会涨。 */
 const CACHE_LIMIT = 200;
-/** 命中了的资料缓存 10 分钟（和 Rust 侧一致）；没命中的只留 1 分钟，别把「刚被豆瓣限流」记成永久没有。 */
+/** 命中了的资料缓存 10 分钟（和 Rust 侧一致）；负结果 5 分钟（对齐 Rust
+ * NEG_CACHE_TTL）：头图每 6.5s 轮播一帧，1 分钟会让查不到的片名每圈重跑
+ * 全链。限流冷却期 Rust 不入缓存、前端这里最多多记 2 分钟，可接受。 */
 const HIT_TTL_MS = 10 * 60_000;
-const MISS_TTL_MS = 60_000;
+const MISS_TTL_MS = 5 * 60_000;
 /** 搜索有频率限制：同时最多两个在途，其余排队，避免一屏海报把豆瓣打到限流。 */
 const MAX_PARALLEL = 2;
 
