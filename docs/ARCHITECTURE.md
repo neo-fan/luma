@@ -49,7 +49,7 @@
 | 类型 | 执行方 | 状态 | 说明 |
 |---|---|---|---|
 | `cms` | 主进程直接 HTTP | ✅ 主体 | `api.php/provide/vod`，直链 m3u8 |
-| `python` | Python 适配层 | ✅ 支持 | `spider` 方法经 `py/main.py` 桥，含 JSON 安全/空信封/`_absolutize` 降级 |
+| `python` | Python 适配层 | ✅ 支持 | 只执行第三方 `spider` 脚本（`py/main.py` → `pyspider.py` → `pyrun.py`），返回值原样交回、由宿主 `cms_parse.rs` 归一化；含 JSON 安全/空信封/`_absolutize` 降级 |
 | `quickjs` | qjs-runner | ✅ 支持（部分） | ESM 加载 + cheerio 等价；`initEnv` 完整 polyfill、FongMi class-based 仍未支持 |
 | `jvm` | （无运行时） | ⛔ 运行时已移除 | jar 站点仍被识别为 `jvm` 并在导入时屏蔽（`enabled=false`+`disabledReason`）；Android dex jar 依赖 ART/okhttp/gson/QuickJS，Win x64 无法加载。JVM 运行时（`spider/jvm.rs` / `sidecars/java` / `sidecars/jre`）已于 1.0.3 整体移除 |
 

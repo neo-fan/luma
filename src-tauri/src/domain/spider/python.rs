@@ -205,6 +205,7 @@ impl SpiderRuntime for PythonRuntime {
             "timeoutMs": timeout.as_millis() as u64,
         });
         bridge::call_with_timeout("spider.py", params, timeout).await
+            .map(|value| normalize(site, method, args, value))
     }
 
     async fn health(&self) -> Result<(), AppError> {
@@ -240,4 +241,29 @@ impl SpiderRuntime for PythonRuntime {
         .await?;
         crate::spider::decode_proxy_payload(&value)
     }
+}
+
+/// py 源返回值归一（原 `sidecars/py/pyspider.py::_normalize`）：契约映射只留
+/// 一份 Rust 实现，适配层回归「只执行脚本」。
+///
+/// 形状不对时返回空信封而不是错误——一个坏源不该拖垮整轮聚合。空详情曾经完全
+/// 不可见（UI 只报「未获取到影片详情」），所以仍记一条 INFO，带脚本 URL 和
+/// vodId：适配层的 `spider.log` 只收脚本异常，这条是宿主侧的归一化诊断，落宿主
+/// 日志。
+fn normalize(site: &Value, method: SpiderMethod, args: &[Value], result: Value) -> Value {
+    let normalized = crate::spider::cms_parse::normalize_spider_result(method.as_str(), &result);
+    if method == SpiderMethod::DetailContent
+        && normalized.as_array().map_or(true, |items| items.is_empty())
+    {
+        let api = site.get("api").and_then(Value::as_str).unwrap_or("");
+        let vod_id = args
+            .first()
+            .map(|value| match value {
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default();
+        tracing::info!(source_api = %api, vod_id = %vod_id, "spider detailContent returned no video");
+    }
+    normalized
 }

@@ -133,16 +133,14 @@ def adapter_phase() -> None:
         pong = adapter.call("ping")
         check(pong.get("ok") is True, "T-14 adapter", "ping", json.dumps(pong.get("result"))[:80])
 
-        # full method table: every method must at least answer with a frame
+        # full method table: every method must at least answer with a frame.
+        # `site.parse*` 已随 CMS 解析搬进 Rust 一并删除（适配层只执行源脚本），
+        # 所以协议面是 7 个业务方法 + `ping`。
         methods = [
             ("config.decrypt", {"raw": '{"sites":[]}'}),
             ("config.normalize", {"raw": '{"sites":[]}', "origin": "stub"}),
             ("config.mergeRepos", {"snapshots": []}),
             ("site.route", {"site": {"jar": "py", "api": "http://127.0.0.1:8787/x.py"}}),
-            ("site.parseHome", {"site": {}, "raw": '{"class":[],"list":[]}'}),
-            ("site.parseCategory", {"site": {}, "raw": '{"list":[]}', "tid": "1", "pg": 1}),
-            ("site.parseDetail", {"site": {}, "raw": '{"list":[]}'}),
-            ("site.parseSearch", {"site": {}, "raw": '{"list":[]}', "wd": "x", "pg": 1}),
             ("live.parseM3u", {"raw": '#EXTM3U\n#EXTINF:-1 group-title="G",Ch\nhttp://127.0.0.1:8787/play.m3u8\n', "url": "stub"}),
             ("parse.resolve", {"url": "http://127.0.0.1:8787/page/play.html", "rule": {"url": "http://127.0.0.1:8787/parse?url=${url}"}}),
             ("spider.py", {"source": (ROOT / "tests" / "fixtures" / "spiders" / "template.py").read_text(encoding="utf-8"), "method": "homeContent", "args": [], "ext": "stub-ext-py"}),
@@ -154,7 +152,16 @@ def adapter_phase() -> None:
                 missing.append(method)
             elif method == "site.route" and frame.get("result", {}).get("runtime") != "python":
                 missing.append(f"{method}(runtime)")
-        check(not missing, "T-14 adapter", "11 method table", ",".join(missing) or "all answered")
+        check(not missing, "T-14 adapter", "7 method table", ",".join(missing) or "all answered")
+
+        # Removed protocol must fail loudly instead of silently answering.
+        gone = adapter.call("site.parseHome", {"site": {}, "raw": '{"class":[],"list":[]}'})
+        check(
+            gone.get("ok") is False and "unknown method" in str(gone.get("error", {}).get("message", "")),
+            "T-14 adapter",
+            "site.parse* removed from the adapter protocol",
+            json.dumps(gone)[:120],
+        )
 
         # 纯分类断言：1.0.3 起不再随包 JVM 运行时，但 site.route 仍需把 jar
         # 站点识别为 jvm（宿主据此在导入时屏蔽并给出原因）。
@@ -216,7 +223,9 @@ def adapter_phase() -> None:
 
         home = adapter.call("spider.py", {"source": source, "method": "homeContent", "args": [], "ext": "stub-ext-py"})
         item = (home.get("result", {}).get("list") or [{}])[0]
-        check(item.get("vod_id") == "py-1", "T-15 python", "normalized page shape", item.get("vod_name", ""))
+        # The adapter no longer maps fields: it must hand back exactly what the
+        # script returned (契约映射在 Rust，见 cms_parse.rs::normalize_spider_result）。
+        check(item.get("vod_id") == "py-1", "T-15 python", "template page passthrough", item.get("vod_name", ""))
 
         player = adapter.call(
             "spider.py",

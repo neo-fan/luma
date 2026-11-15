@@ -21,6 +21,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "sidecars" / "py"))
+# `cms.py` here is a developer-tool copy (the app parses CMS responses in Rust,
+# `src-tauri/src/domain/spider/cms_parse.rs`); the audit script only needs it
+# offline, so it lives next to this file instead of in the shipped sidecar.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cms  # noqa: E402
 from decrypt import DecryptError, decrypt  # noqa: E402

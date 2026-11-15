@@ -90,7 +90,7 @@ def is_cancelled(request_id: object) -> bool:
 
 
 def lane_for(method: str) -> ThreadPoolExecutor:
-    """`config.*` / `ping` 走导入车道，其余（`spider.py` / `site.parse*` / `live.*`）走爬虫车道。"""
+    """`config.*` / `ping` 走导入车道，其余（`spider.py` / `site.route` / `live.*` / `parse.resolve`）走爬虫车道。"""
     if method == "ping" or method.startswith("config."):
         return _config_executor
     return _spider_executor
@@ -164,20 +164,6 @@ def dispatch(method: str, params: dict) -> dict:
         if not isinstance(snapshots, list):
             raise ValueError("snapshots must be an array")
         return merge_repos([s for s in snapshots if isinstance(s, dict)])
-
-    if method.startswith("site.parse"):
-        from cms import parse_category, parse_detail, parse_home, parse_search
-
-        handlers = {
-            "site.parseHome": parse_home,
-            "site.parseCategory": parse_category,
-            "site.parseDetail": parse_detail,
-            "site.parseSearch": parse_search,
-        }
-        handler = handlers.get(method)
-        if handler is None:
-            raise ValueError(f"unknown method: {method}")
-        return handler(params)
 
     if method == "site.route":
         from normalize import route as route_site

@@ -113,6 +113,8 @@ $env:PATH    = "$vc\bin\Hostx64\x64;$sdk\bin\10.0.26100.0\x64;$env:PATH"   # 必
 
 ### 3.3 Python 采集适配层
 
+- 适配层只做协议与子进程执行：`spider.py` 交给 `pyspider.py` → `pyrun.py` 跑第三方脚本，脚本返回值**原样交回**，归一化在宿主 `src-tauri/src/domain/spider/cms_parse.rs::normalize_spider_result`。`sidecars/py/` 不再有 CMS 字段映射；离线审计脚本的副本在 `tools/audit/cms.py`（别从适配层 import）。
+- 空详情（脚本返回 `{"list": []}`）由宿主记 `spider detailContent returned no video`（app 通道，带 `source_api` / `vod_id`），spider 通道只留脚本内的异常与 traceback。
 - 诊断日志写 `logs/spider/spider.<UTC 日期>.log`（每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback）。宿主 spawn 时通过 `LUMA_ADAPTER_LOG` 注入这个路径，`LUMA_ADAPTER_LOG` 也可手动改；单个文件上限 10 MiB，超出滚成 `.1`。日志模块对 spider 协议尽力而为——缺失也不让 py 源整体失效。
 - 临时切解释器：`$env:LUMA_PYTHON = <path>`。
 
