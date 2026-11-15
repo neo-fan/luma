@@ -18,6 +18,7 @@ import { getEpgUrl } from "../lib/epgSettings";
 import { notify } from "../lib/notify";
 import { noticeTtl } from "../lib/notice";
 import { classifyLiveFailure, liveFailureMessage } from "../lib/playErrors";
+import { mediaAdvanced } from "../lib/mediaAlive";
 import type {
   LiveFailureInfo,
   LiveFailureStage,
@@ -276,12 +277,19 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
       // 只有一条线路时没有可换的目标，但**一次 error 不构成结论**：直播分片
       // 瞬时 5xx、hls 抖动都会先抛 error 再自愈——用户实测过「画面已经在放
       // 1080P，顶上却挂着『该频道暂时无法播放』」。等 4s，期间恢复就撤回。
+      // 判死前的快照：音频先出、视频轨还在解码时 `currentTime` 会在窗口内
+      // 前进——这同样是「线路是通的」的证据，不能只盯画面和缓冲等级。
+      const startTime = videoRef.current?.currentTime ?? 0;
       clearVerdict();
       verdictTimer.current = window.setTimeout(() => {
         verdictTimer.current = null;
         const video = videoRef.current;
-        // readyState>=2 = 已有当前帧数据（哪怕用户暂停着），说明线路是通的。
-        if (video && video.readyState >= 2) {
+        // readyState>=2 = 已有当前帧数据（哪怕用户暂停着）；时钟在窗口内
+        // 前进 = 确实在放（可能只是音频）。任一成立都说明线路是通的。
+        if (
+          video &&
+          (video.readyState >= 2 || mediaAdvanced(video, startTime))
+        ) {
           return;
         }
         // 单线路判死：把内核给的最后一句原文带进归类，能看出原因的按原因

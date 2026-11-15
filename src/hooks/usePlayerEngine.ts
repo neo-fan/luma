@@ -28,6 +28,7 @@ import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { registerPlayer, stopActivePlayer } from "../lib/playerRegistry";
 import { errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
+import { mediaIsAdvancing } from "../lib/mediaAlive";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
 import { DEFAULT_PREFS, readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
@@ -917,8 +918,9 @@ export function usePlayerEngine({
       if (watchStopped) {
         return;
       }
-      if (video.readyState >= 2) {
-        // 已经能进入播放状态：watchdog 彻底退场，软提示也撤掉。
+      // 通用存活判据：缓冲到位之外，媒体时钟在走（声音已经出来、画面还在
+      // 解码）也算活着 —— 这种线路不能判死，也不该继续挂着「加载中」。
+      if (video.readyState >= 2 || mediaIsAdvancing(video)) {
         watchStopped = true;
         clearSlowNotice();
         return;
@@ -938,7 +940,11 @@ export function usePlayerEngine({
       void probeLineVerdict(resolved.proxyUrl, resolved.kind, 12_000)
         .then((verdict) => {
           probeBusy = false;
-          if (watchStopped || video.readyState >= 2) {
+          if (
+            watchStopped ||
+            video.readyState >= 2 ||
+            mediaIsAdvancing(video)
+          ) {
             return;
           }
           if (failoverStarted.current || lineSwitchStarted.current) {
@@ -991,7 +997,7 @@ export function usePlayerEngine({
      */
     const loadStartedAt = Date.now();
     const hintTimer = window.setInterval(() => {
-      if (video.readyState >= 2) {
+      if (video.readyState >= 2 || mediaIsAdvancing(video)) {
         clearSlowNotice();
         return;
       }
