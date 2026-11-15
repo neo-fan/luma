@@ -56,7 +56,8 @@ const NAV_ITEMS: {
   { key: "home", label: "首页" },
   { key: "live", label: "直播" },
   // 「播放」是独立导航项：播放页常驻，切到别的页面后仍在这里切回来继续看。
-  // 只有真的开播过（有会话）才显示，空态不给一个点了没反应的入口。
+  // 入口始终显示（需求 2026-11-15）：没有会话时落到 /player 的续播页，
+  // 取最近一条历史；没有历史时那里是美化过的空态。
   { key: "player", label: "播放" },
   { key: "search", label: "搜索" },
   { key: "favorites", label: "收藏" },
@@ -360,9 +361,8 @@ export default function AppShell() {
    */
   const vodSession =
     playSession && playSession.siteKey !== "live" ? playSession : null;
-  const navItems = vodSession
-    ? NAV_ITEMS
-    : NAV_ITEMS.filter((item) => item.key !== "player");
+  // 侧栏所有入口始终在位；「播放」指向会依据有没有会话变化，见下方 loc。
+  const navItems = NAV_ITEMS;
 
   return (
     <ConfigActionsContext.Provider
@@ -386,13 +386,16 @@ export default function AppShell() {
           </div>
           <nav className="nav">
             {navItems.map((item) => {
-              // 「播放」不是固定路径：它指向当前会话的播放页，随时切回来继续播。
+              // 「播放」不是固定路径：有会话时指向会话播放页（随时切回来继续播），
+              // 没有会话时落到 /player 续播页（最近一条历史 / 空态）。
               const loc =
-                item.key === "player" && vodSession
-                  ? {
-                      pathname: `/player/${encodeURIComponent(vodSession.siteKey)}/${encodeURIComponent(vodSession.vodId)}`,
-                      search: "",
-                    }
+                item.key === "player"
+                  ? vodSession
+                    ? {
+                        pathname: `/player/${encodeURIComponent(vodSession.siteKey)}/${encodeURIComponent(vodSession.vodId)}`,
+                        search: "",
+                      }
+                    : { pathname: "/player", search: "" }
                   : viewToLocation({ name: item.key as NavKey });
               return (
                 <button

@@ -8,11 +8,16 @@
 
 补丁版。修掉「进度条走形」，并把自动换线改成真正「先同源同集线路 → 同源其它集 → 跨源」。
 
+### 新增
+
+- **侧栏「播放」始终在，落地页是续播页**：以前没有播放会话时这个入口被整条隐藏（`NAV_ITEMS.filter(item => item.key !== "player")`），想接着看上次的片子只能先去「历史」再点。现在入口常驻：有会话时仍指向当前播放页，没有会话时落到新的 `/player` 续播页 —— 主卡展示最近一条历史（封面、线路、集名、已看进度、多久之前），一键「继续播放」把末次 `playUrl` / 线路 / 集名原样带进播放页（进度由播放页按剧名 + 同集从历史里取 `positionMs` 续上）；下面「最近观看」网格列出其余记录。一条历史都没有时空态给「去逛逛 / 搜索影片」两个去处，不再把人送回首页。新增 `tests/frontend/playPage.test.ts`（4 条）锁住入口常驻、路由顺序、最新历史与空态。
+
 ### 修复
 
 - **toast 的进度线偶发走形（一条压在 toast 上方的灰条）**：`sonner` 2.0.8 会在运行时往 `<head>` 追加一段 `<style>`，里面有 `[data-sonner-toast][data-expanded=true]::after`（悬停时连接两条 toast 的透明桥：`height: calc(var(--gap) + 1px); bottom: 100%; width: 100%`）。它和我们自绘的进度线伪元素 `[data-sonner-toast].notice-toast::after` 特异性同为 (0, 2, 1)，谁生效只取决于样式表先后：dev 下 Vite 把我们的样式也插成 `<style>` 且在后，所以看不出来；正式包里我们的样式是打包好的 `<link>`（靠前），sonner 的 `<style>` 启动后追加（靠后）→ 进度线的 `height` / `bottom` / `left` 被顶成 sonner 的几何，而背景色与 `scaleX` 动画仍是我们的，看起来就是 toast 上方一条 11px 灰条（正好是 `gap: 10` + 1）。选择器改成 `[data-sonner-toast].notice-toast.notice-toast::after`（**类名写两遍是故意的**，把特异性抬到 (0, 3, 1)），从此与样式表先后无关。新增 `tests/frontend/noticeToast.test.ts` 锁住「更高特异性 + 进度线贴在 toast 底部 2px」。
 - **点播自动换线的顺序不严格**：`tryNextLine` 把「同集其它线路」和「同源其它集」混在一个候选列表里交给 `firstPlayable` 竞速，谁先探活成功就用谁，播放器报错时可能直接跳到下一集；另外重复触发靠一个布尔闸门早退，第二次调用直接返回 false 就掉进跨源分支。现在分两阶段：先探同源同集的其它线路（最多 12 条、并发 4），没有再探同源的其它集（最多 8 条），最后才换源；同一次换线用 in-flight Promise 去重并复用结论；集名比较改用 `sameEpisodeName`（全角转半角、去前导 0、忽略分隔符，`第04集` / `第4集` / `EP1` 视为同一集）。阶段提示依次是「正在尝试同源的其它线路…」→「当前源没有同集可播线路，正在尝试其它集…」→「当前源没有可播线路，正在尝试其它源…」，HLS 失败提示从「正在换源」改成「正在切换线路」。新增 `tests/frontend/failoverOrder.test.ts` 锁住三个阶段与顺序。
 - **直播频道级 UA / Referer 被丢掉**：M3U 的 `#EXTINF` 里可以带 `http-user-agent` / `http-referer`（suxuang 这类源有 42 条声明），Rust 侧以前只读 `tvg-*` 与 `group-title`，广播出去没有这两个字段；咪咕系的央视/卫视不带 UA 一律 404。现在解析进 `LiveChannel.ua` / `referer`（同名频道以先声明的为准；没声明时不出现空字段），`resolvePlay` 按「频道级 → 直播源级」兜底。
+- **起播与换台时的一声爆音 / 串音**：`<video>` 在 `playing` 之前音量就已经被 ArtPlayer 恢复成它自己缓存的 100%，MSE 源起播首帧还有一次采样跳变；直播换台时旧实例是「拖着一小段缓冲直接 `pause()` + `removeAttribute("src")` + `load()`」，音频设备上会留一声「咔」。现在新实例一律静音（`muted = true`、`volume = 0`）等 `playing` 后 200ms 淡入到记忆音量，硬停前先把 `muted` 置真再停；淡入期间不落盘音量偏好（否则「0」会被写成用户设置），连点换台没走完淡入时卸载也不补写。CDP 页面内记录器实测：点播起播 `volumechange` 逐帧 0.006 → 0.5（约 230ms、12 帧），`playing` 之前没有未静音的大音量；直播换台旧实例 `emptied` 时 `muted: true`；音量偏好保持 0.5。新增 `tests/frontend/playerAudioFade.test.ts`（4 条）锁住静音起播、淡入曲线、硬停顺序与不落盘。
 - **直播地址被判成网页、白等 15 秒嗅探**：`http://…/live.php?id=CCTV1` 这种路径里没有 `.m3u8`，`classify` 判成 `page`，直接进第 4 级隐藏 WebView2 嗅探；服务器对默认 UA 返回 404 HTML，于是等满 15 秒后报「该地址无法在内置播放器中播放」。现在 `resolve_play` 在嗅探前先用「配置级 headers + 默认值」发一次 4 秒 GET，只读前 8 KiB，首行是 `#EXTM3U` 就按 HLS 处理，并采用**重定向后的最终地址**（分片多为相对路径）。同一地址实测：带 `aliplayer` UA 时 194 ms 拿到 `#EXTM3U`（302 到咪咕 CDN），不带 UA 仍是 15.4 秒 + 404。
 
 ### 工程
@@ -23,6 +28,7 @@
 
 - **设计语言 v2.1：把「看着不齐」的地方收敛成一套尺度**：`base.css` 新增 `--h-chip: 28px` / `--h-control: 34px` / `--h-cta: 40px` 三档控件高度、`--line-measure: 70ch` 阅读宽度、`--scrim` 封面压暗色，并把 `--fs-h1` 从 23px 回填成页头实际的 21px。此前 8 个页面的按钮/输入/下拉实测高度有 26/29/32/33/34/36/38/40 八种，同一行的按钮与输入框底边对不齐；现在 `.btn` / `.input` / `.app-select__trigger` / 直播源搜索框 / 刷新条下拉 / GitHub 加速自定义输入统一走 `--h-control`，主行动按钮走 `--h-cta`。首页分类 chip 从三行换行（吃掉约 100px 首屏）改成单行横向滚动（`.chip-row--tabs`，右缘渐隐）；搜索页结果摘要从三段灰字收成一行（失败源按钮与「只看片名匹配」并排，探针依赖的 `.failure-panel button` 文案不变）；设置页章节标题升到 `--fs-h2`、左侧二级导航改成与侧栏同款的「淡蓝底 + 左侧 2px 竖标」；详情页简介限宽 70ch、单集格子不再塞第二行「上次看到」文字（改为右上角绿点）；封面角标/清晰度/信息条的写死近白（`#f1f1f6`、`rgba(241,241,246,0.92)`、`#f2f4f9`、`rgba(238,241,247,0.82)`）全部改用 token。图标档位同步收敛：直播列表台标 22→20、分组 caret 12→14。用一次性 CDP 巡检脚本逐页量（`tools/.out/audit_pages.mjs`，不入库）：8 个页面的写死近白清零、控件高度收敛到 28/34/40 三档、`.page-head` 高度不再在 32/34/38 间跳。新增 `tests/frontend/designScale.test.ts`（7 条）锁住 token、控件高度引用、首页分类滚动行、页头/章节标题字号、单集绿点与封面信息条 token。
 
+- 新增 `tests/frontend/playerAudioFade.test.ts`（4 条）与 `tests/frontend/playPage.test.ts`（4 条）源码契约；前端用例 367 → 375（46 → 48 个文件）。
 - **交互态收尾（占位色 / 按压 / 滚动吸附）**：封面无图占位、详情与播放页海报底、加载 spinner 环、骨架高光里还残留 `#1a202c` / `#12161e` / `#1c232e` / `#2a3344` 四个写死蓝灰，统一换成 `--panel-raised` / `--panel-sunken` / `--border-strong`；补上点击反馈（`.chip`、`.live-rail__item`、`.episode`、`.settings-nav__item`、`.source-item` 的 `:active` 只换底色明度、不位移，符合「交互靠明度」的设计语言 v2）；首页分类单行滚动加 `scroll-snap-type: x proximity`，键盘/触控板横滚不会把半个分类词切在边缘。CDP 用 `Input.dispatchKeyEvent` 连按 Tab 巡检首页 14 个停靠点，焦点环统一为 `2px var(--accent)` + `offset 2px`。
 - **综艺 / 短剧的长集名在选集格子里被左右同时裁掉**：`.episode` 是固定列宽 + 居中单行，`20260515特别企划` 这类 10+ 字显示成 `0260515特别企划`（省略号也在被裁的一侧，看不到）。折两行会把整行网格撑得高低不齐，所以改成单行**左对齐**裁切，指针悬停或键盘聚焦时把内容横向滚到末尾露出整个集名、移开 / 失焦回位；抽成 `src/components/EpisodeButton.tsx`，详情页与播放页选集区共用，完整集名仍在 `title` 里。CDP 实测「歌手2026」详情页（电影天堂 / 81937，86 集）：格子高度统一 34px、30 条集名超宽、悬停后 `scrollLeft == scrollWidth - clientWidth`、移开回 0。新增 `tests/frontend/episodeScroll.test.ts`（3 条）锁住滚动行为、两处调用点与「单行 + 可横向滚动」的 CSS。
 

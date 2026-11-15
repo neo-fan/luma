@@ -12,6 +12,7 @@ import DetailPage from "./pages/DetailPage";
 import FavoritesPage from "./pages/FavoritesPage";
 import HistoryPage from "./pages/HistoryPage";
 import HomePage from "./pages/HomePage";
+import PlayPage from "./pages/PlayPage";
 import SearchPage from "./pages/SearchPage";
 import SettingsPage from "./pages/SettingsPage";
 import { useEffect } from "react";
@@ -222,6 +223,9 @@ export const router = createHashRouter([
       { path: "history", element: <HistoryRoute /> },
       { path: "settings", element: <SettingsPageRoute /> },
       { path: "detail/:siteKey/:vodId", element: <DetailPageRoute /> },
+      // 「播放」入口始终存在：没有会话时落到 /player 的续播页（取最近一条历史），
+      // 一条历史都没有时是空态，而不是把人送回首页。
+      { path: "player", element: <PlayPageRoute /> },
       { path: "player/:siteKey/:vodId", element: <PlayerPageRoute /> },
       // 未知路径回首页兜底（hash 路由下不会命中，防御性保留）。
       { path: "*", element: <Redirect to="/" replace /> },
@@ -235,4 +239,8 @@ function FavoritesRoute() {
 
 function HistoryRoute() {
   return <HistoryPage navigate={navNavigate} />;
+}
+
+function PlayPageRoute() {
+  return <PlayPage navigate={navNavigate} />;
 }

@@ -619,6 +619,46 @@ export function usePlayerEngine({
     videoRef.current = video;
 
     /**
+     * 起播音频淡入（2026-11-15 用户反馈「直播频道切换时候 有个声音」）。
+     *
+     * 两处噪声源：
+     * 1. ArtPlayer 初始化时会把音量恢复成它自己缓存的 100%，比我们的偏好早
+     *    若干帧生效——首帧就是满音量，换台听起来像「突然响一声」；
+     * 2. MSE / HLS 起播首帧本身带一声爆音（解码器灌入时的采样跳变）。
+     *
+     * 处理：新实例先静音（muted=true）并从 0 起播，等真正 `playing` 后再用
+     * 200ms 淡入到记忆音量。淡入期间的 volumechange 不落盘（见 volumeFadeUntil），
+     * 否则「0」会被写成用户偏好。
+     */
+    const FADE_IN_MS = 200;
+    let volumeFadeUntil = 0;
+    const fadeInVolume = () => {
+      const wanted = Math.min(1, Math.max(0, readPlayerPrefs().volume));
+      video.muted = false;
+      if (wanted <= 0.01) {
+        video.volume = wanted;
+        return;
+      }
+      volumeFadeUntil = Date.now() + FADE_IN_MS + 150;
+      const startedAt = performance.now();
+      const tick = () => {
+        if (videoRef.current !== video) {
+          return;
+        }
+        const progress = Math.min(1, (performance.now() - startedAt) / FADE_IN_MS);
+        video.volume = wanted * progress;
+        if (progress < 1) {
+          window.requestAnimationFrame(tick);
+        }
+      };
+      video.volume = 0;
+      window.requestAnimationFrame(tick);
+    };
+    video.muted = true;
+    video.volume = 0;
+    video.addEventListener("playing", fadeInVolume, { once: true });
+
+    /**
      * 幂等硬停：既由本 effect 的 cleanup 调用，也登记到全局唯一实例登记表，
      * 供下一个实例创建前 / HMR 丢失 cleanup 时收回。顺序必须是先停 <video>
      * 再销毁解码器、最后 art.destroy()，否则 MSE 源会脱离 DOM 继续出声。
@@ -630,6 +670,9 @@ export function usePlayerEngine({
       }
       stopped = true;
       try {
+        // 先静音再 pause：拖着一小段缓冲直接掐断时，音频设备会留下一声
+        // 「咔」的爆音（换台时最明显）。静音后再停，输出端先归零。
+        video.muted = true;
         video.pause();
         video.removeAttribute("src");
         video.load();
@@ -727,6 +770,10 @@ export function usePlayerEngine({
     let volumeTrailing: number | null = null;
     const persistVolume = () => {
       if (videoRef.current !== video) {
+        return;
+      }
+      // 起播淡入会连续改 volume：那不是用户拖动，整段不落盘。
+      if (Date.now() < volumeFadeUntil) {
         return;
       }
       // 静默期内 ArtPlayer 会把自己缓存的音量写回来（100%），那不是用户操作：
@@ -942,14 +989,18 @@ export function usePlayerEngine({
       video.removeEventListener("loadedmetadata", reportMeta);
       video.removeEventListener("resize", reportMeta);
       video.removeEventListener("loadedmetadata", applyResume);
+      video.removeEventListener("playing", fadeInVolume);
       // 先通知上层把 portal 里的角标摘掉，再销毁 ArtPlayer：反过来的话 React
       // 会往一个已经被 remove() 的节点里做移除。
       onPlayerRoot?.(null);
       // 只补写音量：拖动可能被节流/定时器延后，卸载时补一次最终值。
+      // 但淡入还没走完就卸载（连点换台）时 volume 还接近 0，别把它写成偏好。
       // 倍速绝不能在这里覆盖——ended 触发卸载那一刻 video.playbackRate 可能已被
       // 播放内核重置为 1（实测），写回会抹掉用户刚选的倍速。倍速由 persistRate
       // 在变更时立即落盘，无需、也不允许在卸载时再写。
-      writePlayerPrefs({ volume: video.volume });
+      if (Date.now() >= volumeFadeUntil) {
+        writePlayerPrefs({ volume: video.volume });
+      }
       // 先置空引用，避免 destroy 过程中的 video:error 再触发换源。
       videoRef.current = null;
       // 换源 / 切集时的硬停流：ArtPlayer.destroy() 只保证自己的模板被移除，

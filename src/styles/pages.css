@@ -682,3 +682,138 @@
   text-align: center;
 }
 
+
+/* ===== 播放页（/player）：无会话时的续播页 =====
+   侧栏「播放」始终在位：有会话指向会话播放页，没有会话落到这里。
+   主卡展示最近一条历史（封面 + 集进度 + 一键续播），下面是最近观看网格；
+   一条历史都没有时由 AsyncBoundary 渲染统一空态。 */
+.resume-live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.resume-live__dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.resume-live__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.resume-hero {
+  display: flex;
+  gap: 22px;
+  max-width: 880px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.resume-hero__poster {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: var(--cover-w-player);
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background: linear-gradient(160deg, var(--panel-raised), var(--panel-sunken));
+  color: var(--faint);
+  font-size: var(--fs-display);
+}
+
+.resume-hero__poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.resume-hero__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.resume-hero__eyebrow {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+
+.resume-hero__title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.resume-hero__meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.resume-hero__progress {
+  max-width: 420px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--panel-sunken);
+}
+
+.resume-hero__progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.resume-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.resume-section {
+  margin-top: 28px;
+}
+
+.resume-section__title {
+  margin: 0 0 12px;
+  color: var(--text);
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+}
+
+.resume-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
