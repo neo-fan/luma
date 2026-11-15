@@ -1105,13 +1105,23 @@ export function usePlayerEngine({
       .catch(() => {
         /* 反代还没起来：沿用默认端口 */
       });
+    // 上一次读到的累计字节：增长哪怕很慢，也是「这条线路在动」的硬证据。
+    // 极慢的源（1~2 KB/s）出画前会被看门狗当成「无响应」，光靠探活分不清
+    // 「慢」和「死」；字节在涨就直接记活，并把 unknown 计数清零。
+    let lastMeterTotal = 0;
     const speedTimer = window.setInterval(() => {
-      if (!speedEl) return;
       void fetch(`${meterBase}/meter`, { cache: "no-store" })
         .then((res) => res.json())
-        .then((body: { bytesPerSec?: number }) => {
+        .then((body: { bytesPerSec?: number; bytesTotal?: number }) => {
+          const total = Number(body.bytesTotal ?? 0);
+          if (Number.isFinite(total) && total > lastMeterTotal) {
+            lastMeterTotal = total;
+            noteAlive();
+            unresponsiveProbes = 0;
+          }
+          if (!speedEl) return;
           const rate = formatBytesPerSec(Number(body.bytesPerSec ?? 0));
-          if (rate && speedEl) speedEl.textContent = `↓ ${rate}`;
+          if (rate) speedEl.textContent = `↓ ${rate}`;
         })
         .catch(() => {
           /* 反代重启中：保持上一次读数，不闪 0 */

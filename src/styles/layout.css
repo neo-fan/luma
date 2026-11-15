@@ -110,6 +110,7 @@
 
 /* 图标固定 20px 轨道，收缩时文字隐藏后仍保持垂直居中 */
 .nav__icon {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -121,6 +122,24 @@
 .nav__icon svg {
   width: 19px;
   height: 19px;
+}
+
+/* 后台还在播：图标右上角一颗呼吸小点（切到别的页面时才会出现）。 */
+.nav__dot {
+  position: absolute;
+  top: -1px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--panel);
+  animation: nav-dot-pulse 1.8s var(--ease) infinite;
+}
+
+@keyframes nav-dot-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
 }
 
 .nav__label {

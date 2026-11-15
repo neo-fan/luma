@@ -10,6 +10,7 @@ import LiveChannelRail from "../components/player/LiveChannelRail";
 import LiveEpgPanel from "../components/LiveEpgPanel";
 import { useLiveCatalog } from "../hooks/useLiveCatalog";
 import { usePlayResolution } from "../hooks/usePlayResolution";
+import { usePlaybackIndicator } from "../hooks/usePlaybackIndicator";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
 import type { LiveLineControl } from "../hooks/usePlayerEngine";
 import { getLiveLine, setLiveLine } from "../lib/liveMemory";
@@ -404,6 +405,9 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     onSlowNotice: (text) => setSlowNotice(text ?? ""),
     setVideoError: setEngineVideoError,
   });
+
+  // 常驻层切页不卸载：播放状态进全局 store，侧栏图标才能亮小圆点。
+  usePlaybackIndicator(videoRef, "live", resolved);
 
   /**
    * 换台/换线与「源侧慢」的提示统一进播放器 notice：贴着画面、全屏可见。

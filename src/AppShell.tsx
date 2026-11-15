@@ -103,6 +103,7 @@ export default function AppShell() {
   const setCache = useAppStore((s) => s.setCache);
   const preferredSite = useAppStore((s) => s.preferredSite);
   const playSession = useAppStore((s) => s.playSession);
+  const mediaPlaying = useAppStore((s) => s.mediaPlaying);
   const { sites } = useSiteState();
 
   /** 全局命令面板（Ctrl+K）。 */
@@ -401,6 +402,10 @@ export default function AppShell() {
             {navItems.map((item) => {
               // 「播放」不是固定路径：有会话时指向会话播放页（随时切回来继续播），
               // 没有会话时落到 /player 续播页（最近一条历史 / 空态）。
+              // 播放/直播是常驻层：切到别的页面后音频还在放，图标上亮一个小圆点。
+              const showPlayingDot =
+                (item.key === "player" && mediaPlaying.vod && !isPlayerRoute) ||
+                (item.key === "live" && mediaPlaying.live && !isLiveRoute);
               const loc =
                 item.key === "player"
                   ? vodSession
@@ -428,6 +433,7 @@ export default function AppShell() {
                 >
                   <span className="nav__icon">
                     <NavIcon name={item.key} />
+                    {showPlayingDot ? <span className="nav__dot" aria-hidden="true" /> : null}
                   </span>
                   <span className="nav__label">{item.label}</span>
                 </button>

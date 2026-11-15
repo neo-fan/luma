@@ -43,6 +43,7 @@ import { fetchDoubanMeta } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
 import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
+import { usePlaybackIndicator } from "../hooks/usePlaybackIndicator";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
 import type { EpisodeNavControl } from "../hooks/usePlayerEngine";
@@ -478,6 +479,21 @@ export default function PlayerPage({
   const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
 
   /**
+   * 媒体是否已经真的出过画（或正在播）。
+   *
+   * 这是「不能自动换源」的最硬证据：解码器拿到过帧、时间轴走过，说明这条
+   * 线路是活的；此时路由里 `playUrl` 的解析结论（失败 / kind=page）已经
+   * 过期——原地换集或换源后它根本不是正在播的地址。
+   */
+  const mediaHasStarted = () => {
+    const video = videoRef.current;
+    if (!video) {
+      return false;
+    }
+    return video.currentTime > 0 || (!video.paused && video.readyState >= 2);
+  };
+
+  /**
    * 与详情页共用的换源候选缓存：播放页多是从详情跳转过来，缓存已就绪；
    * 从历史/收藏直接播放时这里补一次精确片名的后台检索，点换源图标不等待。
    */
@@ -862,7 +878,12 @@ export default function PlayerPage({
     // 它的解析结论（失败、kind=page）都是上一轮的，不能再拿它去换源。
     // 暂停中不自动换任何东西：用户按暂停就是「先停在这儿」，此时路由里的
     // 旧 playUrl 解析失败（换集/换源后它是过期地址）不代表当前线路坏了。
-    if (!active || switchedUrlRef.current || videoRef.current?.paused) {
+    if (
+      !active ||
+      switchedUrlRef.current ||
+      videoRef.current?.paused ||
+      mediaHasStarted()
+    ) {
       return;
     }
     if (
@@ -896,6 +917,7 @@ export default function PlayerPage({
       !active ||
       switchedUrlRef.current ||
       videoRef.current?.paused ||
+      mediaHasStarted() ||
       resolving ||
       !resolveError
     ) {
@@ -945,6 +967,9 @@ export default function PlayerPage({
     onSlowNotice: (text) => setSlowNotice(text ?? ""),
     setVideoError,
   });
+
+  // 常驻层切页不卸载播放器：播放状态进全局 store，侧栏图标才能亮小圆点。
+  usePlaybackIndicator(videoRef, "vod", resolved);
 
   // 换集 / 换源后旧分辨率不属于新画面：先清空，等新一集 `loadedmetadata`
   // 再上报，避免切集瞬间角标还挂着上一集的 1080P。

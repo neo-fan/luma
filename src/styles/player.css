@@ -346,3 +346,14 @@
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
 }
+
+/* 播放器内提示（ArtPlayer 的 `art.notice`）：默认贴左上角，正好压住「集数 ·
+   分辨率 · 码率」角标。居中显示，宽度也不占满整行。 */
+.art-video-player .art-notice {
+  left: 50%;
+  right: auto;
+  width: auto;
+  max-width: min(78%, 640px);
+  transform: translateX(-50%);
+  text-align: center;
+}

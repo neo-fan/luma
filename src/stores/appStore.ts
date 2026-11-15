@@ -74,11 +74,17 @@ interface AppStore {
    * null = 还没播过任何东西。
    */
   playSession: PlaySession | null;
+  /**
+   * 后台播放状态：播放页/直播页是常驻层，切到别的页面后音频还在放。
+   * 侧栏图标据此显示一个小圆点，告诉用户「它还在响、切回去还能接上」。
+   */
+  mediaPlaying: { vod: boolean; live: boolean };
   setCache: (cache: SiteCache | null) => void;
   setPreferredSite: (key: string) => void;
   setSidebarCollapsed: (value: boolean) => void;
   toggleSidebar: () => void;
   openPlaySession: (session: PlaySession) => void;
+  setMediaPlaying: (kind: "vod" | "live", playing: boolean) => void;
 }
 
 /** 播放会话（与路由 state 同形，AppShell 常驻渲染播放页时用它当 props）。 */
@@ -104,6 +110,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   preferredSite: readHomeSite(),
   sidebarCollapsed: readSidebarCollapsed(),
   playSession: null,
+  mediaPlaying: { vod: false, live: false },
+  setMediaPlaying: (kind, playing) => {
+    const current = get().mediaPlaying;
+    if (current[kind] === playing) {
+      return;
+    }
+    set({ mediaPlaying: { ...current, [kind]: playing } });
+  },
   openPlaySession: (session) => {
     // 同一个播放地址重复写入（路由 effect 重跑 / 探针多次点击）不该让常驻
     // 播放器重建：key 里带 playUrl，引用一变就整页重挂载 = 黑屏重播。
