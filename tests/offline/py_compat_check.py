@@ -8,9 +8,9 @@
    记录字段路径，不能让子进程「produced no frame」把原因吞掉；
 3. 相对路径 `/v1/...` → 用类级 `host` 或 `ext` 里的站点地址补成绝对 URL；
 4. 任何脚本异常都要带 traceback 落盘到 `LUMA_ADAPTER_LOG`，便于复盘；
-5. `detailContent` 返回空 / 单条 dict / `data|result|vod` 别名 → 边界统一归一，
-   空结果必须记 `empty_detail`（含脚本 URL 与 vodId），否则 UI 那句
-   「未获取到影片详情」无从复盘；
+5. `detailContent` 的裸列表 / 单条 dict / `data|result|vod` 别名归一已搬进
+   Rust（`src-tauri/src/domain/spider/cms_parse.rs` 的单测覆盖，含空结果与
+   非对象降级）；适配层只负责把 `pyrun` 的结果原样交回，这里守住这一点；
 6. `adapterlog` 是诊断设施，绝不能成为硬依赖：嵌入版 CPython 的 `._pth`
    不会把脚本目录加进 sys.path，导入顺序错了会让所有 py 源
    `ModuleNotFoundError` 且「produced no frame」。
@@ -35,8 +35,6 @@ LOG = Path(tempfile.gettempdir()) / f"luma-py-compat-{os.getpid()}.log"
 LOG.unlink(missing_ok=True)
 os.environ["LUMA_ADAPTER_LOG"] = str(LOG)
 
-import cms  # noqa: E402
-import pyspider  # noqa: E402
 from base.spider import Spider  # noqa: E402
 from pyrun import to_args  # noqa: E402
 from pyspider import run as run_py_spider  # noqa: E402
@@ -76,7 +74,7 @@ def main() -> int:
     f = frame({"source": missing, "method": "searchContent", "args": ["x", False, "1"]})
     check(f.get("ok") and f.get("result") == {"list": []}, "method", "missing searchContent -> empty envelope", str(f))
 
-    # 2) 非 JSON 返回值 → 边界净化 + 安全空页（原先 "'method' object is not iterable"）
+    # 2) 非 JSON 返回值 → 进程边界净化（原先 "'method' object is not iterable"）
     unsafe = (
         "class Spider:\n"
         "    def searchContent(self, key, quick, pg):\n"
@@ -88,9 +86,14 @@ def main() -> int:
         out = run_py_spider(
             {"source": unsafe, "method": "searchContent", "args": ["x", False, "1"], "api": "https://cfg/unsafe.py"}
         )
-        check(isinstance(out, dict) and out.get("list") == [], "shape", "bound method -> safe empty page", str(out))
+        check(
+            isinstance(out, dict) and out.get("list") == "<method>",
+            "shape",
+            "bound method is sanitized at the process boundary",
+            str(out),
+        )
     except Exception as exc:  # noqa: BLE001
-        check(False, "shape", "bound method -> safe empty page", repr(exc))
+        check(False, "shape", "bound method is sanitized at the process boundary", repr(exc))
 
     # 3) 无 scheme URL → 用 host / ext 兜底（原先 Invalid URL '/v1/...': No scheme supplied）
     class HostSpider(Spider):
@@ -130,32 +133,27 @@ def main() -> int:
     except RuntimeError:
         pass
 
-    # 5) detailContent 形状兼容 + 空结果日志（"未获取到影片详情" 的复盘依据）
-    single = {"vod_id": "7", "vod_name": "走马上任", "vod_play_url": "1$https://x/1.m3u8"}
-    for label, value in (
-        ("bare list", [single]),
-        ("list is one object", {"list": single}),
-        ("root is a vod", single),
-        ("data alias", {"data": [single]}),
-        ("result alias", {"result": single}),
-        ("vod alias", {"vod": [single]}),
-        ("standard envelope", {"list": [single]}),
-    ):
-        got = pyspider._normalize("detailContent", value, "https://cfg/shape.py", "7")
-        check(isinstance(got, list) and len(got) == 1 and got[0].get("vod_id") == "7",
-              "detail", f"py shape: {label}", repr(got)[:160])
-
-    for label, payload in (
-        ("standard", {"list": [single]}),
-        ("root vod", single),
-        ("list object", {"list": single}),
-        ("data wrapper", {"data": [single]}),
-    ):
-        got = cms.parse_detail({"raw": json.dumps(payload, ensure_ascii=False)})
-        check(isinstance(got, list) and len(got) == 1, "detail", f"cms shape: {label}", repr(got)[:160])
-
-    empty = pyspider._normalize("detailContent", {"list": []}, "https://cfg/douban.py", "36882191")
-    check(empty == [], "detail", "genuinely empty detail stays empty")
+    # 5) 归一化在 Rust：适配层必须原样交回 pyrun 的结果，不得再改形状。
+    #    裸列表 / 单条 vod / `data|result|vod` 包装 / 空结果 / 非对象降级的覆盖
+    #    在 `src-tauri/src/domain/spider/cms_parse.rs` 的单测里。
+    passthrough = run_py_spider(
+        {
+            "source": (
+                "class Spider:\n"
+                "    def detailContent(self, ids):\n"
+                "        return [{'vod_id': '7', 'vod_name': '走马上任'}]\n"
+            ),
+            "method": "detailContent",
+            "args": ["7"],
+            "api": "https://cfg/shape.py",
+        }
+    )
+    check(
+        passthrough == [{"vod_id": "7", "vod_name": "走马上任"}],
+        "detail",
+        "adapter hands back the raw spider result",
+        repr(passthrough)[:160],
+    )
 
     check(to_args("detailContent", "204658") == [["204658"]], "args",
           "string payload is not sliced into characters", str(to_args("detailContent", "204658")))
@@ -183,9 +181,6 @@ def main() -> int:
 
     text = LOG.read_text(encoding="utf-8") if LOG.exists() else ""
     check(bool(text), "log", "spider error log written", f"{len(text)} bytes")
-    check('"kind": "empty_detail"' in text, "log", "empty detail logged")
-    check("https://cfg/douban.py" in text and "36882191" in text, "log",
-          "empty detail carries script url and vod id")
     check("spider_crash" in text, "log", "log contains spider_crash")
     check("Traceback" in text, "log", "log contains traceback")
     check("https://cfg/crash.py" in text, "log", "log attributes crash to source api")

@@ -138,19 +138,19 @@ describe("py adapter: diagnostics must not break the protocol", () => {
     expect(pyspider).toContain("except ImportError:");
   });
 
-  it("logs empty detail with the script url and vod id", () => {
-    const pyspider = read("sidecars/py/pyspider.py");
-    expect(pyspider).toContain('"kind": "empty_detail"');
-    expect(pyspider).toContain('"vodId": detail_id');
-    expect(pyspider).toContain('"sourceApi": source_api or ""');
+  it("logs empty detail from the host with the script url and vod id", () => {
+    // Normalization moved into Rust so the adapter only executes scripts; the
+    // diagnostic has to survive the move or "未获取到影片详情" is untraceable again.
+    const runtime = read("src-tauri/src/domain/spider/python.rs");
+    expect(runtime).toContain("spider detailContent returned no video");
+    expect(runtime).toContain('source_api = %api, vod_id = %vod_id');
   });
 
-  it("normalizes every common detailContent shape at the boundary", () => {
-    const pyspider = read("sidecars/py/pyspider.py");
-    expect(pyspider).toContain("def _detail_items(");
-    expect(pyspider).toContain('for key in ("list", "data", "result", "vod")');
-    const cms = read("sidecars/py/cms.py");
-    expect(cms).toContain("def _detail_from_payload(");
+  it("normalizes every common detailContent shape in Rust", () => {
+    const parse = read("src-tauri/src/domain/spider/cms_parse.rs");
+    expect(parse).toContain("fn detail_items(");
+    expect(parse).toContain('["list", "data", "result", "vod"]');
+    expect(parse).toContain("pub(crate) fn normalize_spider_result(");
   });
 });
 

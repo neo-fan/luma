@@ -1,8 +1,8 @@
 //! CMS runtime: build the request, fetch the raw body, parse it in-process.
 //!
 //! Supported: type 0 (XML), type 1 (JSON), type 4 (remote API passthrough).
-//! Field mapping lives in `spider/cms_parse.rs` (port of `sidecars/py/cms.py`);
-//! the reply is normalized here, never sent through the adapter.
+//! Field mapping lives in `spider/cms_parse.rs`; the reply is normalized here,
+//! never sent through the adapter.
 
 use crate::error::{code, AppError};
 use crate::http::{self, FetchRequest};
@@ -79,16 +79,16 @@ fn build(
     match method {
         SpiderMethod::HomeContent => Ok((
             format!("{api}{separator}ac=list"),
-            "site.parseHome",
+            "cms.parseHome",
             json!({}),
         )),
         // CMS 协议没有独立的 homeVideoContent：它的 ac=list 一开始就同时返回
-        // 分类与 list（见 cms.py 的 _page_from_json）。alias 回同一请求，既复用
+        // 分类与 list（见 cms_parse.rs 的 page_from_json）。alias 回同一请求，既复用
         // 解析、又不发明不存在的 ac 参数；也避免 siteKey="all" 聚合 / 前端兜底
         // 无差别调用时把 CMS 站记成 failed。
         SpiderMethod::HomeVideoContent => Ok((
             format!("{api}{separator}ac=list"),
-            "site.parseHome",
+            "cms.parseHome",
             json!({}),
         )),
         SpiderMethod::CategoryContent => {
@@ -96,7 +96,7 @@ fn build(
             let page = arg_page(1);
             Ok((
                 format!("{api}{separator}ac=videolist&t={}&pg={page}", encode(&tid)),
-                "site.parseCategory",
+                "cms.parseCategory",
                 json!({ "tid": tid, "pg": page }),
             ))
         }
@@ -117,7 +117,7 @@ fn build(
                     "{api}{separator}wd={}&ac=videolist&pg={page}",
                     encode(&keyword)
                 ),
-                "site.parseSearch",
+                "cms.parseSearch",
                 json!({ "wd": keyword, "quick": quick, "pg": page }),
             ))
         }
@@ -125,7 +125,7 @@ fn build(
             let id = arg_str(0);
             Ok((
                 format!("{api}{separator}ac=detail&ids={}", encode(&id)),
-                "site.parseDetail",
+                "cms.parseDetail",
                 json!({}),
             ))
         }
@@ -185,7 +185,7 @@ mod tests {
             &[json!("庆余年"), json!(false), json!(3)],
         )
         .expect("three-arg search must build");
-        assert_eq!(method, "site.parseSearch");
+        assert_eq!(method, "cms.parseSearch");
         assert!(url.contains("pg=3"), "{url}");
         assert_eq!(extra["quick"], false);
         assert_eq!(extra["pg"], 3);
@@ -222,11 +222,11 @@ mod tests {
     #[test]
     fn home_video_content_aliases_to_list() {
         // CMS 协议没有独立方法：homeVideoContent 必须 alias 回 ac=list，复用
-        // site.parseHome 解析，避免 siteKey="all" 无差别调用时把 CMS 站记成 failed。
+        // cms 解析，避免 siteKey="all" 无差别调用时把 CMS 站记成 failed。
         let (url, method, extra) = build("http://x/vod", SpiderMethod::HomeVideoContent, &[])
             .expect("homeVideoContent must build for cms");
         assert!(url.contains("ac=list"), "{url}");
-        assert_eq!(method, "site.parseHome");
+        assert_eq!(method, "cms.parseHome");
         assert_eq!(extra, json!({}));
     }
 }

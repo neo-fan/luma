@@ -1,8 +1,10 @@
-"""CMS parsing for site.parseHome / parseCategory / parseDetail / parseSearch.
+"""CMS field mapping for the offline source-audit tool.
 
-Accepts the raw body returned by `cms.rs` and converts JSON or XML CMS
-responses into the normalized contract (spec 7.2 / 8.2). Parsing stays here so
-Rust never re-implements field mapping.
+Developer-tool copy: `tools/audit/scan_sources.py` needs to read community CMS
+responses without starting the app. The runtime parser lives in Rust
+(`src-tauri/src/domain/spider/cms_parse.rs`) and is the one that ships — keep
+this file compatible when the contract changes, but do not import it from the
+Python adapter.
 """
 
 from __future__ import annotations

@@ -325,7 +325,6 @@ tvbox-desktop/
 │  │  ├─ main.py                     # stdio JSON-RPC 主循环（stdout 只走协议）
 │  │  ├─ decrypt.py                  # 解密链
 │  │  ├─ normalize.py                # 方言归一化
-│  │  ├─ cms.py                      # CMS 字段映射（JSON/XML）
 │  │  ├─ live.py                     # m3u / txt 解析
 │  │  ├─ sniff.py                    # parses 嗅探规则
 │  │  └─ pyrun.py                    # TVBox py 源加载器（子进程执行）
@@ -404,7 +403,7 @@ export interface AppError {
 - **替换为**：
 
 ````markdown
-本表共 11 个业务方法 + `ping`，是 Rust ↔ Python **适配层协议面**；6.2 的 `SpiderMethod`（6 个对外方法）与 8.4 的 **Spider API**（12 个 jar 反射方法）是另外两个集合，三者数量不得互相套用。新增或删改方法须同步本表、T-14 与 `bridge.rs` 分发实现。
+本表共 7 个业务方法 + `ping`，是 Rust ↔ Python **适配层协议面**（1.0.5 起 `site.parseHome/parseCategory/parseDetail/parseSearch` 随 CMS/归一化搬进 Rust 删除，适配层只执行第三方源脚本；再调用 `site.parse*` 返回 `unknown method`）。6.2 的 `SpiderMethod`（6 个对外方法）与 8.4 的 **Spider API**（12 个 jar 反射方法）是另外两个集合，三者数量不得互相套用。新增或删改方法须同步本表、T-14 与 `bridge.rs` 分发实现。
 ````
 
 ### 7-3 7.2.1 并发与取消语义（R6，新增小节，线程池 8 workers）
@@ -418,7 +417,7 @@ export interface AppError {
 
 - 请求 `id` 由 Rust 侧生成，进程生命周期内全局单调、绝不复用；适配层重启后 id 带 epoch 前缀
   （如 `e3-42`），旧 epoch 的迟到帧一律丢弃。
-- Python 主循环用线程池并发处理纯计算型方法（`config.*` / `site.parse*` / `live.parseM3u` /
+- Python 主循环用线程池并发处理纯计算型方法（`config.*` / `live.parseM3u` /
   `parse.resolve`），默认 `max_workers = 8`，可配置；`spider.py` 一律转独立子进程，不占主循环。
   主循环只做读帧、派发、写帧，禁止在协议线程内做阻塞计算。
 - 增加取消帧：`{"id":"<new>","method":"__cancel__","params":{"targetId":"<old>"}}`。
@@ -428,7 +427,8 @@ export interface AppError {
   debug 日志；适配层崩溃或重启时，把所有 in-flight 一次性回 `RUNTIME_RESTART` 错误并清空映射。
 - 墙钟超时以 Rust 侧 `tokio::time::timeout` 为准；对 `spider.py` 子进程必须同步执行进程级强杀，
   禁止只取消 future。
-- 4.3 的 CMS 归一化同样走本节的线程池与取消语义，不另设通道。
+- 4.3 的 CMS 归一化在宿主进程内完成（`domain/spider/cms_parse.rs`，含 py 源返回值归一），
+  不经适配层，也不占本节线程池。
 ````
 
 ### 7-4 7.5 本地 proxy 四条（R7，目标白名单）
@@ -496,7 +496,7 @@ v1.1 不启用一次性 token 鉴权；后续如需加固，须单独评估对�
 - **替换为**：
 
 ````markdown
-`init / homeContent / homeVideoContent / categoryContent / detailContent / searchContent / playerContent / liveContent / proxy / isVideoFormat / manualVideoCheck / destroy` 全部登记；未实现的方法返回空结果而非报错。本节为 **Spider API**（12 个 jar 反射方法），与 6.2 `SpiderMethod`（6 个对外方法）、7.2 适配层协议方法（11 个业务方法 + `ping`）分属三套集合，数量不得互相套用（见 7.2 表后说明）；8.5 保持不变。
+`init / homeContent / homeVideoContent / categoryContent / detailContent / searchContent / playerContent / liveContent / proxy / isVideoFormat / manualVideoCheck / destroy` 全部登记；未实现的方法返回空结果而非报错。本节为 **Spider API**（12 个 jar 反射方法），与 6.2 `SpiderMethod`（6 个对外方法）、7.2 适配层协议方法（7 个业务方法 + `ping`）分属三套集合，数量不得互相套用（见 7.2 表后说明）；8.5 保持不变。
 ````
 
 ---
@@ -592,7 +592,7 @@ v1.1 不启用一次性 token 鉴权；后续如需加固，须单独评估对�
 - **替换为**：
 
 ````markdown
-`ping` 与第 7.2 节方法表中全部 11 个业务方法逐一有响应（逐方法断言，不写死数字）
+`ping` 与第 7.2 节方法表中全部 7 个业务方法逐一有响应（逐方法断言，不写死数字）
 ````
 
 ### 9-7 T-16（R4 方案 A 联动）

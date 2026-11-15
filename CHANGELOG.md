@@ -4,6 +4,24 @@
 
 ---
 
+## [未发布]
+
+补丁版预留给下一版（版本号未动，`package.json` 仍 `1.0.4`）。主旨：**适配层只剩「执行第三方源脚本」一条职责**，py 源的结果映射不再随 sidecar 走。
+
+### 变更
+
+- **py 源归一化搬进 Rust，`sidecars/py/cms.py` 删除**：1.0.2 已把 CMS 采集解析搬进进程内（`domain/spider/cms_parse.rs`），但 py 源仍走 `pyspider.py::_normalize` → `cms.py` 再映射一次，同一套契约两份实现，改字段要改两处。现在 `cms_parse.rs` 新增 `normalize_spider_result()` / `detail_items()` / `empty_page()`，接管 `detailContent` 的 5 种包裹形状（`list` / `data` / `result` / `vod` / 裸 vod 对象）、`playerContent/liveContent/proxy` 的字典直通、其它方法的 page 形状；`pyspider.py` 只把 `pyrun.py` 的结果（已 `json_safe` 净化）原样交回。`cms.py` 移到 `tools/audit/cms.py`，只给离线审计脚本 `tools/audit/scan_sources.py` 用，运行时不 import。
+- **适配层协议面从 11 个业务方法降到 7 个**：`site.parseHome/parseCategory/parseDetail/parseSearch` 从 1.0.2 起宿主就不再调用，但适配层一直留着（`main.py` 里还 import `cms`）。现在删除，再调用会明确回 `{"code":"INTERNAL","message":"unknown method: site.parseHome"}`，而不是静默可用 —— 契约表（`docs/spec-v1.1/replacements.md` §4.3）同步改成「7 个业务方法 + `ping`」，T-14 验收加断言锁住。
+
+### 工程
+
+- 空详情诊断从 Python `empty_detail`（`spider` 通道 JSONL）改为宿主 `tracing::info!`（`app` 通道，`spider detailContent returned no video`，带 `source_api` / `vod_id`）—— 归一化在 Rust 了，诊断跟着走；`spider.log` 继续只放脚本异常与 traceback，不引入第二个写入者。
+- 代码位置：`src-tauri/src/domain/spider/cms_parse.rs` 新增 `pub(crate) fn normalize_spider_result(method: &str, result: &Value) -> Value`、`fn detail_items(...)`、`pub(crate) fn empty_page()`，`page_from_json` 由私有改 `pub(crate)`；`python.rs::invoke` 在 bridge 返回后调 `normalize()`；`cms.rs` 的 `sidecar_method` 日志标签从 `site.parse*` 改名 `cms.parse*`（它们从来只用在 `tracing::debug!` 里，不是发给 Python 的）。
+- 测试：`cms_parse.rs` 单测 5 → 9（py 源 detail / page / play 各类形状）；`tests/offline/py_compat_check.py` 删掉 `cms` / `pyspider` 引用、第 5 项改成「适配层原样交回」、日志断言只留 crash 与 unsafe；`src/lib/detailRecovery.test.ts` 的空详情/形状断言改读 Rust 源码；`tests/acceptance/p1.py` 方法表 11 → 7。回归：`cargo test --lib` 166 passed / 1 ignored、`pnpm test` 51 文件 / 404、`py_compat_check` 23 / `py_base_spider_check` 29 / `adapter_isolation` 14、`p1.py --adapter` 14 pass / 0 fail / 3 skip（qjs 未编）。
+- 文档：`docs/spec-v1.1/replacements.md`（目录树、协议面数量、车道表、解析位置）、`docs/DEVELOPMENT.md` §3.3、`docs/ARCHITECTURE.md` 运行时表、`AGENTS.md` 回归基线同步。
+
+---
+
 ## [1.0.4] — 2026-11-15
 
 补丁版。修掉「进度条走形」，并把自动换线改成真正「先同源同集线路 → 同源其它集 → 跨源」。
