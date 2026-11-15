@@ -77,6 +77,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 const CACHE_CAP: usize = 128;
 
+/// 豆瓣搜索有频率限制：几十张海报同时进视口会一次性发出几十个搜索请求，
+/// 命中「搜索访问太频繁」之后所有搜索都返回空。这里串行节流并在被限流时整体冷却。
+const SEARCH_MIN_GAP: Duration = Duration::from_millis(1200);
+const THROTTLE_COOLDOWN: Duration = Duration::from_secs(180);
+
 /// 前端传参（camelCase）。`proxyType` 缺省 = 直连。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -535,15 +540,21 @@ fn douban_error(message: impl Into<String>, cause: impl Into<String>) -> AppErro
     AppError::new(code::CONFIG_FETCH_FAIL, message).with_cause(cause)
 }
 
-async fn get_json(kind: ProxyKind, prefix: &str, target: &str) -> Result<Value, AppError> {
+async fn get_text(
+    kind: ProxyKind,
+    prefix: &str,
+    target: &str,
+    referer: &str,
+    accept: &str,
+) -> Result<String, AppError> {
     let url = proxy_url(kind, prefix, target)?;
     let client = crate::http::shared_client()?;
     let mut request = client
         .get(&url)
         .timeout(REQUEST_TIMEOUT)
         .header(reqwest::header::USER_AGENT, BROWSER_UA)
-        .header(reqwest::header::REFERER, DOUBAN_REFERER)
-        .header(reqwest::header::ACCEPT, "application/json, text/plain, */*")
+        .header(reqwest::header::REFERER, referer)
+        .header(reqwest::header::ACCEPT, accept)
         .header(reqwest::header::ACCEPT_LANGUAGE, "zh-CN,zh;q=0.9");
     if kind == ProxyKind::CorsZwei {
         // ciao-cors 拿不到浏览器自动加的 CORS 头就直接 403，这里手工补一个。
@@ -567,6 +578,18 @@ async fn get_json(kind: ProxyKind, prefix: &str, target: &str) -> Result<Value, 
             preview.trim().to_string(),
         ));
     }
+    Ok(body)
+}
+
+async fn get_json(kind: ProxyKind, prefix: &str, target: &str) -> Result<Value, AppError> {
+    let body = get_text(
+        kind,
+        prefix,
+        target,
+        DOUBAN_REFERER,
+        "application/json, text/plain, */*",
+    )
+    .await?;
     serde_json::from_str(&body).map_err(|err| {
         douban_error(
             "豆瓣返回的不是 JSON",
@@ -731,9 +754,245 @@ fn parse_suggest(body: &Value) -> Vec<SuggestItem> {
         .unwrap_or_default()
 }
 
+/// 移动端搜索接口的候选：`{"subjects":{"items":[{"target":{...}}]}}`。
+///
+/// 这是 2026-11-15 之后实际还能用的入口 —— `j/subject_suggest` 对没有 cookie
+/// 的请求一律返回 `[]`（HTTP 200 但空数组），候选主路径因此换成这里。
+fn parse_search_subjects(body: &Value) -> Vec<SuggestItem> {
+    body.get("subjects")
+        .and_then(|subjects| subjects.get("items"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    let target = row.get("target")?;
+                    let id = json_str(target, "id")?;
+                    if id.trim().is_empty() {
+                        return None;
+                    }
+                    Some(SuggestItem {
+                        id,
+                        title: json_str(target, "title").unwrap_or_default(),
+                        sub_title: String::new(),
+                        year: json_str(target, "year").unwrap_or_default(),
+                        img: json_str(target, "cover_url").unwrap_or_default(),
+                        url: String::new(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 搜索页 HTML 里内嵌的 `window.__DATA__ = {...}`。
+///
+/// `movie.douban.com/subject_search?search_text=<片名>` 至今仍是明文 JSON（不像
+/// 部分豆瓣页面会加密成 `__DATA__ = "..."`），所以直接做括号配对取出对象，
+/// 不做整页 HTML 解析。
+fn search_page_data(html: &str) -> Option<Value> {
+    let marker = "__DATA__ = ";
+    let start = html.find(marker)? + marker.len();
+    let rest = &html[start..];
+    let first = rest.find('{')?;
+    let body = &rest[first..];
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, ch) in body.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return serde_json::from_str(&body[..=index]).ok();
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// 搜索页候选：`__DATA__` 里的 `items[]`，字段是 `id`（数字）/`title`（含年份）/`cover_url`。
+#[cfg(test)]
+fn parse_search_page(html: &str) -> Vec<SuggestItem> {
+    let Some(data) = search_page_data(html) else {
+        return Vec::new();
+    };
+    parse_search_data(&data)
+}
+
+fn parse_search_data(data: &Value) -> Vec<SuggestItem> {
+    let Some(rows) = data.get("items").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|row| {
+            let id = row
+                .get("id")
+                .and_then(|value| match value {
+                    Value::String(text) => Some(text.clone()),
+                    Value::Number(number) => Some(number.to_string()),
+                    _ => None,
+                })?;
+            if id.trim().is_empty() {
+                return None;
+            }
+            let title = json_str(row, "title").unwrap_or_default();
+            Some(SuggestItem {
+                id,
+                year: trailing_year(&title),
+                title,
+                sub_title: String::new(),
+                img: json_str(row, "cover_url").unwrap_or_default(),
+                url: json_str(row, "url").unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// 从 `后会友期‎ (2026)` 这种标题尾巴取年份；取不到返回空串。
+fn trailing_year(title: &str) -> String {
+    let trimmed = title.trim_end();
+    if !trimmed.ends_with(')') {
+        return String::new();
+    }
+    let Some(open) = trimmed[..trimmed.len() - 1].rfind('(') else {
+        return String::new();
+    };
+    let inner = &trimmed[open + 1..trimmed.len() - 1];
+    if inner.len() == 4 && inner.chars().all(|ch| ch.is_ascii_digit()) {
+        inner.to_string()
+    } else {
+        String::new()
+    }
+}
+
+static DOUBAN_GATE: OnceLock<tokio::sync::Mutex<Instant>> = OnceLock::new();
+static DOUBAN_COOLDOWN: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+
+/// 所有豆瓣搜索串行发送，且两次之间至少间隔 `SEARCH_MIN_GAP`。
+async fn pace_douban() {
+    let gate = DOUBAN_GATE
+        .get_or_init(|| tokio::sync::Mutex::new(Instant::now() - SEARCH_MIN_GAP));
+    let mut last = gate.lock().await;
+    let wait = (*last + SEARCH_MIN_GAP).saturating_duration_since(Instant::now());
+    if !wait.is_zero() {
+        tokio::time::sleep(wait).await;
+    }
+    *last = Instant::now();
+}
+
+/// 豆瓣已经在限流窗口里：这期间不再发搜索，直接回退到源站数据。
+fn douban_cooling() -> bool {
+    let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new(None));
+    match cooldown.lock() {
+        Ok(guard) => guard.is_some_and(|until| until > Instant::now()),
+        Err(_) => false,
+    }
+}
+
+fn cool_down_douban() {
+    let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = cooldown.lock() {
+        *guard = Some(Instant::now() + THROTTLE_COOLDOWN);
+    }
+}
+
+/// 候选搜索：老接口 `subject_suggest` → 搜索页 `__DATA__` → 移动端搜索接口。
+///
+/// 2026-11-15 实测：`subject_suggest` 对无 cookie 请求恒返回 `[]`；
+/// `m.douban.com/rexxar/api/v2/search/subjects` 很快会变成 `need_login` 403；
+/// 搜索页 `subject_search` 仍稳定返回明文结果，因此放在第二顺位。
+async fn search_candidates(kind: ProxyKind, prefix: &str, title: &str) -> Vec<SuggestItem> {
+    if douban_cooling() {
+        tracing::debug!(title, "douban search skipped during cooldown");
+        return Vec::new();
+    }
+    pace_douban().await;
+
+    let target = format!(
+        "https://movie.douban.com/j/subject_suggest?q={}",
+        percent_encode(title)
+    );
+    match get_json(kind, prefix, &target).await {
+        Ok(body) => {
+            let items = parse_suggest(&body);
+            if !items.is_empty() {
+                return items;
+            }
+            tracing::warn!(title, "douban suggest returned no subjects");
+        }
+        Err(err) => {
+            tracing::warn!(code = %err.code, error = %err.message, "douban suggest failed");
+        }
+    }
+
+    let target = format!(
+        "https://movie.douban.com/subject_search?search_text={}",
+        percent_encode(title)
+    );
+    match get_text(kind, prefix, &target, DOUBAN_REFERER, "text/html, */*").await {
+        Ok(html) => {
+            match search_page_data(&html) {
+                Some(data) => {
+                    let error = data
+                        .get("error_info")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+                    if !error.is_empty() {
+                        tracing::warn!(title, error, "douban search throttled, cooling down");
+                        cool_down_douban();
+                        return Vec::new();
+                    }
+                    let items = parse_search_data(&data);
+                    if !items.is_empty() {
+                        return items;
+                    }
+                    tracing::warn!(title, "douban search page returned no subjects");
+                }
+                None => tracing::warn!(title, "douban search page had no embedded data"),
+            }
+        }
+        Err(err) => {
+            tracing::warn!(code = %err.code, error = %err.message, "douban search page failed");
+        }
+    }
+
+    let target = format!(
+        "https://m.douban.com/rexxar/api/v2/search/subjects?q={}",
+        percent_encode(title)
+    );
+    match get_json(kind, prefix, &target).await {
+        Ok(body) => parse_search_subjects(&body),
+        Err(err) => {
+            tracing::warn!(code = %err.code, error = %err.message, "douban mobile search failed");
+            Vec::new()
+        }
+    }
+}
+
 /// 详情：先 `tv` 再 `movie`，都不行退到 `subject_abstract`。
 async fn fetch_detail(kind: ProxyKind, prefix: &str, id: &str) -> Option<Value> {
+    if douban_cooling() {
+        tracing::debug!(id, "douban detail skipped during cooldown");
+        return None;
+    }
     for path in ["tv", "movie"] {
+        pace_douban().await;
         let target = format!(
             "https://m.douban.com/rexxar/api/v2/{path}/{}?ck=&for_mobile=1",
             percent_encode(id)
@@ -826,19 +1085,12 @@ pub async fn fetch(req: &DoubanMetaRequest) -> Result<Option<DoubanMeta>, AppErr
     if let Some(hit) = cache_get(&key) {
         return Ok(Some(hit));
     }
+    if douban_cooling() {
+        tracing::debug!(title, "douban meta skipped during cooldown");
+        return Ok(None);
+    }
 
-    let target = format!(
-        "https://movie.douban.com/j/subject_suggest?q={}",
-        percent_encode(&title)
-    );
-    let body = match get_json(kind, &prefix, &target).await {
-        Ok(body) => body,
-        Err(err) => {
-            tracing::warn!(code = %err.code, error = %err.message, "douban suggest failed");
-            return Ok(None);
-        }
-    };
-    let items = parse_suggest(&body);
+    let items = search_candidates(kind, &prefix, &title).await;
     let Some(item) = pick_candidate(&items, &title, year.as_deref()) else {
         tracing::info!(title = %title, candidates = items.len(), "douban: no matching subject");
         return Ok(None);
@@ -1182,6 +1434,57 @@ mod tests {
         assert_eq!(items[0].id, "25853071");
         // 非数组（比如 html 错误页被当成 200）不 panic。
         assert!(parse_suggest(&json!({ "per_page": 1 })).is_empty());
+    }
+
+    #[test]
+    fn parse_search_subjects_reads_rexxar_shape() {
+        // 2026-11-15 之后 subject_suggest 对无 cookie 请求返回空数组，
+        // 候选改由移动端搜索接口提供，形状是 subjects.items[].target。
+        let body = json!({
+            "subjects": {
+                "items": [
+                    {
+                        "layout": "subject",
+                        "target": {
+                            "id": "25853071",
+                            "title": "庆余年 第一季",
+                            "year": "2019",
+                            "cover_url": "https://img3.doubanio.com/p.jpg"
+                        }
+                    },
+                    { "layout": "subject", "target": { "title": "没有 id" } }
+                ]
+            }
+        });
+        let items = parse_search_subjects(&body);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "25853071");
+        assert_eq!(items[0].title, "庆余年 第一季");
+        assert_eq!(items[0].year, "2019");
+        assert_eq!(items[0].img, "https://img3.doubanio.com/p.jpg");
+        // 错误页/空结构不 panic。
+        assert!(parse_search_subjects(&json!({})).is_empty());
+        assert!(parse_search_subjects(&json!({ "subjects": { "items": [] } })).is_empty());
+    }
+
+    #[test]
+    fn parse_search_page_reads_embedded_data() {
+        // 搜索页至今仍把结果明文塞在 window.__DATA__ 里；标题带 U+200E 和年份。
+        let html = r#"<html><script>
+      window.__DATA__ = {"count": 1, "items": [{"id": 37100984, "title": "后会友期‎ (2026)", "cover_url": "https://img3.doubanio.com/p.jpg", "url": "https://movie.douban.com/subject/37100984/", "abstract": "中国大陆 / 真人秀"}], "total": 1};
+      window.__USER__ = { }
+  </script></html>"#;
+        let items = parse_search_page(html);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "37100984");
+        assert_eq!(items[0].title, "后会友期‎ (2026)");
+        assert_eq!(items[0].year, "2026");
+        assert_eq!(items[0].img, "https://img3.doubanio.com/p.jpg");
+        // 没匹配到条目的搜索页 / 没有 __DATA__ 的页面不 panic。
+        assert!(parse_search_page("<html>no data</html>").is_empty());
+        assert!(parse_search_page(r#"<script>window.__DATA__ = {"items": []};</script>"#).is_empty());
+        assert_eq!(trailing_year("庆余年 第二季"), "");
+        assert_eq!(trailing_year("沙丘(2021)"), "2021");
     }
 
     #[test]

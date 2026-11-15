@@ -35,11 +35,11 @@ function sameTile(a: PosterTileProps, b: PosterTileProps): boolean {
 
 const PosterTile = memo(function PosterTile({ vod, onOpen, site }: PosterTileProps) {
   const {
-    src: cover,
-    broken,
-    loading,
-    onError: handleError,
-    onLoad: handleLoad,
+    src: sourceCover,
+    broken: sourceBroken,
+    loading: sourceLoading,
+    onError: handleSourceError,
+    onLoad: handleSourceLoad,
   } = useProxiedImage(vod.vod_pic);
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
@@ -77,6 +77,20 @@ const PosterTile = memo(function PosterTile({ vod, onOpen, site }: PosterTilePro
   const meta = douban
     ? [douban.year, douban.genres.join(" · ")].filter(Boolean).join(" · ")
     : [vod.vod_remarks, vod.vod_year, vod.vod_area].filter(Boolean).join(" · ") || site || "";
+  const {
+    src: doubanCover,
+    broken: doubanBroken,
+    loading: doubanLoading,
+    onError: handleDoubanError,
+    onLoad: handleDoubanLoad,
+  } = useProxiedImage(douban?.pic);
+  /** 豆瓣命中就用豆瓣海报：这张卡本来就在拉豆瓣资料，不额外发请求；没命中 / 图裂时用源站封面兜底。 */
+  const useDoubanCover = Boolean(doubanCover) && !doubanBroken;
+  const cover = useDoubanCover ? doubanCover : sourceCover;
+  const broken = useDoubanCover ? false : sourceBroken;
+  const loading = useDoubanCover ? doubanLoading : sourceLoading;
+  const handleError = useDoubanCover ? handleDoubanError : handleSourceError;
+  const handleLoad = useDoubanCover ? handleDoubanLoad : handleSourceLoad;
   /** 失败时的锚点：用片名首字，比统一灰块更容易认出是哪张。 */
   const initial = title.trim().charAt(0) || "?";
 

@@ -79,8 +79,9 @@ export default function VodMetaHero({
   const style = VARIANTS[variant];
   const sourcePoster = useProxiedImage(vod?.vod_pic);
   const doubanPoster = useProxiedImage(douban?.pic);
+  // 豆瓣命中优先用豆瓣海报（版式统一、2:3 标准裁切）；豆瓣没命中 / 图裂 / 还没加载完时用源站封面兜底。
   const poster =
-    sourcePoster.src && !sourcePoster.broken ? sourcePoster : doubanPoster;
+    doubanPoster.src && !doubanPoster.broken ? doubanPoster : sourcePoster;
   const hasPoster = Boolean(poster.src) && !poster.broken;
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);

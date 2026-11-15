@@ -325,10 +325,16 @@ describe("douban fetch contract", () => {
 
   it("dedupes by title+year+proxy with a bounded FIFO cache", () => {
     expect(source).toContain("const CACHE_LIMIT = 200;");
-    expect(source).toContain("cache.has(key)");
+    expect(source).toContain("const cached = readCache(key);");
     expect(source).toContain("inflight.get(key)");
     // 缓存键必须带代理模式：切换代理后下一次请求要重新走。
     expect(source).toContain("${proxyType}\\u0000${custom}");
+    // 没命中的只留一分钟：豆瓣被限流时不能把「暂时没有」记成永久没有。
+    expect(source).toContain("const MISS_TTL_MS = 60_000;");
+    expect(source).toContain("const HIT_TTL_MS = 10 * 60_000;");
+    // 同时在途数量有限，避免一屏海报把豆瓣打到限流。
+    expect(source).toContain("const MAX_PARALLEL = 2;");
+    expect(source).toContain("await acquireSlot();");
   });
 
   it("falls back to direct when a custom prefix is empty", () => {
@@ -367,9 +373,9 @@ describe("douban ui contract", () => {
     expect(hero).toContain("plainText(douban?.intro)");
     // 源站只保留播放状态（更新到第几集），播放线路 / 剧集仍来自源站。
     expect(hero).toContain("vod?.vod_remarks?.trim()");
-    // 海报：源站优先，源站没有/坏了才用豆瓣兜底。
+    // 海报：豆瓣命中优先，源站只做兜底（版式统一、2:3 标准裁切）。
     expect(hero).toContain(
-      "sourcePoster.src && !sourcePoster.broken ? sourcePoster : doubanPoster",
+      "doubanPoster.src && !doubanPoster.broken ? doubanPoster : sourcePoster",
     );
     // 源站没有详情（发现型源）但豆瓣命中：用同一套 hero 渲染豆瓣页。
     expect(detail).toContain('className="detail-douban-page"');

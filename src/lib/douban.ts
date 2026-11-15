@@ -38,9 +38,52 @@ export interface DoubanMeta {
 
 /** 进程内缓存的条数上限：一次浏览几十部片，200 条足够且不会涨。 */
 const CACHE_LIMIT = 200;
+/** 命中了的资料缓存 10 分钟（和 Rust 侧一致）；没命中的只留 1 分钟，别把「刚被豆瓣限流」记成永久没有。 */
+const HIT_TTL_MS = 10 * 60_000;
+const MISS_TTL_MS = 60_000;
+/** 搜索有频率限制：同时最多两个在途，其余排队，避免一屏海报把豆瓣打到限流。 */
+const MAX_PARALLEL = 2;
 
-const cache = new Map<string, DoubanMeta | null>();
+interface CachedMeta {
+  meta: DoubanMeta | null;
+  at: number;
+}
+
+const cache = new Map<string, CachedMeta>();
 const inflight = new Map<string, Promise<DoubanMeta | null>>();
+let running = 0;
+const waiters: (() => void)[] = [];
+
+async function acquireSlot(): Promise<void> {
+  if (running < MAX_PARALLEL) {
+    running += 1;
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    waiters.push(resolve);
+  });
+}
+
+function releaseSlot(): void {
+  running -= 1;
+  const next = waiters.shift();
+  if (next) {
+    next();
+  }
+}
+
+function readCache(key: string): DoubanMeta | null | undefined {
+  const hit = cache.get(key);
+  if (!hit) {
+    return undefined;
+  }
+  const ttl = hit.meta ? HIT_TTL_MS : MISS_TTL_MS;
+  if (Date.now() - hit.at > ttl) {
+    cache.delete(key);
+    return undefined;
+  }
+  return hit.meta;
+}
 
 /** 测试 / 「换配置后想重新拉」时可清空缓存。 */
 export function clearDoubanMetaCache(): void {
@@ -56,7 +99,7 @@ function remember(key: string, meta: DoubanMeta | null): void {
       cache.delete(oldest);
     }
   }
-  cache.set(key, meta);
+  cache.set(key, { meta, at: Date.now() });
 }
 
 function strings(value: unknown): string[] {
@@ -147,15 +190,17 @@ export async function fetchDoubanMeta(
   const custom = proxyType === "custom" ? proxyPrefix : "";
   const key = `${word}\u0000${(year ?? "").trim()}\u0000${proxyType}\u0000${custom}`;
 
-  if (cache.has(key)) {
-    return cache.get(key) ?? null;
+  const cached = readCache(key);
+  if (cached !== undefined) {
+    return cached;
   }
-  const running = inflight.get(key);
-  if (running) {
-    return running;
+  const inFlight = inflight.get(key);
+  if (inFlight) {
+    return inFlight;
   }
 
   const task = (async (): Promise<DoubanMeta | null> => {
+    await acquireSlot();
     try {
       const raw = await api.doubanMeta(
         word,
@@ -176,6 +221,8 @@ export async function fetchDoubanMeta(
       });
       remember(key, null);
       return null;
+    } finally {
+      releaseSlot();
     }
   })();
 
