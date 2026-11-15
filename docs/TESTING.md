@@ -69,5 +69,5 @@ tools/
 
 ## 5. 现状基线
 
-`python tools/check.py` 9/9、`pnpm test` 448（54 个文件）、`cargo test --lib` 188 passed / 2 ignored。
+`python tools/check.py` 9/9、`pnpm test` 449（54 个文件）、`cargo test --lib` 193 passed / 2 ignored。
 数字随提交变化，以 `AGENTS.md`「当前状态」为准。
