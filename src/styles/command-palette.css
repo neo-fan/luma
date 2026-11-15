@@ -426,7 +426,8 @@
 
 .source-item {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 76px;
+  /* 头像 / 站点名 / 收藏星 / 切换按钮：四个都在同一行，星与按钮各自固定宽。 */
+  grid-template-columns: 32px minmax(0, 1fr) 30px 76px;
   align-items: center;
   gap: 12px;
   height: 60px;
@@ -536,7 +537,6 @@
 .source-item__fav.fav-star {
   width: 30px;
   height: 30px;
-  flex: 0 0 30px;
   margin-right: 2px;
 }
 

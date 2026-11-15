@@ -67,3 +67,15 @@ describe("sidebar playing dot", () => {
     expect(block).not.toContain("var(--accent)");
   });
 });
+
+describe("source picker row", () => {
+  it("keeps avatar, name, favourite star and switch button on one row", () => {
+    const css = readFileSync(resolve(here, "../../src/styles/command-palette.css"), "utf8");
+    const block = css.slice(css.indexOf(".source-item {"), css.indexOf("}", css.indexOf(".source-item {")));
+    // 四列固定：头像 32 / 名称弹性 / 星 30 / 按钮 76。少写一列时按钮会折到第二行压住站点名。
+    expect(block).toContain("grid-template-columns: 32px minmax(0, 1fr) 30px 76px;");
+    expect(css).toContain(".source-item__fav.fav-star {");
+    const fav = css.slice(css.indexOf(".source-item__fav.fav-star {"), css.indexOf("}", css.indexOf(".source-item__fav.fav-star {")));
+    expect(fav).not.toContain("flex:");
+  });
+});
