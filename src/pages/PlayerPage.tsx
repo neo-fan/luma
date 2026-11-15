@@ -4,11 +4,13 @@ import ErrorBar from "../components/ErrorBar";
 import SourcePicker from "../components/SourcePicker";
 import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
+import PlayerSwitchVeil from "../components/player/PlayerSwitchVeil";
 import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
 import PlayerResolution from "../components/player/PlayerResolution";
 import { parsePlayLines, sameEpisodeName, sameTitle, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
+import { clearPlaySwitch, markPlaySwitch, peekPlaySwitch } from "../lib/playSwitch";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
 import { probePlayable } from "../lib/playProbe";
@@ -436,6 +438,51 @@ export default function PlayerPage({
   };
 
   const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
+
+  /**
+   * 手动换集 / 换线路 / 换源的过渡幕。标记经 sessionStorage 跨路由重建传递：
+   * 旧页压暗 180ms 再 navigate，新页继续盖着，等能出画再淡出。
+   */
+  const [switchVeil, setSwitchVeil] = useState<{ label: string; revealing: boolean } | null>(
+    () => {
+      const pending = peekPlaySwitch();
+      return pending ? { label: pending.label, revealing: false } : null;
+    },
+  );
+
+  // 标记读出来就作废：不清的话下次再进播放页（比如回退）会莫名盖一层幕。
+  useEffect(() => {
+    clearPlaySwitch();
+  }, []);
+
+  /** 手动切换统一走这里：先压暗再跳，避免「点完瞬间换一屏」。 */
+  const beginPlaySwitch = useCallback((label: string, run: () => void) => {
+    markPlaySwitch(label);
+    setSwitchVeil({ label, revealing: false });
+    window.setTimeout(run, 180);
+  }, []);
+
+  // 新画面能播（或解析已收尾）才揭幕；解析慢时多等一会儿，显得是「在换」而不是「卡住」。
+  useEffect(() => {
+    if (!switchVeil || switchVeil.revealing) return;
+    if (!playable && (resolving || reloading)) return;
+    const timer = window.setTimeout(
+      () => {
+        setSwitchVeil((value) =>
+          value && !value.revealing ? { ...value, revealing: true } : value,
+        );
+      },
+      playable ? 120 : 400,
+    );
+    return () => window.clearTimeout(timer);
+  }, [switchVeil, playable, resolving, reloading]);
+
+  // 淡出结束后把幕从 DOM 摘掉，别让它一直盖着（pointer-events 已经放开了）。
+  useEffect(() => {
+    if (!switchVeil?.revealing) return;
+    const timer = window.setTimeout(() => setSwitchVeil(null), 320);
+    return () => window.clearTimeout(timer);
+  }, [switchVeil]);
 
   /**
    * 与详情页共用的换源候选缓存：播放页多是从详情跳转过来，缓存已就绪；
@@ -1058,17 +1105,19 @@ export default function PlayerPage({
     // 切换前把当前进度落库，别等 5 秒节流（页面马上会被 key 重建）。
     flushHistoryRef.current?.();
     videoRef.current = null;
-    navigate(
-      {
-        name: "player",
-        siteKey,
-        vodId,
-        vodName,
-        playUrl: episode.url,
-        episodeName: episode.name,
-        playFrom: target.name,
-      },
-      true,
+    beginPlaySwitch(`正在切换到「${episode.name}」…`, () =>
+      navigate(
+        {
+          name: "player",
+          siteKey,
+          vodId,
+          vodName,
+          playUrl: episode.url,
+          episodeName: episode.name,
+          playFrom: target.name,
+        },
+        true,
+      ),
     );
   };
 
@@ -1085,16 +1134,29 @@ export default function PlayerPage({
    */
   const pickSource = async (option: SourceOption) => {
     setShowSources(false);
-    const list = await api.detail(option.siteKey, option.vodId);
-    const nextLines = list?.[0]
-      ? parsePlayLines(list[0].vod_play_from, list[0].vod_play_url)
-      : [];
-    const match = pickMatchingEpisode(nextLines, {
-      name: episodeName,
-      index: episodeIndex,
-    });
+    // 换源的详情请求可能要几秒：先把幕盖上，用户至少知道「点了、在换」，
+    // 而不是选完源之后页面干等着不动（失败时把幕撤掉再提示）。
+    setSwitchVeil({ label: `正在切换到「${option.siteName}」…`, revealing: false });
+    let matched: ReturnType<typeof pickMatchingEpisode> | null = null;
+    try {
+      const list = await api.detail(option.siteKey, option.vodId);
+      const nextLines = list?.[0]
+        ? parsePlayLines(list[0].vod_play_from, list[0].vod_play_url)
+        : [];
+      matched = pickMatchingEpisode(nextLines, {
+        name: episodeName,
+        index: episodeIndex,
+      });
+    } catch (err) {
+      setSwitchVeil(null);
+      notify.error(`换源失败：${errorMessage(err)}`);
+      return;
+    }
+    const match = matched;
     if (!match) {
-      throw "该源没有可播放剧集，请换一个片源";
+      setSwitchVeil(null);
+      notify.error("该源没有可播放剧集，请换一个片源");
+      return;
     }
     // 换源会重建页面，提示沿用自动换源的通道带过去一次。
     log.info("manual source switch", {
@@ -1110,6 +1172,7 @@ export default function PlayerPage({
     // 换源前先落库：历史按剧名合并，这条进度就是新源的续播起点。
     flushHistoryRef.current?.();
     videoRef.current = null;
+    markPlaySwitch(`正在切换到「${option.siteName}」…`);
     navigate(
       {
         name: "player",
@@ -1240,6 +1303,10 @@ export default function PlayerPage({
           />
         ) : null}
       </div>
+
+      {switchVeil ? (
+        <PlayerSwitchVeil label={switchVeil.label} revealing={switchVeil.revealing} />
+      ) : null}
     </section>
   );
 }
