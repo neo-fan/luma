@@ -58,12 +58,14 @@
           拉到同列最高，aspect-ratio 直接失效，海报就被拉成长条；
        2. 容器写 aspect-ratio，不写死 height；宽高由同一个变量推导；
        3. 网格卡片宽度只设下限，列数随可用宽度自动增加，不会无限拉伸。
-     场景：详情页主视觉 210 / 播放页信息卡 132 / 空态识别 150 / 网格 ≥200。 */
+     场景：详情页主视觉 210 / 播放页信息卡 132 / 空态识别 150 / 网格 ≥200 /
+     首页推荐海报墙 ≥150（只放封面、1440 下排 8 列）。 */
   --cover-ratio: 2 / 3;
   --cover-w-hero: 210px;
   --cover-w-player: 132px;
   --cover-w-empty: 150px;
   --cover-w-grid-min: 200px;
+  --cover-w-wall-min: 150px;
 
   --border: #232326;
   --border-strong: #35353a;

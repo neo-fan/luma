@@ -5,6 +5,7 @@ import AsyncBoundary from "../components/AsyncBoundary";
 import Empty from "../components/Empty";
 import IconButton from "../components/IconButton";
 import SiteSelect from "../components/SiteSelect";
+import PosterWall from "../components/PosterWall";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -380,6 +381,19 @@ export default function HomePage({
   const busy = isCategory ? catLoading || catLoadingMore : loading;
   const shownError = isCategory ? catError : error;
 
+  /** 推荐区海报墙与分类区卡片共用同一个进详情入口。 */
+  const openVod = useCallback(
+    (vod: VodInfo) => {
+      navigate({
+        name: "detail",
+        siteKey,
+        vodId: String(vod.vod_id),
+        title: vod.vod_name,
+      });
+    },
+    [navigate, siteKey],
+  );
+
   /**
    * 拉下一页并追加到累积列表；由底部哨兵（IntersectionObserver）在滚动到底前触发。
    * 出错即把 hasMore 置否，避免哨兵反复重试同一条会失败的请求形成死循环。
@@ -615,25 +629,28 @@ export default function HomePage({
           }
           onRetry={refreshVisible}
         >
-          <div className="vod-grid">
-            {shownList.map((vod) => (
-              <VodCard
-                // 不用下标拼 key：刷新/切分类时列表重排会让 React 重挂卡片、重下封面。
-                key={String(vod.vod_id)}
-                title={vod.vod_name}
-                pic={vod.vod_pic}
-                remarks={vod.vod_remarks}
-                onOpen={() =>
-                  navigate({
-                    name: "detail",
-                    siteKey,
-                    vodId: String(vod.vod_id),
-                    title: vod.vod_name,
-                  })
-                }
-              />
-            ))}
-          </div>
+          {isCategory ? (
+            <div className="vod-grid">
+              {shownList.map((vod) => (
+                <VodCard
+                  // 不用下标拼 key：刷新/切分类时列表重排会让 React 重挂卡片、重下封面。
+                  key={String(vod.vod_id)}
+                  title={vod.vod_name}
+                  pic={vod.vod_pic}
+                  remarks={vod.vod_remarks}
+                  onOpen={() => openVod(vod)}
+                />
+              ))}
+            </div>
+          ) : (
+            // 推荐区改成纯海报墙（需求 2026-11-15）：1440 宽下 8 列，分类 tab 不变。
+            // 推荐条目不带宽高信息时，悬停用站点名兜底。
+            <PosterWall
+              items={shownList}
+              onOpen={openVod}
+              site={site?.name ?? siteKey}
+            />
+          )}
         </AsyncBoundary>
 
         {isCategory ? (
