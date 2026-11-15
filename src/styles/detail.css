@@ -71,6 +71,37 @@
   padding-right: 6px;
 }
 
+/* 简介下方的「展开全文 / 收起简介」。曾经是一枚只有图标的按钮、还排在播放按钮
+   那一行，离开正文很远，用户根本不知道它管的是简介；这里改成带文案的行内开关，
+   紧贴正文左下角，箭头随展开状态翻转。 */
+.detail-content__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.detail-content__toggle:hover,
+.detail-content__toggle:focus-visible {
+  color: var(--text);
+}
+
+.detail-content__toggle svg {
+  transition: transform 150ms ease;
+}
+
+.detail-content__toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
 .section {
   margin-top: 28px;
 }

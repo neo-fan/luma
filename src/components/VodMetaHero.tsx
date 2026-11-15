@@ -1,6 +1,6 @@
 import { createElement, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import IconButton from "./IconButton";
+import Icon from "./Icon";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import { plainText } from "../lib/format";
 import { formatVotes } from "../lib/douban";
@@ -39,7 +39,6 @@ const VARIANTS = {
     titleActions: "detail-actions detail-actions--inline",
     meta: "page-meta",
     footer: "detail-actions detail-actions--inline",
-    more: "icon-btn--rotate",
     placeholder: "vod-card__ph",
     heading: "h1",
   },
@@ -52,7 +51,6 @@ const VARIANTS = {
     titleActions: "player-about__actions",
     meta: "player-about__meta",
     footer: null,
-    more: "icon-btn--sm icon-btn--rotate player-about__more",
     placeholder: "player-about__ph",
     heading: "h2",
   },
@@ -135,13 +133,15 @@ export default function VodMetaHero({
 
   const moreButton =
     overflowing || expanded ? (
-      <IconButton
-        name="chevron"
-        label={expanded ? "收起简介" : "展开简介"}
-        expanded={expanded}
-        className={style.more}
+      <button
+        type="button"
+        className="detail-content__toggle"
+        aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
-      />
+      >
+        {expanded ? "收起简介" : "展开全文"}
+        <Icon name="chevron" size={14} />
+      </button>
     ) : null;
 
   return (
@@ -198,16 +198,11 @@ export default function VodMetaHero({
             >
               {description}
             </p>
-            {variant === "player" ? moreButton : null}
+            {moreButton}
           </>
         ) : null}
 
-        {style.footer ? (
-          <div className={style.footer}>
-            {moreButton}
-            {footer}
-          </div>
-        ) : null}
+        {style.footer ? <div className={style.footer}>{footer}</div> : null}
       </div>
     </div>
   );

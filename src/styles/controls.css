@@ -157,13 +157,9 @@
   color: var(--danger);
 }
 
-/* 状态用图形方向表达：倒序翻转上下箭头，展开旋转折叠箭头 */
+/* 状态用图形方向表达：倒序翻转上下箭头。 */
 .icon-btn--flip[aria-pressed="true"] svg {
   transform: scaleY(-1);
-}
-
-.icon-btn--rotate[aria-expanded="true"] svg {
-  transform: rotate(180deg);
 }
 
 .icon-btn.is-busy svg {

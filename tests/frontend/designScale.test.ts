@@ -49,6 +49,9 @@ describe("design scale contract", () => {
     const clamped = block(".detail-content.is-clamped");
     expect(clamped).toContain("-webkit-line-clamp: 4");
     expect(clamped).not.toContain("max-height: 84px");
+    // 展开开关紧贴正文、带文案；箭头方向由 aria-expanded 翻转。
+    expect(css).toContain(".detail-content__toggle {");
+    expect(css).toContain('.detail-content__toggle[aria-expanded="true"] svg');
   });
 
   it("keeps controls on those tokens instead of hardcoded heights", () => {

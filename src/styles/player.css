@@ -396,12 +396,6 @@
   white-space: nowrap;
 }
 
-.player-about__more {
-  margin-top: 6px;
-  align-self: flex-start;
-}
-
-
 .player-about .chip-row {
   margin-bottom: 10px;
 }
