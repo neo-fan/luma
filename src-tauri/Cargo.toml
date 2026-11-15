@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "1.0.4"
+version = "1.1.0"
 description = "Luma - TVBox-compatible desktop player framework"
 edition = "2021"
 rust-version = "1.77.2"
@@ -35,6 +35,10 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 tracing-appender = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+# 封面 HTTP 缓存：按 HTTP 语义（Cache-Control / ETag / Vary）自动存取，
+# 磁盘后端用 cacache（npm/cargo 同款），我们不自己算 key / TTL / 淘汰。
+http-cache-reqwest = { version = "0.16", default-features = false, features = ["manager-cacache"] }
+reqwest-middleware = "0.4"
 # 外部字节不保证 UTF-8（中文圈配置大量是 GBK/GB18030，论坛复制的片段常带
 # BOM 或 UTF-16）。`charset` 特性会把解码塞进 reqwest 内部且只认 Content-Type，
 # 这里自己收字节再按 BOM → UTF-8 → 声明 → GB18030 的顺序洗，规则集中在

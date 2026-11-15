@@ -239,6 +239,17 @@ pub(super) fn classify_error_text(text: &str) -> ImageFailure {
     ImageFailure::Other
 }
 
+/// 中间件错误先剥到 `reqwest::Error` 再分类；缓存后端自己的错误（写盘失败
+/// 之类）只影响这次缓存，不该被说成「线路连不上」。
+fn classify_image_error(err: &reqwest_middleware::Error) -> (ImageFailure, String) {
+    match err {
+        reqwest_middleware::Error::Reqwest(inner) => {
+            (classify_transport_error(inner), error_chain(inner))
+        }
+        other => (ImageFailure::Other, other.to_string()),
+    }
+}
+
 /// 分类一次 reqwest 传输错误。
 pub(super) fn classify_transport_error(err: &reqwest::Error) -> ImageFailure {
     if err.is_timeout() {
@@ -266,10 +277,10 @@ pub(super) fn classify_transport_error(err: &reqwest::Error) -> ImageFailure {
 
 /// 发一次封面请求。`timeout` 是单次上限，不复用 m3u8 的 20s 全局值。
 async fn fetch_image_once(
-    client: &reqwest::Client,
+    client: &reqwest_middleware::ClientWithMiddleware,
     target: &Url,
     headers: &[(String, String)],
-) -> Result<reqwest::Response, reqwest::Error> {
+) -> Result<reqwest::Response, reqwest_middleware::Error> {
     let mut request = client.get(target.clone()).timeout(IMAGE_TIMEOUT);
     for (name, value) in headers {
         request = request.header(name, value);
@@ -279,16 +290,13 @@ async fn fetch_image_once(
 
 /// 发一次请求并检查响应：成功直接给出可返回的图片响应，失败给出分类原因。
 async fn fetch_image(
-    client: &reqwest::Client,
+    client: &reqwest_middleware::ClientWithMiddleware,
     target: &Url,
     headers: &[(String, String)],
 ) -> Result<Response, (ImageFailure, String)> {
     let upstream = match fetch_image_once(client, target, headers).await {
         Ok(upstream) => upstream,
-        Err(err) => {
-            let kind = classify_transport_error(&err);
-            return Err((kind, error_chain(&err)));
-        }
+        Err(err) => return Err(classify_image_error(&err)),
     };
     image_response(upstream, target).await
 }
@@ -309,7 +317,8 @@ async fn image_response(
         .unwrap_or("application/octet-stream")
         .to_string();
 
-    // 上游自己声明了 image/*：直接流式转发（不攒内存）。
+    // 上游自己声明了 image/*：直接流式转发（不攒内存）。缓存命中时
+    // `http-cache-reqwest` 已经把 body 换成缓存副本，这里不需要知道区别。
     if content_type.to_ascii_lowercase().starts_with("image/") {
         let stream = upstream.bytes_stream();
         return Response::builder()
@@ -792,7 +801,7 @@ pub(super) async fn handle_image(
     let mut failure: Option<(ImageFailure, String)> = None;
 
     for round in 0..2 {
-        match fetch_image(&state.client, &request_url, &headers).await {
+        match fetch_image(&state.image_client, &request_url, &headers).await {
             Ok(response) => return response,
             Err((kind, reason)) => {
                 if round == 0 {

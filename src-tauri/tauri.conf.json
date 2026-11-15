@@ -45,13 +45,17 @@
     "category": "Utility",
     "windows": {
       "nsis": {
+        "installMode": "currentUser",
+        "template": "nsis/installer.nsi",
+        "compression": "lzma",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
         "headerImage": "icons/nsis-header.bmp",
         "sidebarImage": "icons/nsis-sidebar.bmp",
-        "languages": ["SimpChinese", "English"],
+        "languages": ["SimpChinese"],
         "displayLanguageSelector": false
-      }
+      },
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true }
     },
     "resources": {
       "../sidecars/py": "sidecars/py",

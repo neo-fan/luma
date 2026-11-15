@@ -51,7 +51,7 @@ python tools/check.py
 
 `check.py` 串行执行并汇总：契约校验、版本一致性、Python 兼容、py 框架、适配层健壮性、`py_compile`、前端单测、`cargo test --lib`、`prepare_runtime.py --check`。任一失败即非零退出。
 
-**当前基线（1.0.4）**：`python tools/check.py` **9/9 全绿**；其中 `pnpm test` 449/449（54 个文件）、`cargo test --lib` 193 passed / 2 ignored、`py_compat_check` 24/24、`adapter_isolation` 14/14、`contract_check` 8 类型 + 7 方法对齐、`version_check` 版本全链一致、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
+**当前基线（1.1.0）**：`python tools/check.py` **9/9 全绿**；其中 `pnpm test` 473/473（58 个文件）、`cargo test --lib` 196 passed / 2 ignored、`py_compat_check` 24/24、`adapter_isolation` 14/14、`contract_check` 8 类型 + 7 方法对齐、`version_check` 版本全链一致、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
 
 ### 2.2 窗口回归（需要 debug 窗口）
 
@@ -78,15 +78,21 @@ corepack pnpm tauri build
 
 ### 2.4 安装器外观（官方 `bundle.windows.nsis`）
 
-安装界面全部由 Tauri 官方 `bundle.windows.nsis` 配置驱动，**没有自定义 `.nsi` 模板、没有手搓 NSIS 脚本**。当前配置：
+安装界面由 Tauri 官方 `bundle.windows.nsis` 配置驱动。**没有手写 NSIS 逻辑**：1.1.0 起为了做「一键安装」把官方模板 vendor 了一份（`src-tauri/nsis/installer.nsi`，取自 `@tauri-cli` v2.12.4），只删掉「欢迎」和「选择安装目录」两页，其余页面、函数、卸载逻辑都是官方原文。当前配置：
 
 | 字段 | 值 | 作用 |
 |---|---|---|
+| `installMode` | `currentUser` | 装到 `%LOCALAPPDATA%\Luma`，不需要管理员；升级沿用上次目录 |
+| `template` | `nsis/installer.nsi` | vendor 的官方模板（只删 Welcome / Directory 两页） |
+| `compression` | `lzma` | 安装包压缩（构建期慢一点、体积更小） |
 | `installerIcon` / `uninstallerIcon` | `icons/icon.ico` | 安装器 / 卸载器 exe 图标（品牌图标，不是 NSIS 默认图标） |
-| `sidebarImage` | `icons/nsis-sidebar.bmp` | 欢迎页 / 完成页左侧竖图，官方推荐 **164×314** |
+| `sidebarImage` | `icons/nsis-sidebar.bmp` | 完成页左侧竖图，官方推荐 **164×314** |
 | `headerImage` | `icons/nsis-header.bmp` | 各安装页顶部横图，官方推荐 **150×57** |
-| `languages` | `["SimpChinese", "English"]` | 中文优先、英文兜底；Tauri 内置 `SimpChinese.nsh` |
-| `displayLanguageSelector` | `false` | 直接跟随 OS 语言，不弹语言选择框 |
+| `languages` | `["SimpChinese"]` | 只出简体中文，不跟随英文 |
+| `displayLanguageSelector` | `false` | 不弹语言选择框 |
+| `webviewInstallMode`（`bundle.windows`） | `downloadBootstrapper` + `silent` | WebView2 缺失时在线引导装运行时，安装包不背离线包 |
+
+模板升级流程：换 Tauri CLI 时从官方仓库重新取 `crates/tauri-cli/templates/installer.nsi`，覆盖 `src-tauri/nsis/installer.nsi`，再照开头的两处删除各做一次（模板文件头有说明），不要顺手改其它逻辑。
 
 位图约束与维护：
 
@@ -94,7 +100,7 @@ corepack pnpm tauri build
 - 两张 BMP 沿用 `public/icon.svg` 的品牌几何（深墨底 `#10131A`、细圆环、`#6E8BFF→#9A8CFF` 渐变播放三角），改品牌色时需同步重生成；`.gitattributes` 已把 `src-tauri/icons/*.bmp` 标为 `binary`，避免换行规范化破坏位图。
 - 改配置后必须重新 `tauri build` 才生效（安装器是构建期产物）。
 
-> 更重度的定制（自定义页面、勾选协议、安装路径预设等）需要官方 `template` / `installerHooks` 字段，按需再评估，当前不需要。
+> 再重度的定制（勾选协议、安装路径预设、自定义页面）优先用官方 `template` / `installerHooks` 字段；仍不建议在模板里写自己的 NSIS 函数。
 
 ### 2.5 产物验收
 

@@ -14,6 +14,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use futures_util::{stream, StreamExt};
+use reqwest_middleware::ClientWithMiddleware;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -54,6 +55,8 @@ pub struct ProxyState {
     port: AtomicU16,
     allow_local: bool,
     client: reqwest::Client,
+    /// 封面专用：带 HTTP 缓存中间件（cacache 磁盘后端）。
+    image_client: ClientWithMiddleware,
 }
 
 /// Port the proxy actually bound. Sidecars need it to build
@@ -75,6 +78,24 @@ impl ProxyState {
             .pool_idle_timeout(Duration::from_secs(60))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new())
+    }
+
+    /// 封面客户端：请求本身仍由 `handle_image` 决定（UA / Referer / 重试），
+    /// 但响应由 `http-cache-reqwest` 按 HTTP 语义缓存到 `<data>/cache/http-images`。
+    /// 缓存键、Vary、ETag 复核、过期都由中间件处理，宿主不维护自己的索引。
+    fn image_client() -> ClientWithMiddleware {
+        let base = reqwest::Client::builder()
+            .pool_idle_timeout(Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let dir = crate::store::data_dir().join("cache").join("http-images");
+        reqwest_middleware::ClientBuilder::new(base)
+            .with(http_cache_reqwest::Cache(http_cache_reqwest::HttpCache {
+                mode: http_cache_reqwest::CacheMode::Default,
+                manager: http_cache_reqwest::CACacheManager::new(dir, false),
+                options: http_cache_reqwest::HttpCacheOptions::default(),
+            }))
+            .build()
     }
 
     pub fn port(&self) -> u16 {
@@ -120,6 +141,7 @@ pub fn start() -> Result<Arc<ProxyState>, AppError> {
         port: AtomicU16::new(port),
         allow_local,
         client: ProxyState::client(),
+        image_client: ProxyState::image_client(),
     });
     ACTIVE_PORT.store(port, Ordering::Relaxed);
 
