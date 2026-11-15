@@ -212,6 +212,8 @@
   padding: 30px 34px 28px;
   overflow: hidden;
   isolation: isolate;
+  /* 纵向滚动留给页面：横向拖动才算翻片。 */
+  touch-action: pan-y;
 }
 
 .home-hero__backdrop {
@@ -229,36 +231,6 @@
   /* 只有竖版海报可以当背景：放大 + 模糊，压成一块色雾而不是一张大图。 */
   transform: scale(1.18);
   filter: blur(36px) saturate(1.35) brightness(0.6);
-}
-
-/* 换片时上一层褪、下一层入，避免硬切。层序由 DOM 顺序保证：
-   刚离开的那层先渲染（在下），新的一层后渲染（在上）。 */
-.home-hero__backdrop img.is-current {
-  animation: hero-layer-in 720ms var(--ease) both;
-}
-
-.home-hero__backdrop img.is-leaving {
-  animation: hero-layer-out 720ms var(--ease) both;
-}
-
-@keyframes hero-layer-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes hero-layer-out {
-  from {
-    opacity: 1;
-  }
-
-  to {
-    opacity: 0;
-  }
 }
 
 .home-hero__scrim {
@@ -726,10 +698,6 @@
     transition: none;
   }
 
-  .home-hero__backdrop img.is-current,
-  .home-hero__backdrop img.is-leaving {
-    animation: none;
-  }
 }
 
 /* 豆瓣评分角标：盖在海报右上角，不吃点击（整张卡本身是按钮）。 */

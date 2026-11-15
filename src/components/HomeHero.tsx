@@ -14,24 +14,40 @@ export interface HomeHeroProps {
   site?: string;
 }
 
+/** 自动轮播间隔；同时是圆点进度条一圈的时长。 */
 const ROTATE_MS = 6500;
+/** 横向拖拽判定：超过这个位移、且横向明显大于纵向，才算翻页。 */
+const SWIPE_MIN_PX = 48;
+/** 滚轮翻页节流，避免一次触控板滑动连翻好几张。 */
+const WHEEL_LOCK_MS = 460;
 
 /**
- * 首页沉浸头图：整幅背景 + 海报 + 大字标题，像腾讯视频首页那样先给一个
- * 「这一屏是内容」的画面，而不是顶着一排工具栏和网格。自动轮播推荐列表前
- * 几条，悬停 / 键盘聚焦 / 用户偏好减少动效时停止轮播。
+ * 首页沉浸头图。
+ *
+ * 一屏只放**一个**视频：整幅模糊背景 + 一张海报 + 标题/评分/简介 + 一个动作按钮，
+ * 像腾讯视频首页的焦点图。切换有三条路：
+ *
+ * 1. 自动轮播（每 {@link ROTATE_MS} 换一张，悬停 / 键盘聚焦 / 减少动效时暂停）；
+ * 2. 手动：右侧贴边、平时隐形的「下一张」按钮，或底部圆点直接跳转；
+ * 3. 手势：触控板双指横滑 / Shift+滚轮，或按住海报横向拖动。
+ *
+ * 刻意保持 DOM 稳定 —— 背景与海报都只有**一个** img 节点，换片只改 `src`，
+ * 不按 key 重新挂载节点；否则在 dev 热更新/连续切换时容易留下上一帧的残留节点，
+ * 看起来就像「一堆海报平铺在头图里」。
  */
 export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const count = items.length;
-  const current = count > 0 ? items[Math.min(index, count - 1)] : undefined;
+  const safeIndex = count > 0 ? Math.min(index, count - 1) : 0;
+  const current = count > 0 ? items[safeIndex] : undefined;
+
   const source = useProxiedImage(current?.vod_pic);
   const douban = useDoubanMeta(current?.vod_name, current?.vod_year, Boolean(current));
   const doubanImage = useProxiedImage(douban?.pic);
-  // 源站封面优先；源站没给（或取图失败）时用豆瓣海报兜底。
+  // 豆瓣命中就用豆瓣海报：版式统一、裁切标准（2:3）；豆瓣没给 / 图裂 / 还没到货时用源站封面兜底。
   const useDoubanPoster =
-    Boolean(douban?.pic?.trim()) && (!current?.vod_pic?.trim() || source.broken);
+    Boolean(douban?.pic?.trim()) && Boolean(doubanImage.src) && !doubanImage.broken;
   const {
     src: cover,
     broken,
@@ -39,47 +55,78 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
     onError: handleError,
     onLoad: handleLoad,
   } = useDoubanPoster ? doubanImage : source;
-  // 背景层栈：换片时把「刚离开的那张」留在底下慢慢褪，新的一张淡入进来。
-  // 不能用 `items[index - 1]` 反推上一层——反向滚动或点圆点跳转时，那并不是
-  // 用户刚看到的图，会闪出一张无关海报。
-  const [layers, setLayers] = useState<{ id: number; item: VodInfo }[]>([]);
-  const layerSeq = useRef(0);
 
-  // 淡出结束后把旧层从 DOM 里摘掉：动效结束时它本来就是 opacity 0，
-  // 但「减少动效」下没有动画、或动画被打断时，留着就会变成一张不该存在
-  // 的底图——每一帧只该有当前这一张。
-  useEffect(() => {
-    if (layers.length <= 1) return;
-    const timer = window.setTimeout(() => {
-      setLayers((prev) => (prev.length <= 1 ? prev : prev.slice(-1)));
-    }, 760);
-    return () => window.clearTimeout(timer);
-  }, [layers]);
-
-  useEffect(() => {
-    if (!current) return;
-    setLayers((prev) => {
-      const last = prev[prev.length - 1];
-      if (last && last.item.vod_id === current.vod_id) return prev;
-      // 只保留上一层用于淡出，更早的直接丢掉。
-      return [
-        ...prev.slice(-1),
-        { id: ++layerSeq.current, item: current },
-      ];
-    });
-  }, [current]);
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
+  const heroRef = useRef<HTMLElement | null>(null);
 
+  /** 向前/向后翻，越界环绕。 */
+  const go = useCallback(
+    (step: number) => {
+      if (count <= 1) return;
+      setIndex((value) => (value + step + count) % count);
+    },
+    [count],
+  );
+  const next = useCallback(() => go(1), [go]);
+
+  // 自动轮播：手动切换后重新计时（index 进依赖），悬停/聚焦/减少动效时不动。
   useEffect(() => {
     if (paused || count <= 1) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const timer = window.setInterval(
-      () => setIndex((value) => (value + 1) % count),
-      ROTATE_MS,
-    );
+    const timer = window.setInterval(() => {
+      setIndex((value) => (value + 1) % count);
+    }, ROTATE_MS);
     return () => window.clearInterval(timer);
-  }, [paused, count]);
+  }, [paused, count, index]);
+
+  // 滚轮只接管横向（触控板双指横滑 / Shift+滚轮）；纵向滚动留给页面，
+  // 用户往下滚是想看下面的内容。原生监听才能 preventDefault。
+  useEffect(() => {
+    const element = heroRef.current;
+    if (!element || count <= 1) return;
+    let lockUntil = 0;
+    const onWheel = (event: WheelEvent) => {
+      const horizontal = Math.abs(event.deltaX) >= Math.abs(event.deltaY);
+      if (!horizontal && !event.shiftKey) return;
+      const delta =
+        event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)
+          ? event.deltaY
+          : event.deltaX;
+      if (Math.abs(delta) < 4) return;
+      event.preventDefault();
+      const now = Date.now();
+      if (now < lockUntil) return;
+      lockUntil = now + WHEEL_LOCK_MS;
+      setIndex((value) => (value + (delta > 0 ? 1 : -1) + count) % count);
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [count]);
+
+  // 按住横向拖动：不抢纵向滚动（CSS touch-action: pan-y），也不抢按钮点击。
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("button, a")) return;
+    dragStart.current = { x: event.clientX, y: event.clientY };
+  }, []);
+  const handlePointerUp = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      const start = dragStart.current;
+      dragStart.current = null;
+      if (!start) return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) <= Math.abs(dy) * 1.2) return;
+      go(dx < 0 ? 1 : -1);
+    },
+    [go],
+  );
+  const handlePointerCancel = useCallback(() => {
+    dragStart.current = null;
+  }, []);
 
   /**
    * 豆瓣命中就以豆瓣为准：评分 / 评价人数 / 年份 / 类型；没命中沿用源站的
@@ -112,37 +159,9 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
   // 头图给两行剧情简介：没有简介时整段不渲染，不留空行。
   const intro = plainText(douban?.intro) || plainText(current?.vod_content);
 
-  // 轮播永远向前走：只留「下一张」一个入口，圆点负责直接跳转。
-  const next = useCallback(() => {
-    setIndex((value) => (value + 1) % Math.max(count, 1));
-  }, [count]);
-
-  // 只接管横向滑动（触控板双指横滑 / Shift+滚轮），纵向滚动留给页面：
-  // 鼠标往下滚是想看下面的内容，不该被头图吃掉。
-  const heroRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    const element = heroRef.current;
-    if (!element || count <= 1) return;
-    let lockUntil = 0;
-    const onWheel = (event: WheelEvent) => {
-      const horizontal = Math.abs(event.deltaX) >= Math.abs(event.deltaY);
-      if (!horizontal && !event.shiftKey) return;
-      const delta = event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)
-        ? event.deltaY
-        : event.deltaX;
-      if (Math.abs(delta) < 4) return;
-      event.preventDefault();
-      const now = Date.now();
-      if (now < lockUntil) return;
-      lockUntil = now + 460;
-      setIndex((value) => (value + (delta > 0 ? 1 : -1) + count) % count);
-    };
-    element.addEventListener("wheel", onWheel, { passive: false });
-    return () => element.removeEventListener("wheel", onWheel);
-  }, [count]);
-
   if (!current) return null;
   const title = current.vod_name || "未命名";
+  const hasCover = Boolean(cover) && !broken;
 
   return (
     <section
@@ -154,23 +173,20 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
       onMouseLeave={() => setPaused(false)}
       onFocusCapture={() => setPaused(true)}
       onBlurCapture={() => setPaused(false)}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
     >
       <div className="home-hero__backdrop" aria-hidden="true">
-        {layers.map((layer) => (
-          <HeroBackdrop
-            key={layer.id}
-            item={layer.item}
-            leaving={layer.item.vod_id !== current.vod_id}
-          />
-        ))}
+        {hasCover ? <img src={cover ?? undefined} alt="" referrerPolicy="no-referrer" /> : null}
       </div>
       <div className="home-hero__scrim" aria-hidden="true" />
 
       <div className="home-hero__body">
-        <span className="home-hero__poster" key={current.vod_id}>
-          {cover && !broken ? (
+        <span className="home-hero__poster">
+          {hasCover ? (
             <img
-              src={cover}
+              src={cover ?? undefined}
               alt=""
               referrerPolicy="no-referrer"
               onError={handleError}
@@ -203,12 +219,12 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
                 <button
                   key={String(vod.vod_id)}
                   type="button"
-                  className={dot === index ? "home-hero__dot is-active" : "home-hero__dot"}
+                  className={dot === safeIndex ? "home-hero__dot is-active" : "home-hero__dot"}
                   onClick={() => setIndex(dot)}
                   aria-label={`第 ${dot + 1} 张推荐`}
-                  aria-current={dot === index}
+                  aria-current={dot === safeIndex}
                 >
-                  {dot === index ? (
+                  {dot === safeIndex ? (
                     <span
                       className="home-hero__dot-fill"
                       style={{ animationDuration: `${ROTATE_MS}ms` }}
@@ -231,15 +247,4 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
       ) : null}
     </section>
   );
-}
-
-/**
- * 头图背景的一层。每层自己取图，`leaving` 表达「这是刚离开的那张，正在褪」。
- * 单独拆成组件是为了按 item 各自调用 `useProxiedImage`（hook 不能写在 map 里）。
- */
-function HeroBackdrop({ item, leaving }: { item: VodInfo; leaving: boolean }) {
-  const image = useProxiedImage(item.vod_pic);
-  const cover = image.src && !image.broken ? image.src : "";
-  if (!cover) return null;
-  return <img className={leaving ? "is-leaving" : "is-current"} src={cover} alt="" />;
 }
