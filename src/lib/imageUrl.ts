@@ -15,9 +15,48 @@
  * The backend owns header parsing; we forward the ORIGINAL string untouched.
  */
 
+/**
+ * Normalize the raw picture string before it reaches `<img>` or the proxy.
+ *
+ * Sources are not consistent about the shape of `vod_pic`; all of these show up
+ * in real configs and each one breaks a plain `src=`:
+ *   * surrounding quotes / angle brackets / whitespace (`" https://x/p.jpg "`),
+ *   * protocol-relative URLs (`//cdn.example.com/p.jpg`) — under Tauri the page
+ *     origin is `tauri://localhost`, so `//host` resolves to `tauri://host`,
+ *   * HTML entities from scraped markup (`p.jpg?w=1&amp;h=2`).
+ *
+ * Only the URL part is normalized; an inline header suffix (`@Referer=…`)
+ * is preserved verbatim because the Rust side owns parsing it.
+ */
+export function normalizePic(pic: string | undefined): string {
+  let value = pic?.trim() ?? "";
+  if (!value) return "";
+  // Some scrapers keep the surrounding HTML attribute quotes/brackets.
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'")) ||
+    (value.startsWith("<") && value.endsWith(">"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  if (!value) return "";
+  value = value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#38;/g, "&")
+    .replace(/&#x26;/gi, "&");
+  // `//cdn/...` is scheme-relative: pick https, which every CDN in these
+  // configs supports and which keeps the WebView from resolving it against
+  // the app origin.
+  if (value.startsWith("//")) {
+    value = `https:${value}`;
+  }
+  return value;
+}
+
 /** True when a pic must bypass the proxy: empty, data URI, or non-http scheme. */
 export function needsProxy(pic: string | undefined): boolean {
-  const value = pic?.trim() ?? "";
+  const value = normalizePic(pic);
   if (!value || value.startsWith("data:")) return false;
   return /^https?:\/\//i.test(value);
 }
@@ -28,7 +67,7 @@ export function needsProxy(pic: string | undefined): boolean {
  * outage degrades to "direct image" instead of breaking every card.
  */
 export function buildImageUrl(pic: string | undefined, baseUrl: string | null | undefined): string {
-  const value = pic?.trim() ?? "";
+  const value = normalizePic(pic);
   const base = baseUrl?.trim().replace(/\/+$/, "") ?? "";
   if (!needsProxy(value) || !base) return value;
   return `${base}/image?url=${encodeURIComponent(value)}`;

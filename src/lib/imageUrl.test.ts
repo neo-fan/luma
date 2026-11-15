@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { buildImageUrl, needsProxy } from "./imageUrl";
+import { buildImageUrl, needsProxy, normalizePic } from "./imageUrl";
+
+describe("normalizePic", () => {
+  it("upgrades protocol-relative URLs so Tauri's origin cannot swallow them", () => {
+    // 生产页面 origin 是 tauri://localhost，`//cdn/x.jpg` 会被解析成 tauri://cdn/x.jpg。
+    expect(normalizePic("//static.ztcuc.com/upload/x.jpg")).toBe(
+      "https://static.ztcuc.com/upload/x.jpg",
+    );
+  });
+
+  it("trims whitespace and strips html attribute wrappers", () => {
+    expect(normalizePic("  https://img/x.jpg  ")).toBe("https://img/x.jpg");
+    expect(normalizePic('"https://img/x.jpg"')).toBe("https://img/x.jpg");
+    expect(normalizePic("'https://img/x.jpg'")).toBe("https://img/x.jpg");
+    expect(normalizePic("<https://img/x.jpg>")).toBe("https://img/x.jpg");
+  });
+
+  it("decodes html entities in scraped query strings", () => {
+    expect(normalizePic("https://img/x.jpg?w=1&amp;h=2")).toBe("https://img/x.jpg?w=1&h=2");
+    expect(normalizePic("https://img/x.jpg?w=1&#38;h=2")).toBe("https://img/x.jpg?w=1&h=2");
+    expect(normalizePic("https://img/x.jpg?q=&quot;a&quot;")).toBe('https://img/x.jpg?q="a"');
+  });
+
+  it("keeps empty values empty", () => {
+    expect(normalizePic(undefined)).toBe("");
+    expect(normalizePic("   ")).toBe("");
+  });
+});
 
 describe("needsProxy", () => {
   it("proxies http(s) URLs", () => {
@@ -17,6 +44,11 @@ describe("needsProxy", () => {
     expect(needsProxy("./poster.jpg")).toBe(false);
     expect(needsProxy("http://127.0.0.1:8787/poster.jpg")).toBe(true); // local stub still http
     expect(needsProxy("blob:http://localhost/abc")).toBe(false);
+  });
+
+  it("proxies protocol-relative pics after normalization", () => {
+    // 以前 `//host/x.jpg` 落入「非 http」分支，被直接当 src 用 → 生产下 tauri://。
+    expect(needsProxy("//cdn/x.jpg")).toBe(true);
   });
 });
 

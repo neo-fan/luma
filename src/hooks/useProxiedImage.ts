@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/invoke";
-import { buildImageUrl, needsProxy } from "../lib/imageUrl";
+import { buildImageUrl, needsProxy, normalizePic } from "../lib/imageUrl";
 
 /**
  * Shared, once-per-app lookup of the local proxy base URL. 200+ cards on an
@@ -116,7 +116,7 @@ export interface ProxiedImage {
  * of firing a doomed direct request (which would trip onError/broken).
  */
 export function useProxiedImage(pic: string | undefined): ProxiedImage {
-  const [src, setSrc] = useState<string | null>(() => resolveNow(pic?.trim() || ""));
+  const [src, setSrc] = useState<string | null>(() => resolveNow(normalizePic(pic)));
   const [broken, setBroken] = useState(false);
   // 首帧就对上「已经解码过」的图时不要再叠骨架：同一张卡回流不该再闪一次。
   const [loading, setLoading] = useState(() => src !== null && !LOADED_SRC.has(src));
@@ -127,7 +127,7 @@ export function useProxiedImage(pic: string | undefined): ProxiedImage {
     let alive = true;
     directRetried.current = false;
     setBroken(false);
-    const value = pic?.trim() || "";
+    const value = normalizePic(pic);
     if (!needsProxy(value)) {
       setSrc(value || null); // data: / relative / empty -> direct
       return;
@@ -162,7 +162,7 @@ export function useProxiedImage(pic: string | undefined): ProxiedImage {
   }, [src]);
 
   const onError = useCallback(() => {
-    const value = pic?.trim() || "";
+    const value = normalizePic(pic);
     // 代理这条路失败时（上游 TLS / 网关问题，本地 `/image` 回 502），直连一次：
     // 普通 CDN 的 <img> 能拿到字节；只有真防盗链的站点会继续失败，那才落入
     // 首字占位。每个 pic 只重试一次，避免 502→直连→失败 的来回抖动。
