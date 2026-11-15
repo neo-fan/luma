@@ -101,7 +101,18 @@ describe("resolveEpisodeTarget", () => {
     spiderInvoke.mockResolvedValue({ url: "CO4K_abc%2FX", parse: 0, header: {} });
     const target = await resolveEpisodeTarget("py_bubuzhuiju", "CO4K", "CO4K_abc%2FX");
     expect(target.unresolvable).toBe(true);
+    expect(target.rejected).toBe(true);
     expect(target.url).toBe("CO4K_abc%2FX");
+  });
+
+  it("treats an empty playerContent result for a private token as a source rejection", async () => {
+    // zijianm3u8 实测：站点回「线路暂时停用 / 无可用套餐」，源只能把 token 吐回。
+    // 这不是超时，也不是永久坏线路——要标成 rejected，好让上层给出重试文案。
+    spiderInvoke.mockResolvedValue({ url: "", parse: 0, header: {} });
+    const target = await resolveEpisodeTarget("py_bubuzhuiju", "zijianm3u8", "zijian_abc");
+    expect(target.unresolvable).toBe(true);
+    expect(target.rejected).toBe(true);
+    expect(target.timedOut).toBeFalsy();
   });
 
   it("does not mark a real http url as unresolvable", async () => {

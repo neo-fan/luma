@@ -192,7 +192,13 @@ export function usePlayResolution({
         if (target.unresolvable) {
           // 源给的 token 连它自己的 playerContent 都不认（网盘 / 专用插件线路）。
           // 说清原因，别把 INVALID_ARGUMENT 的原文抛给用户。fail-fast，不进 resolvePlay。
-          throw new Error("该线路需要源侧插件解析（网盘 token），内置播放器无法直接播放");
+          // 「源明确拒绝」与「源没答完」要分开说：前者是线路停用 / 要源侧账号，
+          // 过一阵可能恢复，文案必须留「重试」这条路，不能写成没救。
+          throw new Error(
+            target.rejected
+              ? "源站没有解析这条线路（可能暂时停用或需要源侧账号），可换一条线路，或稍后点刷新重试"
+              : "该线路需要源侧插件解析（网盘 token），内置播放器无法直接播放",
+          );
         }
         // 直播没有 playerContent 可问，UA 只能来自 lives[].ua。
         if (target.parser) {

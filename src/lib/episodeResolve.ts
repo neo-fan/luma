@@ -31,6 +31,13 @@ export interface EpisodeTarget {
    */
   unresolvable?: boolean;
   /**
+   * 源**明确拒绝了这次解析**（不是超时）：`playerContent` 把 token 原样吐回、
+   * 或返回空串，而原地址本身也不是 URL。布布追剧的 `zijianm3u8` 实测就是站点
+   * 回了「线路暂时停用 / 当前账户无可用套餐」——这类原因可能过一会儿恢复，
+   * 所以要给用户「重试 / 换线路」的出口，而不是当成永久坏线路。
+   */
+  rejected?: boolean;
+  /**
    * `playerContent` 没在超时内返回，但**不能据此判定线路坏**。
    *
    * 2026-11-14 实测 py_bubuzhuiju 的 zijianm3u8：进程内首次调用 18.3s（源侧
@@ -118,13 +125,13 @@ export async function resolveEpisodeTarget(
     const slow = elapsed >= playerContentTimeoutMs * 0.7;
     if (!HTTP_URL.test(playUrl) && !slow) {
       markLineBad(siteKey, playFrom);
-      return { url: playUrl, unresolvable: true };
+      return { url: playUrl, unresolvable: true, rejected: true };
     }
     // 慢失败：不记坏线路（冷启动 18s / 忙时更久的源每次都会被误封），
     // 让上层给「可重试」的提示而不是「网盘 token」。
     return slow
       ? { url: playUrl, unresolvable: !HTTP_URL.test(playUrl), timedOut: true }
-      : { url: playUrl };
+      : { url: playUrl, ...(HTTP_URL.test(playUrl) ? {} : { rejected: true }) };
   }
 
   const candidate = String(played?.playUrl || played?.url || "");
@@ -144,6 +151,9 @@ export async function resolveEpisodeTarget(
     // resolve_play 只会得到 INVALID_ARGUMENT，对用户毫无信息量。
     if (!HTTP_URL.test(playUrl)) {
       target.unresolvable = true;
+      // 源把 token 原样吐回 / 给空串：这是「源明确拒绝」，不是超时。站点通常
+      // 会带一句原因（线路停用、无可用套餐），过一阵可能恢复，所以文案要留重试。
+      target.rejected = true;
       // 源自己都不认这个 token，记下来，下次（含自动接下一集）直接换线。
       markLineBad(siteKey, playFrom);
     }
