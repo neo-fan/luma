@@ -29,8 +29,13 @@ describe("player favourites & history line contract", () => {
 
   it("renders a favourite star next to the detail title", () => {
     const page = read("src/pages/DetailPage.tsx");
-    expect(page).toContain("detail-title-row");
+    // 详情 hero 已抽成 `VodMetaHero`（详情页与播放页共用），星通过
+    // `titleExtra` 插在片名行里；行布局由组件负责。
+    const hero = read("src/components/VodMetaHero.tsx");
+    expect(page).toContain("<VodMetaHero");
+    expect(page).toContain("titleExtra={");
     expect(page).toContain("FavStar");
+    expect(hero).toContain('titleRow: "detail-title-row"');
     // 旧的「☆ 收藏」文字按钮（在右上角工具栏里）必须已经拿掉。
     expect(page).not.toContain("btn--fav");
     expect(page).not.toContain("☆ 收藏");

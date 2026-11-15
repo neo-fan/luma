@@ -393,6 +393,29 @@
   }
 }
 
+/* 豆瓣详情页：源站只有榜单卡片（发现型源），详情信息全部来自豆瓣。
+   版式直接复用 `.detail-hero`（VodMetaHero detail 变体），这里只负责外层
+   宽度与「换源 / 重试」出口的排版，不再另起一套视觉。 */
+.detail-douban-page {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 6px 0 24px;
+}
+
+.detail-douban-page__tag {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+}
+
+.detail-douban-page__foot {
+  margin: 20px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
 /* 设置页节目单地址输入框与按钮行。 */
 .epg-row {
   display: flex;

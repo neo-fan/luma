@@ -348,30 +348,45 @@ describe("douban ui contract", () => {
 
   it("prefers douban metadata on the detail page and keeps source as fallback", () => {
     const detail = read("src/pages/DetailPage.tsx");
-    // 豆瓣命中时用豆瓣的评分 / 年份 / 类型 / 导演 / 主演 / 简介。
-    expect(detail).toContain("const meta = doubanMeta;");
-    expect(detail).toContain("`★ ${meta.rating.toFixed(1)}");
-    expect(detail).toContain("meta.genres.join");
-    expect(detail).toContain("meta.directors.join");
-    expect(detail).toContain("meta.actors.join");
-    expect(detail).toContain("plainText(meta?.intro)");
-    // 源站只保留播放状态（更新到第几集），播放线路 / 剧集仍来自源站。
-    expect(detail).toContain("vod.vod_remarks?.trim()");
+    const hero = read("src/components/VodMetaHero.tsx");
+    // 详情页把「豆瓣优先、源站兜底」交给共用组件，自己只负责取数与兜底参数。
+    expect(detail).toContain('<VodMetaHero');
+    expect(detail).toContain('variant="detail"');
+    expect(detail).toContain("douban={doubanMeta}");
+    expect(detail).toContain('descriptionFallback="暂无简介"');
+    // 等详情落地再问一次（年份到位才有消歧能力，也保证一次访问只发一次）。
+    expect(detail).toContain("if (!doubanReady || !doubanTitle)");
     // 独立的豆瓣块已并入 hero，不再单独渲染。
     expect(detail).not.toContain("DoubanMetaBlock");
     expect(detail).not.toContain("douban-meta");
-    // 等详情落地再问一次（年份到位才有消歧能力，也保证一次访问只发一次）。
-    expect(detail).toContain("if (!doubanReady || !doubanTitle)");
+    // 豆瓣命中时用豆瓣的评分 / 年份 / 类型 / 导演 / 主演 / 简介。
+    expect(hero).toContain("`★ ${douban.rating.toFixed(1)}");
+    expect(hero).toContain("douban.genres.join");
+    expect(hero).toContain("douban.directors.join");
+    expect(hero).toContain("douban.actors.join");
+    expect(hero).toContain("plainText(douban?.intro)");
+    // 源站只保留播放状态（更新到第几集），播放线路 / 剧集仍来自源站。
+    expect(hero).toContain("vod?.vod_remarks?.trim()");
     // 海报：源站优先，源站没有/坏了才用豆瓣兜底。
-    expect(detail).toContain("heroImage.src && !heroImage.broken ? heroImage : doubanImage");
+    expect(hero).toContain(
+      "sourcePoster.src && !sourcePoster.broken ? sourcePoster : doubanPoster",
+    );
+    // 源站没有详情（发现型源）但豆瓣命中：用同一套 hero 渲染豆瓣页。
+    expect(detail).toContain('className="detail-douban-page"');
+    expect(detail).toContain("全站搜索此片");
   });
 
   it("lets the player info card use douban too, with source fallback", () => {
     const about = read("src/components/player/PlayerAbout.tsx");
+    const hero = read("src/components/VodMetaHero.tsx");
+    // 播放页与详情页共用同一个组件：豆瓣取值逻辑只允许存在一份，
+    // 否则两处口径迟早漂移（这次重构前就是各写一遍）。
     expect(about).toContain("douban?: DoubanMeta | null;");
-    expect(about).toContain("formatVotes");
-    expect(about).toContain("douban.genres.join");
-    expect(about).toContain("plainText(douban?.intro) || plainText(vod?.vod_content)");
+    expect(about).toContain("<VodMetaHero");
+    expect(about).toContain('variant="player"');
+    expect(about).toContain("douban={douban}");
+    expect(about).not.toContain("formatVotes");
+    expect(hero).toContain("formatVotes(douban.ratingCount)");
     const page = read("src/pages/PlayerPage.tsx");
     expect(page).toContain("fetchDoubanMeta(name");
     expect(page).toContain("douban={doubanMeta}");

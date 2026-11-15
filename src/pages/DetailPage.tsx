@@ -1,7 +1,5 @@
 import {
-  useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,16 +14,16 @@ import Icon from "../components/Icon";
 import IconButton from "../components/IconButton";
 import SourcePicker from "../components/SourcePicker";
 import DetailSkeleton from "../components/DetailSkeleton";
+import VodMetaHero from "../components/VodMetaHero";
 import {
   formatDuration,
   parsePlayLines,
-  plainText,
   sameTitle,
   toVodRef,
 } from "../lib/format";
 import type { Episode, PlayLine } from "../lib/format";
 import { findPlayableSource } from "../lib/crossSourceRecovery";
-import { fetchDoubanMeta, formatVotes } from "../lib/douban";
+import { fetchDoubanMeta } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { pageCache } from "../lib/pageCache";
@@ -77,9 +75,6 @@ export default function DetailPage({
     `${detailKey}:vod`,
     pageCache.peek<VodInfo[]>(detailKey)?.[0] ?? null,
   );
-  // TVBox `vod_pic` may carry inline @headers; route the hero image through
-  // the same local /image proxy the cards use.
-  const heroImage = useProxiedImage(vod?.vod_pic);
   /**
    * 空详情时回填的卡片：发现型源（豆瓣[py] 等）的 `detailContent` 恒为空，
    * 但列表卡片自带海报、评分、年份——那是这个源能给出的全部信息。不显示就
@@ -97,34 +92,6 @@ export default function DetailPage({
     "",
   );
   const [reverse, setReverse] = usePageState(`${detailKey}:reverse`, false);
-  const [expanded, setExpanded] = usePageState(`${detailKey}:expanded`, false);
-
-  /**
-   * 「展开简介」按钮是否出现，按 clamp 后的真实溢出高度决定，而不是字符数硬阈值：
-   * 简介可能 >120 字却没被裁切（点了无变化），也可能 <120 字就被 84px 裁掉
-   * （按钮不出现却看不到全文）。这里把元素临时切回 clamp 量 scrollHeight，
-   * 超出 clientHeight 才认为「真的被截断」，按钮才出现。
-   */
-  const contentRef = useRef<HTMLParagraphElement | null>(null);
-  const [overflowing, setOverflowing] = useState(false);
-
-  const measureDescription = useCallback(() => {
-    const el = contentRef.current;
-    if (!el) {
-      setOverflowing(false);
-      return;
-    }
-    // 临时回到 clamp 状态测量真实溢出，测完恢复当下展开/收起态，不闪烁。
-    const wasExpanded = el.classList.contains("is-expanded");
-    el.classList.remove("is-expanded");
-    el.classList.add("is-clamped");
-    const isOver = el.scrollHeight > el.clientHeight + 1;
-    el.classList.remove("is-clamped");
-    if (wasExpanded) {
-      el.classList.add("is-expanded");
-    }
-    setOverflowing(isOver);
-  }, []);
 
   // 瞬时状态不缓存：刷新序号每次挂载归零，保证回退一定走缓存。
   const [loading, setLoading] = useState(false);
@@ -159,9 +126,6 @@ export default function DetailPage({
    * 三者对界面是同一种状态：整块不渲染。
    */
   const [doubanMeta, setDoubanMeta] = useState<DoubanMeta | null>(null);
-  // 豆瓣命中后，元数据以豆瓣为准；源站的海报仍是第一优先（播放链路知道得更
-  // 早、也更贴近这部片在源站的样子），只有源站没给封面时才用豆瓣海报兜底。
-  const doubanImage = useProxiedImage(doubanMeta?.pic);
 
   useEffect(() => {
     // reload>0 是用户点了刷新图标；此时忽略缓存强制拉取最新播放列表。
@@ -365,8 +329,8 @@ export default function DetailPage({
    * 同一片名+年份的去重与并发合并都在 `src/lib/douban.ts` 里，从播放页返回
    * 详情（组件重新挂载）不会重复打豆瓣。设置关闭时该函数直接返回 null。
    */
-  const doubanTitle = (vod?.vod_name || title || "").trim();
-  const doubanYear = (vod?.vod_year || "").trim();
+  const doubanTitle = (vod?.vod_name || emptyCard?.vod_name || title || "").trim();
+  const doubanYear = (vod?.vod_year || emptyCard?.vod_year || "").trim();
   const doubanReady = !loading && (!!vod || empty || !!error);
   useEffect(() => {
     // 片名/年份变了先清空：详情页在同一条路由上换片时组件不卸载，
@@ -387,15 +351,8 @@ export default function DetailPage({
     };
   }, [doubanReady, doubanTitle, doubanYear]);
 
-  // 简介可能来自豆瓣（命中时）也可能来自源站（兜底），两者都要重新量溢出高度。
-  useLayoutEffect(() => {
-    measureDescription();
-  }, [vod?.vod_content, doubanMeta?.intro, expanded, siteKey, vodId, measureDescription]);
-
-  useEffect(() => {
-    window.addEventListener("resize", measureDescription);
-    return () => window.removeEventListener("resize", measureDescription);
-  }, [measureDescription]);
+  // 简介的溢出测量、展开/收起都在 `VodMetaHero` 里做：详情页与播放页共用
+  // 同一份实现，避免两处口径漂移。
 
   const lines = useMemo(
     () => parsePlayLines(vod?.vod_play_from, vod?.vod_play_url),
@@ -576,6 +533,8 @@ export default function DetailPage({
     // 卡片回填后，标题优先用卡片片名（`title` 只在从列表点进来时才有，
     // 收藏/历史直链进详情时只剩卡片这一条线索）。
     const cardTitle = (emptyCard?.vod_name || title || "").trim();
+    /** 豆瓣也命中时，用它补上卡片/路由都没给出的片名。 */
+    const searchWord = (cardTitle || doubanMeta?.title || "").trim();
     const emptyMeta = [
       emptyCard?.vod_remarks,
       emptyCard?.vod_year,
@@ -597,6 +556,64 @@ export default function DetailPage({
               detail={error}
               onRetry={retry}
             />
+          ) : doubanMeta ? (
+            /* 豆瓣命中、但源站没有详情与播放地址（发现/榜单型源）：直接用豆瓣
+               资料渲染这一屏——用户要看的是「这部片是什么」，和一个「怎么把它
+               放出来」的出口。与详情 hero 共用 `VodMetaHero`，版式不另起一套。 */
+            <div className="detail-douban-page" role="status">
+              <p className="detail-douban-page__tag">豆瓣信息 · 当前源只提供榜单</p>
+              <VodMetaHero
+                variant="detail"
+                vod={emptyCard}
+                douban={doubanMeta}
+                fallbackName={cardTitle}
+                posterPlaceholder="无封面"
+                descriptionFallback="暂未获取到剧情简介。"
+                footer={
+                  searchWord ? (
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      onClick={() =>
+                        navigate({ name: "search", keyword: searchWord })
+                      }
+                    >
+                      <Icon name="search" />
+                      全站搜索此片
+                    </button>
+                  ) : null
+                }
+              />
+              <div className="detail-douban-page__foot">
+                <p className="detail-empty__desc">
+                  「{siteName || siteKey}
+                  」是榜单/推荐型源：能给出片名、海报和评分，但没有播放地址。豆瓣资料已补全，想直接看的话换一个有片源的站点。
+                </p>
+                {fallback === "searching" || fallback === "none" ? (
+                  <p className="detail-empty__hint">
+                    {fallback === "searching"
+                      ? `正在按片名从其它源查找${searchWord ? `《${searchWord}》` : ""}的可播放版本，找到后会自动切换…`
+                      : "已按片名在其它源查找，暂时没有找到可播放的版本。"}
+                  </p>
+                ) : null}
+                <div className="detail-empty__actions">
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    onClick={openSources}
+                  >
+                    换源
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    onClick={retry}
+                  >
+                    重试
+                  </button>
+                </div>
+              </div>
+            </div>
           ) : (
             /* 居中容器：空态是这一屏唯一的内容，贴左上角会显得「页面没渲染完」；
                垂直居中后上下留白对称，视线自然落在海报与下一步动作上。 */
@@ -687,37 +704,7 @@ export default function DetailPage({
     );
   }
 
-  /**
-   * 豆瓣命中后，详情信息以豆瓣为准（用户定调：详情 / 播放页用豆瓣，源只负责
-   * 播放线路与兜底）。豆瓣缺席时才逐项回退源站。
-   * `vod_remarks`（全 N 集 / 更新到第几集）属于播放状态而不是元数据，继续用
-   * 源站的：豆瓣不知道这部片在当前源更新到了哪。
-   */
-  const meta = doubanMeta;
-  const votes = meta && meta.ratingCount > 0 ? formatVotes(meta.ratingCount) : "";
-  const chips = meta
-    ? [
-        meta.rating > 0
-          ? `★ ${meta.rating.toFixed(1)}${votes ? ` · ${votes}` : ""}`
-          : "",
-        meta.year,
-        meta.genres.join(" · "),
-        vod.vod_remarks?.trim() || "",
-      ].filter((item): item is string => Boolean(item))
-    : [vod.vod_year, vod.vod_area, vod.type_name, vod.vod_remarks].filter(
-        (item): item is string => Boolean(item && item.trim()),
-      );
   const site = sites.find((item) => item.key === siteKey);
-  const director = meta?.directors.length
-    ? meta.directors.join(" / ")
-    : plainText(vod.vod_director);
-  const actors = meta?.actors.length
-    ? meta.actors.join(" / ")
-    : plainText(vod.vod_actor);
-  const description =
-    plainText(meta?.intro) || plainText(vod.vod_content) || "暂无简介";
-  // 源站海报优先；源站没给（或取图失败）时用豆瓣海报兜底。
-  const heroCover = heroImage.src && !heroImage.broken ? heroImage : doubanImage;
   const cacheAge = pageCache.age(detailKey);
   const cacheLabel =
     cacheAge === undefined
@@ -770,84 +757,40 @@ export default function DetailPage({
           </p>
         ) : null}
 
-        <div className="detail-hero">
-          <div className="detail-poster">
-            {heroCover.src && !heroCover.broken ? (
-              <img
-                src={heroCover.src}
-                alt={vod.vod_name}
-                referrerPolicy="no-referrer"
-                onError={heroCover.onError}
-              />
-            ) : (
-              <span className="vod-card__ph">
-                {vod.vod_pic || meta?.pic ? "无封面" : ""}
-              </span>
-            )}
-          </div>
-          <div className="detail-info">
-            <div className="detail-title-row">
-              <h1 className="detail-title">{vod.vod_name || "未命名"}</h1>
-              <FavStar
-                on={favorite}
-                busy={favBusy}
-                onToggle={() => void toggleFavorite()}
-              />
-            </div>
-            {chips.length > 0 ? (
-              <div className="chip-row chip-row--static">
-                {chips.map((chip, index) => (
-                  <span className="chip chip--static" key={`${chip}-${index}`}>
-                    {chip}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            {director ? (
-              <p className="detail-line">导演：{director}</p>
-            ) : null}
-            {actors ? <p className="detail-line">主演：{actors}</p> : null}
-            <p
-              ref={contentRef}
-              className={
-                expanded
-                  ? "detail-content is-expanded"
-                  : "detail-content is-clamped"
+        <VodMetaHero
+          variant="detail"
+          vod={vod}
+          douban={doubanMeta}
+          descriptionFallback="暂无简介"
+          posterPlaceholder={vod.vod_pic || doubanMeta?.pic ? "无封面" : ""}
+          titleExtra={
+            <FavStar
+              on={favorite}
+              busy={favBusy}
+              onToggle={() => void toggleFavorite()}
+            />
+          }
+          footer={
+            /* 按钮只留动作本身：线路有 chip 的「上次」角标、集数有剧集格的「上次看到」，
+               进度这类细节放 hover 提示里，不占按钮文案。 */
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={!quickPlay}
+              onClick={() =>
+                quickPlay && playEpisode(quickPlay.line, quickPlay.episode)
+              }
+              title={
+                resume && quickPlay
+                  ? `上次看到：${resume.episodeName || `第 ${quickPlay.index + 1} 集`} · ${formatDuration(resume.positionMs ?? 0)}`
+                  : undefined
               }
             >
-              {description}
-            </p>
-            <div className="detail-actions detail-actions--inline">
-              {overflowing || expanded ? (
-                <IconButton
-                  name="chevron"
-                  label={expanded ? "收起简介" : "展开简介"}
-                  expanded={expanded}
-                  className="icon-btn--rotate"
-                  onClick={() => setExpanded((value) => !value)}
-                />
-              ) : null}
-              {/* 按钮只留动作本身：线路有 chip 的「上次」角标、集数有剧集格的「上次看到」，
-                进度这类细节放 hover 提示里，不占按钮文案。 */}
-              <button
-                type="button"
-                className="btn btn--primary"
-                disabled={!quickPlay}
-                onClick={() =>
-                  quickPlay && playEpisode(quickPlay.line, quickPlay.episode)
-                }
-                title={
-                  resume && quickPlay
-                    ? `上次看到：${resume.episodeName || `第 ${quickPlay.index + 1} 集`} · ${formatDuration(resume.positionMs ?? 0)}`
-                    : undefined
-                }
-              >
-                <Icon name="play" />
-                {resume && quickPlay ? "继续播放" : "播放第 1 集"}
-              </button>
-            </div>
-          </div>
-        </div>
+              <Icon name="play" />
+              {resume && quickPlay ? "继续播放" : "播放第 1 集"}
+            </button>
+          }
+        />
 
         {/* 豆瓣信息已并入上面的 hero（命中时替换源站元数据），不再单独占一块。 */}
 
