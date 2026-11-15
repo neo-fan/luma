@@ -15,6 +15,8 @@ import { loadCategoryPage } from "./categoryLoad";
 import { log } from "./logger";
 // type-only：sources.ts 运行时反向依赖本模块，这里只借类型不引运行时代码。
 import type { AggregateRow } from "./sources";
+import type { DoubanMeta } from "./douban";
+import type { DoubanProxyType } from "./doubanSettings";
 import type {
   AppError,
   ConfigMeta,
@@ -383,6 +385,22 @@ export const api = {
 
   httpFetch(req: FetchRequest): Promise<FetchResponse> {
     return call("http_fetch", { req });
+  },
+
+  /**
+   * 按片名（可带年份）取豆瓣元数据；没匹配上时后端返回 `null`，不是错误。
+   *
+   * 代理参数由 Rust 侧决定怎么用（内置前缀或用户自定义前缀），前端只透传
+   * 设置里的选择，这样换代理不用改 command 签名。调用方是 `src/lib/douban.ts`，
+   * 失败一律静默降级，详情页不依赖它。
+   */
+  doubanMeta(
+    title: string,
+    year?: string,
+    proxyType?: DoubanProxyType,
+    proxyPrefix?: string,
+  ): Promise<DoubanMeta | null> {
+    return call("douban_meta", { title, year, proxyType, proxyPrefix });
   },
 
   /** 直播 m3u 动辄数千频道，返回直播页时不要重新下载解析一遍。 */

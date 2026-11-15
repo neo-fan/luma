@@ -817,3 +817,86 @@
   gap: 10px;
   justify-content: center;
 }
+
+/* ---------- 设置 · 豆瓣信息补全 ---------- */
+
+/* 组内再画一层卡片：开关 + 请求方式 + 可选前缀是同一条设置，用底色把它们
+   圈在一起，避免和下面「本地反代」的段落看起来连续。 */
+.douban-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+/* 两行文案的开关：复用 .filter-toggle 的自绘复选框，只把对齐从 center 换成
+   flex-start，让方框对齐第一行而不是整块的中线。 */
+.douban-settings__switch {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.douban-settings__switch input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.douban-settings__switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.douban-settings__switch-label {
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+
+.douban-settings__switch-note {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.douban-settings__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.douban-settings__label {
+  flex: 0 0 72px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* 下拉/输入框占满标签右侧，长前缀才不会把行撑出卡片。 */
+.douban-settings__row .app-select {
+  flex: 0 1 auto;
+}
+
+.douban-settings__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+
+/* 选中项说明：比 .settings-line 更弱一级（--muted + 12px），是控件的注脚。 */
+.douban-settings__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.douban-settings__note {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}

@@ -46,6 +46,8 @@ pub mod window;
 pub mod clipboard;
 #[path = "domain/config/mod.rs"]
 pub mod config;
+#[path = "domain/douban.rs"]
+pub mod douban;
 #[path = "domain/ghproxy.rs"]
 pub mod ghproxy;
 #[path = "domain/live.rs"]
@@ -252,6 +254,7 @@ pub fn run() {
             play::resolve_play,
             parse::parse_resolve,
             play::open_external,
+            douban::douban_meta,
             store::favorites_list,
             store::favorites_toggle,
             store::favorites_patch_meta,

@@ -16,6 +16,7 @@ import Icon from "../components/Icon";
 import IconButton from "../components/IconButton";
 import SourcePicker from "../components/SourcePicker";
 import DetailSkeleton from "../components/DetailSkeleton";
+import DoubanMetaBlock from "../components/DoubanMetaBlock";
 import {
   formatDuration,
   parsePlayLines,
@@ -25,6 +26,8 @@ import {
 } from "../lib/format";
 import type { Episode, PlayLine } from "../lib/format";
 import { findPlayableSource } from "../lib/crossSourceRecovery";
+import { fetchDoubanMeta } from "../lib/douban";
+import type { DoubanMeta } from "../lib/douban";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { pageCache } from "../lib/pageCache";
 import { notify } from "../lib/notify";
@@ -161,6 +164,11 @@ export default function DetailPage({
   }, [recoveryNotice]);
   // 历史进度刚在播放页写过，必须每次回到详情重新读，不能缓存成旧值。
   const [resume, setResume] = useState<HistoryItem | null>(null);
+  /**
+   * 豆瓣补全结果。`null` = 没有（未开启 / 没匹配上 / 请求失败），
+   * 三者对界面是同一种状态：整块不渲染。
+   */
+  const [doubanMeta, setDoubanMeta] = useState<DoubanMeta | null>(null);
 
   useEffect(() => {
     // reload>0 是用户点了刷新图标；此时忽略缓存强制拉取最新播放列表。
@@ -356,6 +364,35 @@ export default function DetailPage({
     // title 不在依赖里会让「按剧名接续别的源的进度」永远等不到 title 到位。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteKey, vodId, title]);
+
+  /**
+   * 豆瓣补全：进详情页自动问一次，等详情落地后再发（`vod_year` 到位时能避免
+   * 同名片认错，也保证一次访问只发一次请求）。不预取首页、不在列表里发。
+   * 拿不到就是 `null`——不渲染区块、不弹提示、不占位，详情照旧显示源站信息。
+   * 同一片名+年份的去重与并发合并都在 `src/lib/douban.ts` 里，从播放页返回
+   * 详情（组件重新挂载）不会重复打豆瓣。设置关闭时该函数直接返回 null。
+   */
+  const doubanTitle = (vod?.vod_name || title || "").trim();
+  const doubanYear = (vod?.vod_year || "").trim();
+  const doubanReady = !loading && (!!vod || empty || !!error);
+  useEffect(() => {
+    // 片名/年份变了先清空：详情页在同一条路由上换片时组件不卸载，
+    // 不清会出现「上一部片的评分挂在新片下面」。
+    setDoubanMeta(null);
+    if (!doubanReady || !doubanTitle) {
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      const meta = await fetchDoubanMeta(doubanTitle, doubanYear || undefined);
+      if (alive && meta) {
+        setDoubanMeta(meta);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [doubanReady, doubanTitle, doubanYear]);
 
   const lines = useMemo(
     () => parsePlayLines(vod?.vod_play_from, vod?.vod_play_url),
@@ -787,6 +824,12 @@ export default function DetailPage({
             </div>
           </div>
         </div>
+
+        {/* 豆瓣补全块：只有拿到数据才存在（拿不到连空壳都不占位）。
+            海报只在源站没给 `vod_pic` 时才由豆瓣兜底，不跟源站抢封面。 */}
+        {doubanMeta ? (
+          <DoubanMetaBlock meta={doubanMeta} posterFallback={!vod?.vod_pic} />
+        ) : null}
 
         <div className="section">
           <div className="section-head">
