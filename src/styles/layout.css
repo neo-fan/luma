@@ -84,14 +84,6 @@
   white-space: nowrap;
 }
 
-.brand__text small {
-  color: var(--faint);
-  font-size: var(--fs-2xs);
-  font-weight: var(--fw-medium);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 .nav {
   display: flex;
   flex-direction: column;

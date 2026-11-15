@@ -379,10 +379,7 @@ export default function AppShell() {
             <span className="brand__mark">
               <img src="/icon.svg" alt="" />
             </span>
-            <span className="brand__text">
-              Luma
-              <small>TVBox 兼容</small>
-            </span>
+            <span className="brand__text">Luma</span>
           </div>
           <nav className="nav">
             {navItems.map((item) => {
