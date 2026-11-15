@@ -396,6 +396,28 @@ export function usePlayerEngine({
     const noteAlive = () => {
       lastAliveAt = Date.now();
     };
+    // 插件在 art 的 ready / restart 事件里会再调一次 update，只摘一次控件会被它
+    // 重新挂回来；把开关做实到配置对象上，单码率时后续事件也不再添加「清晰度：
+    // 自动」这种假选项。
+    const qualityOption = {
+      control: true,
+      setting: true,
+      title: "清晰度",
+      auto: "自动",
+      // 多数 TVBox 源是单码率且不带 RESOLUTION，插件默认会显示 "0P"；
+      // 无分辨率时退回码率 / 片源自定义名 / 原画。
+      getName: (level: unknown) => {
+        const item = level as { name?: string; height?: number; bitrate?: number };
+        if (item.height && item.height > 0) {
+          return `${item.height}P`;
+        }
+        if (item.bitrate && item.bitrate > 0) {
+          return `${Math.round(item.bitrate / 1000)}kbps`;
+        }
+        return item.name || "原画";
+      },
+    };
+
     const art = new Artplayer({
       container,
       url: resolved.proxyUrl,
@@ -421,24 +443,7 @@ export function usePlayerEngine({
         resolved.kind === "hls"
           ? [
               artplayerPluginHlsControl({
-                quality: {
-                  control: true,
-                  setting: true,
-                  title: "清晰度",
-                  auto: "自动",
-                  // 多数 TVBox 源是单码率且不带 RESOLUTION，插件默认会显示
-                  // "0P"；无分辨率时退回码率 / 片源自定义名 / 原画。
-                  getName: (level) => {
-                    const item = level as { name?: string; height?: number; bitrate?: number };
-                    if (item.height && item.height > 0) {
-                      return `${item.height}P`;
-                    }
-                    if (item.bitrate && item.bitrate > 0) {
-                      return `${Math.round(item.bitrate / 1000)}kbps`;
-                    }
-                    return item.name || "原画";
-                  },
-                },
+                quality: qualityOption,
                 audio: { control: false, setting: true, title: "音轨", auto: "自动" },
               }),
             ]
@@ -531,6 +536,8 @@ export function usePlayerEngine({
               ),
             );
             if (levels.size <= 1) {
+              qualityOption.control = false;
+              qualityOption.setting = false;
               instance.controls.remove("hls-quality");
               instance.setting.remove("hls-quality");
             }
