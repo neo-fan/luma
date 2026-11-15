@@ -1298,6 +1298,7 @@ export default function PlayerPage({
         label={resolutionBadge(videoMeta)}
         detail={resolutionDetail(videoMeta.width, videoMeta.height)}
         episode={activeEpisodeName}
+        bitrate={videoMeta.bitrateKbps}
       />
     </>
   );

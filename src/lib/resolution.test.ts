@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  bitrateLabel,
   remarksResolution,
   resolutionBadge,
   resolutionDetail,
@@ -85,5 +86,19 @@ describe("resolutionFromVideo", () => {
     // 还没出画：返回空串，调用方保留上一次的已知值。
     expect(resolutionFromVideo(video(0, 0))).toBe("");
     expect(resolutionFromVideo(null)).toBe("");
+  });
+});
+
+describe("bitrateLabel", () => {
+  it("kbps 与 Mbps 两种口径按 1000 分界", () => {
+    expect(bitrateLabel(860)).toBe("860 kbps");
+    expect(bitrateLabel(1000)).toBe("1.0 Mbps");
+    expect(bitrateLabel(1834)).toBe("1.8 Mbps");
+  });
+
+  it("拿不到码率时返回空串，角标不渲染这一段", () => {
+    expect(bitrateLabel(undefined)).toBe("");
+    expect(bitrateLabel(0)).toBe("");
+    expect(bitrateLabel(Number.NaN)).toBe("");
   });
 });

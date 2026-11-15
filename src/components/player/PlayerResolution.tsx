@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { bitrateLabel } from "../../lib/resolution";
 
 interface PlayerResolutionProps {
   /**
@@ -20,6 +21,11 @@ interface PlayerResolutionProps {
    * 「在播哪一集」，而控制栏那枚「下一集」按钮只说明还有下一集。
    */
   episode?: string;
+  /**
+   * 实测视频码率（kbps）。有值才展示：直链 mp4 / flv 拿不到，TVBox 的多数
+   * 单码率 HLS 也只有分片下载量能算出来（见引擎的 FRAG_LOADED）。
+   */
+  bitrate?: number;
   /**
    * 直播态传入频道名：频道名与分辨率合并成画面左上角一块。
    *
@@ -64,6 +70,7 @@ export default function PlayerResolution({
   label,
   detail,
   episode,
+  bitrate,
   channel,
 }: PlayerResolutionProps) {
   const [idle, setIdle] = useState(false);
@@ -150,18 +157,21 @@ export default function PlayerResolution({
       host,
     );
   }
-  if (!label && !episode) {
+  const rate = bitrateLabel(bitrate);
+  if (!label && !episode && !rate) {
     return null;
   }
   return createPortal(
     <span
       className={`player-res${idle ? " is-idle" : ""}`}
-      title={[detail, label, episode].filter(Boolean).join(" · ")}
+      title={[detail, episode, label, rate].filter(Boolean).join(" · ")}
       aria-hidden="true"
     >
       {episode ? <em className="player-res__ep">{episode}</em> : null}
       {episode && label ? <span className="player-res__sep">·</span> : null}
       {label}
+      {rate ? <span className="player-res__sep">·</span> : null}
+      {rate ? <span className="player-res__rate">{rate}</span> : null}
     </span>,
     host,
   );

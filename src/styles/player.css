@@ -98,6 +98,11 @@
   font-style: normal;
 }
 
+.player-res__rate {
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+}
+
 .player-res__sep {
   margin: 0 6px;
   color: rgba(255, 255, 255, 0.4);

@@ -20,6 +20,13 @@ export interface VideoMeta {
   height: number;
   /** HLS 清单 RESOLUTION 声明的短边高度；没有就留空。 */
   declaredHeight?: number;
+  /**
+   * 实测视频码率（kbps，按 HLS 分片 `字节数 × 8 ÷ 分片时长` 平滑）。
+   *
+   * 清单里的 `BANDWIDTH` 是声明值，源常写错或干脆不写；这个值来自实际下载的
+   * 分片，能反映「这一集到底多少码率」。非 HLS（直链 mp4 / flv）拿不到，留空。
+   */
+  bitrateKbps?: number;
 }
 
 /**
@@ -119,4 +126,19 @@ export function remarksResolution(remarks?: string | null): string {
   }
   const height = Number(match[1]);
   return height >= 300 ? `${height}P` : "";
+}
+
+/**
+ * 实测码率的展示文案：≥1000 kbps 用 Mbps 一位小数，否则 kbps 整数。
+ *
+ * 非正数/NaN 返回空串：直链 mp4 拿不到码率，角标就不该出现这一段。
+ */
+export function bitrateLabel(kbps?: number): string {
+  if (typeof kbps !== "number" || !Number.isFinite(kbps) || kbps <= 0) {
+    return "";
+  }
+  if (kbps >= 1000) {
+    return `${(kbps / 1000).toFixed(1)} Mbps`;
+  }
+  return `${Math.round(kbps)} kbps`;
 }

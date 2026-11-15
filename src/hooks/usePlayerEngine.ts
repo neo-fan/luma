@@ -364,6 +364,8 @@ export function usePlayerEngine({
      * 分辨率以 `<video>` 解码出来的 `videoWidth/videoHeight` 为准。
      */
     let declaredHeight = 0;
+    /** 实测视频码率（kbps）：按分片字节 ÷ 分片时长做指数平滑。 */
+    let measuredKbps = 0;
     /**
      * 最近一次「确认源还在动」的时刻。
      *
@@ -488,7 +490,24 @@ export function usePlayerEngine({
           hls.on(Hls.Events.MANIFEST_LOADING, noteHlsAlive);
           hls.on(Hls.Events.MANIFEST_LOADED, noteHlsAlive);
           hls.on(Hls.Events.LEVEL_LOADED, noteHlsAlive);
-          hls.on(Hls.Events.FRAG_LOADED, noteHlsAlive);
+          hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+            noteHlsAlive();
+            // 实测码率：分片真实字节 / 该分片覆盖的媒体时长。声明值常缺失或
+            // 偏小，这个数才反映「当前这一集到底多大码率」。按 0.7/0.3 平滑，
+            // 避免单个小分片（片头）把读数带飞。
+            const bytes = data.frag?.stats?.total;
+            const seconds = data.frag?.duration;
+            if (!bytes || !seconds || seconds <= 0) {
+              return;
+            }
+            const kbps = (bytes * 8) / seconds / 1000;
+            measuredKbps = measuredKbps > 0 ? measuredKbps * 0.7 + kbps * 0.3 : kbps;
+            // 抖动小于 10% 不必重渲染；换档时那一跳能立刻反映出来。
+            const previous = Math.round(measuredKbps);
+            if (Math.abs(kbps - previous) / Math.max(previous, 1) > 0.1) {
+              reportMeta();
+            }
+          });
           hls.on(Hls.Events.FRAG_BUFFERED, noteHlsAlive);
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (disposed) {
@@ -806,6 +825,7 @@ export function usePlayerEngine({
         width: video.videoWidth || 0,
         height: video.videoHeight || 0,
         declaredHeight,
+        bitrateKbps: measuredKbps > 0 ? Math.round(measuredKbps) : undefined,
       });
     };
     video.addEventListener("loadedmetadata", reportMeta);
