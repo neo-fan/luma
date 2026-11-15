@@ -53,16 +53,21 @@
   margin: 2px 0;
   color: var(--muted);
   font-size: var(--fs-sm);
+  /* 主演/导演是「/」串起来的长名单：没有断行点也可以换行，别把卡片撑出横向溢出。 */
+  overflow-wrap: anywhere;
 }
 
+/* 简介曾经用 --line-measure（70ch）：ch 按西文「0」宽度算，13px 下每行只剩三十多个
+   汉字，长简介被压成一列窄条、宽卡右半边全空，卡片还会跟着无谓长高。这里改用列宽，
+   上限按 em（汉字宽度）给，超宽屏也不会出现长到读不下去的行。 */
 .detail-content {
-  max-width: var(--line-measure);
+  max-width: min(100%, 72em);
   margin: 14px 0 0;
   color: var(--text-soft);
   font-size: var(--fs-sm);
+  line-height: 1.6;
   white-space: pre-wrap;
-  max-height: 220px;
-  overflow-y: auto;
+  overflow-wrap: anywhere;
   padding-right: 6px;
 }
 
