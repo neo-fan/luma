@@ -19,13 +19,24 @@ fn first_image_failure(host: &str) -> bool {
     seen.insert(host.to_string())
 }
 
-/// 封面代理的所有失败出口都从这里过：带 host 与原因落一条日志。
-fn log_image_failure(target: &Url, reason: &str) {
+/// 封面代理的所有失败出口都从这里过：带 host + 分类原因落一条日志。
+///
+/// `kind` 是排查的第一现场：`tls` / `dns` 是本机网络（或 Clash fake-IP）的
+/// 问题，`status` / `not-image` 才是上游内容的问题，别混成一句 502。
+fn log_image_failure(
+    target: &Url,
+    kind: ImageFailure,
+    reason: &str,
+    first_kind: Option<ImageFailure>,
+) {
     let host = target.host_str().unwrap_or("");
+    // 有第二次尝试时，最终分类只是「第二次怎么失败的」；第一次的 tls/dns 才是
+    // 判断「本机网络问题」的关键，所以两条都留在同一行里。
+    let first_kind = first_kind.map(ImageFailure::as_str).unwrap_or("-");
     if first_image_failure(host) {
-        tracing::warn!(host, url = %target, reason, "poster fetch failed");
+        tracing::warn!(host, url = %target, kind = kind.as_str(), first_kind, reason, "poster fetch failed");
     } else {
-        tracing::debug!(host, url = %target, reason, "poster fetch failed again");
+        tracing::debug!(host, url = %target, kind = kind.as_str(), first_kind, reason, "poster fetch failed again");
     }
 }
 
@@ -54,6 +65,293 @@ pub(super) fn image_format(bytes: &[u8]) -> Option<&'static str> {
         return Some("image/bmp");
     }
     None
+}
+
+/// 浏览器味的 UA / Accept，给 `/image` 的第二次尝试用。
+///
+/// 默认头是 `okhttp/3.15`（TVBox 生态的约定），但相当一部分国内图床 / CDN
+/// 对非浏览器 UA 直接回 403、防盗链空页或 `text/html`。封面不是播放，换一套
+/// 浏览器头没有副作用，命中率明显更高。
+pub(super) const IMAGE_BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const IMAGE_ACCEPT: &str =
+    "image/avif,image/webp,image/apng,image/png,image/svg+xml,image/*,*/*;q=0.8";
+/// 单次上游请求上限。`ProxyState::client` 的 20s 是给 m3u8 的；一屏封面动辄
+/// 几十上百张，20s 会把整面卡片墙拖到超时，8s 足够区分「慢」与「死」。
+const IMAGE_TIMEOUT: Duration = Duration::from_secs(8);
+/// 非 `image/*` 响应最多攒这么多字节再嗅探，超过不往内存里读。
+const MAX_SNIFF_BYTES: usize = 8 * 1024 * 1024;
+
+/// 封面失败的分类。日志与重试策略都只看它：必须把「本机网络 / TLS」和
+/// 「上游真不是图片」分开，否则 502 全被当成一个原因，排查时毫无信息量。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ImageFailure {
+    Timeout,
+    Dns,
+    Tls,
+    Connect,
+    /// 上游给了非 2xx。
+    Status,
+    /// 2xx 但响应体不是图片（空 body / 防盗链 HTML / 播放列表）。
+    NotImage,
+    Other,
+}
+
+impl ImageFailure {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Dns => "dns",
+            Self::Tls => "tls",
+            Self::Connect => "connect",
+            Self::Status => "status",
+            Self::NotImage => "not-image",
+            Self::Other => "other",
+        }
+    }
+
+    /// 换浏览器 UA 再试一次是否可能有效。
+    ///
+    /// `dns` 换 UA 不会改变解析结果；`timeout` 再等 8s 只会让封面墙更慢；
+    /// `tls` 走 http 回退（见 `next_image_attempt`），换 UA 没用。
+    pub(super) fn retry_with_browser(self) -> bool {
+        !matches!(self, Self::Dns | Self::Timeout | Self::Tls)
+    }
+}
+
+/// 封面的第几次尝试 / 换什么再试。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ImageAttempt {
+    /// 第一次：spider / 配置里的头 + TVBox 默认头（`okhttp/3.15`）。
+    Source,
+    /// 第二次：同 URL，浏览器 UA + `Accept: image/*`（其余头保留）。
+    Browser,
+    /// 第二次的另一种形态：https 握手失败时降级到 http（仍用浏览器头）。
+    HttpFallback,
+}
+
+/// 生成某次尝试实际发送的头。
+///
+/// `Source` 原样使用（默认头由 `netrules::with_defaults` 在调用方补齐）；
+/// `Browser` / `HttpFallback` 只覆盖 `User-Agent`、补一个缺失的 `Accept`，
+/// 绝不覆盖调用方显式给的 Referer / Cookie —— 防盗链靠的正是它们。
+pub(super) fn image_attempt_headers(
+    base: &[(String, String)],
+    attempt: ImageAttempt,
+) -> Vec<(String, String)> {
+    let mut out = base.to_vec();
+    if attempt == ImageAttempt::Source {
+        return out;
+    }
+    if let Some(slot) = out
+        .iter_mut()
+        .find(|(name, _)| name.eq_ignore_ascii_case("User-Agent"))
+    {
+        slot.0 = "User-Agent".into();
+        slot.1 = IMAGE_BROWSER_UA.into();
+    } else {
+        out.push(("User-Agent".into(), IMAGE_BROWSER_UA.into()));
+    }
+    if !out
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("Accept"))
+    {
+        out.push(("Accept".into(), IMAGE_ACCEPT.into()));
+    }
+    out
+}
+
+/// 决定第一次失败后是否还有第二次、以及第二次怎么打。
+///
+/// 只有两种回退，最多两次请求：
+/// 1. https + TLS 握手失败 → 降级 http（同一路径，浏览器头）；
+/// 2. 其余可重试原因（连接失败 / 非 2xx / 不是图片）→ 同 URL 换浏览器头。
+///
+/// 明令不做的事：忽略证书校验、关闭 TLS 验证、把 DNS/fake-IP 失败当图片错。
+pub(super) fn next_image_attempt(
+    target: &Url,
+    failure: ImageFailure,
+) -> Option<(ImageAttempt, Url)> {
+    if failure == ImageFailure::Tls && target.scheme() == "https" {
+        let mut fallback = target.clone();
+        if fallback.set_scheme("http").is_ok() {
+            return Some((ImageAttempt::HttpFallback, fallback));
+        }
+    }
+    if failure.retry_with_browser() {
+        return Some((ImageAttempt::Browser, target.clone()));
+    }
+    None
+}
+
+/// 把 reqwest 错误的整条 `source()` 链摊平成一行。
+///
+/// `reqwest::Error` 的 `Display` 只有 `error sending request for url (...)`，
+/// 真正原因（DNS / TLS 证书 / 连接被重置）全在 `source()` 里。只打 Display
+/// 等于什么也没说，本任务最初就是被这行日志耽误的。
+pub(super) fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts: Vec<String> = vec![err.to_string()];
+    let mut source = err.source();
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if text.is_empty() || parts.iter().any(|part| part == &text) {
+            break;
+        }
+        parts.push(text);
+        source = cause.source();
+    }
+    parts.join("; ")
+}
+
+/// 只按错误文本分类，纯函数，便于单测。
+pub(super) fn classify_error_text(text: &str) -> ImageFailure {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("timed out") || lower.contains("timeout") {
+        return ImageFailure::Timeout;
+    }
+    if lower.contains("dns error")
+        || lower.contains("failed to lookup")
+        || lower.contains("failed to resolve")
+        || lower.contains("no such host")
+        || lower.contains("getaddrinfo")
+        || lower.contains("name or service not known")
+    {
+        return ImageFailure::Dns;
+    }
+    if lower.contains("certificate")
+        || lower.contains("tls")
+        || lower.contains("handshake")
+        || lower.contains("ssl")
+        || lower.contains("unknownissuer")
+        || lower.contains("unknown issuer")
+        || lower.contains("invalid peer")
+    {
+        return ImageFailure::Tls;
+    }
+    if lower.contains("connect")
+        || lower.contains("connection refused")
+        || lower.contains("connection reset")
+        || lower.contains("unreachable")
+        || lower.contains("eof")
+    {
+        return ImageFailure::Connect;
+    }
+    ImageFailure::Other
+}
+
+/// 分类一次 reqwest 传输错误。
+pub(super) fn classify_transport_error(err: &reqwest::Error) -> ImageFailure {
+    if err.is_timeout() {
+        return ImageFailure::Timeout;
+    }
+    // 只看 source 链：`Display` 里的 URL 可能恰好含 "dns"/"tls" 之类的词，
+    // 拿它分类会误判（比如 `https://dns.example/x.jpg`）。
+    let mut text = String::new();
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        if !text.is_empty() {
+            text.push_str("; ");
+        }
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    let kind = classify_error_text(&text);
+    // 连接阶段没给出更具体原因时，归为 connect 而不是 other：它对排查仍然
+    // 意味着「到上游的 TCP/代理层没走通」。
+    if kind == ImageFailure::Other && err.is_connect() {
+        return ImageFailure::Connect;
+    }
+    kind
+}
+
+/// 发一次封面请求。`timeout` 是单次上限，不复用 m3u8 的 20s 全局值。
+async fn fetch_image_once(
+    client: &reqwest::Client,
+    target: &Url,
+    headers: &[(String, String)],
+) -> Result<reqwest::Response, reqwest::Error> {
+    let mut request = client.get(target.clone()).timeout(IMAGE_TIMEOUT);
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    request.send().await
+}
+
+/// 发一次请求并检查响应：成功直接给出可返回的图片响应，失败给出分类原因。
+async fn fetch_image(
+    client: &reqwest::Client,
+    target: &Url,
+    headers: &[(String, String)],
+) -> Result<Response, (ImageFailure, String)> {
+    let upstream = match fetch_image_once(client, target, headers).await {
+        Ok(upstream) => upstream,
+        Err(err) => {
+            let kind = classify_transport_error(&err);
+            return Err((kind, error_chain(&err)));
+        }
+    };
+    image_response(upstream, target).await
+}
+
+/// 检查一次上游响应：能当图片回就构造好响应；不能就返回「分类 + 原因」。
+async fn image_response(
+    upstream: reqwest::Response,
+    target: &Url,
+) -> Result<Response, (ImageFailure, String)> {
+    let status = upstream.status();
+    if !status.is_success() {
+        return Err((ImageFailure::Status, format!("upstream status {status}")));
+    }
+    let content_type = upstream
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    // 上游自己声明了 image/*：直接流式转发（不攒内存）。
+    if content_type.to_ascii_lowercase().starts_with("image/") {
+        let stream = upstream.bytes_stream();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", content_type)
+            .header("cache-control", "public, max-age=604800")
+            .header("access-control-allow-origin", "*")
+            .header("access-control-expose-headers", "*")
+            .header("x-tvbox-proxy", "image")
+            .body(Body::from_stream(stream))
+            .map_err(|_| (ImageFailure::Other, "response build failed".into()));
+    }
+
+    // 没声明成图片（常见 `application/octet-stream` / `binary/octet-stream`
+    // / 空 body 的防盗链页）：读回来按文件头嗅探，认出是图片就补对
+    // content-type 再回给 <img>。
+    let body = match upstream.bytes().await {
+        Ok(bytes) => bytes,
+        Err(err) => return Err((ImageFailure::Other, format!("body read failed: {err}"))),
+    };
+    if body.len() > MAX_SNIFF_BYTES {
+        return Err((
+            ImageFailure::NotImage,
+            format!("image too large ({} bytes, type {content_type})", body.len()),
+        ));
+    }
+    let Some(kind) = image_format(&body) else {
+        return Err((
+            ImageFailure::NotImage,
+            format!("not an image (status {status}, type {content_type}, {} bytes)", body.len()),
+        ));
+    };
+    tracing::debug!(url = %target, sniffed = kind, "poster sniffed from non-image content-type");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", kind)
+        .header("cache-control", "public, max-age=604800")
+        .header("access-control-allow-origin", "*")
+        .header("access-control-expose-headers", "*")
+        .header("x-tvbox-proxy", "image")
+        .body(Body::from(body))
+        .map_err(|_| (ImageFailure::Other, "response build failed".into()))
 }
 
 pub(super) async fn handle_health(State(state): State<Arc<ProxyState>>) -> Response {
@@ -423,6 +721,17 @@ pub(crate) fn parse_vod_pic_url(raw: &str) -> Option<(String, Vec<(String, Strin
 /// `?url=`; we parse the inline headers, validate the pure URL against the
 /// same whitelist as `/proxy`, inject headers (inline > config `headers[]` >
 /// defaults), then stream the image back with a long cache lifetime.
+///
+/// Failures get exactly one more chance:
+/// - https TLS handshake failure → same path over http (browser headers);
+/// - connection failure / non-2xx / 2xx-but-not-an-image → same URL with a
+///   browser UA + `Accept: image/*`. Many image hosts answer the TVBox
+///   `okhttp/3.15` UA with 403 or a hotlink page.
+///
+/// DNS failures (e.g. the host resolves to a Clash fake-IP that cannot be
+/// dialed) and timeouts are not retried: the retry cannot change the outcome
+/// and would only double the stall. We never disable certificate verification
+/// to "fix" a site.
 pub(super) async fn handle_image(
     State(state): State<Arc<ProxyState>>,
     RawQuery(raw): RawQuery,
@@ -446,78 +755,87 @@ pub(super) async fn handle_image(
     }
 
     // Inline headers win over the config-level host table; defaults fill gaps.
-    let forwarded = crate::netrules::with_defaults(
+    let base = crate::netrules::with_defaults(
         &target,
         crate::netrules::merged_for(target.as_str(), &inline),
     );
-    let mut request = state.client.get(target.clone());
-    for (name, value) in forwarded {
-        request = request.header(name, value);
-    }
+    let host = target.host_str().unwrap_or("");
 
-    let upstream = match request.send().await {
-        Ok(response) => response,
-        Err(err) => {
-            let status = if err.is_timeout() { StatusCode::GATEWAY_TIMEOUT } else { StatusCode::BAD_GATEWAY };
-            log_image_failure(&target, &format!("upstream failed: {err}"));
-            return deny(status, &format!("upstream failed: {err}"));
+    // 最多两次请求。第一次用源给的头；失败后由 `next_image_attempt` 决定
+    // 第二次是「换浏览器头」还是「https 降 http」，这里不堆分支。
+    let mut request_url = target.clone();
+    let mut headers = image_attempt_headers(&base, ImageAttempt::Source);
+    let mut first_failure: Option<(ImageFailure, String)> = None;
+    let mut failure: Option<(ImageFailure, String)> = None;
+
+    for round in 0..2 {
+        match fetch_image(&state.client, &request_url, &headers).await {
+            Ok(response) => return response,
+            Err((kind, reason)) => {
+                if round == 0 {
+                    first_failure = Some((kind, reason.clone()));
+                }
+                tracing::debug!(
+                    host,
+                    url = %request_url,
+                    kind = kind.as_str(),
+                    reason,
+                    "poster attempt failed"
+                );
+                let next = if round == 0 {
+                    next_image_attempt(&target, kind)
+                } else {
+                    None
+                };
+                match next {
+                    Some((attempt, url)) => {
+                        tracing::debug!(
+                            host,
+                            url = %url,
+                            attempt = ?attempt,
+                            "poster retrying"
+                        );
+                        request_url = url;
+                        headers = image_attempt_headers(&base, attempt);
+                    }
+                    None => {
+                        failure = Some((kind, reason));
+                        break;
+                    }
+                }
+            }
         }
+    }
+
+    let (kind, reason) = failure.unwrap_or((ImageFailure::Other, "no attempt".to_string()));
+    // 第二次打了别的地址（http 回退）时，把原始 URL 一并留在日志里。
+    let reason = if request_url == target {
+        reason
+    } else {
+        format!("{reason} (from {target})")
     };
-    let status = upstream.status();
-    let content_type = upstream
-        .headers()
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("application/octet-stream")
-        .to_string();
-    // Only serve real images; refuse to turn the proxy into a generic file
-    // fetcher (and stop a mislabeled playlist/script from reaching <img>).
-    if !status.is_success() {
-        log_image_failure(&target, &format!("upstream status {status}"));
-        return deny(StatusCode::BAD_GATEWAY, &format!("upstream status {status}"));
-    }
-
-    // 上游自己声明了 image/*：直接流式转发（不攒内存）。
-    if content_type.to_ascii_lowercase().starts_with("image/") {
-        let stream = upstream.bytes_stream();
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", content_type)
-            .header("cache-control", "public, max-age=604800")
-            .header("access-control-allow-origin", "*")
-            .header("access-control-expose-headers", "*")
-            .header("x-tvbox-proxy", "image")
-            .body(Body::from_stream(stream))
-            .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"));
-    }
-
-    // 没声明成图片（常见 `application/octet-stream` / `binary/octet-stream`）：
-    // 读回来按文件头嗅探，认出是图片就补对 content-type 再回给 <img>。
-    const MAX_SNIFF_BYTES: usize = 8 * 1024 * 1024;
-    let body = match upstream.bytes().await {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            log_image_failure(&target, &format!("body read failed: {err}"));
-            return deny(StatusCode::BAD_GATEWAY, &format!("body read failed: {err}"));
+    let first_kind = first_failure
+        .as_ref()
+        .map(|(first_kind, _)| *first_kind)
+        .filter(|first_kind| *first_kind != kind);
+    log_image_failure(&target, kind, &reason, first_kind);
+    let status = if kind == ImageFailure::Timeout {
+        StatusCode::GATEWAY_TIMEOUT
+    } else {
+        StatusCode::BAD_GATEWAY
+    };
+    let body = match &first_failure {
+        // 只保留最终那次的话，tls 这种「第一次真因」会从响应体里消失。
+        Some((first_kind, first_reason)) if *first_kind != kind => {
+            format!(
+                "{}: {reason} [{}: {first_reason}]",
+                kind.as_str(),
+                first_kind.as_str()
+            )
         }
+        _ => format!("{}: {reason}", kind.as_str()),
     };
-    if body.len() > MAX_SNIFF_BYTES {
-        log_image_failure(&target, &format!("not an image (too large: {} bytes, type {content_type})", body.len()));
-        return deny(StatusCode::BAD_GATEWAY, "image too large");
-    }
-    let Some(kind) = image_format(&body) else {
-        log_image_failure(&target, &format!("not an image (status {status}, type {content_type})"));
-        return deny(StatusCode::BAD_GATEWAY, &format!("not an image (status {status}, type {content_type})"));
-    };
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", kind)
-        .header("cache-control", "public, max-age=604800")
-        .header("access-control-allow-origin", "*")
-        .header("access-control-expose-headers", "*")
-        .header("x-tvbox-proxy", "image")
-        .body(Body::from(body))
-        .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"))
+    deny(status, &body)
 }
 
 /// TVBox local proxy for spider-owned resources (`/proxy?do=py|jar|js`).

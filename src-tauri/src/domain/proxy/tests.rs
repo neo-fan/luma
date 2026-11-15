@@ -187,3 +187,137 @@ fn image_format_rejects_non_images() {
     assert_eq!(image_format(b"#EXTM3U\n#EXTINF:4,\nseg.ts\n"), None);
     assert_eq!(image_format(b""), None);
 }
+
+#[test]
+fn image_attempt_browser_headers_overwrite_ua_and_keep_referer() {
+    let base = vec![
+        ("User-Agent".to_string(), "okhttp/3.15".to_string()),
+        ("Referer".to_string(), "https://ref.example/".to_string()),
+        ("Cookie".to_string(), "a=1".to_string()),
+    ];
+    assert_eq!(image_attempt_headers(&base, ImageAttempt::Source), base);
+
+    let browser = image_attempt_headers(&base, ImageAttempt::Browser);
+    let get = |name: &str| {
+        browser
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    };
+    assert_eq!(get("User-Agent"), Some(IMAGE_BROWSER_UA));
+    assert_eq!(get("Referer"), Some("https://ref.example/"));
+    assert_eq!(get("Cookie"), Some("a=1"));
+    assert!(get("Accept").unwrap_or("").contains("image/avif"));
+    // 不允许出现两个 UA（reqwest 会把后一个覆盖成单值，别指望它去重）。
+    assert_eq!(
+        browser
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("User-Agent"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn image_attempt_headers_adds_missing_ua_and_keeps_explicit_accept() {
+    let base = vec![("Accept".to_string(), "image/png".to_string())];
+    let browser = image_attempt_headers(&base, ImageAttempt::HttpFallback);
+    assert!(browser
+        .iter()
+        .any(|(key, value)| key == "User-Agent" && value == IMAGE_BROWSER_UA));
+    assert_eq!(
+        browser.iter().filter(|(key, _)| key == "Accept").count(),
+        1,
+        "显式 Accept 不能被覆盖或重复"
+    );
+    assert!(browser
+        .iter()
+        .any(|(key, value)| key == "Accept" && value == "image/png"));
+}
+
+#[test]
+fn next_image_attempt_prefers_http_fallback_for_https_tls_failure() {
+    let url = Url::parse("https://img.example/a.jpg").unwrap();
+    let (attempt, fallback) = next_image_attempt(&url, ImageFailure::Tls).expect("http 回退");
+    assert_eq!(attempt, ImageAttempt::HttpFallback);
+    assert_eq!(fallback.scheme(), "http");
+    assert_eq!(fallback.as_str(), "http://img.example/a.jpg");
+
+    // 原 URL 已经是 http：没有「降级」空间，也不做隐式 https 升级。
+    let plain = Url::parse("http://img.example/a.jpg").unwrap();
+    assert_eq!(next_image_attempt(&plain, ImageFailure::Tls), None);
+}
+
+#[test]
+fn next_image_attempt_retries_browser_headers_only_for_retryable_kinds() {
+    let url = Url::parse("https://img.example/a.jpg").unwrap();
+    for failure in [
+        ImageFailure::Status,
+        ImageFailure::NotImage,
+        ImageFailure::Connect,
+        ImageFailure::Other,
+    ] {
+        let (attempt, retry) = next_image_attempt(&url, failure).expect(failure.as_str());
+        assert_eq!(attempt, ImageAttempt::Browser, "{}", failure.as_str());
+        assert_eq!(retry.as_str(), "https://img.example/a.jpg");
+    }
+    // DNS（Clash fake-IP）/ 超时重试无意义：换个 UA 解析结果和超时预算都不变。
+    assert_eq!(next_image_attempt(&url, ImageFailure::Dns), None);
+    assert_eq!(next_image_attempt(&url, ImageFailure::Timeout), None);
+}
+
+#[test]
+fn classify_error_text_separates_network_from_picture() {
+    assert_eq!(
+        classify_error_text("dns error: failed to lookup address information: Name or service not known"),
+        ImageFailure::Dns
+    );
+    assert_eq!(
+        classify_error_text("invalid peer certificate: UnknownIssuer"),
+        ImageFailure::Tls
+    );
+    assert_eq!(classify_error_text("tls handshake eof"), ImageFailure::Tls);
+    assert_eq!(
+        classify_error_text("tcp connect error: Connection refused (os error 10061)"),
+        ImageFailure::Connect
+    );
+    assert_eq!(classify_error_text("connection reset by peer"), ImageFailure::Connect);
+    assert_eq!(classify_error_text("operation timed out"), ImageFailure::Timeout);
+    assert_eq!(classify_error_text("something odd"), ImageFailure::Other);
+    // 失败的 UA / 状态码不参与分类，别把 403 当成 TLS。
+    assert_eq!(classify_error_text("upstream status 403 Forbidden"), ImageFailure::Other);
+}
+
+#[derive(Debug)]
+struct ChainLink(&'static str, Option<Box<ChainLink>>);
+
+impl std::fmt::Display for ChainLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for ChainLink {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.1.as_deref().map(|link| link as &(dyn std::error::Error + 'static))
+    }
+}
+
+#[test]
+fn error_chain_flattens_source_chain() {
+    // reqwest 的 Display 只有 "error sending request for url (...)"，真正原因
+    // 在 source() 里；摊平后日志才有 tls/dns 可读。
+    let err = ChainLink(
+        "error sending request for url (https://img.example/a.jpg)",
+        Some(Box::new(ChainLink(
+            "client error (Connect)",
+            Some(Box::new(ChainLink("invalid peer certificate: UnknownIssuer", None))),
+        ))),
+    );
+    let text = error_chain(&err);
+    assert!(text.contains("error sending request"), "{text}");
+    assert!(text.contains("invalid peer certificate: UnknownIssuer"), "{text}");
+    // 同一段文本不重复拼（source 链里偶尔会有等价的 io::Error）。
+    let dup = ChainLink("same", Some(Box::new(ChainLink("same", None))));
+    assert_eq!(error_chain(&dup), "same");
+}
