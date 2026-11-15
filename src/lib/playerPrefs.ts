@@ -11,11 +11,16 @@ export interface PlayerPrefs {
   volume: number;
   /** 倍速，0.5~3，实际可选值见 ArtPlayer 菜单。 */
   rate: number;
+  /**
+   * 用户是否按过静音。单独记：音量 0 有两种含义（拖到 0 / 按了静音），
+   * 只有后者点一次音量图标就该恢复，前者得靠用户重新拖。
+   */
+  muted: boolean;
   /** 上次选中的清晰度高度（如 1080）；缺省表示跟随自动。 */
   height?: number;
 }
 
-export const DEFAULT_PREFS: PlayerPrefs = { volume: 0.8, rate: 1 };
+export const DEFAULT_PREFS: PlayerPrefs = { volume: 0.8, rate: 1, muted: false };
 
 const KEY = "luma:player:prefs";
 
@@ -59,9 +64,17 @@ export function readPlayerPrefs(storage?: Storage): PlayerPrefs {
       return { ...DEFAULT_PREFS };
     }
     const parsed = JSON.parse(raw) as Partial<PlayerPrefs>;
+    /**
+     * 旧格式没有 `muted` 字段。1.0.4 开发期的起播淡入 bug 会把「还没淡入的
+     * 0 音量」写成偏好，导致整机从此默认静音——那种 0 没有配套的 muted=true，
+     * 直接按损坏数据处理，回落到默认音量。真正拖到 0 的用户会带着 muted 字段
+     * （新版本写入）或被修复后的路径重新写入，不受影响。
+     */
+    const legacyZero = parsed.muted === undefined && Number(parsed.volume) <= 0.01;
     const prefs: PlayerPrefs = {
-      volume: clampVolume(Number(parsed.volume)),
+      volume: legacyZero ? DEFAULT_PREFS.volume : clampVolume(Number(parsed.volume)),
       rate: clampRate(Number(parsed.rate)),
+      muted: parsed.muted === true,
     };
     const height = Number(parsed.height);
     if (Number.isFinite(height) && height > 0) {
@@ -78,6 +91,7 @@ export function writePlayerPrefs(patch: Partial<PlayerPrefs>, storage?: Storage)
   const next = { ...readPlayerPrefs(storage), ...patch };
   next.volume = clampVolume(next.volume);
   next.rate = clampRate(next.rate);
+  next.muted = next.muted === true;
   if (next.height !== undefined) {
     next.height = Number.isFinite(next.height) && next.height > 0 ? Math.round(next.height) : undefined;
   }

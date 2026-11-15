@@ -30,7 +30,7 @@ import { errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
-import { readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
+import { DEFAULT_PREFS, readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import type { VideoMeta } from "../lib/resolution";
 import type { PlayResolved } from "../types/tvbox";
 
@@ -632,14 +632,30 @@ export function usePlayerEngine({
      */
     const FADE_IN_MS = 200;
     let volumeFadeUntil = 0;
+    /** 淡入是否已开始。false 期间任何 volumechange 都不落盘（见 persistVolume）。 */
+    let fadeDone = false;
+    /** 最近一次「有声」的音量：从静音恢复时用它，别恢复到 0。 */
+    let lastAudible = prefs.volume > 0.01 ? prefs.volume : DEFAULT_PREFS.volume;
     const fadeInVolume = () => {
-      const wanted = Math.min(1, Math.max(0, readPlayerPrefs().volume));
-      video.muted = false;
-      if (wanted <= 0.01) {
-        video.volume = wanted;
+      if (fadeDone) {
         return;
       }
+      fadeDone = true;
+      const stored = readPlayerPrefs();
+      const wanted = Math.min(1, Math.max(0, stored.volume));
+      // 用户上次是静音（或音量拖到 0）：保持 muted。别把 0 摊成一个「没静音
+      // 但没声音」的状态，否则用户点取消静音后仍然是哑的。
+      if (stored.muted || wanted <= 0.01) {
+        video.volume = wanted;
+        video.muted = true;
+        return;
+      }
+      // 先把静默窗口立起来，再动 muted / volume：顺序反了的话，`muted=false`
+      // 先触发一次 volumechange，persistVolume 会把此刻的 0 当成用户在调音量
+      // 写进偏好，整机从此默认静音（2026-11-15 实测踩到）。
       volumeFadeUntil = Date.now() + FADE_IN_MS + 150;
+      video.volume = 0;
+      video.muted = false;
       const startedAt = performance.now();
       const tick = () => {
         if (videoRef.current !== video) {
@@ -651,12 +667,24 @@ export function usePlayerEngine({
           window.requestAnimationFrame(tick);
         }
       };
-      video.volume = 0;
       window.requestAnimationFrame(tick);
     };
     video.muted = true;
     video.volume = 0;
     video.addEventListener("playing", fadeInVolume, { once: true });
+    /**
+     * `playing` 在直播首帧偶尔不触发（源在缓冲状态里翻来覆去、或者视频已经被
+     * 另一个实例接管），只靠它会让画面在播、声音永远是 0。补两个兜底：能播即
+     * 解（canplay / 第一个 timeupdate），再加 1.5s 定时器兜最后一层。
+     */
+    const fadeIfPlaying = () => {
+      if (!video.paused) {
+        fadeInVolume();
+      }
+    };
+    video.addEventListener("canplay", fadeIfPlaying);
+    video.addEventListener("timeupdate", fadeIfPlaying, { once: true });
+    const fadeTimer = window.setTimeout(fadeIfPlaying, 1500);
 
     /**
      * 幂等硬停：既由本 effect 的 cleanup 调用，也登记到全局唯一实例登记表，
@@ -772,8 +800,9 @@ export function usePlayerEngine({
       if (videoRef.current !== video) {
         return;
       }
-      // 起播淡入会连续改 volume：那不是用户拖动，整段不落盘。
-      if (Date.now() < volumeFadeUntil) {
+      // 起播淡入会连续改 volume：那不是用户拖动，整段不落盘。淡入开始前
+      // （fadeDone=false）也不落盘——那时 video.volume 是我们自己的 0。
+      if (!fadeDone || Date.now() < volumeFadeUntil) {
         return;
       }
       // 静默期内 ArtPlayer 会把自己缓存的音量写回来（100%），那不是用户操作：
@@ -786,6 +815,15 @@ export function usePlayerEngine({
         }
         return;
       }
+      // 用户点音量图标从静音恢复时，<video>.volume 可能还停在 0（ArtPlayer
+      // 只切 muted，不还原音量）：恢复到最近一次有声值，否则图标亮了还是没声。
+      if (!video.muted && video.volume <= 0.01) {
+        video.volume = lastAudible;
+        return;
+      }
+      if (!video.muted && video.volume > 0.01) {
+        lastAudible = video.volume;
+      }
       const now = Date.now();
       if (now - volumeWrittenAt < 500) {
         if (volumeTrailing !== null) {
@@ -797,12 +835,12 @@ export function usePlayerEngine({
             return;
           }
           volumeWrittenAt = Date.now();
-          writePlayerPrefs({ volume: video.volume });
+          writePlayerPrefs({ volume: video.volume, muted: video.muted });
         }, 500);
         return;
       }
       volumeWrittenAt = now;
-      writePlayerPrefs({ volume: video.volume });
+      writePlayerPrefs({ volume: video.volume, muted: video.muted });
     };
     const persistRate = () => {
       if (videoRef.current !== video) {
@@ -989,17 +1027,21 @@ export function usePlayerEngine({
       video.removeEventListener("loadedmetadata", reportMeta);
       video.removeEventListener("resize", reportMeta);
       video.removeEventListener("loadedmetadata", applyResume);
+      window.clearTimeout(fadeTimer);
       video.removeEventListener("playing", fadeInVolume);
+      video.removeEventListener("canplay", fadeIfPlaying);
+      video.removeEventListener("timeupdate", fadeIfPlaying);
       // 先通知上层把 portal 里的角标摘掉，再销毁 ArtPlayer：反过来的话 React
       // 会往一个已经被 remove() 的节点里做移除。
       onPlayerRoot?.(null);
       // 只补写音量：拖动可能被节流/定时器延后，卸载时补一次最终值。
-      // 但淡入还没走完就卸载（连点换台）时 volume 还接近 0，别把它写成偏好。
+      // 但淡入还没开始/没走完就卸载（连点换台）时 volume 还接近 0，别把它写成
+      // 偏好（1.0.4 开发期踩过：写成 0 之后整机默认静音）。
       // 倍速绝不能在这里覆盖——ended 触发卸载那一刻 video.playbackRate 可能已被
       // 播放内核重置为 1（实测），写回会抹掉用户刚选的倍速。倍速由 persistRate
       // 在变更时立即落盘，无需、也不允许在卸载时再写。
-      if (Date.now() >= volumeFadeUntil) {
-        writePlayerPrefs({ volume: video.volume });
+      if (fadeDone && Date.now() >= volumeFadeUntil) {
+        writePlayerPrefs({ volume: video.volume, muted: video.muted });
       }
       // 先置空引用，避免 destroy 过程中的 video:error 再触发换源。
       videoRef.current = null;

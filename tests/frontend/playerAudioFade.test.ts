@@ -41,8 +41,27 @@ describe("player audio fade", () => {
 
   it("does not persist the volume while the fade is running", () => {
     expect(engine).toContain("let volumeFadeUntil = 0;");
-    expect(engine).toContain("if (Date.now() < volumeFadeUntil) {");
-    expect(engine).toContain("if (Date.now() >= volumeFadeUntil) {");
+    expect(engine).toContain("if (!fadeDone || Date.now() < volumeFadeUntil) {");
+    expect(engine).toContain("if (fadeDone && Date.now() >= volumeFadeUntil) {");
     expect(engine).toContain('video.removeEventListener("playing", fadeInVolume);');
+    expect(engine).toContain('video.removeEventListener("canplay", fadeIfPlaying);');
+    expect(engine).toContain("window.clearTimeout(fadeTimer);");
+  });
+
+  it("keeps the volume icon able to restore sound", () => {
+    // 淡入前先立静默窗口：否则 muted=false 触发的那次 volumechange 会把 0
+    // 写进偏好，之后「点图标取消静音」也没有声音（2026-11-15 实测）。
+    const order = engine.indexOf("volumeFadeUntil = Date.now() + FADE_IN_MS + 150;");
+    const unmute = engine.indexOf("video.muted = false;", order);
+    expect(order).toBeGreaterThan(-1);
+    expect(unmute).toBeGreaterThan(order);
+    // 上次静音 / 音量 0 就保持静音，别摊成「没静音但没声音」
+    expect(engine).toContain("if (stored.muted || wanted <= 0.01) {");
+    // 从静音恢复但音量还是 0 时，补回最近一次有声的音量
+    expect(engine).toContain("video.volume = lastAudible;");
+    // 静音状态要跟音量一起落盘，否则重开又回到默认有声
+    expect(engine).toContain(
+      "writePlayerPrefs({ volume: video.volume, muted: video.muted });",
+    );
   });
 });

@@ -50,6 +50,18 @@ describe("readPlayerPrefs", () => {
     expect(readPlayerPrefs(fakeStorage())).toEqual(DEFAULT_PREFS);
   });
 
+  it("旧格式里没有 muted 的 0 音量按损坏数据修复（1.0.4 开发期淡入 bug）", () => {
+    const legacy = fakeStorage({ "luma:player:prefs": JSON.stringify({ volume: 0, rate: 1 }) });
+    expect(readPlayerPrefs(legacy).volume).toBe(DEFAULT_PREFS.volume);
+    expect(readPlayerPrefs(legacy).muted).toBe(false);
+    // 新格式显式 muted=true 的 0 音量是用户真的静音，必须保留。
+    const muted = fakeStorage({
+      "luma:player:prefs": JSON.stringify({ volume: 0, rate: 1, muted: true }),
+    });
+    expect(readPlayerPrefs(muted).volume).toBe(0);
+    expect(readPlayerPrefs(muted).muted).toBe(true);
+  });
+
   it("容忍损坏的 JSON 与越界字段", () => {
     expect(readPlayerPrefs(fakeStorage({ "luma:player:prefs": "{oops" }))).toEqual(DEFAULT_PREFS);
     const prefs = readPlayerPrefs(
@@ -66,8 +78,8 @@ describe("writePlayerPrefs", () => {
     const storage = fakeStorage();
     writePlayerPrefs({ volume: 0.4 }, storage);
     const after = writePlayerPrefs({ rate: 1.5 }, storage);
-    expect(after).toEqual({ volume: 0.4, rate: 1.5 });
-    expect(readPlayerPrefs(storage)).toEqual({ volume: 0.4, rate: 1.5 });
+    expect(after).toEqual({ volume: 0.4, rate: 1.5, muted: false });
+    expect(readPlayerPrefs(storage)).toEqual({ volume: 0.4, rate: 1.5, muted: false });
   });
 
   it("清晰度按整数落地，非法值被清掉", () => {
