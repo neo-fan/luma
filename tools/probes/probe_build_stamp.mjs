@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 快速验收：侧栏 build 时间戳格式 + 设置页「前端/后端构建」两行。
+ * 快速验收：侧栏 build 号与设置页「构建号」是同一个 14 位时间戳（宿主启动时刻）。
  * 用法：node tools/probes/probe_build_stamp.mjs
  */
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -74,30 +74,56 @@ await cdp.send("Page.enable");
 
 const foot = await cdp.eval(`(() => {
   const el = document.querySelector('.sidebar__foot');
-  return el ? { text: el.innerText.replace(/\\n/g, ' | '), title: el.querySelector('.sidebar__stamp')?.title || '' } : null;
+  if (!el) return null;
+  const stamp = el.querySelector('.sidebar__stamp');
+  return {
+    text: el.innerText.replace(/\\n/g, ' | '),
+    build: (stamp?.innerText || '').replace(/^build:\\s*/, '').trim(),
+    title: stamp?.title || '',
+  };
 })()`);
 console.log("[sidebar]", JSON.stringify(foot));
 
-// 进设置页看构建两行
+// 进设置页看统一后的「构建号」一行
 await cdp.eval(`(() => {
   const btn = [...document.querySelectorAll('.nav__item')].find((n) => (n.textContent || '').includes('设置'));
   if (btn) btn.click();
   return !!btn;
 })()`);
-const builds = await cdp.eval(`(async () => {
+const buildRow = await cdp.eval(`(async () => {
   const end = Date.now() + 10000;
   while (Date.now() < end) {
     const rows = [...document.querySelectorAll('.settings-kv > span')];
-    if (rows.some((r) => r.textContent.includes('前端构建'))) {
-      return rows.filter((r) => /构建/.test(r.textContent)).map((r) => {
-        const code = r.nextElementSibling;
-        return { label: r.textContent, value: code?.textContent || '', title: code?.title || '' };
-      });
+    const label = rows.find((r) => r.textContent.includes('构建号'));
+    if (label) {
+      const code = label.nextElementSibling;
+      return { label: label.textContent, value: code?.textContent || '', title: code?.title || '' };
     }
     await new Promise((r) => setTimeout(r, 200));
   }
   return 'TIMEOUT';
 })()`);
-console.log("[settings]", JSON.stringify(builds, null, 2));
+console.log("[settings]", JSON.stringify(buildRow, null, 2));
+
+const staleLabels = await cdp.eval(
+  `[...document.querySelectorAll('.settings-kv > span')].some((r) => /前端构建|后端构建/.test(r.textContent))`,
+);
+if (!foot) throw new Error("sidebar foot not found");
+if (buildRow === "TIMEOUT") throw new Error("settings 构建号 row not found");
+if (staleLabels) throw new Error("设置页仍有「前端构建 / 后端构建」两行，应合并为「构建号」");
+
+const settingsBuild = (buildRow.value.match(/build:\s*([0-9]+)/) || [])[1] || "";
+for (const [label, value] of [
+  ["sidebar", foot.build],
+  ["settings", settingsBuild],
+]) {
+  if (!/^\d{14}$/.test(value)) {
+    throw new Error(`${label} build 号不是 14 位时间戳: ${JSON.stringify(value)}`);
+  }
+}
+if (foot.build !== settingsBuild) {
+  throw new Error(`前后端 build 号不一致: sidebar=${foot.build} settings=${settingsBuild}`);
+}
+console.log(`[ok] 前后端 build 号统一为 ${settingsBuild}（本次启动时刻）`);
 await cdp.shot("build-stamp");
 cdp.ws.close();

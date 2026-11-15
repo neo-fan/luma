@@ -6,15 +6,18 @@
 
 ## [未发布]
 
-补丁版预留给下一版（版本号未动，`package.json` 仍 `1.0.4`）。主旨：**适配层只剩「执行第三方源脚本」一条职责**，py 源的结果映射不再随 sidecar 走。
+补丁版预留给下一版（版本号未动，`package.json` 仍 `1.0.4`）。主旨：**适配层只剩「执行第三方源脚本」一条职责**，py 源的结果映射不再随 sidecar 走；**版本号与 build 号同时收敛到单一来源**。
 
 ### 变更
 
+- **build 号前后端统一为「本次启动时刻」**：设置页原先分「前端构建 / 后端构建」两行，`tauri dev` 下 Vite 与 cargo 的构建时刻必然不同，两行永远对不上。现在后端在 `run()` 最开始 `started::mark()`（`infra/started.rs`），`Diagnostics` 增加 `startedAt`；前端 `src/lib/appInfo.ts` 取一次诊断快照后缓存，侧栏与设置页共用同一个 14 位 build 号，设置页两行合并为一行「构建号」。`buildHash` / `buildTime` 仍在诊断数据里供排障，界面不展示。
 - **py 源归一化搬进 Rust，`sidecars/py/cms.py` 删除**：1.0.2 已把 CMS 采集解析搬进进程内（`domain/spider/cms_parse.rs`），但 py 源仍走 `pyspider.py::_normalize` → `cms.py` 再映射一次，同一套契约两份实现，改字段要改两处。现在 `cms_parse.rs` 新增 `normalize_spider_result()` / `detail_items()` / `empty_page()`，接管 `detailContent` 的 5 种包裹形状（`list` / `data` / `result` / `vod` / 裸 vod 对象）、`playerContent/liveContent/proxy` 的字典直通、其它方法的 page 形状；`pyspider.py` 只把 `pyrun.py` 的结果（已 `json_safe` 净化）原样交回。`cms.py` 移到 `tools/audit/cms.py`，只给离线审计脚本 `tools/audit/scan_sources.py` 用，运行时不 import。
 - **适配层协议面从 11 个业务方法降到 7 个**：`site.parseHome/parseCategory/parseDetail/parseSearch` 从 1.0.2 起宿主就不再调用，但适配层一直留着（`main.py` 里还 import `cms`）。现在删除，再调用会明确回 `{"code":"INTERNAL","message":"unknown method: site.parseHome"}`，而不是静默可用 —— 契约表（`docs/spec-v1.1/replacements.md` §4.3）同步改成「7 个业务方法 + `ping`」，T-14 验收加断言锁住。
 
 ### 工程
 
+- **版本号单一来源落到工具链**：`src-tauri/tauri.conf.json` 的 `version` 改为 `"../package.json"`（Tauri 官方支持的路径引用，安装器元数据不再抄数字）；`src-tauri/build.rs` 在编译期断言 `Cargo.toml` 版本与 `package.json` 一致，漂移直接编译失败；`sidecars/py/main.py` 的 `VERSION` 改读宿主注入的 `LUMA_VERSION`（`infra/bridge.rs`），离线直跑回退 `package.json`；新增 `tools/version_check.py` 并接进 `tools/check.py`（8 → 9 项）。
+- 探针 `tools/probes/probe_build_stamp.mjs` 改为断言侧栏与设置页 build 号相同、且为 14 位时间戳；`docs/RELEASING.md` §1 重写并新增 §1.1（build 号口径）。
 - 空详情诊断从 Python `empty_detail`（`spider` 通道 JSONL）改为宿主 `tracing::info!`（`app` 通道，`spider detailContent returned no video`，带 `source_api` / `vod_id`）—— 归一化在 Rust 了，诊断跟着走；`spider.log` 继续只放脚本异常与 traceback，不引入第二个写入者。
 - 代码位置：`src-tauri/src/domain/spider/cms_parse.rs` 新增 `pub(crate) fn normalize_spider_result(method: &str, result: &Value) -> Value`、`fn detail_items(...)`、`pub(crate) fn empty_page()`，`page_from_json` 由私有改 `pub(crate)`；`python.rs::invoke` 在 bridge 返回后调 `normalize()`；`cms.rs` 的 `sidecar_method` 日志标签从 `site.parse*` 改名 `cms.parse*`（它们从来只用在 `tracing::debug!` 里，不是发给 Python 的）。
 - 测试：`cms_parse.rs` 单测 5 → 9（py 源 detail / page / play 各类形状）；`tests/offline/py_compat_check.py` 删掉 `cms` / `pyspider` 引用、第 5 项改成「适配层原样交回」、日志断言只留 crash 与 unsafe；`src/lib/detailRecovery.test.ts` 的空详情/形状断言改读 Rust 源码；`tests/acceptance/p1.py` 方法表 11 → 7。回归：`cargo test --lib` 166 passed / 1 ignored、`pnpm test` 51 文件 / 404、`py_compat_check` 23 / `py_base_spider_check` 29 / `adapter_isolation` 14、`p1.py --adapter` 14 pass / 0 fail / 3 skip（qjs 未编）。

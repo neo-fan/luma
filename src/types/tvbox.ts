@@ -387,9 +387,11 @@ export interface DiagnosticsLogFile {
 
 export interface Diagnostics {
   version: string;
-  /** 后端构建号：最近提交 short hash（与前端同源，便于比对前后端是否同构建）。 */
+  /** 最近提交 short hash（与前端同源，便于比对前后端是否同构建）。 */
   buildHash: string;
-  /** 后端构建号：上述提交的提交时间。 */
+  /** 本次运行的启动时刻（epoch 秒字符串）：界面上的 build 号统一显示它。 */
+  startedAt: string;
+  /** exe 编译完成时刻（epoch 秒）：仅供诊断排障，不作为界面 build 号。 */
   buildTime: string;
   os: string;
   arch: string;

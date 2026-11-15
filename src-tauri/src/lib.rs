@@ -34,6 +34,8 @@ pub mod netrules;
 pub mod paths;
 #[path = "infra/process.rs"]
 pub mod process;
+#[path = "infra/started.rs"]
+pub mod started;
 #[path = "infra/store.rs"]
 pub mod store;
 #[path = "infra/textio.rs"]
@@ -99,6 +101,8 @@ fn enable_devtools_port() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 界面的 build 号取「本次启动时刻」：越早记越好，保证它是进程真正起来的时刻。
+    started::mark();
     // 最先做：晚于 WebView2 环境创建就失效（见函数注释）。
     let devtools_default = enable_devtools_port();
     // 把解析后的数据目录发布给子进程：py 适配器的 spider.log 只认

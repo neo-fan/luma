@@ -5,25 +5,41 @@
 
 ## 1. 版本单一来源与同步清单
 
-`package.json` 的 `version` 是唯一来源，`vite.config.ts` 通过 `define` 注入 `__APP_VERSION__`。升级版本时**以下文件必须同步**，缺一即版本漂移：
+`package.json` 的 `version` 是唯一来源，其余位置要么引用它、要么被工具链断言：
 
-| 文件 | 字段 | 校验 |
+- **前端**：`vite.config.ts` 通过 `define` 注入 `__APP_VERSION__`。
+- **安装器**：`src-tauri/tauri.conf.json` 的 `version` 写 `"../package.json"`（Tauri 官方支持版本字段指向 `package.json` 路径），不再抄数字。
+- **Cargo 包版本**：`src-tauri/Cargo.toml` 的 `version` 只能写字面量，由 `src-tauri/build.rs` 在编译期断言与 `package.json` 一致——不一致直接编译失败，不会装出版本号对不上的包。
+- **Python 适配层**：`sidecars/py/main.py` 不再写死版本，优先读宿主注入的 `LUMA_VERSION`（`infra/bridge.rs`，值 = cargo 包版本），离线直跑（测试 / 审计工具）时回退读 `package.json`。
+
+| 位置 | 口径 | 由谁保证 |
 |---|---|---|
-| `package.json` | `version` | 唯一来源 |
-| `src-tauri/Cargo.toml` | `version` | `cargo` 包版本 |
-| `src-tauri/Cargo.lock` | `name = "luma"` 下的 `version` | `cargo build` 自动改，提交前确认 |
-| `src-tauri/tauri.conf.json` | `version` | 安装器元数据；`bundle.targets` 控制产物形态 |
-| `sidecars/py/main.py` | `VERSION` | Python sidecar `ping` 返回值 |
-| `README.md` / `CHANGELOG.md` | 版本号 | 文档一致性 |
+| `package.json` `version` | 唯一来源 | **手工改** |
+| `src-tauri/Cargo.toml` `version` | cargo 包版本 | **手工改**，`build.rs` 断言等于 `package.json` |
+| `src-tauri/Cargo.lock` | `luma` 包版本 | `cargo` 自动同步（提交前确认） |
+| `src-tauri/tauri.conf.json` `version` | 安装器元数据 | 写 `"../package.json"`，直接引用 |
+| `sidecars/py/main.py` `VERSION` | 适配层 `ping` 返回值 | 宿主注入 `LUMA_VERSION`；离线回退 `package.json` |
+| `AGENTS.md`「版本」行 | 文档快照 | `tools/version_check.py` 校验 |
+| `CHANGELOG.md` / `README.md` | 发版说明 | 发版时人工 |
 
-**不要再硬编码版本号到探针**。`tools/probes/probe_settings_logs.mjs` 从 `../../package.json` 动态读 `EXPECTED_VERSION`，并按 `formatVersion()` 规则派生 `DISPLAY_VERSION`。UI 展示层 `src/lib/version.ts::formatVersion()` 把 prerelease 缩写成 `.a/.b/.rc`，正式版原样显示。
-
-一键核对：
+**升版本只需改两处**：`package.json` + `src-tauri/Cargo.toml`；`Cargo.lock` 随 cargo 自动，安装器元数据跟着路径引用走。改完一键核对（也内建在 `tools/check.py` 里）：
 
 ```bash
-grep -rn "1\.0\.0" package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json sidecars/py/main.py README.md
-# 应与 package.json 的 version 完全一致（把 1.0.0 换成目标版本号）
+python tools/version_check.py
 ```
+
+> 不要再硬编码版本号到探针或断言。`tools/probes/probe_settings_logs.mjs` 从 `../../package.json` 动态读 `EXPECTED_VERSION`，并按 `formatVersion()` 规则派生 `DISPLAY_VERSION`。UI 展示层 `src/lib/version.ts::formatVersion()` 把 prerelease 缩写成 `.a/.b/.rc`，正式版原样显示。
+
+### 1.1 界面上的 build 号
+
+侧栏与设置页显示的是**同一个 build 号 = 宿主进程本次的启动时刻**（`yyyyMMddHHmmss`，本地时区），不是构建时刻：
+
+- 后端在 `run()` 最开始 `started::mark()`（`src-tauri/src/infra/started.rs`），从 `Diagnostics::started_at` 输出；
+- 前端 `src/lib/appInfo.ts` 取一次诊断快照后缓存，侧栏和设置页共用（浏览器里没有宿主时回退前端构建时刻）。
+
+`dev` 下前端（Vite）和后端（cargo）的构建时刻必然不同，所以早期「前端构建 / 后端构建」两行永远对不上；现在只留一行「构建号」。`buildHash` / `buildTime` 仍在诊断数据里供排障，界面不展示。
+
+窗口验收：`node tools/probes/probe_build_stamp.mjs`（需 debug 窗口 + CDP 9222），会断言侧栏与设置页的 build 号相同且为 14 位时间戳。
 
 ## 2. 发版前检查清单（按顺序）
 
@@ -33,9 +49,9 @@ grep -rn "1\.0\.0" package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-ta
 python tools/check.py
 ```
 
-`check.py` 串行执行并汇总：契约校验、Python 兼容、py 框架、适配层车道隔离、`py_compile`、前端单测、`cargo test --lib`、`prepare_runtime.py --check`。任一失败即非零退出。
+`check.py` 串行执行并汇总：契约校验、版本一致性、Python 兼容、py 框架、适配层车道隔离、`py_compile`、前端单测、`cargo test --lib`、`prepare_runtime.py --check`。任一失败即非零退出。
 
-**当前基线（1.0.4）**：`python tools/check.py` **8/8 全绿**；其中 `pnpm test` 433/433（52 个文件）、`cargo test --lib` 183 passed / 2 ignored、`py_compat_check` 37/37、`adapter_isolation` 14/14、`contract_check` 8 类型 + 7 方法对齐、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
+**当前基线（1.0.4）**：`python tools/check.py` **9/9 全绿**；其中 `pnpm test` 436/436（53 个文件）、`cargo test --lib` 188 passed / 2 ignored、`py_compat_check` 24/24、`adapter_isolation` 14/14、`contract_check` 8 类型 + 7 方法对齐、`version_check` 版本全链一致、`prepare_runtime --check` 依赖齐全 + 8/8 JS 资源 SHA256 通过。
 
 ### 2.2 窗口回归（需要 debug 窗口）
 
@@ -58,7 +74,7 @@ corepack pnpm tauri build
 
 > **为什么两步**：Tauri 官方只负责「把 `dist/` 嵌入 exe + 打包安装器」，它不会替你构建 Python embeddable / qjs-runner 这些 sidecar 运行时。这一步是项目特有的，不是重新造 Tauri 的轮子——`prepare_runtime.py` 只产出 `tauri.conf.json` 里 `bundle.resources` / `bundle.externalBin` 指向的源文件，构建本身仍 100% 交给 `tauri build`。
 
-产物：`src-tauri/target/release/bundle/nsis/Luma_1.0.3_x64-setup.exe`（NSIS 安装器）。
+产物：`src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe`（NSIS 安装器，版本号来自 `package.json`）。
 
 ### 2.4 安装器外观（官方 `bundle.windows.nsis`）
 
@@ -95,7 +111,7 @@ corepack pnpm tauri build
 
 ## 3. 回滚
 
-版本升级只改第 1 节 5 处 + 文档，代码无迁移逻辑（无旧数据兼容负担）。回滚 = 还原版本字符串并重新 `tauri build`；`data/luma.db` 不随版本变更，无需迁移脚本。
+版本升级只改 `package.json` + `src-tauri/Cargo.toml` 两处（其余引用/断言自动跟随），代码无迁移逻辑（无旧数据兼容负担）。回滚 = 还原版本字符串并重新 `tauri build`；`data/luma.db` 不随版本变更，无需迁移脚本。
 
 ## 4. 常见失败与对策
 

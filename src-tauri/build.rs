@@ -15,6 +15,11 @@ fn main() {
     println!("cargo:rerun-if-changed=../.git/refs/heads");
     println!("cargo:rerun-if-env-changed=LUMA_BUILD_HASH");
     println!("cargo:rerun-if-env-changed=LUMA_BUILD_TIME");
+    // 版本单一来源是 ../package.json（tauri.conf.json 用路径引用它）；Cargo.toml
+    // 只能写字面量，所以在这里断言两处一致，漂移在编译期就失败，而不是等装出
+    // 一个版本号对不上的包。见 docs/RELEASING.md §1。
+    println!("cargo:rerun-if-changed=../package.json");
+    assert_version();
 
     // 优先读环境变量（重编脚本显式注入，避免 cargo 子进程取不到 git 时回退 unknown）；
     // 时间戳始终优先用构建时刻，不用 git 提交时间——用户要的是「这个 exe 什么时候编的」。
@@ -32,8 +37,7 @@ fn main() {
 
 /// 构建时刻（epoch 秒）。只作为兜底：运行时诊断优先读 exe 文件 mtime，
 /// 那个值不受 build script 缓存影响，永远对应真实的编译完成时刻。
-fn now_epoch_secs() -> String {
-    std::time::SystemTime::now()
+fn now_epoch_secs() -> String {    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "0".to_string())
@@ -54,4 +58,39 @@ fn git_hash() -> String {
         }
     }
     "unknown".to_string()
+}
+
+/// 断言 `Cargo.toml` 的版本与 `../package.json` 的 `version` 一致。
+///
+/// `tauri.conf.json` 已经 `"version": "../package.json"` 指向唯一来源，cargo 却没
+/// 有这种能力（`version` 必须是字面量），所以只能在这里守：不一致直接让编译失败。
+fn assert_version() {
+    let Some(expected) = package_version() else {
+        // 目录被单独拷贝出去构建（没有 ../package.json）时跳过，不让构建脚本
+        // 猜测用户意图；仓库内构建一定命中下面的断言。
+        println!("cargo:warning=../package.json missing, skip version assertion");
+        return;
+    };
+    let actual = env!("CARGO_PKG_VERSION");
+    if expected != actual {
+        panic!(
+            "version drift: package.json = {expected}, Cargo.toml = {actual}; \
+             keep them equal (docs/RELEASING.md §1, precheck: python tools/version_check.py)"
+        );
+    }
+}
+
+/// 读 `package.json` 顶层的 `"version"` 字段。
+///
+/// 只为构建期断言服务，不引 JSON 依赖：顶层字段固定两个空格缩进，依赖字段是
+/// `"pkg": "^1.2.3"` 不带 `version` 键，因此按行取第一个顶格字段即可。
+fn package_version() -> Option<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../package.json");
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines().find_map(|line| {
+        let rest = line.strip_prefix("  \"version\"")?;
+        let rest = rest.trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
+        let value = rest.split('"').next()?.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
 }

@@ -75,7 +75,10 @@ SYNTAX_SNIPPET = (
 
 def checks(full: bool, quick: bool, ci: bool = False) -> list[tuple[str, list[str]]]:
     py = interp()
-    items: list[tuple[str, list[str]]] = [("contract (schema <-> TS)", [py, "tests/offline/contract_check.py"])]
+    items: list[tuple[str, list[str]]] = [
+        ("contract (schema <-> TS)", [py, "tests/offline/contract_check.py"]),
+        ("version consistency", [py, "tools/version_check.py"]),
+    ]
     if not ci:
         items += [
             ("py compatibility", [py, "tests/offline/py_compat_check.py"]),

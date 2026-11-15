@@ -32,7 +32,11 @@ pub struct Diagnostics {
     pub version: &'static str,
     /// 提交 short hash（与前端同一来源，便于确认前后端是否同源）。
     pub build_hash: &'static str,
-    /// 构建时间戳：exe 的修改时间（epoch 秒），即本次编译完成时刻。
+    /// 本次运行的启动时刻（epoch 秒）。界面上的 build 号统一取它：dev 下前端
+    /// （Vite）与后端（cargo）的构建时刻必然不同，分两处显示永远对不上。
+    pub started_at: String,
+    /// 构建时间戳：exe 的修改时间（epoch 秒），即本次编译完成时刻。仅供诊断排障，
+    /// 不作为界面 build 号（那个是 `started_at`）。
     /// 不用 build.rs 里取的时间：cargo 缓存会让 build script 不重跑，
     /// 那个值可能停留在很久以前，无法回答「这个 exe 是不是刚编的」。
     pub build_time: String,
@@ -53,6 +57,7 @@ pub(super) fn collect(configs: tauri::State<'_, crate::config::ConfigStore>) -> 
     Diagnostics {
         version: env!("CARGO_PKG_VERSION"),
         build_hash: env!("BUILD_HASH"),
+        started_at: crate::started::epoch_secs().to_string(),
         build_time: exe_build_time(),
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
