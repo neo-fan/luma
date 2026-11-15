@@ -12,6 +12,7 @@ import { useLiveCatalog } from "../hooks/useLiveCatalog";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { usePlaybackIndicator } from "../hooks/usePlaybackIndicator";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
+import { useAppStore } from "../stores/appStore";
 import type { LiveLineControl } from "../hooks/usePlayerEngine";
 import { getLiveLine, setLiveLine } from "../lib/liveMemory";
 import { readLiveChannel, rememberLiveChannel } from "../lib/liveChannels";
@@ -137,6 +138,8 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
 
   /** 这次暂停是我们为了给点播让路做的：回到直播页时只恢复自己暂停的那一次。 */
   const pausedForVod = useRef(false);
+  /** 点播是否真的在出声（后台也算）。路由之外的这半条件是双声的根治点。 */
+  const vodPlaying = useAppStore((state) => state.mediaPlaying.vod);
 
   /**
    * 点播播放器常驻在 AppShell 里（`.player-host`），直播出画时把它按停。
@@ -162,7 +165,7 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     if (!video) {
       return;
     }
-    if (vodActive) {
+    if (vodActive || vodPlaying) {
       if (!video.paused) {
         video.pause();
         pausedForVod.current = true;
@@ -175,7 +178,7 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
         /* 被浏览器拦下就停在原地，用户点播放器上的播放即可 */
       });
     }
-  }, [vodActive, playUrl]);
+  }, [vodActive, vodPlaying, playUrl]);
 
   // 出画即认领声音：此时点播那边（如果还在后台播）必须让位。
   useEffect(() => {

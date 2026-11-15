@@ -116,7 +116,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (current[kind] === playing) {
       return;
     }
-    set({ mediaPlaying: { ...current, [kind]: playing } });
+    // 直播与点播共用一套声音：谁真的在出声，图标就只亮谁。
+    // 开播的一方把另一方清零；真正暂停对方由 LivePage / 播放器各自处理。
+    const next = playing
+      ? { vod: false, live: false, [kind]: true }
+      : { ...current, [kind]: false };
+    set({ mediaPlaying: next });
   },
   openPlaySession: (session) => {
     // 同一个播放地址重复写入（路由 effect 重跑 / 探针多次点击）不该让常驻

@@ -364,6 +364,9 @@ export function usePlayerEngine({
      * 分辨率以 `<video>` 解码出来的 `videoWidth/videoHeight` 为准。
      */
     let declaredHeight = 0;
+    // 只要出过画（currentTime>0），之后所有卡顿都按「网络抖动」处理：
+    // 用户明确要求「已经能播放了 就不要切源」，换线交给他手动决定。
+    let hasPlayed = false;
     /** 实测视频码率（kbps）：按分片字节 ÷ 分片时长做指数平滑。 */
     let measuredKbps = 0;
     /**
@@ -593,6 +596,12 @@ export function usePlayerEngine({
             }
             // 实际链路是「先换同源线路，再跨源」，文案不能写成直接换源，
             // 否则用户看到跳到别的源会以为是逻辑错了。
+            if (hasPlayed) {
+              // 已经在播的流突然致命：网络上抖一下的概率远高于线路真的坏了，
+              // 自动跳走会把用户正在看的内容切没。只提示，由用户决定。
+              setVideoError(`网络波动导致播放中断：${reason}，可点刷新重试`);
+              return;
+            }
             setVideoError(`HLS 播放失败：${reason}，正在切换线路`);
             void switchOrFailoverRef.current();
           });
@@ -998,6 +1007,12 @@ export function usePlayerEngine({
         lastAliveAt = Date.now();
         return;
       }
+      if (hasPlayed) {
+        // 播过就再也不自动换线：卡住很可能是网络抖动，看门狗只撤掉慢提示，
+        // 让用户在控制栏自己点刷新/换线。
+        clearSlowNotice();
+        return;
+      }
       // 通用存活判据：缓冲到位之外，媒体时钟在走（声音已经出来、画面还在
       // 解码）也算活着 —— 这种线路不能判死，也不该继续挂着「加载中」。
       if (video.readyState >= 2 || mediaIsAdvancing(video)) {
@@ -1065,6 +1080,9 @@ export function usePlayerEngine({
     // 媒体侧的生命信号：缓冲有增长、元数据到位、开始播放都算活着。
     // `waiting` / `stalled` 不算——它们恰恰是「卡住」的表现，不能重置计时。
     const onMediaAlive = () => {
+      if (video.currentTime > 0) {
+        hasPlayed = true;
+      }
       noteAlive();
     };
     const watchTimer = window.setInterval(stallCheck, STALL_TICK_MS);
