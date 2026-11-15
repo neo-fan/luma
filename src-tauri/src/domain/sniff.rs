@@ -16,6 +16,75 @@ use crate::error::{code, AppError};
 use std::time::Duration;
 use url::Url;
 
+/// Third-party config files are untrusted input: a 1 MB header value would be
+/// copied onto every request the hidden window makes, so cap both fields long
+/// before they reach WebView2.
+const MAX_HEADER_NAME_BYTES: usize = 256;
+const MAX_HEADER_VALUE_BYTES: usize = 8 * 1024;
+
+/// RFC 7230 `token`: what a header name may consist of. Spaces, colons, CR/LF
+/// and non-ASCII bytes are rejected — they either produce an invalid request or
+/// allow request splitting.
+fn is_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_HEADER_NAME_BYTES
+        && name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
+}
+
+/// Header values may be arbitrary printable text (config tables in the wild
+/// carry non-ASCII Referer / Cookie values), but never control characters:
+/// CR/LF/NUL are the injection vectors, and Chromium rejects them anyway.
+fn is_header_value(value: &str) -> bool {
+    value.len() <= MAX_HEADER_VALUE_BYTES && value.chars().all(|ch| ch == '\t' || !ch.is_control())
+}
+
+/// Turn the caller's headers into the set the hidden WebView2 will send.
+///
+/// * names/values Chromium would reject are dropped instead of failing the
+///   whole sniff — one bad row from a config must not kill level 4;
+/// * duplicates are merged case-insensitively keeping the last value (same
+///   rule `resolve_play` uses when a parser overrides spider headers);
+/// * nothing is invented here: UA / Referer defaults come from
+///   [`crate::netrules::with_defaults`] on the caller side, so a caller that
+///   passes no headers (the `parses[]` type-0 path) keeps WebView2's own UA and
+///   behaves exactly like it did before this change.
+fn webview_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (name, value) in headers {
+        if !is_header_name(name) || !is_header_value(value) {
+            continue;
+        }
+        if let Some(slot) = out
+            .iter_mut()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        {
+            slot.1.clone_from(value);
+        } else {
+            out.push((name.clone(), value.clone()));
+        }
+    }
+    out
+}
+
 /// Only accept the actual stream entry, never segment requests: a page loads
 /// `index.m3u8` before its `.ts` segments, and returning a segment would make
 /// the player show a 2-second clip.
@@ -33,14 +102,16 @@ fn is_media(url: &str) -> bool {
 #[cfg(windows)]
 fn install(
     webview: tauri::webview::PlatformWebview,
+    headers: Vec<(String, String)>,
     tx: tokio::sync::mpsc::UnboundedSender<String>,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2WebResourceRequestedEventArgs, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+        ICoreWebView2Settings2, ICoreWebView2WebResourceRequestedEventArgs,
+        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
     };
     use webview2_com::WebResourceRequestedEventHandler;
-    use windows062::core::HSTRING;
+    use windows062::core::{HSTRING, Interface};
 
     unsafe {
         let controller = webview.controller();
@@ -51,6 +122,26 @@ fn install(
                 return;
             }
         };
+        // `Settings2.SetUserAgent` also changes `navigator.userAgent`, so pages
+        // that branch on the UA see the same client that sends the request. The
+        // per-request header below is the fallback for runtimes where the cast
+        // to Settings2 is unavailable.
+        if let Some((_, ua)) = headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("User-Agent"))
+        {
+            match core
+                .Settings()
+                .and_then(|settings| settings.cast::<ICoreWebView2Settings2>())
+            {
+                Ok(settings) => {
+                    if let Err(err) = settings.SetUserAgent(&HSTRING::from(ua.as_str())) {
+                        eprintln!("[sniff] SetUserAgent failed: {err}");
+                    }
+                }
+                Err(err) => eprintln!("[sniff] ICoreWebView2Settings2 unavailable: {err}"),
+            }
+        }
         if let Err(err) =
             core.AddWebResourceRequestedFilter(&HSTRING::from("*"), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
         {
@@ -62,6 +153,19 @@ fn install(
                   args: Option<ICoreWebView2WebResourceRequestedEventArgs>| {
                 if let Some(args) = args {
                     if let Ok(request) = args.Request() {
+                        // WebView2 only lets the host rewrite outgoing headers
+                        // from this event; that is how Referer/Cookie and any
+                        // config-level header reach the page before it runs.
+                        // A rejected header (Host, Content-Length, ...) must not
+                        // abort the request, so errors are ignored.
+                        if let Ok(outgoing) = request.Headers() {
+                            for (name, value) in &headers {
+                                let _ = outgoing.SetHeader(
+                                    &HSTRING::from(name.as_str()),
+                                    &HSTRING::from(value.as_str()),
+                                );
+                            }
+                        }
                         // Uri() writes into a CoTaskMem pointer; take_pwstr copies
                         // it out and frees the original, so no COM leak per request.
                         let mut uri = windows062::core::PWSTR::null();
@@ -85,19 +189,37 @@ fn install(
 #[cfg(not(windows))]
 fn install(
     _webview: tauri::webview::PlatformWebview,
+    _headers: Vec<(String, String)>,
     _tx: tokio::sync::mpsc::UnboundedSender<String>,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) {
     let _ = ready.send(Err("sniffer is only implemented on Windows".to_string()));
 }
 
-/// Load `page_url` in a hidden WebView and return the first media URL it asks
-/// for. The caller is responsible for wrapping it into the local proxy.
+/// Entry point kept for `parses[]` type-0 webview rules, which do not resolve
+/// config-level headers yet. Level 4 in `resolve_play` calls
+/// [`sniff_with_headers`] with the same pairs it sends to the local proxy.
 pub async fn sniff(
     app: &tauri::AppHandle,
     page_url: &str,
     timeout: Duration,
 ) -> Result<String, AppError> {
+    sniff_with_headers(app, page_url, &[], timeout).await
+}
+
+/// Load `page_url` in a hidden WebView and return the first media URL it asks
+/// for. `headers` follow the `resolve_play` precedence (spider-explicit first,
+/// config host rules next, defaults last) and are sanitised by
+/// [`webview_headers`] before they reach WebView2; they are injected before the
+/// navigation, so the page's very first request carries them. The caller is
+/// responsible for wrapping the result into the local proxy.
+pub async fn sniff_with_headers(
+    app: &tauri::AppHandle,
+    page_url: &str,
+    headers: &[(String, String)],
+    timeout: Duration,
+) -> Result<String, AppError> {
+    let headers = webview_headers(headers);
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::OnceLock;
     use tauri::Manager;
@@ -151,7 +273,7 @@ pub async fn sniff(
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-    if let Err(err) = window.with_webview(move |webview| install(webview, tx, ready_tx)) {
+    if let Err(err) = window.with_webview(move |webview| install(webview, headers, tx, ready_tx)) {
         eprintln!("[sniff] with_webview failed: {err}");
         let _ = window.close();
         return Err(AppError::new(code::RUNTIME_UNAVAILABLE, "sniffer hook failed")
@@ -213,5 +335,77 @@ mod tests {
         assert!(!is_media("https://cdn.example/page.html"));
         assert!(!is_media("blob:http://localhost/abc"));
         assert!(!is_media("data:video/mp4;base64,AAAA"));
+    }
+
+    /// The `parses[]` type-0 path passes no headers: WebView2 must keep its own
+    /// UA and send nothing extra, i.e. behave exactly like before this change.
+    #[test]
+    fn empty_headers_leave_the_webview_untouched() {
+        assert!(webview_headers(&[]).is_empty());
+    }
+
+    /// The whole point of the change: a spider/config UA survives untouched
+    /// (and is not replaced by, or duplicated with, a default).
+    #[test]
+    fn explicit_user_agent_is_kept() {
+        let out = webview_headers(&[
+            ("User-Agent".to_string(), "Mozilla/5.0 Luma".to_string()),
+            ("Referer".to_string(), "https://page.example/".to_string()),
+        ]);
+        let agents: Vec<&(String, String)> = out
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("User-Agent"))
+            .collect();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].1, "Mozilla/5.0 Luma");
+        assert!(out
+            .iter()
+            .any(|(name, value)| name == "Referer" && value == "https://page.example/"));
+    }
+
+    #[test]
+    fn lowercase_user_agent_from_a_spider_is_kept() {
+        let out = webview_headers(&[("user-agent".to_string(), "spider/2.0".to_string())]);
+        assert_eq!(out.len(), 1, "case-insensitive match, no second UA");
+        assert_eq!(out[0].1, "spider/2.0");
+    }
+
+    /// Third-party config rows are untrusted: one malformed name/value must be
+    /// dropped, not break the remaining headers or the sniff.
+    #[test]
+    fn illegal_header_names_and_values_are_dropped() {
+        let out = webview_headers(&[
+            ("Bad Header".to_string(), "x".to_string()),
+            ("X-CRLF".to_string(), "a\r\nInjected: 1".to_string()),
+            (String::new(), "x".to_string()),
+            ("Cookie".to_string(), "sid=1; theme=dark".to_string()),
+        ]);
+        assert!(out.iter().all(|(name, _)| !name.contains(' ')));
+        assert!(!out
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("X-CRLF")));
+        assert!(!out.iter().any(|(name, _)| name.is_empty()));
+        assert!(out
+            .iter()
+            .any(|(name, value)| name == "Cookie" && value == "sid=1; theme=dark"));
+        assert_eq!(
+            out.len(),
+            1,
+            "only the well-formed row survives; nothing is invented"
+        );
+    }
+
+    #[test]
+    fn duplicate_headers_keep_the_last_value() {
+        let out = webview_headers(&[
+            ("Referer".to_string(), "https://old.example/".to_string()),
+            ("referer".to_string(), "https://new.example/".to_string()),
+        ]);
+        let referers: Vec<&(String, String)> = out
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("Referer"))
+            .collect();
+        assert_eq!(referers.len(), 1);
+        assert_eq!(referers[0].1, "https://new.example/");
     }
 }

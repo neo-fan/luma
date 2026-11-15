@@ -288,11 +288,14 @@ pub async fn resolve_play(
     // 先做一次 4s 的普通 GET；命中既省掉开隐藏窗口的十几秒，也让「需要特定
     // UA 才回 m3u8」的源站终于能播。
     if kind == "page" {
-        let probe_headers = crate::netrules::with_defaults(
+        // 4s 探测和隐藏 WebView2 必须用同一份 headers：探测没命中说明页面确实
+        // 要靠 JS 起播，嗅探再拿不到 UA/Referer 就还是会失败。默认值仍由
+        // `with_defaults` 最后补，顺序语义不变。
+        let sniff_headers = crate::netrules::with_defaults(
             &parsed,
             crate::netrules::merged_for(&effective_url, &explicit),
         );
-        if let Some(final_url) = probe_playlist(&effective_url, &probe_headers).await {
+        if let Some(final_url) = probe_playlist(&effective_url, &sniff_headers).await {
             tracing::info!(
                 site = %request.site_key,
                 url = %final_url,
@@ -304,29 +307,36 @@ pub async fn resolve_play(
             }
             kind = "hls".to_string();
         }
-    }
-    if kind == "page" {
-        let cached = cached_sniff(&effective_url);
-        let media = match cached {
-            Some(media) => Some(media),
-            None => match crate::sniff::sniff(&app, &effective_url, SNIFF_TIMEOUT).await {
-                Ok(media) => {
-                    remember_sniff(&effective_url, &media);
-                    Some(media)
-                }
-                Err(err) => {
-                    tracing::info!(
-                        site = %request.site_key,
-                        error = %err.message,
-                        "level-4 sniff found nothing"
-                    );
-                    None
-                }
-            },
-        };
-        if let Some(media) = media {
-            kind = kind_of(&media);
-            effective_url = media;
+        if kind == "page" {
+            let cached = cached_sniff(&effective_url);
+            let media = match cached {
+                Some(media) => Some(media),
+                None => match crate::sniff::sniff_with_headers(
+                    &app,
+                    &effective_url,
+                    &sniff_headers,
+                    SNIFF_TIMEOUT,
+                )
+                .await
+                {
+                    Ok(media) => {
+                        remember_sniff(&effective_url, &media);
+                        Some(media)
+                    }
+                    Err(err) => {
+                        tracing::info!(
+                            site = %request.site_key,
+                            error = %err.message,
+                            "level-4 sniff found nothing"
+                        );
+                        None
+                    }
+                },
+            };
+            if let Some(media) = media {
+                kind = kind_of(&media);
+                effective_url = media;
+            }
         }
     }
 
