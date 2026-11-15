@@ -117,6 +117,20 @@ class Cdp {
     return reply.result;
   }
   async eval(expression) {
+    // reload 之后在途的 evaluate 会撞上「Execution context was destroyed」：
+    // 这是探针流程的正常时序（Page.reload 后等新文档），等一秒重投即可。
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.evalOnce(expression);
+      } catch (err) {
+        if (attempt >= 4 || !/context was destroyed|Not found|no frame/i.test(String(err?.message))) {
+          throw err;
+        }
+        await sleep(1000);
+      }
+    }
+  }
+  async evalOnce(expression) {
     const res = await this.send("Runtime.evaluate", {
       expression,
       awaitPromise: true,
@@ -244,27 +258,46 @@ try {
   // 直接调底层 invoke 绕过了设置页的 handleImported 回调，App 内存里的 sites
   // 仍是旧配置。reload 让它从 config_active（此时是刚导入的内联配置）重新加载。
   await cdp.send("Page.reload", { ignoreCache: true });
-  await cdp.eval(WAIT(`return document.querySelector('.nav__item') ? 'OK' : null;`, 15000));
+  // reload 生效前旧文档仍在：只等 .nav__item 会在旧页面上「通过」，随后的
+  // 导航点击被 reload 冲掉（2026-11-16 实测停在上一轮的 detail 路由）。
+  // 等页面真正属于新文档（performance.now() 重置）再往下走。
+  await cdp.eval(WAIT(
+    `return (performance.now() > 1200 && document.querySelector('.nav__item')) ? 'OK' : null;`,
+    20000,
+  ));
   const activeAfter = await cdp.eval(`window.__TAURI_INTERNALS__.invoke('config_active').then(a => a ? a.name : '')`);
   assert(activeAfter === CONFIG_NAME, "inline config is active after reload", String(activeAfter));
 
   // 2. 首页 → 详情（首页应渲染出临时 CMS 的片子）。
-  await cdp.eval(CLICK("首页", ".nav__item"));
+  //    沉浸式首页（2026-11-15）推荐流渲染为头图 + poster-rail，分类网格才是
+  //    .vod-card；三种形态任一出现即算「首页出了内容」。
+  await cdp.eval(`location.hash = '#/'; 'home'`);
+  await cdp.eval(WAIT(`return document.querySelector('.page--home') ? 'OK' : null;`, 8000));
   const homeCard = await cdp.eval(
-    WAIT(`const c = document.querySelector('.vod-card'); return c ? c.innerText.split('\\n')[0] : null;`, 25000),
+    WAIT(`const c = document.querySelector('.vod-card, .home-hero, .poster-tile'); return c ? c.innerText.split('\\n')[0] : null;`, 25000),
   );
   const homeDiag = await cdp.eval(`JSON.stringify({
     err: document.querySelector('.error-bar__text')?.textContent?.trim() || '',
     sites: (() => { try { return JSON.parse(localStorage.getItem('luma:sites:v1') || '{}').sites?.length ?? -1; } catch { return -2; } })(),
-    cards: document.querySelectorAll('.vod-card').length,
+    cards: document.querySelectorAll('.vod-card, .home-hero, .poster-tile').length,
   })`);
   assert(!!homeCard, "home renders temp CMS card", `${homeCard} | diag=${homeDiag}`);
   if (!homeCard) throw new Error("no home card; abort before click");
-  await cdp.eval(`document.querySelector('.vod-card').click()`);
+  // 进详情的入口按形态分：横排 tile / 分类网格点卡进详情；头图整块不可点，
+  // 走「立即观看」（直达播放页，详情在会话内挂同一 vod）。
+  const enter = await cdp.eval(`(() => {
+    const tile = document.querySelector('.vod-card, .poster-tile');
+    if (tile) { tile.click(); return 'detail:tile'; }
+    const watch = [...document.querySelectorAll('.home-hero button')].find((b) => /立即观看/.test(b.textContent || ''));
+    if (watch) { watch.click(); return 'detail:hero-watch'; }
+    return 'MISSING';
+  })()`);
+  assert(enter !== "MISSING", "entered detail/player from home", enter);
+  // 两条路径统一以「剧集格出现」为准：详情页有播放线路列表，播放页有剧集面板。
   const detailOk = await cdp.eval(
-    WAIT(`return document.body.innerText.includes('播放线路') ? 'OK' : null;`, 20000),
+    WAIT(`return document.querySelectorAll('.episode').length >= 3 ? 'OK' : null;`, 30000),
   );
-  assert(detailOk === "OK", "detail page with episodes", String(detailOk));
+  assert(detailOk === "OK", "episodes rendered after enter", String(enter));
   const episodeCount = await cdp.eval(`document.querySelectorAll('.episode').length`);
   assert(Number(episodeCount) >= 3, "detail has >=3 episodes", `${episodeCount} episodes`);
 
@@ -320,7 +353,7 @@ try {
   );
   assert(!!ep2, "auto-advanced to episode 2", String(ep2));
   const tip = await cdp.eval(
-    WAIT(`const t = document.querySelector('.tip')?.textContent?.trim() || ''; return /自动播放下一集/.test(t) ? t : null;`, 10000),
+    WAIT(`const t = [...document.querySelectorAll('[data-sonner-toast]')].map((x) => x.textContent).join(' ') || ''; return /自动播放下一集/.test(t) ? t.slice(0, 40) : null;`, 10000),
   );
   assert(!!tip, "auto-next tip shown", String(tip));
 
@@ -407,6 +440,19 @@ try {
 
   // clipboard API 需要 user activation：b.click() 是脚本触发、没有手势，writeText
   // 会被拒。用 CDP 真实鼠标事件点在按钮中心，模拟用户点击后再验证。
+  // 入场动画（bar-in 260ms）期间节点有 ≤6px 位移，测标必须等动画落定，
+  // 否则坐标打偏、点不到按钮（2026-11-16 动效改造后实测）。
+  await sleep(500);
+  // 先授予剪贴板权限再点：writeText 被权限拒时按钮不会进入 ok/failed 态，
+  // 「反馈出现」与「内容正确」两条断言都建立在权限就位之上。
+  try {
+    await cdp.send("Browser.grantPermissions", {
+      origin: "http://localhost:1420",
+      permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+    });
+  } catch (e) {
+    console.log(`[info] grant clipboard permission failed: ${e && e.message || e}`);
+  }
   const box = await cdp.eval(`(() => {
     const b = [...document.querySelectorAll('.error-bar__actions button')]
       .find(x => (x.getAttribute('aria-label') || '').includes('复制'));
@@ -416,9 +462,28 @@ try {
   })()`);
   assert(box !== "MISSING", "copy-error button present", String(box));
   if (box !== "MISSING") {
-    const { x, y } = JSON.parse(box);
-    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    // 点击前重新测坐标并在按下前一刻校验命中：错误条上方任何布局变化都会让
+    // 旧坐标落到别处（2026-11-16 实测点击落到旁边的「搜索」按钮上，
+    // 剪贴板里留下“点击”二字）。
+    const clickRes = await cdp.eval(`(async () => {
+      const b = [...document.querySelectorAll('.error-bar__actions button')]
+        .find((x) => (x.getAttribute('aria-label') || '').includes('复制'));
+      if (!b) return 'VANISHED';
+      const r = b.getBoundingClientRect();
+      const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+      const el = document.elementFromPoint(x, y);
+      if (el !== b && !b.contains(el)) return 'COVERED:' + (el ? el.tagName + '.' + el.className.toString().slice(0, 30) : 'null');
+      return 'READY';
+    })()`);
+    if (clickRes !== "READY") {
+      console.log(`[info] copy click skipped: ${clickRes}`);
+    } else {
+      const { x, y } = JSON.parse(box);
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, buttons: 0 });
+      await sleep(80);
+      await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    }
   }
   // 按钮初始就是 data-copy-state="idle"，必须等它变成 ok/failed 才算捕获到反馈。
   const copyState = await cdp.eval(
@@ -432,14 +497,7 @@ try {
   assert(copyState !== "failed", "copy did not report failure", String(copyState));
 
   // 授予剪贴板读权限后读回完整文案（读写同源、内容应一字不差）。
-  try {
-    await cdp.send("Browser.grantPermissions", {
-      origin: "http://localhost:1420",
-      permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
-    });
-  } catch (e) {
-    console.log(`[info] grant clipboard permission failed: ${e && e.message || e}`);
-  }
+  // 权限已在点击前授予，这里直接读。
   let clip = "";
   try {
     clip = (await cdp.eval(`navigator.clipboard.readText().catch(() => '')`)) || "";

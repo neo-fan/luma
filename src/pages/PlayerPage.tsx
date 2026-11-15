@@ -12,6 +12,13 @@ import type { PlayLine } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
+import {
+  getEpisodePlayCache,
+  invalidateEpisodePlayCache,
+  setEpisodePlayCache,
+} from "../lib/episodePlayCache";
+import { buildImageUrl, needsProxy, normalizePic } from "../lib/imageUrl";
+import { getProxyBaseUrl, resolveProxiedImageSync } from "../hooks/useProxiedImage";
 import { probePlayable } from "../lib/playProbe";
 import { firstPlayable } from "../lib/probeRace";
 import { lineRank } from "../lib/lineHealth";
@@ -41,7 +48,7 @@ import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
 import { fetchDoubanMeta } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
-import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/luma";
+import type { HistoryItem, PlayResolved, ResultPage, Site, VodInfo } from "../types/luma";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { usePlaybackIndicator } from "../hooks/usePlaybackIndicator";
 import { useEpisodeList } from "../hooks/useEpisodeList";
@@ -161,6 +168,29 @@ export default function PlayerPage({
     episodeIndex: number;
   } | null>(null);
   /**
+   * 原地换集进行中（resolve → switchSource 全程 true）：控制栏钉住不自动收起、
+   * 「下一集」按钮转圈、吞掉重复点击。没有它，点击后的 1~50s 里唯一反馈是一条
+   * 会闪 2 秒的 notice，用户读作「点了没反应」（2026-11-16 反馈）。
+   */
+  const [episodeSwitching, setEpisodeSwitching] = useState(false);
+  /** 切换代次：只有最新一次切换的收尾才允许解除「切换中」，防在途旧协程误清。 */
+  const episodeSwitchGenRef = useRef(0);
+  /**
+   * 「切换中」的兜底解除：完成路径（switchSource 出画 / 15s 封顶 / 退回重建）
+   * 都收不回 true 的极端情况（HMR 丢掉在途 promise、异常路径遗漏）会把控制栏
+   * 永久钉住、按钮永远转圈。30s 后强制解除并收回提示。
+   */
+  useEffect(() => {
+    if (!episodeSwitching) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setEpisodeSwitching(false);
+      setSwitchTip("");
+    }, 30000);
+    return () => window.clearTimeout(timer);
+  }, [episodeSwitching]);
+  /**
    * 原地换源：跨站切换后路由身份（siteKey/vodId/vodName）还是进入本页时那一份，
    * 但播放器已经在放新源。显示、历史、收藏都以这份覆盖值为准，免得「换源后
    * 历史记到旧站」或信息卡写着旧站名。
@@ -203,6 +233,11 @@ export default function PlayerPage({
   const resumeMsRef = useRef(0);
   /** 原地换集后的真实播放地址（路由里的 playUrl 不跟着改）。 */
   const switchedUrlRef = useRef<string | null>(null);
+  /**
+   * 当前真正在播的「集身份」（站点 / 线路 / 集地址）。原地换集 / 换源后路由
+   * 参数是旧的，播放 fatal 要按这份身份作废解析缓存，否则作废的是上一集。
+   */
+  const playingEpisodeRef = useRef({ siteKey, playFrom, url: playUrl });
   /**
    * 立即写一次历史的通道。切集 / 换源会用 navigate 重建本页，若只靠 5 秒
    * 节流，切换瞬间的进度可能丢；history effect 把 write 挂到这里，
@@ -341,6 +376,39 @@ export default function PlayerPage({
   const canPlayNext = Boolean(
     activeLine && activeEpisodeIndex + 1 < activeLine.episodes.length,
   );
+
+  /**
+   * 首帧前海报：影片封面过 /image 代理（防盗链 / 内联 header），供播放内核
+   * 构造 poster 与舞台解析期背景共用。URL 构造是 lib/imageUrl 的纯函数，
+   * 代理端口复用 useProxiedImage 导出的 getProxyBaseUrl（非 hook 的进程级
+   * 单例，不在引擎里引 React hook）。封面缺失 / 代理不可用时退化为直连或
+   * 无海报，绝不阻塞播放。
+   */
+  const [posterUrl, setPosterUrl] = useState<string | null>(() =>
+    // 首帧同步解析：详情有 pageCache 种子、代理端口有进程级缓存时，remount
+    // 第一个 commit 就有海报（缓存命中路径实例建得极快，异步海报赶不上）。
+    resolveProxiedImageSync(vod?.vod_pic),
+  );
+  useEffect(() => {
+    const value = normalizePic(vod?.vod_pic);
+    if (!value) {
+      setPosterUrl(null);
+      return;
+    }
+    if (!needsProxy(value)) {
+      setPosterUrl(value);
+      return;
+    }
+    let alive = true;
+    void getProxyBaseUrl().then((base) => {
+      if (alive) {
+        setPosterUrl(buildImageUrl(value, base));
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [vod?.vod_pic]);
 
   /**
    * 历史写入需要「当前线路名 / 当前集名」，但两个值随异步剧集列表到达才确定。
@@ -579,7 +647,13 @@ export default function PlayerPage({
         }
         // 别把死 CDN / 假地址当成「可播放线路」：网盘解析接口会以 200 + JSON
         // 返回「解析失败了」，只看状态码会误判成可播线路。
-        return await probePlayable(probe.proxyUrl, probe.kind);
+        const ok = await probePlayable(probe.proxyUrl, probe.kind);
+        if (ok) {
+          // 探活已经跑完整条解析链：预热按集缓存，navigate 重挂载后新页面的
+          // 首次解析直接命中，不再重跑 playerContent → resolve_play。
+          setEpisodePlayCache(key, candidate.line, candidate.url, probe);
+        }
+        return ok;
       } catch {
         return false;
       }
@@ -592,6 +666,9 @@ export default function PlayerPage({
       return;
     }
     failoverStarted.current = true;
+    // 换源接管：收回可能挂着的「换集进行中」，否则控制栏会被钉住到兜底超时。
+    episodeSwitchGenRef.current += 1;
+    setEpisodeSwitching(false);
     // `changeable: 0`：配置明确不允许换源，别再对其它站点发搜索。
     if (!allowFailover) {
       setSwitchTip("");
@@ -851,6 +928,11 @@ export default function PlayerPage({
 
   /** 线路切换失败后的兜底：整站找同名影片。 */
   const switchOrFailover = useCallback(async () => {
+    // 走到这里说明播放 fatal（hls fatal / 解码失败 / 看门狗判死）：当前地址
+    // 的解析结论不可信，作废按集缓存，避免换集 / remount 又命中坏地址。
+    // 按「真正在播的集」作废——原地换集后路由参数已是上一集。
+    const playing = playingEpisodeRef.current;
+    invalidateEpisodePlayCache(playing.siteKey, playing.playFrom, playing.url);
     // 跳转次数预算用完就停：之前没有上限，跨站记账又失效，会出现
     // 「一直在切换」的无限横跳；现在最多 4 次，之后把控制权交还用户。
     if (ledgerBudget(ledgerKey) <= 0) {
@@ -875,6 +957,9 @@ export default function PlayerPage({
       return;
     }
     setNextLineBusy(true);
+    // 手动换线接管：同 tryFailover，收回挂起的「换集进行中」。
+    episodeSwitchGenRef.current += 1;
+    setEpisodeSwitching(false);
     setSwitchTip("正在切换到下一条线路…");
     void tryNextLine()
       .then((switched) => {
@@ -973,6 +1058,7 @@ export default function PlayerPage({
     switchOrFailoverRef,
     episodeNavRef,
     canNext: canPlayNext,
+    switching: episodeSwitching,
     reloadRef,
     resumeMsRef,
     resolved,
@@ -980,6 +1066,7 @@ export default function PlayerPage({
     siteKey,
     vodName,
     vodId,
+    poster: posterUrl ?? undefined,
     onVideoMeta: setVideoMeta,
     onPlayerRoot: setPlayerRoot,
     onSlowNotice: (text) => setSlowNotice(text ?? ""),
@@ -1106,12 +1193,16 @@ export default function PlayerPage({
       if (!canPlayNext || !activeLine) {
         return;
       }
+      const next = activeLine.episodes[activeEpisodeIndex + 1];
       log.info("auto next episode", {
         siteKey,
         vodId,
         from: activeEpisodeIndex,
         to: activeEpisodeIndex + 1,
       });
+      // 自动换台的完成确认：原地切换改版把旧的页面内提示弄丢了，用户只能靠
+      // 「画面突然变了」意识到换了集。低打扰 toast 补回这条反馈。
+      notify.info(`已自动播放下一集${next ? `：${next.name}` : ""}`);
       goToEpisode(activeLineIndex, activeEpisodeIndex + 1);
     };
     video.addEventListener("ended", onEnded);
@@ -1128,6 +1219,11 @@ export default function PlayerPage({
    * 只有解析失败、类型变化或播放器还没就绪时才退回整页 navigate。
    */
   const goToEpisode = (targetLine: number, index: number) => {
+    // 一次只跑一个切换协程：双路 switchUrl 竞态会互相覆盖（后完成者赢），
+    // 用户看到「画面切回旧集」。控制栏按钮侧另有同态守卫，这里兜住选集面板。
+    if (episodeSwitching) {
+      return;
+    }
     const target = activeLines[targetLine];
     if (!target || index < 0 || index >= target.episodes.length) {
       return;
@@ -1160,31 +1256,57 @@ export default function PlayerPage({
       return;
     }
     const previousKind = resolved.kind;
+    const gen = episodeSwitchGenRef.current + 1;
+    episodeSwitchGenRef.current = gen;
+    setEpisodeSwitching(true);
     void (async () => {
       try {
-        const next = await resolveEpisodeTarget(activeSiteKey, target.name, episode.url);
-        if (next.unresolvable) {
-          throw new Error("线路不可解析");
-        }
-        const play = await api.resolvePlay({
-          siteKey: activeSiteKey,
-          url: next.url,
-          ua: next.ua,
-          referer: next.referer,
-          cookie: next.cookie,
-        });
-        if (play.kind !== previousKind || play.kind === "page") {
-          throw new Error(`播放类型变化：${previousKind} → ${play.kind}`);
+        // 按集缓存：预解析 / 探活 / 上次访问可能已解析过这一集。命中且类型
+        // 兼容就跳过整条 playerContent → resolve_play 链，直接原地换源。
+        const cached = getEpisodePlayCache(activeSiteKey, target.name, episode.url);
+        let play: PlayResolved;
+        if (cached && cached.kind === previousKind && cached.kind !== "page") {
+          play = cached;
+        } else {
+          const next = await resolveEpisodeTarget(activeSiteKey, target.name, episode.url);
+          if (next.unresolvable) {
+            throw new Error("线路不可解析");
+          }
+          play = await api.resolvePlay({
+            siteKey: activeSiteKey,
+            url: next.url,
+            ua: next.ua,
+            referer: next.referer,
+            cookie: next.cookie,
+          });
+          if (play.kind !== previousKind || play.kind === "page") {
+            throw new Error(`播放类型变化：${previousKind} → ${play.kind}`);
+          }
+          setEpisodePlayCache(activeSiteKey, target.name, episode.url, play);
         }
         resumeMsRef.current = 0;
         await engine.switchSource(play.proxyUrl);
         switchedUrlRef.current = play.proxyUrl;
+        playingEpisodeRef.current = {
+          siteKey: activeSiteKey,
+          playFrom: target.name,
+          url: episode.url,
+        };
         setSwitchTip("");
       } catch (err) {
+        // 原地切换失败要退回整页重建：这份解析结论（可能来自缓存）已不可信，
+        // 作废掉，免得新页面首次解析又命中同一个坏地址。
+        invalidateEpisodePlayCache(activeSiteKey, target.name, episode.url);
         log.warn("in-place episode switch failed", {
           message: errorMessage(err),
         });
         fallback();
+      } finally {
+        // 出画 / 退回整页重建 / 15s 封顶：三条路都要收回「切换中」态；
+        // 被更新的切换（或换线/换源接管）顶掉代次时不清——那是别人的状态。
+        if (episodeSwitchGenRef.current === gen) {
+          setEpisodeSwitching(false);
+        }
       }
     })();
   };
@@ -1261,27 +1383,40 @@ export default function PlayerPage({
     }
     const previousKind = resolved.kind;
     try {
-      const next = await resolveEpisodeTarget(
-        nextSiteKey,
-        match.line.name,
-        match.episode.url,
-      );
-      if (next.unresolvable) {
-        throw new Error("线路不可解析");
-      }
-      const play = await api.resolvePlay({
-        siteKey: nextSiteKey,
-        url: next.url,
-        ua: next.ua,
-        referer: next.referer,
-        cookie: next.cookie,
-      });
-      if (play.kind !== previousKind || play.kind === "page") {
-        throw new Error(`播放类型变化：${previousKind} → ${play.kind}`);
+      // 与换集同口径：跨站探活可能已预热过目标站的这一集，命中即跳过解析链。
+      const cached = getEpisodePlayCache(nextSiteKey, match.line.name, match.episode.url);
+      let play: PlayResolved;
+      if (cached && cached.kind === previousKind && cached.kind !== "page") {
+        play = cached;
+      } else {
+        const next = await resolveEpisodeTarget(
+          nextSiteKey,
+          match.line.name,
+          match.episode.url,
+        );
+        if (next.unresolvable) {
+          throw new Error("线路不可解析");
+        }
+        play = await api.resolvePlay({
+          siteKey: nextSiteKey,
+          url: next.url,
+          ua: next.ua,
+          referer: next.referer,
+          cookie: next.cookie,
+        });
+        if (play.kind !== previousKind || play.kind === "page") {
+          throw new Error(`播放类型变化：${previousKind} → ${play.kind}`);
+        }
+        setEpisodePlayCache(nextSiteKey, match.line.name, match.episode.url, play);
       }
       resumeMsRef.current = 0;
       await engine.switchSource(play.proxyUrl);
       switchedUrlRef.current = play.proxyUrl;
+      playingEpisodeRef.current = {
+        siteKey: nextSiteKey,
+        playFrom: match.line.name,
+        url: match.episode.url,
+      };
       setSwitchedSource({
         siteKey: nextSiteKey,
         siteName: option.siteName,
@@ -1294,6 +1429,8 @@ export default function PlayerPage({
       setManualPick(null);
       setSwitchTip("");
     } catch (err) {
+      // 同换集：失败的解析结论（可能来自缓存）作废，重建后的页面重新解析。
+      invalidateEpisodePlayCache(nextSiteKey, match.line.name, match.episode.url);
       log.warn("in-place source switch failed", { message: errorMessage(err) });
       fallback();
     }
@@ -1313,6 +1450,133 @@ export default function PlayerPage({
     }
   };
 
+  /**
+   * 下一集预解析：当前集稳定出画后延迟 5s，后台把下一集解析好写进按集缓存。
+   * ended 自动接下一集 / 用户点下一集时自然命中，切换不再等解析。
+   *
+   * 保守约定：并发 1；只写缓存、不占任何 UI 状态，用户发起的解析随时优先
+   * （不被预解析阻塞）；暂停 / 换集 / 离页取消定时器；任何异常静默吞掉。
+   * 出画信号直接听 <video> 的 playing（≈readyState>=3，与历史 effect 同一
+   * 套路）——引擎没有对外的 playing 回调，不为这个信号新增内核 API。
+   */
+  const preResolveRef = useRef<{ timer: number | null; busy: boolean; gen: number }>({
+    timer: null,
+    busy: false,
+    gen: 0,
+  });
+  /** 最新预解析目标：跟随当前线路 / 集，渲染期更新，fire 时读到的永远是最新。 */
+  const preResolveTargetRef = useRef<{
+    siteKey: string;
+    playFrom: string;
+    url: string;
+  } | null>(null);
+  const nextEpisodeForPreResolve =
+    canPlayNext && activeLine ? activeLine.episodes[activeEpisodeIndex + 1] : null;
+  preResolveTargetRef.current =
+    nextEpisodeForPreResolve?.url && activeLine
+      ? {
+          siteKey: activeSiteKey,
+          playFrom: activeLine.name,
+          url: nextEpisodeForPreResolve.url,
+        }
+      : null;
+  /** 解析中 / 手动切换在途时不去抢源侧：预解析只是锦上添花。 */
+  const preResolveGuardRef = useRef({ resolving: true, switching: false });
+  preResolveGuardRef.current = { resolving, switching: switchTip !== "" };
+
+  const runPreResolve = useCallback(async () => {
+    const state = preResolveRef.current;
+    const target = preResolveTargetRef.current;
+    const video = videoRef.current;
+    if (
+      state.busy ||
+      !target ||
+      !video ||
+      video.paused ||
+      video.ended ||
+      preResolveGuardRef.current.resolving ||
+      preResolveGuardRef.current.switching
+    ) {
+      return;
+    }
+    state.busy = true;
+    const gen = state.gen;
+    try {
+      const next = await resolveEpisodeTarget(target.siteKey, target.playFrom, target.url);
+      if (next.unresolvable) {
+        return;
+      }
+      const play = await api.resolvePlay({
+        siteKey: target.siteKey,
+        url: next.url,
+        ua: next.ua,
+        referer: next.referer,
+        cookie: next.cookie,
+      });
+      // 目标没变、也没离页才写：用户已经切走时这份结果属于旧目标，写进去
+      // 可能覆盖刚因 fatal 作废的条目。kind 过滤在缓存内部（page 不入）。
+      const now = preResolveTargetRef.current;
+      if (
+        gen === state.gen &&
+        now &&
+        now.siteKey === target.siteKey &&
+        now.playFrom === target.playFrom &&
+        now.url === target.url
+      ) {
+        setEpisodePlayCache(target.siteKey, target.playFrom, target.url, play);
+        log.info("next episode pre-resolved", {
+          siteKey: target.siteKey,
+          kind: play.kind,
+        });
+      }
+    } catch {
+      // 预解析失败不影响任何现有链路：用户真点下一集时会重新解析。
+    } finally {
+      state.busy = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const state = preResolveRef.current;
+    if (!video || siteKey === "live") {
+      return;
+    }
+    const cancel = () => {
+      if (state.timer !== null) {
+        window.clearTimeout(state.timer);
+        state.timer = null;
+      }
+    };
+    const arm = () => {
+      // 换集 / 恢复播放都重新计时：旧定时器作废，从新的稳定出画再等 5s。
+      cancel();
+      state.timer = window.setTimeout(() => {
+        state.timer = null;
+        void runPreResolve();
+      }, 5000);
+    };
+    const onPlaying = () => {
+      if (!video.paused) {
+        arm();
+      }
+    };
+    const onPause = () => cancel();
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("pause", onPause);
+    return () => {
+      // 离页 / 内核重建：取消定时器，gen 递增让在途预解析的结果作废。
+      cancel();
+      state.gen += 1;
+      video.removeEventListener("playing", onPlaying);
+      video.removeEventListener("pause", onPause);
+    };
+    // resolved 变化 = 内核重建，要把监听挂到新 <video>（内核 effect 先于本
+    // effect 执行，videoRef 已是新元素）；原地换集复用同一 video，监听不变，
+    // 新一集的 playing 会重新 arm。runPreResolve 引用稳定。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolved, siteKey, runPreResolve]);
+
   useEffect(() => {
     const text = switchTip || slowNotice;
     if (!text) {
@@ -1320,6 +1584,14 @@ export default function PlayerPage({
     }
     // 源侧慢的文案每 2s 变一次，跟着刷新 notice 的自动隐藏计时。
     engine.notice(text);
+    // ArtPlayer 的 notice 2s 自动隐藏，而换集 / 换线解析可能要 3~50s：
+    // switchTip 非空期间每 1.5s 重发一次，压过自动隐藏，提示全程常驻；
+    // tip 清空即停定时器。slowNotice 自身每 2s 更新触发本 effect，不必加表。
+    if (!switchTip) {
+      return;
+    }
+    const timer = window.setInterval(() => engine.notice(text), 1500);
+    return () => window.clearInterval(timer);
   }, [engine, switchTip, slowNotice]);
 
   /** 当前集名：剧集列表到达后用列表里的名字，否则用路由参数。 */
@@ -1330,6 +1602,7 @@ export default function PlayerPage({
   episodeNavRef.current = {
     canNext: canPlayNext,
     onNext: () => goEpisode(1),
+    switching: episodeSwitching,
   };
 
   /* 播放舞台：画面 + 分辨率角标（角标是 portal，渲染进 ArtPlayer 根节点）。 */
@@ -1339,11 +1612,14 @@ export default function PlayerPage({
         resolving={resolving}
         stage={stage}
         reloading={reloading}
+        switching={episodeSwitching}
         playable={playable}
         recovering={recovering}
+        pending={resolved === null}
         resolveError={switchedUrlRef.current ? "" : resolveError}
         retryable={resolveRetryable}
         containerRef={containerRef}
+        poster={posterUrl ?? undefined}
         onNextLine={pickNextLine}
         nextLineBusy={nextLineBusy}
       />

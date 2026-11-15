@@ -61,14 +61,19 @@ if (!opened) {
   process.exit(1);
 }
 console.log("打开详情:", opened);
-await cdp.sleep(5000);
 
 // 详情页可能是单集（无「播放」按钮），直接点第一集也行。
-const entered = await cdp.eval(`(() => {
-  const play = [...document.querySelectorAll('.content button')].find((node) => /^播放/.test(node.textContent.trim()));
-  if (play) { play.click(); return 'play-button'; }
-  const episode = document.querySelector('.content .episode');
-  if (episode) { episode.click(); return 'episode'; }
+// 慢源详情普遍要 10~25s（源侧偶发还要重试），定长 sleep 是假阴性来源，
+// 改成轮询到出现可点入口为止（2026-11-16 探针在庆余年上连续误报两次）。
+const entered = await cdp.eval(`(async () => {
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    const play = [...document.querySelectorAll('.content button')].find((node) => /^播放/.test(node.textContent.trim()));
+    if (play) { play.click(); return 'play-button'; }
+    const episode = document.querySelector('.content .episode');
+    if (episode) { episode.click(); return 'episode'; }
+    await new Promise((r) => setTimeout(r, 800));
+  }
   return null;
 })()`);
 if (!entered) {
@@ -125,7 +130,9 @@ for (const { at, snap } of rows) {
   if (!snap.hasDesc) problems.push(`${at}ms: 简介消失`);
   if (snap.posterOk !== true) problems.push(`${at}ms: 封面未出图`);
 }
-const advanced = rows[0]?.snap?.active !== rows.at(-1)?.snap?.active;
+// 与基线比而不是与 +40ms 采样比：原地切换 + 按集缓存命中时 40ms 内就已完成，
+// 首拍即新集会误报「没有前进」（2026-11-15 实测）。
+const advanced = baseline.active !== rows.at(-1)?.snap?.active;
 const videoChanged = baseline.videoSrc !== rows.at(-1)?.snap?.videoSrc;
 if (!advanced) problems.push("当前集没有前进（点击可能没命中）");
 if (!videoChanged) problems.push("视频源没有切换");

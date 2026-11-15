@@ -39,6 +39,9 @@ export const PLAYER_NEXT_ICON = [
   // 右侧补一根圆角竖条 —— 与「暂停」并排时圆角半径、填充重量完全一致。
   '<path transform="translate(1.3 3.87) scale(0.65)" d="M17.982 9.275L8.06 3.27A2.013 2.013 0 0 0 5 4.994v12.011a2.017 2.017 0 0 0 3.06 1.725l9.922-6.005a2.017 2.017 0 0 0 0-3.45z"/>',
   '<rect x="14.8" y="4.4" width="2.2" height="13.2" rx="1.05"/>',
+  // 换集进行中的转圈提示：默认 display:none，按钮挂 .is-switching 时显示
+  //（见 player.css）。描弧 270°，圆心 (11,11) 半径 9.2。
+  '<circle class="player-next-spin" cx="11" cy="11" r="9.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="43.35 14.45"/>',
   "</svg></i>",
 ].join(" ");
 

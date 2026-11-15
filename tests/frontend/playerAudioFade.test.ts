@@ -41,7 +41,10 @@ describe("player audio fade", () => {
 
   it("does not persist the volume while the fade is running", () => {
     expect(engine).toContain("let volumeFadeUntil = 0;");
-    expect(engine).toContain("if (!fadeDone || Date.now() < volumeFadeUntil) {");
+    expect(engine).toContain("if (Date.now() < volumeFadeUntil) {");
+    // 「淡入还没开始」不能压住落盘：自动播放被拦时 fadeDone 恒 false，
+    // 用户在起播前拖的音量会被整段吞掉（2026-11-16 探针回归实测）。
+    expect(engine).not.toContain("if (!fadeDone || Date.now() < volumeFadeUntil) {");
     expect(engine).toContain("if (fadeDone && Date.now() >= volumeFadeUntil) {");
     expect(engine).toContain('video.removeEventListener("playing", fadeInVolume);');
     expect(engine).toContain('video.removeEventListener("canplay", fadeIfPlaying);');

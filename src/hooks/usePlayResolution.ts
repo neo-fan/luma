@@ -10,6 +10,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
+import {
+  getEpisodePlayCache,
+  invalidateEpisodePlayCache,
+  setEpisodePlayCache,
+} from "../lib/episodePlayCache";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
 import type { PlayResolved } from "../types/luma";
@@ -96,7 +101,15 @@ export function usePlayResolution({
   const [resolveRetryable, setResolveRetryable] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
-  const reload = useCallback(() => setReloadNonce((value) => value + 1), []);
+  /**
+   * 刷新必须绕过按集缓存：用户点刷新就是「这个地址可能坏了，重新要一个」，
+   * 若命中缓存会把同一个坏地址再喂一遍。直接作废当前 key，软/硬解析都重走。
+   * 依赖里的三个值在一次挂载内不变（PlayerHost 按它们换 key），reload 引用稳定。
+   */
+  const reload = useCallback(() => {
+    invalidateEpisodePlayCache(siteKey, playFrom, playUrl);
+    setReloadNonce((value) => value + 1);
+  }, [siteKey, playFrom, playUrl]);
   /** 上一次解析的地址组合：相同地址再次触发只可能是用户点了「刷新」。 */
   const lastSource = useRef("");
   /** 最近一次已落地的结果，用来区分「软刷新」与「effect 被重跑」。 */
@@ -121,7 +134,15 @@ export function usePlayResolution({
     // 直接给明确错误并结束 resolving，避免一直转「正在解析播放地址…」。
     // 从影片详情重新进入即可带上地址。注意 playUrl 在依赖里，变化会重跑。
     if (!playUrl) {
-      setResolveError("缺少播放地址，请从影片详情重新进入播放页");
+      if (siteKey === "live") {
+        // 直播的空地址是选台前的瞬态（冷启动 / 切源清空 pick），不是「恢复
+        // 播放页缺地址」：不写错误结论，否则 m3u 返回、loading 翻 false 的
+        // 那一帧会先于选台 effect 把「播放失败」闪上屏（2026-11-15 实测）。
+        // 顺手清掉上一源/上一轮可能残留的错误。
+        setResolveError("");
+      } else {
+        setResolveError("缺少播放地址，请从影片详情重新进入播放页");
+      }
       setStage(null);
       setResolving(false);
       return;
@@ -133,6 +154,26 @@ export function usePlayResolution({
     /** 本次失败是否只是「源还没答完」——决定上层能不能自动换源。 */
     let slowTimeout = false;
     const run = async () => {
+      // 按集缓存：换线探活（probeCandidate）/ 下一集预解析 / 上一轮播放都可能
+      // 已经把这条地址解析过。remount 后的新页面命中即直接落地，跳过整条
+      // playerContent → resolve_play 网络链。只在硬解析查：软刷新（用户点
+      // 刷新）在 reload 里已作废缓存，且必须重走网络。直播地址可能带时效
+      // token，不读不写（siteKey === "live"）。
+      //
+      // StrictMode 双跑安全：两遍都命中同一份缓存、写同一组 state，幂等；
+      // 不触碰 lastSource / soft 的判定时序（见上方注释）。
+      if (!soft && siteKey !== "live") {
+        const cached = getEpisodePlayCache(siteKey, playFrom, playUrl);
+        if (cached) {
+          setResolveError("");
+          setResolveRetryable(false);
+          setVideoError("");
+          setResolved(cached);
+          setResolving(false);
+          setStage(null);
+          return;
+        }
+      }
       if (soft) {
         setReloading(true);
         // 软刷新意味着已有 resolved，绝不该停在「解析中」——多这一行是给
@@ -219,6 +260,11 @@ export function usePlayResolution({
         ]);
         if (alive) {
           setResolved(result);
+          // 写入按集缓存：换集 / 换线 / 换源 remount 回来时直接命中。
+          // kind 过滤在 setEpisodePlayCache 内（page/share 不入缓存）。
+          if (siteKey !== "live") {
+            setEpisodePlayCache(siteKey, playFrom, playUrl, result);
+          }
         }
       } catch (err) {
         if (alive) {

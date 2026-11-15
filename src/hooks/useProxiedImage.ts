@@ -70,6 +70,16 @@ function resolveNow(value: string): string | null {
   return built;
 }
 
+/**
+ * 同步版代理地址解析（非 hook）：播放页 remount 的首帧就要把海报交给
+ * ArtPlayer 构造参数——按集缓存命中时解析零等待，实例在第一个 commit 就
+ * 创建，异步等 proxy_status 的海报赶不上。端口 / 结果已有进程级缓存，
+ * 这里直接复用；拿不到返回 null，调用方退回异步路径。
+ */
+export function resolveProxiedImageSync(pic: string | undefined): string | null {
+  return resolveNow(normalizePic(pic));
+}
+
 export function getProxyBaseUrl(): Promise<string | null> {
   if (proxyBasePromise) return proxyBasePromise;
   if (cachedProxyBase) return Promise.resolve(cachedProxyBase);

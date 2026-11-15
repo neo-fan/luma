@@ -46,12 +46,14 @@ export const BUILTIN_KINDS = ["hls", "flv", "file"];
  * 都不会重建实例，所以禁用状态不能写死在 `controls[].disable` 里，只能改 DOM。
  * click 里仍会再读一次 ref，双保险（DOM 状态与真实 canNext 万一有一帧不同步）。
  */
-function syncNextButton(el: HTMLElement | null, enabled: boolean): void {
+function syncNextButton(el: HTMLElement | null, enabled: boolean, switching = false): void {
   if (!el) {
     return;
   }
   el.classList.toggle("is-disabled", !enabled);
   el.setAttribute("aria-disabled", String(!enabled));
+  el.classList.toggle("is-switching", switching);
+  el.setAttribute("aria-busy", String(switching));
 }
 
 /**
@@ -99,6 +101,8 @@ export interface LiveLineControl {
 export interface EpisodeNavControl {
   canNext: boolean;
   onNext: () => void;
+  /** 原地换集进行中：按钮图标叠转圈、吞掉重复点击（反馈 + 防连点竞态）。 */
+  switching?: boolean;
 }
 
 export interface UsePlayerEngineArgs {
@@ -125,6 +129,11 @@ export interface UsePlayerEngineArgs {
   episodeNavRef?: MutableRefObject<EpisodeNavControl | null>;
   /** 是否还有下一集；只驱动控制栏按钮的禁用态，不进播放内核的依赖数组。 */
   canNext?: boolean;
+  /**
+   * 原地换集进行中；只驱动按钮转圈态。同步走下面的独立 effect——
+   * **不能进内核 effect 的依赖**，否则每次换集都会重建播放器实例。
+   */
+  switching?: boolean;
   /** 控制栏「刷新」：重新解析地址并重建实例。ref 转发，避免内核重建。 */
   reloadRef?: MutableRefObject<(() => void) | null>;
   /**
@@ -138,6 +147,12 @@ export interface UsePlayerEngineArgs {
   siteKey: string;
   vodName: string;
   vodId: string;
+  /**
+   * 首帧前的海报（影片封面，调用方已过 /image 代理）。remount 路径解析完成后
+   * 实例创建时铺上，避免「黑屏 + 转圈」直到 canplay；直播没有海报可不传。
+   * 用 ref 承接、不进内核 effect 依赖：封面异步到达绝不能重建正在播的实例。
+   */
+  poster?: string;
   /** 画面尺寸 / 清单声明分辨率变化时回调；角标由调用方渲染进 `playerRoot`。 */
   onVideoMeta?: (meta: VideoMeta) => void;
   /**
@@ -182,6 +197,7 @@ export function usePlayerEngine({
   liveLineRef,
   episodeNavRef,
   canNext,
+  switching,
   reloadRef,
   resumeMsRef,
   resolved,
@@ -189,6 +205,7 @@ export function usePlayerEngine({
   siteKey,
   vodName,
   vodId,
+  poster,
   onVideoMeta,
   onPlayerRoot,
   onSlowNotice,
@@ -199,6 +216,9 @@ export function usePlayerEngine({
   /** 软提示回调放 ref：它的身份每次渲染都会变，不能进内核 effect 的依赖。 */
   const slowNoticeRef = useRef(onSlowNotice);
   slowNoticeRef.current = onSlowNotice;
+  /** 海报同理：封面晚于实例创建到达时不重建实例，只在下次建实例时生效。 */
+  const posterRef = useRef(poster);
+  posterRef.current = poster;
   /** 原地换集的命令句柄：实例在 effect 里创建，ref 负责把命令送到它手上。 */
   const switchRef = useRef<((url: string) => Promise<void>) | null>(null);
   /** 播放器内提示通道：同样由 effect 里创建实例时挂上。 */
@@ -211,8 +231,8 @@ export function usePlayerEngine({
    * cleanup 顺序是回归探针的固定契约，不能被状态同步污染。
    */
   useEffect(() => {
-    syncNextButton(nextButtonRef.current, Boolean(canNext));
-  }, [canNext, resolved]);
+    syncNextButton(nextButtonRef.current, Boolean(canNext), Boolean(switching));
+  }, [canNext, resolved, switching]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -325,7 +345,9 @@ export function usePlayerEngine({
         tooltip: "下一集",
         click: () => {
           const nav = episodeNavRef.current;
-          if (nav?.canNext) {
+          // 换集进行中再点一次会叠出第二个切换协程：新旧两路 switchUrl 竞态，
+          // 后完成的覆盖先完成的——用户看到的就是「点了没反应 / 画面切回旧集」。
+          if (nav?.canNext && !nav.switching) {
             nav.onNext();
           }
         },
@@ -334,7 +356,7 @@ export function usePlayerEngine({
           // tooltip 在桌面端会顺手写上 aria-label，移动端不会；显式补一次，
           // 让读屏与窗口探针在两种环境下都有稳定定位点。
           el.setAttribute("aria-label", "下一集");
-          syncNextButton(el, episodeNavRef.current?.canNext ?? false);
+          syncNextButton(el, episodeNavRef.current?.canNext ?? false, episodeNavRef.current?.switching ?? false);
         },
       });
     }
@@ -364,6 +386,16 @@ export function usePlayerEngine({
      * 分辨率以 `<video>` 解码出来的 `videoWidth/videoHeight` 为准。
      */
     let declaredHeight = 0;
+    /**
+     * 看门狗探活用的「当前真实地址」。原地换集不重建本 effect，`resolved`
+     * 仍是进页面时那一集——探活若照旧读 resolved.proxyUrl，会拿旧集的地址
+     * 给新一集判生死。switchRef 换源时同步更新它。
+     */
+    let activeProxyUrl = resolved.proxyUrl;
+    /** 原地换集代数：在途探活回来时代数已变，结论属于旧集，直接丢弃。 */
+    let switchGeneration = 0;
+    /** 上一次切换挂起的续播监听：新一轮切换前收回，防旧 canplay 触发播放。 */
+    let resumeCleanup: (() => void) | null = null;
     // 只要出过画（currentTime>0），之后所有卡顿都按「网络抖动」处理：
     // 用户明确要求「已经能播放了 就不要切源」，换线交给他手动决定。
     let hasPlayed = false;
@@ -422,6 +454,11 @@ export function usePlayerEngine({
       container,
       url: resolved.proxyUrl,
       type: resolved.kind === "hls" ? "m3u8" : resolved.kind,
+      // remount 路径的首帧前画面：没有海报时 ArtPlayer 默认黑底 + 转圈直到
+      // canplay（慢源 1~10s+）。铺上影片封面，出画后由 poster hold 渐隐接管。
+      // 只在有海报时才传这个选项：ArtPlayer 对每个选项做类型校验，显式传
+      // undefined 会抛 TypeError 直接崩掉实例（2026-11-15 实测）。
+      ...(posterRef.current ? { poster: posterRef.current } : {}),
       lang: "zh-cn",
       theme: "#e50914",
       volume: prefs.volume,
@@ -603,6 +640,9 @@ export function usePlayerEngine({
             }
             // 实际链路是「先换同源线路，再跨源」，文案不能写成直接换源，
             // 否则用户看到跳到别的源会以为是逻辑错了。
+            // 失败路径必须撤掉首帧前的冻结帧 / 海报：接下来要么报错要么换线，
+            // 绝不允许一张静帧永久盖住画面（超时复核路径除外——那还在等）。
+            finishPoster(false);
             if (hasPlayed) {
               // 已经在播的流突然致命：网络上抖一下的概率远高于线路真的坏了，
               // 自动跳走会把用户正在看的内容切没。只提示，由用户决定。
@@ -692,6 +732,8 @@ export function usePlayerEngine({
                   return;
                 }
                 setVideoError(`FLV 播放失败：${detail}`);
+                // 同 hls fatal：报错换线前撤掉冻结帧，不让静帧盖住后续画面。
+                finishPoster(false);
                 void switchOrFailoverRef.current();
               });
               void video.play().catch(() => {
@@ -707,6 +749,99 @@ export function usePlayerEngine({
 
     const video = art.video;
     videoRef.current = video;
+
+    /**
+     * 首帧前海报保持（poster hold）。
+     *
+     * ArtPlayer 默认在 `video:play` 就把 poster 设成 display:none——而 play
+     * 事件在 HLS 清单解析完调 play() 的那一刻就触发，首帧根本还没解码出来，
+     * 画面随即掉进「黑屏 + 转圈」。这里接管 poster 的退场时机：一直盖到
+     * 新源真正出画（playing，或 readyState>=3 的 timeupdate），再 250ms 渐隐。
+     *
+     * 失败路径（video error / hls fatal / 看门狗判死）必须能立刻撤掉它：
+     * 冻结帧只是过渡，绝不允许永久盖住画面。finishPoster(false) 即硬撤。
+     */
+    const $poster = art.template.$poster;
+    let posterHoldActive = false;
+    let posterFadeTimer: number | null = null;
+    let onPosterPlay: (() => void) | null = null;
+    let onPosterPlaying: (() => void) | null = null;
+    let onPosterTimeUpdate: (() => void) | null = null;
+    const releasePosterHold = () => {
+      posterHoldActive = false;
+      if (onPosterPlay) {
+        art.off("video:play", onPosterPlay);
+        onPosterPlay = null;
+      }
+      if (onPosterPlaying) {
+        video.removeEventListener("playing", onPosterPlaying);
+        onPosterPlaying = null;
+      }
+      if (onPosterTimeUpdate) {
+        video.removeEventListener("timeupdate", onPosterTimeUpdate);
+        onPosterTimeUpdate = null;
+      }
+      if (posterFadeTimer !== null) {
+        window.clearTimeout(posterFadeTimer);
+        posterFadeTimer = null;
+      }
+    };
+    const clearPosterVisual = () => {
+      $poster.style.transition = "";
+      $poster.style.opacity = "";
+      // 不能用 art.poster = ""：ArtPlayer 拼成 `url()`，空值是非法 CSS，
+      // 浏览器直接忽略这次赋值，旧图会永远留在层上。直接清 style。
+      $poster.style.backgroundImage = "";
+      $poster.style.display = "none";
+    };
+    const finishPoster = (fade: boolean) => {
+      releasePosterHold();
+      if (!fade) {
+        clearPosterVisual();
+        return;
+      }
+      $poster.style.transition = "opacity 250ms ease";
+      $poster.style.opacity = "0";
+      // 渐隐结束再清图：提前清会闪一帧黑底。定时器由 cleanup / hardStop 收。
+      posterFadeTimer = window.setTimeout(() => {
+        posterFadeTimer = null;
+        clearPosterVisual();
+      }, 300);
+    };
+    const holdPoster = () => {
+      // 连续快速换集：先收掉上一轮的监听，再按当前帧重新保持。
+      releasePosterHold();
+      posterHoldActive = true;
+      $poster.style.transition = "";
+      $poster.style.opacity = "";
+      $poster.style.display = "";
+      // ArtPlayer 内部的 video:play 监听先于我们注册，会把 display 设成 none；
+      // 同一事件里我们的回调后执行，把它抬回来，poster 得以盖到首帧。
+      onPosterPlay = () => {
+        if (posterHoldActive) {
+          $poster.style.display = "";
+        }
+      };
+      art.on("video:play", onPosterPlay);
+      onPosterPlaying = () => {
+        if (posterHoldActive) {
+          finishPoster(true);
+        }
+      };
+      onPosterTimeUpdate = () => {
+        // playing 在个别源上会丢（缓冲态翻来覆去），timeupdate + 足够缓冲兜底。
+        // 必须排除暂停态：缓冲期间 timeupdate 也会触发，那时首帧还没出画，
+        // 渐隐会露出黑屏（2026-11-15 实测）。
+        if (posterHoldActive && !video.paused && video.readyState >= 3) {
+          finishPoster(true);
+        }
+      };
+      video.addEventListener("playing", onPosterPlaying);
+      video.addEventListener("timeupdate", onPosterTimeUpdate);
+    };
+    if (posterRef.current) {
+      holdPoster();
+    }
 
     /**
      * 起播音频淡入（2026-11-15 用户反馈「直播频道切换时候 有个声音」）。
@@ -797,6 +932,8 @@ export function usePlayerEngine({
       } catch {
         // 已 detach 的 <video> 可能抛 InvalidStateError，忽略即可。
       }
+      // 海报保持的监听与渐隐定时器随实例一起收，不留残留回调。
+      releasePosterHold();
       teardownDecoders?.();
       art.destroy();
     };
@@ -860,7 +997,7 @@ export function usePlayerEngine({
      * ratechange 仍在静默期内被忽略，只纠正 video 实际值、不污染 storage。
      * 静默期之后用户手动点倍速，才正常落盘。
      */
-    const rateReadyAt = Date.now() + 2000;
+    let rateReadyAt = Date.now() + 2000;
     const rateReplay = window.setTimeout(() => {
       if (videoRef.current !== video) {
         return;
@@ -891,14 +1028,16 @@ export function usePlayerEngine({
       if (videoRef.current !== video) {
         return;
       }
-      // 起播淡入会连续改 volume：那不是用户拖动，整段不落盘。淡入开始前
-      // （fadeDone=false）也不落盘——那时 video.volume 是我们自己的 0。
-      if (!fadeDone || Date.now() < volumeFadeUntil) {
+      // 淡入 ramp 进行中（volumeFadeUntil 窗口内）的连续音量变更是我们自己
+      // 写的中间值，整段不落盘。淡入还没开始的暂停态不拦——自动播放被拦时
+      // 用户可能先拖音量，曾用 !fadeDone 一并吞掉，偏好永远丢
+      // （2026-11-16 实测）。
+      if (Date.now() < volumeFadeUntil) {
         return;
       }
-      // 静默期内 ArtPlayer 会把自己缓存的音量写回来（100%），那不是用户操作：
-      // 不落盘、并即时纠正回记忆值。否则换集后音量被顶到最大，卸载时又把
-      // 最大值写回偏好，用户调好的音量就永久丢了（实测复现）。
+      // 新建实例的静默期（只在 load 时立起，原地换集不续窗）：
+      // ArtPlayer 会把自己缓存的音量写回来（100%），那不是用户操作——不落盘、
+      // 即时纠正回记忆值，否则卸载补写会把噪声固化成偏好（历史实测）。
       if (Date.now() < rateReadyAt) {
         const wantedVolume = readPlayerPrefs().volume;
         if (Math.abs(video.volume - wantedVolume) > 0.01) {
@@ -961,6 +1100,8 @@ export function usePlayerEngine({
         vodId,
         mediaCode: mediaError?.code ?? 0,
       });
+      // 解码失败要换线了：先撤掉冻结帧，别让静帧盖住错误提示与后续画面。
+      finishPoster(false);
       setVideoError(`播放器加载失败，${PLAY_FAILURE_HINT}。`);
       void switchOrFailoverRef.current();
     };
@@ -1001,6 +1142,8 @@ export function usePlayerEngine({
         quietMs: Date.now() - lastAliveAt,
         unresponsiveProbes,
       });
+      // 看门狗确认线路失效：冻结帧的使命结束，撤掉后交给换线链路。
+      finishPoster(false);
       setVideoError(message);
       void switchOrFailoverRef.current();
     };
@@ -1039,10 +1182,14 @@ export function usePlayerEngine({
       }
       probeBusy = true;
       lastProbeAt = Date.now();
-      void probeLineVerdict(resolved.proxyUrl, resolved.kind, 12_000)
+      // 探「当前真实地址」而不是 resolved.proxyUrl：原地换集后 resolved 不变，
+      // 照旧探旧地址会拿旧集的生死结论误杀新一集。
+      const generation = switchGeneration;
+      void probeLineVerdict(activeProxyUrl, resolved.kind, 12_000)
         .then((verdict) => {
           probeBusy = false;
           if (
+            generation !== switchGeneration ||
             watchStopped ||
             video.readyState >= 2 ||
             mediaIsAdvancing(video)
@@ -1165,13 +1312,207 @@ export function usePlayerEngine({
       if (!videoRef.current) {
         throw new Error("player is not ready");
       }
+      // 同地址重入（file 直链时 art.url 就是播放地址）：ArtPlayer 的 switchUrl
+      // 对同地址是 no-op，若先销毁解码器就没人重建了，画面会死在缓冲耗尽处。
+      if (url === art.url) {
+        return;
+      }
+      // 记录切换前的播放意图：teardown 销毁解码器会把 video 打回 paused，
+      // ArtPlayer 的 switchUrl 不会替我们续播——新源挂上后必须手动 play()，
+      // 否则缓冲完成了却停在暂停态，用户看到的就是「换集后黑屏不动」
+      // （2026-11-15 实测）。
+      const wasPlaying = !video.paused && !video.ended;
+      /**
+       * 偏好沿用（与新建实例同一套纪律）：原地换集同样会被 ArtPlayer 把
+       * playbackRate 重置回 1、把 volume 恢复成它缓存的 100%——那不是用户
+       * 动作，静默期必须按切换前的有效值重新立起来，否则倍速被冲成 1 还
+       * 落进偏好（2026-11-16 探针实测「第 2 集回到 1 倍速」）。音量取「当前
+       * 有效值」而不是存储值：本集内刚拖过音量可能还压在节流窗口里没落盘，
+       * 丢了它就是把用户的手动调节抹掉。
+       */
+      const swVolume =
+        !fadeDone || video.muted || video.volume <= 0.01 ? lastAudible : video.volume;
+      const swMuted = video.muted;
+      const swRate = video.playbackRate;
+      // 静默窗（rateReadyAt）**不在这里续**：那是新建实例的 load 窗口，换集
+      // 时续窗会把用户紧随换集的音量调节也吞掉（persistVolume 的纠正分支
+      // 按存储值回写）。ArtPlayer 在 switchUrl 后恢复缓存音量/倍速的噪声，
+      // 由下面的显式重放 + swFadeIn 的 ramp 窗口负责压住与纠正。
+      window.setTimeout(() => {
+        if (videoRef.current !== video) {
+          return;
+        }
+        if (Math.abs(video.playbackRate - swRate) > 0.01) {
+          video.playbackRate = swRate;
+        }
+        if (!video.muted && fadeDone && Math.abs(video.volume - swVolume) > 0.01) {
+          video.volume = swVolume;
+        }
+      }, 1250);
+      // 首帧前保留画面：teardown 销毁 Hls 即清 MSE 缓冲，画面立刻黑。趁缓冲
+      // 还在抓当前帧当 poster。MSE blob 同源，drawImage 不会 taint；跨源 native
+      // src 会抛 SecurityError——catch 住跳过，退回无海报，不阻塞换集。
+      let frozen: string | null = null;
+      try {
+        if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            frozen = canvas.toDataURL("image/jpeg", 0.85);
+          }
+        }
+      } catch {
+        frozen = null;
+      }
+      if (wasPlaying) {
+        // 掐断旧音频前先静音：拖着一小段缓冲直接 teardown，输出端会留一声
+        // 「咔」的爆音（与 hardStop 同一处理）。暂停态切换不出声，不动它。
+        video.muted = true;
+      }
+      resumeCleanup?.();
+      resumeCleanup = null;
       teardownDecoders?.();
       teardownDecoders = null;
+      /**
+       * 按集重置：原地换集复用同一个 effect 闭包，旧集的「出画 / 探活 /
+       * 码率」状态若不归零，新一集就失去看门狗保护（hasPlayed=true 后永不
+       * 自动换线）、角标残留旧码率、unknown 计数接着旧值累计。看门狗三态
+       * （dead 一次即换 / unknown 累计三次 / 出画后只提示不换）必须从
+       * 「未知」重新开始，watchStopped 也要复位。
+       */
+      hasPlayed = false;
+      unresponsiveProbes = 0;
+      measuredKbps = 0;
+      watchStopped = false;
+      lastProbeAt = 0;
+      switchGeneration += 1;
+      activeProxyUrl = url;
       declaredHeight = 0;
       lastAliveAt = Date.now();
       loadStartedAt = Date.now();
       clearSlowNotice();
+      // 角标不残留旧集的分辨率 / 码率：先清零，等新集 loadedmetadata 再上报。
+      onVideoMeta?.({ width: 0, height: 0, declaredHeight: 0 });
+      if (frozen) {
+        art.poster = frozen;
+        holdPoster();
+      }
       await art.switchUrl(url);
+      // 倍速先立起来：ratechange 在静默期内只会「纠正回切换前的倍速」，
+      // 顺带把 ArtPlayer 稍后恢复的默认 1 也一并压掉。
+      if (Math.abs(video.playbackRate - swRate) > 0.01) {
+        video.playbackRate = swRate;
+      }
+      if (wasPlaying) {
+        // 新集声音重走淡入，但**目标 = 切换前的有效音量**（不是存储偏好）：
+        // 重置淡入闸门从静音起播，playing 后 200ms 渐回，canplay 兜底——
+        // 既压掉解码首帧爆音，也不会像复用 fadeInVolume 那样把音量冲成
+        // ArtPlayer 刚恢复的存储值（2026-11-16 实测拖音量后换集丢音量）。
+        fadeDone = false;
+        video.volume = 0;
+        video.muted = true;
+        const swFadeIn = () => {
+          if (fadeDone || videoRef.current !== video) {
+            return;
+          }
+          fadeDone = true;
+          if (swMuted) {
+            video.volume = swVolume;
+            video.muted = true;
+            return;
+          }
+          // 先把静默窗口立起来再动 muted/volume（同 fadeInVolume 的顺序教训：
+          // 顺序反了会把此刻的 0 写成用户偏好）。
+          volumeFadeUntil = Date.now() + FADE_IN_MS + 150;
+          video.volume = 0;
+          video.muted = false;
+          const startedAt = performance.now();
+          const tick = () => {
+            if (videoRef.current !== video) {
+              return;
+            }
+            const progress = Math.min(1, (performance.now() - startedAt) / FADE_IN_MS);
+            video.volume = swVolume * progress;
+            if (progress < 1) {
+              window.requestAnimationFrame(tick);
+            } else {
+              // 渐入完成：再压 400ms 静默窗，让 ramp 期间挂上的节流/trailing
+              // 写全部作废，并把切换前的有效音量正式落盘——否则下一次
+              // ArtPlayer 恢复缓存音量时，存储里还是被冲掉前的旧值。
+              volumeFadeUntil = Date.now() + 400;
+              writePlayerPrefs({ volume: swVolume, muted: swMuted });
+            }
+          };
+          window.requestAnimationFrame(tick);
+        };
+        video.addEventListener("playing", swFadeIn, { once: true });
+        const swFadeIfPlaying = () => {
+          if (!video.paused) {
+            swFadeIn();
+          }
+        };
+        video.addEventListener("canplay", swFadeIfPlaying, { once: true });
+        const swFadeTimer = window.setTimeout(swFadeIfPlaying, 1500);
+        // 续播：switchUrl 返回时新解码器可能还没把 src 挂上（HLS 清单异步），
+        // 此刻 play() 会被拒且不再重试，画面就停在暂停态。立即试一次 +
+        // canplay 兜底；期间用户主动暂停则放弃续播，别跟用户抢控制权。
+        let resumeCancelled = false;
+        const cancelResume = () => {
+          resumeCancelled = true;
+        };
+        video.addEventListener("pause", cancelResume, { once: true });
+        const resumePlay = () => {
+          video.removeEventListener("pause", cancelResume);
+          resumeCleanup = null;
+          if (!resumeCancelled && videoRef.current === video && video.paused) {
+            void video.play().catch(() => {});
+          }
+        };
+        video.addEventListener("canplay", resumePlay, { once: true });
+        resumeCleanup = () => {
+          video.removeEventListener("pause", cancelResume);
+          video.removeEventListener("canplay", resumePlay);
+          video.removeEventListener("canplay", swFadeIfPlaying);
+          window.clearTimeout(swFadeTimer);
+        };
+        void video.play().catch(() => {});
+      }
+      /**
+       * 等到新集**真正有画面**才算切换完成：调用方（PlayerPage）在这条 promise
+       * 上挂着「切换中」状态——按钮转圈、控制栏钉住。若 switchUrl 一返回就结束，
+       * 慢源缓冲的十几秒里画面还停在冻结帧、spinner 却已消失，用户读作
+       * 「点了没反应」。15s 封顶：出画 / 被更新一轮切换取代 / 超时都收敛，
+       * 坏源的善后由看门狗与慢提示接管，按钮不能永远转。
+       */
+      const gen = switchGeneration;
+      await new Promise<void>((resolve) => {
+        const finish = (aliveCheck: boolean) => {
+          if (aliveCheck && switchGeneration !== gen) {
+            return; // 「出画」快路径只认最新一轮；在途旧切换不该宣布新集就绪
+          }
+          video.removeEventListener("loadeddata", onAlive);
+          video.removeEventListener("playing", onAlive);
+          video.removeEventListener("timeupdate", onAlive);
+          window.clearTimeout(cap);
+          resolve();
+        };
+        const onAlive = () => {
+          if (!video.paused && video.readyState >= 2 && video.videoWidth > 0) {
+            finish(true);
+          }
+        };
+        // 封顶必须无条件收口（finish(false)）：上一轮切换被新代次顶掉后，
+        // 若连 cap 也被守卫吞了，这条 promise 永挂、finally 永远不跑，
+        // 「切换中」只能等页面级兜底（2026-11-16 CDP 实测卡 10s+）。
+        const cap = window.setTimeout(() => finish(false), 15000);
+        video.addEventListener("loadeddata", onAlive);
+        video.addEventListener("playing", onAlive);
+        video.addEventListener("timeupdate", onAlive);
+        onAlive();
+      });
     };
     video.addEventListener("progress", onMediaAlive);
     video.addEventListener("loadeddata", onMediaAlive);
@@ -1184,6 +1525,8 @@ export function usePlayerEngine({
       window.clearInterval(hintTimer);
       switchRef.current = null;
       noticeRef.current = null;
+      // 海报保持的监听 / 渐隐定时器随卸载收回（DOM 由 art.destroy 移除）。
+      releasePosterHold();
       window.clearInterval(speedTimer);
       clearSlowNotice();
       window.clearTimeout(rateReplay);

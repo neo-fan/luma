@@ -43,7 +43,16 @@ describe("player stage fallback action", () => {
     const body = block.slice(0, block.indexOf("}"));
     expect(body).toContain("opacity: 1 !important;");
     expect(body).toContain("visibility: visible !important;");
-    expect(body).toContain("pointer-events: auto !important;");
+    // .art-bottom 是 inset:0 的全幅层：给它放开 pointer-events 会在后台
+    // 播放时把整个页面的点击吞光（2026-11-16 实测搜索页错误条点不到）。
+    // 可点权限只给进度条 / 控制栏两行。
+    expect(body).not.toContain("pointer-events");
+    const clickable = css.slice(
+      css.indexOf(".player-stage.is-busy .art-video-player .art-progress,"),
+    );
+    expect(clickable.slice(0, clickable.indexOf("}"))).toContain(
+      "pointer-events: auto !important;",
+    );
   });
 
   it("keeps the button clickable inside a pointer-events-none overlay", () => {
