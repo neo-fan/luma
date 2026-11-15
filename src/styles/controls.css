@@ -699,3 +699,10 @@
   background: var(--panel-raised);
 }
 
+
+.site-select__favorite {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1;
+}

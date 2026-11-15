@@ -1,5 +1,6 @@
 import * as Select from "@radix-ui/react-select";
 import Icon from "./Icon";
+import { favoriteFirst, useFavoriteSites } from "../lib/siteFavorites";
 import type { Site } from "../types/tvbox";
 
 const ALL_SITES = "__all__";
@@ -40,6 +41,9 @@ export default function SiteSelect({
   disabledHints,
 }: SiteSelectProps) {
   const isAll = value === ALL_SITES;
+  const favorites = useFavoriteSites();
+  // 收藏源排前面；同组内保持配置原顺序（favoriteFirst 是稳定排序）。
+  const ordered = favoriteFirst(sites, (site) => site.key);
   const current = isAll ? null : sites.find((item) => item.key === value);
   const triggerLabel = isAll ? "全部站点" : current?.name ?? "选择站点";
 
@@ -76,7 +80,7 @@ export default function SiteSelect({
                   </Select.ItemText>
                 </Select.Item>
               ) : null}
-              {sites.map((site) => {
+              {ordered.map((site) => {
                 const blocked = disabledKeys?.has(site.key) ?? false;
                 return (
                   <Select.Item
@@ -96,6 +100,11 @@ export default function SiteSelect({
                     <Select.ItemText asChild>
                       <span className="site-select__name app-select__name">{site.name}</span>
                     </Select.ItemText>
+                    {favorites.includes(site.key) ? (
+                      <small className="site-select__favorite" aria-hidden="true">
+                        ★
+                      </small>
+                    ) : null}
                     {blocked ? (
                       <small className="site-select__tag app-select__tag">
                         {disabledHints?.get(site.key) ?? "不可选"}

@@ -860,7 +860,9 @@ export default function PlayerPage({
   useEffect(() => {
     // 原地换集/换源之后，路由里的 playUrl 已经不代表正在播的地址：
     // 它的解析结论（失败、kind=page）都是上一轮的，不能再拿它去换源。
-    if (!active || switchedUrlRef.current) {
+    // 暂停中不自动换任何东西：用户按暂停就是「先停在这儿」，此时路由里的
+    // 旧 playUrl 解析失败（换集/换源后它是过期地址）不代表当前线路坏了。
+    if (!active || switchedUrlRef.current || videoRef.current?.paused) {
       return;
     }
     if (
@@ -888,8 +890,15 @@ export default function PlayerPage({
    * 又回到同一条」的循环；跳转次数有上限，预算用完就停下报错交还用户。
    */
   useEffect(() => {
-    // 同上：已经原地换到新地址时，旧地址的「解析失败」不该把画面切走。
-    if (!active || switchedUrlRef.current || resolving || !resolveError) {
+    // 同上：已经原地换到新地址时，旧地址的「解析失败」不该把画面切走；
+    // 暂停中也不换 —— 用户只是停下来，不代表这条线路坏了。
+    if (
+      !active ||
+      switchedUrlRef.current ||
+      videoRef.current?.paused ||
+      resolving ||
+      !resolveError
+    ) {
       return;
     }
     if (ledgerHasUrl(ledgerKey, playUrl)) {

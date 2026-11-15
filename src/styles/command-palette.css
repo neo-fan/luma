@@ -531,7 +531,19 @@
   color: var(--faint);
 }
 
-/* 按钮固定 76×32：文案在「切换 / 切换中」之间变化时不再带着整行抖一下 */
+/* 换源弹窗行内的收藏星：复用 .fav-star 的星形/金色态，尺寸与「切换」按钮同高，
+   ／按钮固定 76×32：文案在「切换 / 切换中」之间变化时不再带着整行抖一下 */
+.source-item__fav.fav-star {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  margin-right: 2px;
+}
+
+.source-item__fav.fav-star svg {
+  width: 18px;
+  height: 18px;
+}
 .source-item__pick {
   display: inline-flex;
   align-items: center;

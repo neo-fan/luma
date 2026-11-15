@@ -12,6 +12,7 @@ import VodCard from "../components/VodCard";
 import { api, errorMessage, toAppError } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
 import { rankByTitle, titleMatchScore } from "../lib/format";
+import { favoriteFirst } from "../lib/siteFavorites";
 import {
   clearSearchHistory,
   pushSearchHistory,
@@ -243,10 +244,11 @@ export default function SearchPage({
             if (added) {
               // 每批都按片名相关度稳定重排：先到的精确命中保持置顶，
               // 后到的按分数插队（陆续出来、始终有序）。
-              const ranked = rankByTitle(
-                streamed,
-                word,
-                (hit) => hit.vod.vod_name,
+              // 收藏源优先：同一部片在多个站都有时，先把用户收藏过的站排上来；
+              // 站内仍按片名相关度（favoriteFirst 稳定排序，不动同组顺序）。
+              const ranked = favoriteFirst(
+                rankByTitle(streamed, word, (hit) => hit.vod.vod_name),
+                (hit) => hit.siteKey,
               );
               setHits(ranked);
               setMatchCount(ranked.filter((hit) => hit.matchScore >= 2).length);

@@ -568,3 +568,15 @@
   background-size: 12px 12px;
 }
 
+/* 首页工具栏的「收藏当前源」：复用 .fav-star 的星形、金色态与热区，
+   只把尺寸收到与控制栏按钮一致（34 → 32），保证与下拉框同高。 */
+.site-fav.fav-star {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+}
+
+.site-fav.fav-star svg {
+  width: 19px;
+  height: 19px;
+}

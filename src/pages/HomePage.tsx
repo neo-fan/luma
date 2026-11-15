@@ -4,7 +4,9 @@ import type { Navigate } from "../lib/nav";
 import AsyncBoundary from "../components/AsyncBoundary";
 import Empty from "../components/Empty";
 import IconButton from "../components/IconButton";
+import FavStar from "../components/FavStar";
 import SiteSelect from "../components/SiteSelect";
+import { toggleFavoriteSite, useFavoriteSites } from "../lib/siteFavorites";
 import HomeHero from "../components/HomeHero";
 import PosterRail from "../components/PosterRail";
 import Spinner from "../components/Spinner";
@@ -104,6 +106,7 @@ export default function HomePage({
   navigate,
 }: HomePageProps) {
   // 首页推荐内容按站点保留，返回首页时直接出结果；站点 key 变化时自然失效。
+  const favoriteSites = useFavoriteSites();
   const [home, setHome] = usePageState<HomeResult | null>(
     `home:${siteKey}:data`,
     null,
@@ -576,6 +579,13 @@ export default function HomePage({
             disabledKeys={blockedKeys}
             disabledHints={blockedHints}
           />
+          {siteKey ? (
+            <FavStar
+              className="site-fav"
+              on={favoriteSites.includes(siteKey)}
+              onToggle={() => toggleFavoriteSite(siteKey)}
+            />
+          ) : null}
         </div>
         <IconButton
           name="refresh"

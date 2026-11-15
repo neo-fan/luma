@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import Empty from "./Empty";
+import FavStar from "./FavStar";
 import ErrorBar from "./ErrorBar";
 import Icon from "./Icon";
 import IconButton from "./IconButton";
@@ -15,6 +16,7 @@ import {
 } from "../lib/sourceCache";
 import type { SourceView } from "../lib/sourceCache";
 import type { SourceOption } from "../lib/sources";
+import { favoriteFirst, toggleFavoriteSite, useFavoriteSites } from "../lib/siteFavorites";
 import type { Site } from "../types/tvbox";
 
 interface SourcePickerProps {
@@ -215,7 +217,12 @@ export default function SourcePicker({
     }
   };
 
-  const visible = onlyMatch ? view.options.filter((item) => item.matchScore >= 2) : view.options;
+  const favorites = useFavoriteSites();
+  // 收藏源排前面：换源时用户多半还想回到自己常用的那几个站。
+  const visible = favoriteFirst(
+    onlyMatch ? view.options.filter((item) => item.matchScore >= 2) : view.options,
+    (item) => item.siteKey,
+  );
   const stats = view.stats;
   const missed = stats.failed + stats.skipped;
   // 运行配置里已屏蔽的 jvm（Android dex/jar）源不参与聚合，进度文案按可用站点数算。
@@ -413,6 +420,11 @@ export default function SourcePicker({
                               ) : null}
                             </div>
                           </div>
+                          <FavStar
+                            className="source-item__fav"
+                            on={favorites.includes(option.siteKey)}
+                            onToggle={() => toggleFavoriteSite(option.siteKey)}
+                          />
                           <button
                             type="button"
                             className="btn source-item__pick"

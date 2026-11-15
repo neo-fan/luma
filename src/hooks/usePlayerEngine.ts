@@ -992,6 +992,12 @@ export function usePlayerEngine({
       if (watchStopped) {
         return;
       }
+      // 用户主动暂停（不是播完）：没有任何「线路坏了」的证据，绝不能探活换源。
+      // 同时把存活计时推到当前时刻，恢复播放后不会因为「暂停了十分钟」立刻判死。
+      if (video.paused && !video.ended) {
+        lastAliveAt = Date.now();
+        return;
+      }
       // 通用存活判据：缓冲到位之外，媒体时钟在走（声音已经出来、画面还在
       // 解码）也算活着 —— 这种线路不能判死，也不该继续挂着「加载中」。
       if (video.readyState >= 2 || mediaIsAdvancing(video)) {
