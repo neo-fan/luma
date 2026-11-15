@@ -17,6 +17,11 @@ import { readLiveChannel, rememberLiveChannel } from "../lib/liveChannels";
 import { getEpgUrl } from "../lib/epgSettings";
 import { notify } from "../lib/notify";
 import { noticeTtl } from "../lib/notice";
+import { classifyLiveFailure, liveFailureMessage } from "../lib/playErrors";
+import type {
+  LiveFailureInfo,
+  LiveFailureStage,
+} from "../lib/playErrors";
 import { resolutionBadge, resolutionDetail } from "../lib/resolution";
 import type { VideoMeta } from "../lib/resolution";
 import { api } from "../lib/invoke";
@@ -50,10 +55,18 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
 
   const [videoError, setVideoError] = useState("");
   /**
+   * `videoError` 的来源阶段：内核报错（play）还是「单线路等 4s 仍没出画」的
+   * 结论（single-line）。阶段决定文案该引导「换线路」还是「换频道」。
+   */
+  const [videoStage, setVideoStage] = useState<LiveFailureStage>("play");
+  /** 最近一次内核报错原文：4s 判死时 timer 回调读 state 会拿到旧值，用 ref 承接。 */
+  const lastErrorRef = useRef("");
+  lastErrorRef.current = videoError;
+  /**
    * 结论性错误（这个频道的所有线路都试过了）：常驻到用户换台。
    * 它本身就是「该你操作了」的指令，8s 后自己消失等于把唯一的出口藏起来。
    */
-  const [fatalError, setFatalError] = useState("");
+  const [fatalError, setFatalError] = useState<LiveFailureInfo | null>(null);
   const [slowNotice, setSlowNotice] = useState("");
   const [switchTip, setSwitchTip] = useState("");
   /** 自动换线路进行中：这段时间不铺红色错误条（有希望自愈）。 */
@@ -176,6 +189,16 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     }
   }, [videoMeta.width, channel?.name, pauseVodMedia]);
 
+  /**
+   * 内核 / 解析钩子只会 set 字符串；这里顺手把阶段打回 `play`，避免上一轮
+   * 「单线路判死」的阶段泄漏到新的错误上（那样会把只换线路就能解决的错误
+   * 说成「只能换频道」）。
+   */
+  const setEngineVideoError = useCallback<typeof setVideoError>((value) => {
+    setVideoStage("play");
+    setVideoError(value);
+  }, []);
+
   const {
     resolved,
     resolving,
@@ -193,13 +216,14 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     liveReferer: channel?.referer,
     vodId: channel?.name ?? "",
     setSwitchTip,
-    setVideoError,
+    setVideoError: setEngineVideoError,
   });
 
   const reloadRef = useRef<(() => void) | null>(null);
   reloadRef.current = () => {
     setVideoError("");
-    setFatalError("");
+    setVideoStage("play");
+    setFatalError(null);
     setSwitchTip("");
     reload();
   };
@@ -227,7 +251,8 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
       setLiveLine(sourceKey, name, idx);
       rememberLiveChannel(sourceKey, { name, line: idx });
       setVideoError("");
-      setFatalError("");
+      setVideoStage("play");
+      setFatalError(null);
       setSwitchTip("");
       setPick({ name, line: idx });
     },
@@ -259,7 +284,13 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
         if (video && video.readyState >= 2) {
           return;
         }
-        setVideoError("该频道暂时无法播放，可以换一个频道。");
+        // 单线路判死：把内核给的最后一句原文带进归类，能看出原因的按原因
+        // 引导（解码 / 超时 / 网络），看不出原因才用「换频道」的结论文案。
+        const lastError = lastErrorRef.current;
+        setVideoStage("single-line");
+        setVideoError(
+          lastError || liveFailureMessage({ stage: "single-line" }),
+        );
       }, 4_000);
       return;
     }
@@ -278,7 +309,7 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
       return;
     }
     setRecovering(false);
-    setFatalError("该频道的所有线路都无法播放，请换一个频道。");
+    setFatalError(classifyLiveFailure({ stage: "exhausted" }));
     setVideoError("");
   };
 
@@ -296,6 +327,7 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     lineSwitchStarted.current = false;
     clearVerdict();
     setVideoMeta({ width: 0, height: 0 });
+    setVideoStage("play");
   }, [lineIdx, playUrl, clearVerdict]);
 
   useEffect(() => clearVerdict, [clearVerdict]);
@@ -308,7 +340,8 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     if (videoMeta.width > 0) {
       clearVerdict();
       setVideoError("");
-      setFatalError("");
+      setVideoStage("play");
+      setFatalError(null);
       setSlowNotice("");
     }
   }, [videoMeta.width, clearVerdict]);
@@ -339,7 +372,7 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     onVideoMeta: setVideoMeta,
     onPlayerRoot: setPlayerRoot,
     onSlowNotice: (text) => setSlowNotice(text ?? ""),
-    setVideoError,
+    setVideoError: setEngineVideoError,
   });
 
   /**
@@ -389,6 +422,7 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
         return;
       }
       setVideoError("");
+      setVideoStage("play");
       setSwitchTip("");
       selectLine(next.name, idx, next.lines.length);
     },
@@ -424,6 +458,30 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
       : null;
 
   const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
+
+  /**
+   * 播放内核失败 / 单线路判死的统一归类。主文案与归因都只从
+   * `classifyLiveFailure` 出，原始报错降级到 ErrorBar 的「技术详情」，
+   * 界面不再把 `HLS 播放失败：manifestParsingError` 这类内部名当正文。
+   */
+  const videoFailure =
+    videoError || videoStage === "single-line"
+      ? classifyLiveFailure({ message: videoError, stage: videoStage })
+      : null;
+
+  /**
+   * 解析失败 / 页面型地址的统一归类。
+   *
+   * `resolved.kind === "page"` 表示 `resolve_play` 的第 4 级嗅探也没拿到媒体
+   * 流（`domain/play.rs` 的 page 分支）：地址本身是网页，播放器无从下手。
+   * 这是「该换频道/换源」的结论，所以用常驻横幅；普通解析失败仍是时效性
+   * 结论，保持 8s 自动收起。
+   */
+  const resolveFailure = resolveError
+    ? classifyLiveFailure({ message: resolveError, stage: "resolve" })
+    : resolved !== null && !playable && !reloading
+      ? classifyLiveFailure({ stage: "sniff" })
+      : null;
 
   // 进页面就预热节目单：默认 7.6MB XMLTV，点开才发现「加载节目单…」像坏了。
   useEffect(() => {
@@ -480,20 +538,35 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
       <div className="page-body">
         {switchTip ? <p className="tip">{switchTip}</p> : null}
         {/* 两类错误分开：
-          · tone="warn"＝「此刻这条线路这一下不行」，画面可能已在别的线路上
-            播着，8s 带倒计时自动收起（时长见 lib/notice.ts）；
-          · 默认 tone="error"＝「该频道所有线路都试过了」，这是要用户动手的
-            结论，常驻到换台为止。 */}
-        {videoError && !recovering ? (
-          <ErrorBar message={videoError} lifetime="timed" />
-        ) : null}
-        {channel && resolveError && !recovering ? (
+          · lifetime="timed"＝「此刻这条线路这一下不行」，画面可能已在别的
+            线路上播着，8s 带倒计时自动收起（时长见 lib/notice.ts）；
+          · 默认 sticky＝「该频道所有线路都试过了」或「地址是网页、嗅探不到
+            播放源」，这是要用户动手的结论，常驻到换台为止。
+          主文案与归因由 lib/playErrors 的 classifyLiveFailure 统一给出，
+          原始报错折叠进「技术详情」。 */}
+        {videoFailure && !recovering ? (
           <ErrorBar
-            message={`播放地址解析失败：${resolveError}`}
+            message={videoFailure.message}
+            hint={videoFailure.hint}
+            detail={
+              videoError && videoError !== videoFailure.message
+                ? videoError
+                : undefined
+            }
             lifetime="timed"
           />
         ) : null}
-        {fatalError && !recovering ? <ErrorBar message={fatalError} /> : null}
+        {resolveFailure && !recovering ? (
+          <ErrorBar
+            message={resolveFailure.message}
+            hint={resolveFailure.hint}
+            detail={resolveError || undefined}
+            lifetime={resolveError ? "timed" : "sticky"}
+          />
+        ) : null}
+        {fatalError && !recovering ? (
+          <ErrorBar message={fatalError.message} hint={fatalError.hint} />
+        ) : null}
 
         <div className="live-layout">
           <LiveChannelRail
@@ -518,7 +591,9 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
                   playable={playable}
                   recovering={recovering}
                   slowText={slowNotice}
-                  resolveError={resolveError}
+                  resolveError={
+                    resolveError ? (resolveFailure?.message ?? resolveError) : ""
+                  }
                   retryable={resolveRetryable}
                   containerRef={containerRef}
                 />
