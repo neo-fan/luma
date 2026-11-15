@@ -138,6 +138,8 @@ pub fn start() -> Result<Arc<ProxyState>, AppError> {
             .route("/proxy", get(handle_proxy).options(handle_options))
             .route("/image", get(handle_image).options(handle_options))
             .route("/health", get(handle_health))
+            // 播放器 HUD 的吞吐读数；只读、无副作用，和 /health 一样不设鉴权。
+            .route("/meter", get(handle_meter))
             .with_state(shared.clone());
         if let Err(err) = axum::serve(listener, router).await {
             tracing::error!(error = %err, "local proxy stopped");
@@ -220,6 +222,7 @@ pub fn proxy_status(state: tauri::State<'_, Arc<ProxyState>>) -> ProxyStatus {
 mod guard;
 mod handlers;
 mod playlist;
+mod speed;
 
 use guard::*;
 pub(crate) use handlers::base64_decode;

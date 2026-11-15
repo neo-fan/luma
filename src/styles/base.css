@@ -162,6 +162,29 @@ textarea {
   color: #fff;
 }
 
+/* 原生窗口观感：界面 chrome 默认不可框选（拖动时不会顺手刷出一片蓝），
+   只有真正要复制的正文与输入框允许选择。与 webviewGuards 的右键/快捷键
+   拦截配套 —— 少了这条，鼠标一划还是像在浏览器里。 */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+.detail-content,
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 图片不是可拖拽的资源：按住封面拖出去会变成一条「打开图片」的浏览器手势。 */
+img {
+  -webkit-user-drag: none;
+}
+
 /* 桌面端不留可见滚动条：滚轮 / 触控板 / 拖动仍能滚动（overflow 不变），
    只是不画那 10px 的轨道条。以前自定义 thumb 在深色界面上像一道割裂的
    竖线，抢内容注意力；Windows WebView2 走 -webkit，scrollbar-width 覆盖

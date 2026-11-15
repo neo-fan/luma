@@ -1005,7 +1005,14 @@ export function usePlayerEngine({
       if (waited >= 8) {
         // 只补「等了多久」：标题由 PlayerStage 统一给「正在加载画面…」，
         // 这里再说一遍会变成两行同义文案。
-        showSlowNotice(`源侧响应较慢，已等待 ${waited}s`);
+        //
+        // 45s 后封顶：计数器一直往上翻（用户截到过「已等待 906s」）既没有信息量，
+        // 还会让人以为应用在傻等。此时改成可操作的建议，是否换线仍由上层决定。
+        showSlowNotice(
+          waited >= 45
+            ? "源侧长时间没有响应，可切换线路或点刷新重试"
+            : `源侧响应较慢，已等待 ${waited}s`,
+        );
       }
     }, 2_000);
     video.addEventListener("progress", onMediaAlive);

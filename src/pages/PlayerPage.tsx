@@ -4,13 +4,12 @@ import ErrorBar from "../components/ErrorBar";
 import SourcePicker from "../components/SourcePicker";
 import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
-import PlayerSwitchVeil from "../components/player/PlayerSwitchVeil";
 import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
 import PlayerResolution from "../components/player/PlayerResolution";
+import PlayerSpeed from "../components/player/PlayerSpeed";
 import { parsePlayLines, sameEpisodeName, sameTitle, toVodRef } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
-import { clearPlaySwitch, markPlaySwitch, peekPlaySwitch } from "../lib/playSwitch";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
 import { probePlayable } from "../lib/playProbe";
@@ -46,6 +45,7 @@ import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
+import { useCacheSpeed } from "../hooks/useCacheSpeed";
 import type { EpisodeNavControl } from "../hooks/usePlayerEngine";
 
 interface PlayerPageProps {
@@ -439,50 +439,9 @@ export default function PlayerPage({
 
   const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
 
-  /**
-   * 手动换集 / 换线路 / 换源的过渡幕。标记经 sessionStorage 跨路由重建传递：
-   * 旧页压暗 180ms 再 navigate，新页继续盖着，等能出画再淡出。
-   */
-  const [switchVeil, setSwitchVeil] = useState<{ label: string; revealing: boolean } | null>(
-    () => {
-      const pending = peekPlaySwitch();
-      return pending ? { label: pending.label, revealing: false } : null;
-    },
-  );
-
-  // 标记读出来就作废：不清的话下次再进播放页（比如回退）会莫名盖一层幕。
-  useEffect(() => {
-    clearPlaySwitch();
-  }, []);
-
-  /** 手动切换统一走这里：先压暗再跳，避免「点完瞬间换一屏」。 */
-  const beginPlaySwitch = useCallback((label: string, run: () => void) => {
-    markPlaySwitch(label);
-    setSwitchVeil({ label, revealing: false });
-    window.setTimeout(run, 180);
-  }, []);
-
-  // 新画面能播（或解析已收尾）才揭幕；解析慢时多等一会儿，显得是「在换」而不是「卡住」。
-  useEffect(() => {
-    if (!switchVeil || switchVeil.revealing) return;
-    if (!playable && (resolving || reloading)) return;
-    const timer = window.setTimeout(
-      () => {
-        setSwitchVeil((value) =>
-          value && !value.revealing ? { ...value, revealing: true } : value,
-        );
-      },
-      playable ? 120 : 400,
-    );
-    return () => window.clearTimeout(timer);
-  }, [switchVeil, playable, resolving, reloading]);
-
-  // 淡出结束后把幕从 DOM 摘掉，别让它一直盖着（pointer-events 已经放开了）。
-  useEffect(() => {
-    if (!switchVeil?.revealing) return;
-    const timer = window.setTimeout(() => setSwitchVeil(null), 320);
-    return () => window.clearTimeout(timer);
-  }, [switchVeil]);
+  // 缓存速度：反代 `/meter` 给真实下载速率，`<video>.buffered` 给已缓冲时长。
+  // 只在可播时轮询，解析中/换源中不显示，避免和 ArtPlayer 的 loading 抢画面。
+  const cacheSpeed = useCacheSpeed(videoRef, playable);
 
   /**
    * 与详情页共用的换源候选缓存：播放页多是从详情跳转过来，缓存已就绪；
@@ -1105,19 +1064,19 @@ export default function PlayerPage({
     // 切换前把当前进度落库，别等 5 秒节流（页面马上会被 key 重建）。
     flushHistoryRef.current?.();
     videoRef.current = null;
-    beginPlaySwitch(`正在切换到「${episode.name}」…`, () =>
-      navigate(
-        {
-          name: "player",
-          siteKey,
-          vodId,
-          vodName,
-          playUrl: episode.url,
-          episodeName: episode.name,
-          playFrom: target.name,
-        },
-        true,
-      ),
+    // 换集不盖幕、不延迟：同源同一份剧集列表，新地址立刻交给播放器，
+    // 缓冲进度由 ArtPlayer 自己的 loading 呈现。
+    navigate(
+      {
+        name: "player",
+        siteKey,
+        vodId,
+        vodName,
+        playUrl: episode.url,
+        episodeName: episode.name,
+        playFrom: target.name,
+      },
+      true,
     );
   };
 
@@ -1134,9 +1093,9 @@ export default function PlayerPage({
    */
   const pickSource = async (option: SourceOption) => {
     setShowSources(false);
-    // 换源的详情请求可能要几秒：先把幕盖上，用户至少知道「点了、在换」，
-    // 而不是选完源之后页面干等着不动（失败时把幕撤掉再提示）。
-    setSwitchVeil({ label: `正在切换到「${option.siteName}」…`, revealing: false });
+    // 换源要先取新站详情，可能几秒：只在页面上留一行提示，不盖全屏、
+    // 不压暗播放器 —— 视频加载交给播放器自己显示。
+    setSwitchTip(`正在切换到「${option.siteName}」…`);
     let matched: ReturnType<typeof pickMatchingEpisode> | null = null;
     try {
       const list = await api.detail(option.siteKey, option.vodId);
@@ -1148,13 +1107,13 @@ export default function PlayerPage({
         index: episodeIndex,
       });
     } catch (err) {
-      setSwitchVeil(null);
+      setSwitchTip("");
       notify.error(`换源失败：${errorMessage(err)}`);
       return;
     }
     const match = matched;
     if (!match) {
-      setSwitchVeil(null);
+      setSwitchTip("");
       notify.error("该源没有可播放剧集，请换一个片源");
       return;
     }
@@ -1172,7 +1131,6 @@ export default function PlayerPage({
     // 换源前先落库：历史按剧名合并，这条进度就是新源的续播起点。
     flushHistoryRef.current?.();
     videoRef.current = null;
-    markPlaySwitch(`正在切换到「${option.siteName}」…`);
     navigate(
       {
         name: "player",
@@ -1220,7 +1178,6 @@ export default function PlayerPage({
         reloading={reloading}
         playable={playable}
         recovering={recovering}
-        slowText={slowNotice}
         resolveError={resolveError}
         retryable={resolveRetryable}
         containerRef={containerRef}
@@ -1229,6 +1186,11 @@ export default function PlayerPage({
         host={playerRoot}
         label={resolutionBadge(videoMeta)}
         detail={resolutionDetail(videoMeta.width, videoMeta.height)}
+      />
+      <PlayerSpeed
+        host={playerRoot}
+        bytesPerSec={cacheSpeed.bytesPerSec}
+        bufferedSec={cacheSpeed.bufferedSec}
       />
     </>
   );
@@ -1245,7 +1207,11 @@ export default function PlayerPage({
       />
 
       <div className="page-body">
-        {switchTip ? <p className="tip">{switchTip}</p> : null}
+        {/* 换源提示与「源侧慢、已等待 Ns」共用一行文案：视频本身的缓冲由
+           ArtPlayer 内建的 loading 呈现，这里只负责说清楚在等什么。 */}
+        {switchTip || slowNotice ? (
+          <p className="tip">{switchTip || slowNotice}</p>
+        ) : null}
         {/* 与直播页同一口径：播放失败/解析失败是「这一下这条线路不行」的时效
           结论（自动换源可能已经把你救回来了），8s 带倒计时收起；hover 面板
           上时倒计时冻结。真正要用户决策的错误由 PlayerStage 面板常驻呈现。 */}
@@ -1303,10 +1269,6 @@ export default function PlayerPage({
           />
         ) : null}
       </div>
-
-      {switchVeil ? (
-        <PlayerSwitchVeil label={switchVeil.label} revealing={switchVeil.revealing} />
-      ) : null}
     </section>
   );
 }

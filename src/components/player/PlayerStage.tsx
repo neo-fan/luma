@@ -10,12 +10,6 @@ interface PlayerStageProps {
   reloading?: boolean;
   /** 自动换线路进行中（有希望自愈，不铺满错误面板）。 */
   recovering?: boolean;
-  /**
-   * 内核报告的「慢但在动」文案（已含等待秒数，空串 = 没有）。
-   *
-   * 只用来顶一块中性加载态：慢源不该出现红色错误条，也不该被自动换走。
-   */
-  slowText?: string;
   playable: boolean;
   resolveError: string;
   /** 解析失败的成因是「源还没答完」（可重试），标题别提成「无法解析」。 */
@@ -41,7 +35,6 @@ export default function PlayerStage({
   stage = null,
   reloading = false,
   recovering = false,
-  slowText = "",
   playable,
   resolveError,
   retryable = false,
@@ -65,7 +58,9 @@ export default function PlayerStage({
     return () => clearInterval(timer);
   }, [busy]);
 
-  // 有可播地址时即便在重新解析，也照常显示画面与控件，不给容器加 hidden。
+  // 只有「还没有播放实例」时才有自定义提示：拿地址、重建实例。
+  // 视频本身的加载与缓冲一律交给 ArtPlayer 内建的 loading 样式，这里不再画
+  // 第二套转圈（11-14 用户反馈过两坨加载动画叠在画面中心）。
   const status = resolving
     ? // 解析分两个阶段给不同文案：问源拿直链 vs 交给反代建连，避免「一直转」被误判卡死。
       stage === "connecting"
@@ -73,26 +68,19 @@ export default function PlayerStage({
       : { busy: true, title: "正在解析播放源…", desc: "" }
     : reloading
       ? { busy: true, title: "正在重新获取播放地址…", desc: "" }
-      : recovering
-        ? { busy: true, title: "当前线路不可用，正在尝试其它线路…", desc: "" }
-        : !playable
-          ? {
-              busy: false,
-              title: resolveError
-                ? retryable
-                  ? "源响应较慢，暂未拿到播放地址"
-                  : "无法解析播放地址"
-                : EXTERNAL_PLAY_FALLBACK.title,
-              desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
-            }
-          : null;
+      : !playable
+        ? {
+            busy: false,
+            title: resolveError
+              ? retryable
+                ? "源响应较慢，暂未拿到播放地址"
+                : "无法解析播放地址"
+              : EXTERNAL_PLAY_FALLBACK.title,
+            desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
+          }
+        : null;
 
-  /**
-   * 播放实例已建立、但迟迟没有出画时的兜底态：解析/换源都有自己的忙态文案，
-   * 这里补的是「地址没问题、源就是慢」这一档。不带红色、不换线。
-   */
-  const active =
-    status ?? (slowText ? { busy: true, title: "正在加载画面…", desc: slowText } : null);
+  const active = status;
 
   // 等待提示只挂在「正在等源」的三种忙态上，错误面板不显示。
   const slowHint =
@@ -121,12 +109,6 @@ export default function PlayerStage({
           {/* 等待态用「呼吸光环 + 旋转弧」占据画面正中，文字压在下方：纯转圈
               在小窗口里太轻，用户会以为没在动；错误态才用卡片承载长文案。 */}
           <div className={active.busy ? "player-status is-busy" : "player-status is-error"}>
-            {active.busy ? (
-              <span className="player-status__pulse" aria-hidden="true">
-                <span className="player-status__ring" />
-                <span className="player-status__dot" />
-              </span>
-            ) : null}
             <p className="player-status__title">{active.title}</p>
             {active.desc ? <p className="player-status__desc">{active.desc}</p> : null}
             {slowHint ? <p className="player-status__desc">{slowHint}</p> : null}

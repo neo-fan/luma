@@ -336,6 +336,9 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     clearVerdict();
     setVideoMeta({ width: 0, height: 0 });
     setVideoStage("play");
+    // 等待秒数属于上一条流：换台 / 换线后必须归零，否则会出现
+    // 「已等待 906s」这种跨切换残留（2026-11-15 用户截图）。
+    setSlowNotice("");
   }, [lineIdx, playUrl, clearVerdict]);
 
   useEffect(() => clearVerdict, [clearVerdict]);
@@ -545,6 +548,7 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
       </header>
       <div className="page-body">
         {switchTip ? <p className="tip">{switchTip}</p> : null}
+        {!switchTip && slowNotice ? <p className="tip">{slowNotice}</p> : null}
         {/* 两类错误分开：
           · lifetime="timed"＝「此刻这条线路这一下不行」，画面可能已在别的
             线路上播着，8s 带倒计时自动收起（时长见 lib/notice.ts）；
@@ -598,7 +602,6 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
                   reloading={reloading}
                   playable={playable}
                   recovering={recovering}
-                  slowText={slowNotice}
                   resolveError={
                     resolveError ? (resolveFailure?.message ?? resolveError) : ""
                   }

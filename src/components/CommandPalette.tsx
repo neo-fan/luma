@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Command } from "cmdk";
 import type { Site } from "../types/tvbox";
 import type { Navigate } from "../lib/nav";
+import Icon from "./Icon";
+import NavIcon from "./NavIcon";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -22,6 +24,20 @@ const NAV_ITEMS: { key: "home" | "live" | "search" | "favorites" | "history" | "
   { key: "history", label: "历史" },
   { key: "settings", label: "设置" },
 ];
+
+/** 站点类型标注：只在能一眼看出差别的地方给，cms 占绝大多数就不写了。 */
+function runtimeLabel(site: Site): string | null {
+  if (!site.runtime || site.runtime === "cms") {
+    return null;
+  }
+  if (site.runtime === "python") {
+    return "PY";
+  }
+  if (site.runtime === "quickjs") {
+    return "JS";
+  }
+  return site.runtime.toUpperCase();
+}
 
 /**
  * 全局命令面板（Ctrl / Cmd + K）。
@@ -67,62 +83,115 @@ export default function CommandPalette({
   };
 
   const pickable = sites.filter((site) => site.enabled && site.runtime !== "jvm");
+  const keyword = query.trim();
 
   return (
-    <Command.Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      label="全局命令面板"
-      loop
-    >
-      <Command.Input
-        value={query}
-        onValueChange={setQuery}
-        placeholder="搜索影片、跳转页面、切换站点…"
-        aria-label="命令面板输入"
-      />
-      <Command.List>
-        <Command.Empty>没有匹配的命令</Command.Empty>
+    <Command.Dialog open={open} onOpenChange={onOpenChange} label="全局命令面板" loop>
+      <div className="palette__bar">
+        <Icon name="search" size={15} />
+        <Command.Input
+          value={query}
+          onValueChange={setQuery}
+          placeholder="搜索影片、跳转页面、切换站点…"
+          aria-label="命令面板输入"
+        />
+        <kbd className="palette__esc">esc</kbd>
+      </div>
 
-        {query.trim() ? (
-          <Command.Group heading="搜索">
+      <Command.List>
+        <Command.Empty>
+          <span className="palette__empty">
+            <Icon name="search" size={16} />
+            <span>没有匹配的结果</span>
+            <small>换个关键词，或直接回车全站搜索</small>
+          </span>
+        </Command.Empty>
+
+        {keyword ? (
+          <Command.Group heading={<span className="palette__heading">搜索</span>}>
             <Command.Item
-              value={`搜索影片 ${query.trim()}`}
-              onSelect={run(() => navigate({ name: "search", keyword: query.trim() }))}
+              value={`搜索影片 ${keyword}`}
+              onSelect={run(() => navigate({ name: "search", keyword }))}
             >
-              全站搜索「{query.trim()}」
+              <Icon name="search" size={15} />
+              <span className="palette__label">
+                全站搜索「<strong>{keyword}</strong>」
+              </span>
+              <span className="palette__hint">
+                <kbd>↵</kbd>
+              </span>
             </Command.Item>
           </Command.Group>
         ) : null}
 
-        <Command.Group heading="页面">
+        <Command.Group
+          heading={
+            <span className="palette__heading">
+              页面
+              <span className="palette__count">{NAV_ITEMS.length}</span>
+            </span>
+          }
+        >
           {NAV_ITEMS.map((item) => (
             <Command.Item
               key={item.key}
               value={`导航 ${item.label}`}
               onSelect={run(() => navigate({ name: item.key }))}
             >
-              打开{item.label}
+              <NavIcon name={item.key} />
+              <span className="palette__label">{item.label}</span>
+              <span className="palette__hint">打开</span>
             </Command.Item>
           ))}
         </Command.Group>
 
         {pickable.length > 0 ? (
-          <Command.Group heading="切换首页站点">
-            {pickable.map((site) => (
-              <Command.Item
-                key={site.key}
-                value={`站点 ${site.name} ${site.key}`}
-                keywords={[site.name, site.key]}
-                onSelect={run(() => onPickHomeSite(site.key))}
-              >
-                {site.name}
-                {site.key === homeSite ? <span className="cmdk-current">当前</span> : null}
-              </Command.Item>
-            ))}
+          <Command.Group
+            heading={
+              <span className="palette__heading">
+                切换首页站点
+                <span className="palette__count">{pickable.length}</span>
+              </span>
+            }
+          >
+            {pickable.map((site) => {
+              const runtime = runtimeLabel(site);
+              return (
+                <Command.Item
+                  key={site.key}
+                  value={`站点 ${site.name} ${site.key}`}
+                  keywords={[site.name, site.key]}
+                  onSelect={run(() => onPickHomeSite(site.key))}
+                >
+                  <span className="palette__site-mark" aria-hidden="true">
+                    {site.name.slice(0, 1)}
+                  </span>
+                  <span className="palette__label">{site.name}</span>
+                  {runtime ? <span className="palette__badge">{runtime}</span> : null}
+                  {site.key === homeSite ? (
+                    <span className="cmdk-current">当前</span>
+                  ) : null}
+                  <span className="palette__hint">切换</span>
+                </Command.Item>
+              );
+            })}
           </Command.Group>
         ) : null}
       </Command.List>
+
+      <div className="palette__foot">
+        <span>
+          <kbd>↑</kbd>
+          <kbd>↓</kbd> 选择
+        </span>
+        <span>
+          <kbd>↵</kbd> 打开
+        </span>
+        <span>
+          <kbd>ctrl</kbd>
+          <kbd>k</kbd> 关闭
+        </span>
+      </div>
     </Command.Dialog>
   );
 }

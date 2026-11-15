@@ -364,6 +364,21 @@ pub(super) async fn handle_health(State(state): State<Arc<ProxyState>>) -> Respo
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// 播放器 HUD 的吞吐读数（`/meter`）。
+///
+/// 前端每秒拉一次：没有 IPC 往返、也没有状态要同步，读不到就当 0 处理即可。
+pub(super) async fn handle_meter() -> Response {
+    let (bytes_per_sec, bytes_total) = super::speed::meter().sample();
+    let body = format!(r#"{{"bytesPerSec":{bytes_per_sec},"bytesTotal":{bytes_total}}}"#);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .header("access-control-allow-origin", "*")
+        .header("cache-control", "no-store")
+        .body(Body::from(body))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
 pub(super) async fn handle_options() -> Response {
     Response::builder()
         .status(StatusCode::NO_CONTENT)
@@ -575,7 +590,15 @@ pub(super) async fn handle_proxy(
 
     // 回放已读头部，再接上游剩余流；`head` 为空时等价于原样透传。
     let body_stream = stream::once(async move { Ok::<Bytes, reqwest::Error>(Bytes::from(head)) })
-        .chain(upstream_stream);
+        .chain(upstream_stream)
+        // 只有这里知道「从源站真正下了多少字节」：hls.js 读的是 127.0.0.1，它自己
+        // 量到的是回环速度。头部也计入，否则分片被重写前缀时读数会偏小。
+        .map(|chunk| {
+            if let Ok(ref bytes) = chunk {
+                super::speed::meter().add(bytes.len());
+            }
+            chunk
+        });
     builder
         .header("access-control-allow-origin", "*")
         .header("access-control-expose-headers", "*")
