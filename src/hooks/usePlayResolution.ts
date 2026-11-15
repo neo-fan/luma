@@ -176,10 +176,13 @@ export function usePlayResolution({
           }),
           hardCap,
         ]);
-        if (alive) {
-          // 直链已拿到，进入「交给反代 + 播放内核建连」阶段。
-          setStage("connecting");
+        if (!alive) {
+          // 这一轮已被新地址取代（换台 / 换集 / 刷新）：旧结果一个字段都不许再写，
+          // 否则会把新一轮的「解析中」覆盖成「连接中」，界面就此卡住。
+          return;
         }
+        // 直链已拿到，进入「交给反代 + 播放内核建连」阶段。
+        setStage("connecting");
         if (target.timedOut) {
           // 慢失败必须先说清楚：这不是「网盘 token」，重试就能好。
           // 同时标记成「无定论」：上层不许因为这一条自动换源（用户实测：
@@ -201,7 +204,7 @@ export function usePlayResolution({
           );
         }
         // 直播没有 playerContent 可问，UA 只能来自 lives[].ua。
-        if (target.parser) {
+        if (target.parser && alive) {
           setSwitchTip(`解析来自「${target.parser}」`);
         }
         const result = await Promise.race([
@@ -245,6 +248,14 @@ export function usePlayResolution({
     void run();
     return () => {
       alive = false;
+      // 硬上限定时器必须一起收掉：只置 alive 的话，旧一轮的 50s 计时器会在
+      // 下一轮解析途中触发，把一条过期错误塞进 Promise.race（表现为「刚换台
+      // 就报超时」）。
+      if (capTimer) {
+        clearTimeout(capTimer);
+        capTimer = null;
+      }
+      capReject = null;
     };
     // setter 引用稳定，vodId 仅用于日志；reloadNonce 只由用户点刷新时递增。
     // eslint-disable-next-line react-hooks/exhaustive-deps
