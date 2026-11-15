@@ -104,7 +104,9 @@ luma/
 │                                          #   clipboard/ghproxy/spider/{mod,cms,python,quickjs}
 │
 ├── sidecars/                              # 随包分发的 sidecar
-│   ├── py/  qjs-runner/                   # 源码（入库）
+│   ├── py/  qjs-runner/                   # 源码（入库）；py/ 只执行第三方脚本：
+│   │                                      #   main.py（stdio 协议）、pyspider.py、pyrun.py、
+│   │                                      #   adapterlog.py、base/spider.py
 │   ├── qjs-assets/                        # [入库资源] 8 个 JS 依赖 + manifest.json，SHA256 校验
 │   ├── python-embed/                      # [产物] 3.11 embeddable + site-packages 第三方依赖，gitignore
 │   │                                      #   dev/交付统一用它（bridge.rs::embedded_python 自动探测）
@@ -117,14 +119,15 @@ luma/
 │   │   ├── manual/                        # 真实配置样本（不入库）
 │   │   ├── configs/  spiders/            # 脱敏 fixture / py spider
 │   │   └── media/                         # m3u8 / flv / mp4 / ts 解码与解析样本
-│   └── e2e/                               # p0/p1/p3、contract_check、config_compat、parse_check、
-│                                          #   py_compat_check、py_base_spider_check、capabilities_check
+│   └── offline/                           # 离线确定性检查（全部进 check.py）：contract_check、
+│                                          #   py_compat_check、py_base_spider_check、adapter_isolation、
+│                                          #   config_compat、capabilities_check
 │
 └── tools/                                 # 离线辅助脚本（不参与构建）
     ├── prepare_runtime.py                 # 重建 python-embed 等产物；含 Python 依赖安装 + .pth 修正
     ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
     ├── inspect_config.py                  # 离线解码配置（图种 / 方言），只读不发网络
-    ├── check.py                           # 离线一键回归（7 项门禁）
+    ├── check.py                           # 离线一键回归（9 项门禁）
     ├── run_probes.mjs                     # 窗口探针一键回归（唯一入口）
     ├── bundle_report.mjs                  # 前端体积对比
     ├── probes/                            # 窗口探针：probe_*.mjs（50 个，按功能命名）
@@ -153,7 +156,7 @@ luma/
 | 前端源码 | `src/` | React + TypeScript + Vite |
 | Rust 宿主源码 | `src-tauri/src/{infra,domain}/` | 命令、进程管理、proxy、运行时，按层归档 |
 | sidecar 源码 | `sidecars/{py,qjs-runner}/` | 入库；二进制产物目录见 §1 |
-| 离线检查脚本 | `tests/offline/` | 契约、py 兼容、解析池、适配层隔离等确定性检查，全部接进 `tools/check.py` |
+| 离线检查脚本 | `tests/offline/` | 契约、版本一致性、py 兼容、适配层协议等确定性检查，全部接进 `tools/check.py` |
 | 阶段验收脚本 | `tests/acceptance/p0.py~p3.py` | 规格书 12.2 累积断言；stub 在 `tests/stub_server.py` |
 | 前端单测 | 与被测模块同目录 `*.test.ts`（`src/lib`、`src/pages`、`src/stores`） | 只测本模块；不为了放测试而新建目录 |
 | 跨文件约定测试 | `tests/frontend/` | 读源码文本断言「哪些文件里必须出现什么」，不属于任何单模块 |

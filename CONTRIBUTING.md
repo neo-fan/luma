@@ -60,7 +60,7 @@ node tools/run_probes.mjs --with-ui  # 追加会切桩配置的 UI 冒烟，放�
 **契约（最容易踩）**
 
 `contracts/tvbox.schema.json` 是唯一真源，改字段的顺序是：
-schema → `src/types/tvbox.ts` → Rust 序列化 / `sidecars/py/normalize.py` →
+schema → `src/types/tvbox.ts` → Rust 序列化（`src-tauri/src/domain/spider/`、`src-tauri/src/domain/config/`）→
 `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。
 新增 Tauri command 或错误码需要先在文档里写清楚，`contract_check` 与 capabilities 也要同步。
 

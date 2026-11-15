@@ -41,7 +41,7 @@
 
 1. 先改 `$defs` 里的字段（含 `description` 说明语义）。
 2. 再改 `src/types/tvbox.ts` 的接口字段与注释。
-3. 再改 Rust 序列化侧（`src-tauri/src/domain/spider/` 等）与 `sidecars/py/normalize.py`。
+3. 再改 Rust 序列化侧（`src-tauri/src/domain/spider/`、`src-tauri/src/domain/config/`）。
 4. `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。
 5. 字段名是 camelCase 且 `additionalProperties: false`，新增字段**必须**同步 schema，否则校验报 `in TS, missing in schema`。
 

@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""适配层「车道隔离」回归（1.0.2 修复点，不依赖窗口 / 桩服务）。
+"""适配层健壮性回归（单车道 + 帧协议 + UTF-8 + 慢调用日志，不依赖窗口 / 桩服务）。
 
-1.0.1 的真实故障：导入配置时弹出
-`导入失败：python adapter config.decrypt exceeded 15000ms`。
-根因**不是**解密慢 —— 同一份 `box.json` 解密只要 7ms —— 而是 `config.*` 与
-`spider.py` 共用同一条 8 线程 FIFO 队列：一次 `spider.py` 能占住 worker 到子进程
-结束（最长 15s），导入就排在它后面一路等到宿主自己的墙钟到期，报出来的字面却
-像「解密花了 15 秒」。
+1.0.4 起适配层只剩「执行第三方 Python 脚本」一条职责：`config.*` / `site.route`
+/ `live.*` / `parse.resolve` 全部搬进 Rust 宿主进程，协议面是 `ping` +
+`spider.py`（外加门控的 `debug.*`）。车道隔离那条历史断言（导入不能排在爬虫后面）
+随之失效——但帧健壮性、stdio 编码、慢调用可观测性仍然必须守：
 
-本脚本守三件事：
-
-1. 爬虫车道被占满时，`config.decrypt` / `ping` 仍然立即返回（两者走独立车道）；
-2. 帧解析失败要回错误帧，不能静默丢弃（静默丢 = 宿主干等满 15s 才报超时）；
-3. 每次 `config.*` 都在适配层日志里留一条 `adapter_latency`（耗时 + 字节数），
-   下次再出问题不必靠猜；
+1. `ping` 永远答帧，`spider.py` 能真的把脚本跑起来；
+2. 8 个 worker 被占满时，后来的请求排队但最终必须答复（不是丢帧）；
+3. 帧解析失败要回错误帧，不能静默丢弃（静默丢 = 宿主干等满自己的墙钟才报超时）；
 4. stdio 恒为 UTF-8：即便环境把 `PYTHONIOENCODING` 设成 `gbk` / `cp936`
-   （中文 Windows 的默认代码页），含中文的配置帧也必须原样送达并解出中文。
+   （中文 Windows 的默认代码页），含中文的请求帧也必须原样送达；
+5. 慢到可疑的 `spider.py` 调用要在适配层日志里留一条 `adapter_latency`。
 
 运行： `python tests/offline/adapter_isolation.py`（`tools/check.py` 已接入）。
 """
@@ -33,10 +29,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ADAPTER = ROOT / "sidecars" / "py" / "main.py"
+TEMPLATE = ROOT / "tests" / "fixtures" / "spiders" / "template.py"
 
-# 爬虫车道占满后，导入车道必须在这个预算内答复；留足 CI 抖动余量。
-LANE_BUDGET_S = 0.7
-SATURATE_MS = 1500
+# 一次请求（含排队）的答复预算；留足 CI 抖动余量。
+ANSWER_BUDGET_S = 8.0
+SATURATE_MS = 1200
 
 PASS = 0
 FAIL = 0
@@ -63,6 +60,15 @@ def interpreter() -> str:
         if candidate.is_file():
             return str(candidate)
     return sys.executable
+
+
+def spider_source(body: str) -> str:
+    """包一个最小 spider：body 是 `homeContent` 的方法体。"""
+    return (
+        "class Spider:\n"
+        "    def homeContent(self, filter):\n"
+        + "".join(f"        {line}\n" for line in body.strip().splitlines())
+    )
 
 
 class Adapter:
@@ -108,13 +114,17 @@ class Adapter:
         self.proc.stdin.write((line + "\n").encode("utf-8"))
         self.proc.stdin.flush()
 
-    def send(self, method: str, params: dict | None = None) -> int:
+    def send(self, method: str, params: dict | None = None, *, ensure_ascii: bool = True) -> int:
         self.next_id += 1
         request_id = self.next_id
-        self.send_raw(json.dumps({"id": request_id, "method": method, "params": params or {}}))
+        payload = json.dumps(
+            {"id": request_id, "method": method, "params": params or {}},
+            ensure_ascii=ensure_ascii,
+        )
+        self.send_raw(payload)
         return request_id
 
-    def wait(self, request_id: int, timeout: float = 10.0) -> dict | None:
+    def wait(self, request_id: int, timeout: float = ANSWER_BUDGET_S) -> dict | None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self.lock:
@@ -124,7 +134,7 @@ class Adapter:
             time.sleep(0.01)
         return None
 
-    def timed(self, method: str, params: dict | None = None, timeout: float = 10.0):
+    def timed(self, method: str, params: dict | None = None, timeout: float = ANSWER_BUDGET_S):
         request_id = self.send(method, params)
         started = time.perf_counter()
         frame = self.wait(request_id, timeout)
@@ -155,43 +165,38 @@ def log_records(path: Path) -> list[dict]:
 def main() -> int:
     adapter = Adapter()
     try:
-        # 1) 冷启动 + ping（ping 与导入同车道，不能被爬虫堵住）
+        # 1) 冷启动 + ping
         frame, took = adapter.timed("ping", {}, timeout=20.0)
         check(frame is not None and frame.get("ok") is True, "ping replies", str(frame))
         version = (frame or {}).get("result", {}).get("version", "")
         check(isinstance(version, str) and version.count(".") == 2, "ping reports a version", str(version))
 
-        # 2) 明文配置照常解密
-        frame, _ = adapter.timed("config.decrypt", {"raw": json.dumps({"sites": []})})
+        # 2) spider.py 真的把第三方脚本跑起来（模板 7 方法之一）
+        template = TEMPLATE.read_text(encoding="utf-8")
+        frame, _ = adapter.timed(
+            "spider.py",
+            {"source": template, "method": "homeContent", "args": [], "ext": "stub-ext"},
+            timeout=25.0,
+        )
+        result = (frame or {}).get("result") or {}
         check(
-            frame is not None and frame.get("ok") is True and frame["result"].get("method") == "plain",
-            "config.decrypt plain json",
-            str(frame),
+            frame is not None and frame.get("ok") is True and bool(result.get("list")),
+            "spider.py executes a template script",
+            str(frame)[:200],
         )
 
-        # 3) 占满爬虫车道，再插一次导入：必须在 LANE_BUDGET_S 内答复
+        # 3) 8 个 worker 占满后，后来的请求排队但必须答复（丢帧会让宿主等满墙钟）
         for _ in range(8):
             adapter.send("debug.echo", {"delayMs": SATURATE_MS})
-        frame, took = adapter.timed("config.decrypt", {"raw": json.dumps({"sites": [{"key": "a"}]})})
-        check(
-            frame is not None and frame.get("ok") is True,
-            "config.decrypt answers while 8 spider workers are busy",
-            f"{took * 1000:.0f}ms frame={frame}",
-        )
-        check(
-            took < LANE_BUDGET_S,
-            f"import lane is not queued behind spiders (<{LANE_BUDGET_S * 1000:.0f}ms)",
-            f"{took * 1000:.0f}ms",
-        )
         frame, took = adapter.timed("ping", {})
         check(
-            frame is not None and frame.get("ok") is True and took < LANE_BUDGET_S,
-            "ping is not queued behind spiders",
-            f"{took * 1000:.0f}ms",
+            frame is not None and frame.get("ok") is True,
+            "ping still answers while all workers are busy",
+            f"{took * 1000:.0f}ms frame={frame}",
         )
 
         # 4) 坏帧（能捞出 id）必须回错误帧，而不是静默丢弃
-        adapter.send_raw('{"id": 9001, "method": "config.decrypt", "params": {"raw": "oops}')
+        adapter.send_raw('{"id": 9001, "method": "spider.py", "params": {"source": "oops')
         frame = adapter.wait(9001, timeout=5.0)
         check(
             frame is not None and frame.get("ok") is False,
@@ -209,50 +214,53 @@ def main() -> int:
         frame, _ = adapter.timed("ping", {})
         check(frame is not None and frame.get("ok") is True, "adapter survives an unidentifiable frame")
 
-        # 6) 导入耗时/字节数必须落盘（1.0.1 查不动就是缺这条）
-        time.sleep(0.2)  # adapterlog 是同步写，这里只等文件系统刷一下
+        # 6) 中文 Windows（cp936）：stdio 不能按 ANSI 代码页解码。
+        # 1.0.2 的真实故障：UTF-8 帧被按 GBK 解码，中文内容在 ~8 KiB 处字节错位。
+        # 请求必须够大（>8 KiB）且不转义成 \uXXXX，才会暴露真问题。
+        blob = "".join(f"站点{i:03d}·港澳台直播" for i in range(360))
+        source = spider_source(f"return {{'list': [{{'vod_name': {blob!r}}}]}}")
+        for encoding in ("gbk", "cp936"):
+            localized = Adapter(suffix=f"-{encoding}", env_extra={"PYTHONIOENCODING": encoding})
+            try:
+                request_id = localized.send(
+                    "spider.py",
+                    {"source": source, "method": "homeContent", "args": []},
+                    ensure_ascii=False,
+                )
+                frame = localized.wait(request_id, timeout=30.0)
+            finally:
+                localized.close()
+            got = ((frame or {}).get("result") or {}).get("list") or [{}]
+            check(
+                (frame or {}).get("ok") is True and got[0].get("vod_name") == blob,
+                f"utf-8 frames survive a {encoding} stdio code page",
+                f"{len(source)}B {str(frame)[:160]}",
+            )
+
+        # 7) 慢调用要在适配层日志里留一条 adapter_latency（超过 SLOW_CALL_MS=3000）
+        slow = spider_source("import time\ntime.sleep(3.3)\nreturn {'list': []}")
+        frame, took = adapter.timed(
+            "spider.py",
+            {"source": slow, "method": "homeContent", "args": []},
+            timeout=30.0,
+        )
+        check(frame is not None and frame.get("ok") is True, "slow spider.py still answers", f"{took:.1f}s")
+        time.sleep(0.2)
         records = log_records(adapter.log_path)
-        decrypts = [
-            r for r in records if r.get("kind") == "adapter_latency" and r.get("method") == "config.decrypt"
+        slow_records = [
+            r for r in records if r.get("kind") == "adapter_latency" and r.get("method") == "spider.py"
         ]
-        check(bool(decrypts), "config.decrypt logs an adapter_latency record", str(records[:3]))
+        check(bool(slow_records), "slow spider.py logs an adapter_latency record", str(records[:3]))
         check(
-            any(isinstance(r.get("elapsedMs"), int) and isinstance(r.get("bytes"), int) for r in decrypts),
-            "adapter_latency carries elapsedMs + bytes",
-            str(decrypts[:3]),
+            any(isinstance(r.get("elapsedMs"), int) and r.get("elapsedMs") >= 3000 for r in slow_records),
+            "adapter_latency carries the elapsed time",
+            str(slow_records[:3]),
         )
         check(
             any(r.get("kind") == "bad_frame" for r in records),
             "malformed frame is recorded in the adapter log",
             str(records[-3:]),
         )
-
-        # 7) 中文 Windows（cp936）：stdio 不能按 ANSI 代码页解码。
-        # 1.0.2 的真实故障：UTF-8 帧被按 GBK 解码，中文站名处字节错位，
-        # `config.decrypt` 在 ~8 KiB 处报 malformed frame（1.0.1 则静默丢帧→超时）。
-        # 载荷要够大（>8 KiB），否则只会出现乱码而不会暴露拆帧错位。
-        payload = json.dumps(
-            {
-                "sites": [
-                    {"key": f"s{i:03d}", "name": f"站点{i:03d}·港澳台直播"}
-                    for i in range(360)
-                ]
-            },
-            ensure_ascii=False,
-        )
-        for encoding in ("gbk", "cp936"):
-            localized = Adapter(suffix=f"-{encoding}", env_extra={"PYTHONIOENCODING": encoding})
-            try:
-                frame, took = localized.timed("config.decrypt", {"raw": payload}, timeout=20.0)
-            finally:
-                localized.close()
-            ok = frame is not None and frame.get("ok") is True
-            text = json.dumps(frame, ensure_ascii=False) if frame else ""
-            check(
-                ok and "站点000" in text and "站点359" in text,
-                f"utf-8 frames survive a {encoding} stdio code page",
-                f"{len(payload)}B {took * 1000:.0f}ms {str(frame)[:160]}",
-            )
     finally:
         adapter.close()
 

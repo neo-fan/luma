@@ -33,7 +33,7 @@
 
 - 前端唯一出口 `src/lib/invoke.ts` → Tauri `invoke(cmd, args)` → Rust `generate_handler!` 注册的 37 个 command。禁止前端 `import` Node 内置模块。
 - 主进程 ↔ sidecar：通用 `spawn_stdio` / `call_on` / `kill_conn`（`bridge.rs`）；每行 stdout 是一帧 JSON-RPC，主循环线程池 `max_workers=8`。
-- 归一化契约 `contracts/tvbox.schema.json` 是 TS / Rust / Python 三端唯一真源；`tests/offline/contract_check.py` 校验 TS 侧字段。
+- 归一化契约 `contracts/tvbox.schema.json` 是 TS / Rust 两端唯一真源；`tests/offline/contract_check.py` 校验 TS 侧字段。
 
 ```text
 用户操作 → 前端 (pages/hooks) → invoke → Rust command

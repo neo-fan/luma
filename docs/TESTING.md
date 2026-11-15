@@ -29,15 +29,12 @@ tests/
   fixtures/                # 测试输入：configs / spiders / media / manual
   frontend/                # 跨文件约定测试（readFileSync 读源码文本，断言"哪些文件里必须出现什么"）
   offline/                 # 离线确定性检查，全部进 tools/check.py
-    contract_check.py      #   schema ↔ TS ↔ Rust ↔ Python 字段对齐
+    contract_check.py      #   schema ↔ TS ↔ Rust 字段对齐
     capabilities_check.py  #   Tauri 权限闭集
-    py_compat_check.py     #   TVBox py 脚本通用兼容
+    py_compat_check.py     #   TVBox py 脚本通用兼容 / 子进程信封
     py_base_spider_check.py#   py 框架与 base.spider 原生行为对齐
-    adapter_isolation.py   #   适配层车道隔离 / 坏帧回帧 / 编码
-    parse_check.py         #   CMS 解析池与站点字段透传
-    parse_epg_check.py     #   XMLTV 解析
-    config_compat.py       #   真实 box.json 形态（相对地址、base.spider）
-    config_shapes_check.py #   T-05：六种配置形状端到端
+    adapter_isolation.py   #   适配层协议：单车道 / 坏帧回帧 / 编码 / 慢调用日志
+    config_compat.py       #   脚本执行侧兼容（BOM 源码、base.spider、html().xpath()）
   acceptance/              # spec 12.2 阶段验收，累积断言，未交付能力标 N/A
     p0.py p1.py p3.py      # p2.py（jar/JVM 回归）已随 JVM 运行时移除
 

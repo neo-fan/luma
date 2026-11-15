@@ -113,7 +113,9 @@ $env:PATH    = "$vc\bin\Hostx64\x64;$sdk\bin\10.0.26100.0\x64;$env:PATH"   # 必
 
 ### 3.3 Python 采集适配层
 
-- 适配层只做协议与子进程执行：`spider.py` 交给 `pyspider.py` → `pyrun.py` 跑第三方脚本，脚本返回值**原样交回**，归一化在宿主 `src-tauri/src/domain/spider/cms_parse.rs::normalize_spider_result`。`sidecars/py/` 不再有 CMS 字段映射；离线审计脚本的副本在 `tools/audit/cms.py`（别从适配层 import）。
+- 适配层只做协议与子进程执行：协议面就是 `ping` + `spider.py`（外加 `LUMA_ADAPTER_DEBUG=1` 时的 `debug.*`），`spider.py` 交给 `pyspider.py` → `pyrun.py` 跑第三方脚本，脚本返回值**原样交回**，归一化在宿主 `src-tauri/src/domain/spider/cms_parse.rs::normalize_spider_result`。
+- 配置解密 / 归一化 / CMS 解析 / M3U / XMLTV 的参考实现全在 Rust（`domain/config/{decrypt,normalize}.rs`、`domain/spider/cms_parse.rs`、`domain/live/{m3u,epg}.rs`）；`sidecars/py/` 里没有这些模块的副本。开发工具要复用旧 Python 实现时去 `tools/audit/`（`cms.py` / `decrypt.py` / `normalize.py`），不要从适配层 import。
+- 调用任何已删方法（`config.decrypt`、`config.normalize`、`config.mergeRepos`、`site.route`、`live.parseM3u`、`live.parseEpg`、`parse.resolve`、`site.parse*`）会明确回 `{"code":"INTERNAL","message":"unknown method: …"}`，不会静默成功。
 - 空详情（脚本返回 `{"list": []}`）由宿主记 `spider detailContent returned no video`（app 通道，带 `source_api` / `vod_id`），spider 通道只留脚本内的异常与 traceback。
 - 诊断日志写 `logs/spider/spider.<UTC 日期>.log`（每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback）。宿主 spawn 时通过 `LUMA_ADAPTER_LOG` 注入这个路径，`LUMA_ADAPTER_LOG` 也可手动改；单个文件上限 10 MiB，超出滚成 `.1`。日志模块对 spider 协议尽力而为——缺失也不让 py 源整体失效。
 - 临时切解释器：`$env:LUMA_PYTHON = <path>`。
@@ -146,12 +148,16 @@ $env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（安装版�
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 corepack pnpm test
-python tests/offline/parse_check.py            # 解析池与配置字段
-python tests/offline/py_compat_check.py        # TVBox py 脚本通用兼容 / 错误日志
+python tools/check.py                          # 9 项一键（契约 / 版本 / py 兼容 / py 框架 / 适配层 / 语法 / 前端 / cargo / 运行时）
+python tests/offline/py_compat_check.py        # TVBox py 脚本通用兼容 / 子进程信封
 python tests/offline/py_base_spider_check.py   # py 框架与原生对齐
-python tools/prepare_runtime.py --check    # 随包 Python 依赖齐全度（JVM 运行时已移除，不再检查 JRE）
+python tools/prepare_runtime.py --check        # 随包 Python 依赖齐全度（JVM 运行时已移除，不再检查 JRE）
 python tests/offline/contract_check.py         # 校验 contracts/tvbox.schema.json 与 TS 侧字段
 ```
+
+注意：配置解密 / 归一化 / CMS 采集解析 / M3U / XMLTV 的参考实现都在 Rust
+（`domain/config/`、`domain/spider/cms_parse.rs`、`domain/live/`），`sidecars/py/`
+只剩「执行第三方脚本」这一条职责；`tests/offline/` 也不再保留这些解析的 Python 副本。
 
 ### 5.2 需窗口（CDP 驱动真实窗口）
 

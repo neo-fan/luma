@@ -26,7 +26,7 @@ Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用�
 
 - 前端：React 18 + TS + Vite、react-router（hash）、zustand、ArtPlayer + hls.js / mpegts.js、Radix / cmdk / sonner / lucide。
 - 宿主：Tauri v2 + Rust stable（`x86_64-pc-windows-msvc`）、`reqwest`(rustls)、`tokio`、`axum`(反代)、`rusqlite`(bundled)、`windows`(JobObjects)。
-- 适配层：Python 3.11 embeddable（stdio JSON-RPC，线程池 8）、`qjs-runner`（QuickJS）；jar 站点只保留分类，JVM 运行时已移除。
+- 适配层：Python 3.11 embeddable（stdio JSON-RPC，单车道 8 线程），**只执行第三方源脚本**（`ping` + `spider.py`）；`qjs-runner`（QuickJS）同理只执行 JS 源；jar 站点只保留分类，JVM 运行时已移除。
 - 配置链与解析链全在 Rust：解密（`domain/config/decrypt.rs`）、归一化（`normalize.rs`）、导入（`import.rs`）、CMS 采集解析（`domain/spider/cms_parse.rs`）、M3U/XMLTV（`domain/live/{m3u,epg}.rs`）都是进程内纯函数，**不再走 sidecar**；sidecar 只负责执行第三方源脚本。外部字节一律经 `infra/textio.rs` 洗成 UTF-8 再解析。
 
 ## 架构
@@ -61,7 +61,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 
 1. **构建与打包只走 Tauri 官方工具链**：`tauri dev`（debug）/ `tauri build`（release）/ `tauri icon`（图标）。裸 `cargo build --release` 不会把 `frontendDist` 嵌进 exe，窗口会回退到 `devUrl` 报 `ERR_CONNECTION_REFUSED`。Cargo profile 用官方 [App Size](https://v2.tauri.app/concept/size/) 建议值，不要加项目私有 tweak。
 2. **随包运行时优先**：sidecar 运行时一律走 `paths::sidecar_roots()`，优先级 = 显式环境变量（`LUMA_PYTHON` / `LUMA_QJS_RUNNER`）→ 随包 `sidecars/python-embed`、exe 同目录 `qjs-runner.exe` → 宿主兜底。用户无需安装 Python；`prepare_runtime.py` 禁止硬编码本机路径。
-3. **契约单一真源** `contracts/tvbox.schema.json`：改字段先改 schema → `src/types/tvbox.ts` → Rust 序列化与 `sidecars/py/normalize.py` → `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。字段 camelCase、`additionalProperties: false`；不许删 TS 字段来「修」校验。
+3. **契约单一真源** `contracts/tvbox.schema.json`：改字段先改 schema → `src/types/tvbox.ts` → Rust 序列化（`domain/spider/*`、`domain/config/*`）→ `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。字段 camelCase、`additionalProperties: false`；不许删 TS 字段来「修」校验。
 4. **双快照不可越过**：运行策略只改 `runtime_json`，`imported_json` 一个字段都不许动。
 5. **换线只认证据**：`dead` 仅限 4xx/5xx、非 `#EXTM3U`、首分片是图片/HTML；超时算 `unknown`，连续 3 次才换。**慢 ≠ 死**。
 6. **headers 优先级**：爬虫显式 UA/Referer/Cookie > 配置级 `headers[]`（host 精确 → 通配）> 默认值（`okhttp/3.15` + `{scheme}://{host}/`）。默认值必须由反代最后补，不能提前折进 proxyUrl 的 query。
@@ -82,7 +82,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 
 ```powershell
 # 离线回归（无窗口、无外网；改动的最低门槛）
-python tools/check.py                 # 9 项：契约 / 版本一致性 / py 兼容 / py 框架 / 适配层车道 / py 语法 / 前端单测 / cargo test / 运行时候检
+python tools/check.py                 # 9 项：契约 / 版本一致性 / py 兼容 / py 框架 / 适配层健壮性 / py 语法 / 前端单测 / cargo test / 运行时候检
 python tools/check.py --quick         # 跳过 cargo test
 python tools/check.py --full          # 追加 pnpm build
 python tools/check.py --ci            # 干净机器可跑的便携子集（CI job "checks"）

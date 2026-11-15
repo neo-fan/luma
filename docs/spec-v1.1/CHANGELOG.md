@@ -80,3 +80,34 @@
 - 已用 Git 管理（`main` 分支，初始基线已提交）；真实配置样本与抓取记录不入库；目录与编码约定见 `docs/project-layout.md`；`AGENTS.md` 已同步为本地基线。
 - **仍未开工、未建代码**：只有文档、目录骨架与 `tools/inspect_config.py` 一个离线脚本；无源码、无构建脚本、无依赖。
 - 下一步：按 P0 / T-01 起建工程；用 6 类脱敏 fixture（全部指向 `127.0.0.1`）覆盖解码链与四类源。
+
+---
+
+## 六、1.0.5 现状重写（R12）
+
+> 日期：2026-11-15。触发原因：1.0.2 ~ 1.0.5 的实现把文档里假设的「解析在 Python 适配层」全部推翻了，
+> 继续按 §三 / §四 施工会写出与代码相反的规格。
+
+**改动**
+
+| 位置 | 处置 |
+| --- | --- |
+| 同目录 `replacements.md` | 整篇重写为《现状对齐》：R1~R11 逐条标注「保留 / 作废」，补进程拓扑、四类源、适配层协议（2 个方法）、37 个 command、解析链位置、验收基线、与云端规格的差异清单 |
+| 本文件 §四 | 下表逐行已失效：`sidecars/qjs-runner/` 已落地（保留）；`contracts/`、`contract_check.py`、`size-report.md` 已落地（保留）；`tests/fixtures/jars/*` 两行作废（jar 运行时与 fixture 已删除） |
+| 本文件 §三 | 4.1 / 4.3 / 5 的「目录树补 `tests/fixtures/jars/`」、8.4「Spider API(12)」、9 节 T-23、10 节 py/js/jar、12.2 的 `+jar` 列、14 节 jar 跑通率——均随 JVM 移除作废 |
+
+**1.0.5 与 v1.1 的实质差异**
+
+1. **适配层只剩 `ping` + `spider.py`**（原 11 个业务方法）。`config.decrypt` / `config.normalize` /
+   `config.mergeRepos` / `site.route` / `site.parse*` / `live.parseM3u` / `live.parseEpg` /
+   `parse.resolve` 全部删除，再调用返回 `unknown method`。
+2. **`sidecars/py` 只剩 5 个文件**：`main.py`（协议循环）、`pyspider.py`（拉起子进程）、
+   `pyrun.py`（脚本加载器）、`adapterlog.py`（JSONL 日志）、`base/spider.py`（随包框架）。
+   `decrypt.py` / `normalize.py` 迁到 `tools/audit/` 只作开发工具副本；`live.py` / `parse.py` 删除。
+3. **单车道**：没有导入 / 爬虫两条车道的区分，`ThreadPoolExecutor(max_workers=8)` 一条车道。
+4. **命令面 37 个**（含 `douban_meta` / `live_epg_warm` / `parse_resolve` / `site_set_enabled` 等后加项），
+   不再有 `commands.rs` 汇总文件，注册点就是 `lib.rs` 的 `generate_handler!`。
+5. **jar 全链路移除**：`SpiderMethod` 仍保留 `jvm` 分类用于识别与屏蔽，但没有 JVM 进程、没有 `SpiderRunner`、
+   没有 `externalBin: jvm`、没有 `fixtures/jars`。
+6. **版本 / build 号**：`package.json` 唯一来源，界面 build 号取宿主进程启动时刻（`infra/started.rs`），
+   `tools/version_check.py` 作为离线门禁第 2 项。
