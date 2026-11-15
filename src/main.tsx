@@ -2,10 +2,15 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { installGlobalErrorLogging, log } from "./lib/logger";
+import { installWebviewGuards } from "./lib/webviewGuards";
 import { APP_VERSION } from "./lib/version";
 import "./styles/index.css";
 
-// 先装兜底日志再挂载 React：模块初始化 / 首个渲染的异常也要能落盘。
+// 先收 WebView 的浏览器行为（右键菜单、F5、Ctrl+F、拖文件），再挂 React：
+// 任何界面元素渲染之前就已经生效。
+installWebviewGuards();
+
+// 兜底日志紧随其后：模块初始化 / 首个渲染的异常也要能落盘。
 installGlobalErrorLogging();
 log.info("frontend boot", {
   version: APP_VERSION,
