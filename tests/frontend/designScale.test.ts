@@ -9,6 +9,8 @@
  * - 字号只用 `base.css` 的 `--fs-*`；页头标题 = `--fs-h1`，设置章节标题 = `--fs-h2`。
  * - 封面信息条/画面上信息条统一用 `--scrim` 压暗，不再逐处调 rgba。
  * - 「上次看到」只是格子右上角绿点，不再往格子里塞第二行字。
+ * - 简介按信息列的可用宽度限读（em，汉字宽度），不用 ch —— ch 量的是西文「0」，
+ *   中文字体下会把简介压成三十多字一行的窄条；收起用行数裁切，展开不再内嵌滚动。
  *
  * 读的是模块拼接后的级联文本（`readCss()`），与产物规则序一致。
  */
@@ -36,8 +38,20 @@ describe("design scale contract", () => {
     expect(css).toContain("--h-chip: 28px");
     expect(css).toContain("--h-control: 34px");
     expect(css).toContain("--h-cta: 40px");
-    expect(css).toContain("--line-measure: 70ch");
     expect(css).toContain("--scrim: rgba(8, 10, 15, 0.76)");
+  });
+
+  it("lets the synopsis use the info column and clamps by lines", () => {
+    const intro = block(".detail-content");
+    expect(intro).toContain("max-width: min(100%, 72em)");
+    expect(intro).not.toContain("max-height");
+    expect(intro).not.toContain("var(--line-measure)");
+    const clamped = block(".detail-content.is-clamped");
+    expect(clamped).toContain("-webkit-line-clamp: 4");
+    expect(clamped).not.toContain("max-height: 84px");
+    // 展开开关紧贴正文、带文案；箭头方向由 aria-expanded 翻转。
+    expect(css).toContain(".detail-content__toggle {");
+    expect(css).toContain('.detail-content__toggle[aria-expanded="true"] svg');
   });
 
   it("keeps controls on those tokens instead of hardcoded heights", () => {

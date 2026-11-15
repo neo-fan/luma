@@ -32,9 +32,8 @@ describe("icon-first controls", () => {
     expect(css).toContain(".icon-btn.is-on");
     expect(css).toContain(".icon-btn.is-busy svg");
     expect(css).toContain(".icon-btn--danger:hover:not(:disabled)");
-    // 倒序/展开靠图形方向表达状态，不换图标也不换文案。
+    // 倒序靠图形方向表达状态，不换图标也不换文案。
     expect(css).toContain('.icon-btn--flip[aria-pressed="true"] svg');
-    expect(css).toContain('.icon-btn--rotate[aria-expanded="true"] svg');
     // 悬浮提示气泡
     expect(css).toContain(".icon-btn[data-tip]::after");
   });

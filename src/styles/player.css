@@ -351,6 +351,9 @@
   font-weight: var(--fw-semibold);
   letter-spacing: -0.02em;
   line-height: 1.35;
+  /* flex 子项的自动最小宽度会让 nowrap 标题顶出列宽（实测 info 列 1024 时
+     scrollWidth 1029，右侧多出 5px 横向滚动），显式允许收缩后省略号才生效。 */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -360,6 +363,20 @@
   display: flex;
   flex: 0 0 auto;
   gap: 2px;
+}
+
+/* 标题行最右侧的图标按钮贴着卡片边缘：默认居中的悬浮气泡会横向顶出列宽
+   （实测 info 列 1024 时 scrollWidth 1029，播放页因此出现横向滚动条）。
+   这里把气泡改成右对齐向左展开，鼠标悬停时只上下位移。 */
+.player-about__actions .icon-btn[data-tip]::after {
+  left: auto;
+  right: 0;
+  transform: translate(0, 3px);
+}
+
+.player-about__actions .icon-btn[data-tip]:hover::after,
+.player-about__actions .icon-btn[data-tip]:focus-visible::after {
+  transform: translate(0, 0);
 }
 
 .player-about__meta {
@@ -378,12 +395,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.player-about__more {
-  margin-top: 6px;
-  align-self: flex-start;
-}
-
 
 .player-about .chip-row {
   margin-bottom: 10px;

@@ -13,6 +13,11 @@
 - **py 源归一化搬进 Rust，`sidecars/py/cms.py` 删除**：1.0.2 已把 CMS 采集解析搬进进程内（`domain/spider/cms_parse.rs`），但 py 源仍走 `pyspider.py::_normalize` → `cms.py` 再映射一次，同一套契约两份实现，改字段要改两处。现在 `cms_parse.rs` 新增 `normalize_spider_result()` / `detail_items()` / `empty_page()`，接管 `detailContent` 的 5 种包裹形状（`list` / `data` / `result` / `vod` / 裸 vod 对象）、`playerContent/liveContent/proxy` 的字典直通、其它方法的 page 形状；`pyspider.py` 只把 `pyrun.py` 的结果（已 `json_safe` 净化）原样交回。`cms.py` 移到 `tools/audit/cms.py`，只给离线审计脚本 `tools/audit/scan_sources.py` 用，运行时不 import。
 - **适配层协议面从 11 个业务方法降到 7 个**：`site.parseHome/parseCategory/parseDetail/parseSearch` 从 1.0.2 起宿主就不再调用，但适配层一直留着（`main.py` 里还 import `cms`）。现在删除，再调用会明确回 `{"code":"INTERNAL","message":"unknown method: site.parseHome"}`，而不是静默可用 —— 契约表（`docs/spec-v1.1/replacements.md` §4.3）同步改成「7 个业务方法 + `ping`」，T-14 验收加断言锁住。
 
+### 修复
+
+- **详情 / 播放页简介在信息超长时被压成窄条、卡片被无谓拉高**：简介宽度一直是 `--line-measure: 70ch`（约 491px），而 `ch` 量的是西文「0」的宽度 —— 中文字体下每行只剩三十多字，卡片宽 1164 时简介只占左半边，长剧情一路往下堆，右边大片空白；收起态用 `max-height: 84px` 硬裁（行高不是整 84 的约数时最后一行会被切一半），展开态又退回 `max-height: 220px + overflow-y: auto`，在卡片里叠出第二根滚动条。现在简介按信息列宽度排（`min(100%, 72em)`，em 量汉字宽度，超宽屏也不会长到读不下去），收起改成 `-webkit-line-clamp: 4` 自带省略号，展开后不设上限、让卡片自然长高；播放页信息卡底部留白从 2px 加到 10px，「主演」这类长名单允许在任意位置断行。顺带修掉播放页标题行右侧图标的悬浮气泡顶出列宽 5px 造成的横向滚动（气泡改为右对齐向左展开）。`base.css` 删掉已无人使用的 `--line-measure`，`tests/frontend/designScale.test.ts` 把「简介按列宽限读、按行裁切、展开不内嵌滚动」钉成契约。
+- **简介的「展开 / 收起」从一枚孤立图标改成正文下方的行内按钮**：原来它是个没有文案的 chevron 图标，还排在「播放」按钮那一行 —— 展开后箭头孤零零挂在按钮左边，用户根本不知道它管的是简介。现在开关带文案（「展开全文」/「收起简介」）、紧贴正文左下角，箭头按 `aria-expanded` 翻转；`VodMetaHero` 不再把开关塞进 footer，`icon-btn--rotate` 这条只为它存在的样式一并删掉。
+
 ### 工程
 
 - 空详情诊断从 Python `empty_detail`（`spider` 通道 JSONL）改为宿主 `tracing::info!`（`app` 通道，`spider detailContent returned no video`，带 `source_api` / `vod_id`）—— 归一化在 Rust 了，诊断跟着走；`spider.log` 继续只放脚本异常与 traceback，不引入第二个写入者。

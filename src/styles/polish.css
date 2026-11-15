@@ -41,7 +41,9 @@ button:focus:not(:focus-visible) {
 .page--player .player-about,
 .page--player .player-episodes {
   margin-top: 16px;
-  padding: 16px 2px 2px;
+  /* 底部留 10px：简介收起到 4 行时最后一行原本离下面的分隔线只剩 2px，
+     长剧情一多就显得文字贴着边框。 */
+  padding: 16px 2px 10px;
   border: 0;
   border-top: 1px solid var(--border);
   border-radius: 0;

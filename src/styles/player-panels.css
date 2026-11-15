@@ -58,8 +58,13 @@
   box-shadow: 0 8px 22px -10px rgba(232, 236, 244, 0.62);
 }
 
+/* 收起态按行裁切（4 行）。以前是 max-height: 84px + overflow: hidden：行高不是整
+   84 的约数时最后一行会被从中间切掉；展开态又只能退回 220px 内嵌滚动条，长简介在
+   卡里叠出第二根滚动条。line-clamp 自带省略号，展开后交给卡片自然长高。 */
 .detail-content.is-clamped {
-  max-height: 84px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
   overflow: hidden;
 }
 

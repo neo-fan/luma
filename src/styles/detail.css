@@ -53,17 +53,53 @@
   margin: 2px 0;
   color: var(--muted);
   font-size: var(--fs-sm);
+  /* 主演/导演是「/」串起来的长名单：没有断行点也可以换行，别把卡片撑出横向溢出。 */
+  overflow-wrap: anywhere;
 }
 
+/* 简介曾经用 --line-measure（70ch）：ch 按西文「0」宽度算，13px 下每行只剩三十多个
+   汉字，长简介被压成一列窄条、宽卡右半边全空，卡片还会跟着无谓长高。这里改用列宽，
+   上限按 em（汉字宽度）给，超宽屏也不会出现长到读不下去的行。 */
 .detail-content {
-  max-width: var(--line-measure);
+  max-width: min(100%, 72em);
   margin: 14px 0 0;
   color: var(--text-soft);
   font-size: var(--fs-sm);
+  line-height: 1.6;
   white-space: pre-wrap;
-  max-height: 220px;
-  overflow-y: auto;
+  overflow-wrap: anywhere;
   padding-right: 6px;
+}
+
+/* 简介下方的「展开全文 / 收起简介」。曾经是一枚只有图标的按钮、还排在播放按钮
+   那一行，离开正文很远，用户根本不知道它管的是简介；这里改成带文案的行内开关，
+   紧贴正文左下角，箭头随展开状态翻转。 */
+.detail-content__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.detail-content__toggle:hover,
+.detail-content__toggle:focus-visible {
+  color: var(--text);
+}
+
+.detail-content__toggle svg {
+  transition: transform 150ms ease;
+}
+
+.detail-content__toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
 }
 
 .section {
