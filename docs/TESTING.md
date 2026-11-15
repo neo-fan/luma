@@ -35,7 +35,7 @@ tests/
     py_base_spider_check.py#   py 框架与 base.spider 原生行为对齐
     adapter_isolation.py   #   适配层协议：单车道 / 坏帧回帧 / 编码 / 慢调用日志
     config_compat.py       #   脚本执行侧兼容（BOM 源码、base.spider、html().xpath()）
-  acceptance/              # spec 12.2 阶段验收，累积断言，未交付能力标 N/A
+  acceptance/              # spec §11 阶段验收，累积断言，未交付能力标 N/A
     p0.py p1.py p3.py      # p2.py（jar/JVM 回归）已随 JVM 运行时移除
 
 tools/

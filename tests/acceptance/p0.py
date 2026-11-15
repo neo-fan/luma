@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""P0 stage acceptance (spec 12.2, cumulative assertion matrix).
+"""P0 stage acceptance (spec §11, cumulative assertion matrix).
 
 Only capabilities delivered in P0 are asserted. Everything that belongs to a
-later phase is reported as N/A instead of FAIL, which is the v1.1 wording of
-12.2 (`docs/spec-v1.1/replacements.md`, R1).
+later phase is reported as N/A instead of FAIL (`docs/spec.md` §11).
 
 Usage:
     python3 tests/acceptance/p0.py            # full run, needs stub + running app for HTTP parts

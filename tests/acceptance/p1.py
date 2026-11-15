@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P1 stage acceptance (spec 12.2, cumulative).
+"""P1 stage acceptance (spec §11, cumulative).
 
 Two phases:
   adapter  — drives `sidecars/py/main.py` over stdio directly: frame protocol,

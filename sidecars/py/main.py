@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Python adapter layer: stdio JSON-RPC, one job only — run third-party scripts.
 
-Protocol surface (see `docs/spec-v1.1/replacements.md` §4):
+Protocol surface (see `docs/spec.md` §5):
 
 * `ping` — health/version probe;
 * `spider.py` — execute a Python source script in a child process;

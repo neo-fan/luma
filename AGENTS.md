@@ -123,6 +123,7 @@ node tools/run_probes.mjs             # 全套；--list / --only=a,b / --with-ui
 
 | 我要… | 去哪 |
 |---|---|
+| 理解实现基线 / 规格（现状唯一依据） | `docs/spec.md` |
 | 理解进程模型 / 四类源 / 数据流 / ADR | `docs/ARCHITECTURE.md` |
 | 环境准备 / 四端调试 / 日志 / 常见坑 | `docs/DEVELOPMENT.md` |
 | 测试分层 / 用例该放哪 / 各层命令 | `docs/TESTING.md` |

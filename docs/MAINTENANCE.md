@@ -49,7 +49,7 @@
 
 ## 4. 新增 Tauri command
 
-1. 规格先行：新增 command 或错误码需改本地 `docs/spec-v1.1/` 文档。
+1. 规格先行：新增 command 或错误码需改 `docs/spec.md`。
 2. Rust 侧一律 `Result<T, AppError>`，生产路径禁 `unwrap()`；错误码走 `code::*`。
 3. `src-tauri/src/lib.rs` 的 `generate_handler!` 注册（当前 37 个）。
 4. 前端唯一出口 `src/lib/invoke.ts`，禁止 `import` Node 内置模块。
