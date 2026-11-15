@@ -80,7 +80,9 @@
   border-radius: var(--r-sm);
   background: rgba(10, 12, 18, 0.55);
   backdrop-filter: blur(6px);
-  color: rgba(255, 255, 255, 0.82);
+  /* 2026-11-15：分辨率原本 0.82，比旁边的集数亮一档，用户觉得「有点亮」。
+     两块并排就该同一层级，统一到集数那一档。 */
+  color: rgba(255, 255, 255, 0.58);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
@@ -89,6 +91,16 @@
   transition:
     opacity 0.24s var(--ease),
     transform 0.24s var(--ease);
+}
+
+.player-res__ep {
+  color: inherit;
+  font-style: normal;
+}
+
+.player-res__sep {
+  margin: 0 6px;
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .player-res.is-idle {

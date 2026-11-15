@@ -858,8 +858,12 @@ export default function PlayerPage({
   switchOrFailoverRef.current = switchOrFailover;
 
   useEffect(() => {
+    // 原地换集/换源之后，路由里的 playUrl 已经不代表正在播的地址：
+    // 它的解析结论（失败、kind=page）都是上一轮的，不能再拿它去换源。
+    if (!active || switchedUrlRef.current) {
+      return;
+    }
     if (
-      !active ||
       resolving ||
       resolveError ||
       !resolved ||
@@ -884,12 +888,11 @@ export default function PlayerPage({
    * 又回到同一条」的循环；跳转次数有上限，预算用完就停下报错交还用户。
    */
   useEffect(() => {
-    if (
-      !active ||
-      resolving ||
-      !resolveError ||
-      ledgerHasUrl(ledgerKey, playUrl)
-    ) {
+    // 同上：已经原地换到新地址时，旧地址的「解析失败」不该把画面切走。
+    if (!active || switchedUrlRef.current || resolving || !resolveError) {
+      return;
+    }
+    if (ledgerHasUrl(ledgerKey, playUrl)) {
       return;
     }
     // 「源还没答完」（冷启动 / 忙时超预算）不是线路坏了：保留这条线路，
@@ -1286,7 +1289,7 @@ export default function PlayerPage({
         reloading={reloading}
         playable={playable}
         recovering={recovering}
-        resolveError={resolveError}
+        resolveError={switchedUrlRef.current ? "" : resolveError}
         retryable={resolveRetryable}
         containerRef={containerRef}
       />
@@ -1294,6 +1297,7 @@ export default function PlayerPage({
         host={playerRoot}
         label={resolutionBadge(videoMeta)}
         detail={resolutionDetail(videoMeta.width, videoMeta.height)}
+        episode={activeEpisodeName}
       />
     </>
   );
@@ -1316,7 +1320,7 @@ export default function PlayerPage({
         {videoError && !recovering ? (
           <ErrorBar message={videoError} lifetime="timed" />
         ) : null}
-        {resolveError && !recovering ? (
+        {resolveError && !recovering && !switchedUrlRef.current ? (
           <ErrorBar
             message={`播放地址解析失败：${resolveError}`}
             lifetime="timed"

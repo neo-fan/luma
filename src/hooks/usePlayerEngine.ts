@@ -500,6 +500,18 @@ export function usePlayerEngine({
               | { update?: () => void }
               | undefined;
             control?.update?.();
+            // 单码率的源不该出现「清晰度：自动」这种假选项：插件只要看到
+            // levels 非空就会挂控件，而 TVBox 源绝大多数只有一档。按 高度/码率/
+            // 名称 去重后只剩一档时，把控件与设置项一起摘掉。
+            const levels = new Set(
+              hls.levels.map(
+                (level) => `${level.height ?? 0}|${level.bitrate ?? 0}|${level.name ?? ""}`,
+              ),
+            );
+            if (levels.size <= 1) {
+              instance.controls.remove("hls-quality");
+              instance.setting.remove("hls-quality");
+            }
             // 清单里的 RESOLUTION 只有这一时刻拿得到，留作真实帧尺寸到达前的
             // 兜底；没有声明值（多数源）就保持 0，角标等解码后再出现。
             const heights = hls.levels

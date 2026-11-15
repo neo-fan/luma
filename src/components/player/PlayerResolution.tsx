@@ -16,6 +16,11 @@ interface PlayerResolutionProps {
   /** tooltip：精确像素尺寸或清单声明值。 */
   detail?: string;
   /**
+   * 当前集数（如「第 5 集」）。排在分辨率**前面**：全屏时用户更需要知道
+   * 「在播哪一集」，而控制栏那枚「下一集」按钮只说明还有下一集。
+   */
+  episode?: string;
+  /**
    * 直播态传入频道名：频道名与分辨率合并成画面左上角一块。
    *
    * 直播没有海报 / 简介，「频道叫什么」是画面旁唯一必须常驻的信息，而左下
@@ -58,6 +63,7 @@ export default function PlayerResolution({
   host,
   label,
   detail,
+  episode,
   channel,
 }: PlayerResolutionProps) {
   const [idle, setIdle] = useState(false);
@@ -144,15 +150,17 @@ export default function PlayerResolution({
       host,
     );
   }
-  if (!label) {
+  if (!label && !episode) {
     return null;
   }
   return createPortal(
     <span
       className={`player-res${idle ? " is-idle" : ""}`}
-      title={detail || label}
+      title={[detail, label, episode].filter(Boolean).join(" · ")}
       aria-hidden="true"
     >
+      {episode ? <em className="player-res__ep">{episode}</em> : null}
+      {episode && label ? <span className="player-res__sep">·</span> : null}
       {label}
     </span>,
     host,
