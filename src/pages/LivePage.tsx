@@ -568,7 +568,7 @@ export default function LivePage({
    */
   const resolveFailure = resolveError
     ? classifyLiveFailure({ message: resolveError, stage: "resolve" })
-    : resolved !== null && !playable && !reloading
+    : resolved !== null && !playable && !reloading && !resolving
       ? classifyLiveFailure({ stage: "sniff" })
       : null;
 
@@ -658,7 +658,7 @@ export default function LivePage({
             lifetime="timed"
           />
         ) : null}
-            {resolveFailure && !recovering && !catalog.loading ? (
+            {resolveFailure && channel && !recovering && !catalog.loading ? (
           <ErrorBar
             message={resolveFailure.message}
             hint={resolveFailure.hint}
@@ -678,6 +678,7 @@ export default function LivePage({
                   reloading={reloading}
                   playable={playable}
                   recovering={recovering}
+                  pending={resolved === null}
                   resolveError={
                     resolveError ? (resolveFailure?.message ?? resolveError) : ""
                   }

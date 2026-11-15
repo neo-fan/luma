@@ -96,7 +96,9 @@ export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
     restoreIndex(lives),
   );
   const [groups, setGroups] = useState<LiveGroup[]>([]);
-  const [loading, setLoading] = useState(false);
+  // 初值 true：冷启动首帧 effect 还没跑，false 会先闪一帧「没有可播放的
+  // 频道」Empty。下方两个早退分支负责在无源时把它翻回 false。
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FailureReason | null>(null);
   /** 递增即重新下载；0 表示「优先用缓存」。 */
   const [reloadToken, setReloadToken] = useState(0);
@@ -124,6 +126,7 @@ export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
   useEffect(() => {
     if (!sourceKey) {
       setGroups([]);
+      setLoading(false);
       return;
     }
     const cached = peekLiveGroups(sourceKey);
@@ -135,6 +138,7 @@ export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
   useEffect(() => {
     if (!source) {
       setGroups([]);
+      setLoading(false);
       return;
     }
     // 播放页刷新直达时 pageState 已空，靠记住的 url/ua 重新拉列表。
