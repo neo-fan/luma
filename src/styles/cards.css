@@ -221,12 +221,44 @@
 }
 
 .home-hero__backdrop img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   /* 只有竖版海报可以当背景：放大 + 模糊，压成一块色雾而不是一张大图。 */
   transform: scale(1.18);
   filter: blur(36px) saturate(1.35) brightness(0.6);
+}
+
+/* 换片时上一层褪、下一层入，避免硬切。层序由 DOM 顺序保证：
+   刚离开的那层先渲染（在下），新的一层后渲染（在上）。 */
+.home-hero__backdrop img.is-current {
+  animation: hero-layer-in 720ms var(--ease) both;
+}
+
+.home-hero__backdrop img.is-leaving {
+  animation: hero-layer-out 720ms var(--ease) both;
+}
+
+@keyframes hero-layer-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes hero-layer-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
 }
 
 .home-hero__scrim {
@@ -337,57 +369,108 @@
   margin-top: 6px;
 }
 
+/* 圆点进度条：直接浮在头图上，不加底衬，别抢画面。 */
 .home-hero__controls {
   position: absolute;
   right: 30px;
   bottom: 26px;
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.home-hero__arrow {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-pill);
-  background: var(--scrim);
-  color: var(--text-soft);
-  cursor: pointer;
-  transition:
-    color var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
-}
-
-.home-hero__arrow:hover {
-  color: var(--text);
-  border-color: var(--border-strong);
 }
 
 .home-hero__dots {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
 
 .home-hero__dot {
+  position: relative;
   width: 6px;
   height: 6px;
   padding: 0;
   border: 0;
   border-radius: var(--r-pill);
-  background: var(--border-strong);
+  background: rgb(255 255 255 / 30%);
   cursor: pointer;
+  overflow: hidden;
   transition:
     width var(--dur) var(--ease),
     background var(--dur) var(--ease);
 }
 
+.home-hero__dot:hover {
+  background: rgb(255 255 255 / 55%);
+}
+
 .home-hero__dot.is-active {
-  width: 18px;
-  background: var(--accent);
+  width: 26px;
+  background: rgb(255 255 255 / 24%);
+}
+
+/* 激活圆点同时是自动轮播的进度条：到 100% 就换下一张。 */
+.home-hero__dot-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: inherit;
+  background: var(--text);
+  animation-name: hero-dot-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+
+.home-hero:hover .home-hero__dot-fill,
+.home-hero:focus-within .home-hero__dot-fill {
+  animation-play-state: paused;
+}
+
+@keyframes hero-dot-fill {
+  from {
+    width: 0;
+  }
+
+  to {
+    width: 100%;
+  }
+}
+
+/*
+ * 下一张：平时隐形，头图 hover / 键盘聚焦时从右缘滑进来。不做按钮外形
+ * （没有圆角、没有底、没有边框）：只留一枚带投影的箭头，靠投影在模糊
+ * 背景上站住，而不是贴一块渐变矩形。
+ */
+.home-hero__next {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  width: 48px;
+  height: 96px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgb(255 255 255 / 82%);
+  filter: drop-shadow(0 2px 10px rgb(0 0 0 / 65%));
+  cursor: pointer;
+  opacity: 0;
+  transform: translate(8px, -50%);
+  transition:
+    opacity var(--dur) var(--ease),
+    transform var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.home-hero:hover .home-hero__next,
+.home-hero__next:focus-visible {
+  opacity: 0.92;
+  transform: translate(0, -50%);
+}
+
+.home-hero__next:hover {
+  color: var(--accent);
 }
 
 .poster-rail {
@@ -631,6 +714,20 @@
   }
 
   .home-hero__text {
+    animation: none;
+  }
+
+  .home-hero__dot-fill {
+    width: 100%;
+    animation: none;
+  }
+
+  .home-hero__next {
+    transition: none;
+  }
+
+  .home-hero__backdrop img.is-current,
+  .home-hero__backdrop img.is-leaving {
     animation: none;
   }
 }

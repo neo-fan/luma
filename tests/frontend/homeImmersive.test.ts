@@ -42,6 +42,22 @@ describe("immersive home (hero + horizontal rails)", () => {
     // 「立即观看」本身就是进详情/播放页，不再重复一个「查看详情」按钮。
     expect(hero).not.toContain("查看详情");
     expect(hero).toContain("home-hero__dot");
+    // 切换只有「下一张」一个入口：不再单独放上一张/下一张两个箭头按钮。
+    expect(hero).toContain("home-hero__next");
+    expect(hero).toContain("下一张推荐");
+    expect(hero).not.toContain("上一张推荐");
+    expect(hero).not.toContain("home-hero__arrow");
+    expect(hero).not.toContain("ChevronLeft");
+    // 激活圆点同时充当自动轮播进度条，时长跟 ROTATE_MS 同步。
+    expect(hero).toContain("home-hero__dot-fill");
+    expect(hero).toContain("animationDuration: `${ROTATE_MS}ms`");
+    // 头图只接管横向滑动（触控板双指横滑 / Shift+滚轮）：原生监听才能
+    // preventDefault，纵向滚动留给页面，不被头图吃掉。
+    expect(hero).toContain('addEventListener("wheel", onWheel, { passive: false })');
+    expect(hero).toContain("event.preventDefault();");
+    expect(hero).toContain("Math.abs(event.deltaX) >= Math.abs(event.deltaY)");
+    expect(hero).toContain("if (!horizontal && !event.shiftKey) return;");
+    expect(hero).toContain("delta > 0 ? 1 : -1");
     // 站点小字整行去掉，不再渲染 eyebrow。
     expect(hero).not.toContain("home-hero__eyebrow");
     // 头图补豆瓣数据：评分 / 评价人数 / 年份 / 类型，主海报缺失时用豆瓣海报兜底。
@@ -110,6 +126,15 @@ describe("immersive home (hero + horizontal rails)", () => {
     expect(css).toContain(".poster-rail__track:focus-visible");
     // 换片时只让文字入场
     expect(css).toContain("@keyframes hero-text-in");
+    // 轮播控件：圆点进度 + 右侧贴边、平时隐形的「下一张」
+    expect(css).toContain(".home-hero__controls {");
+    expect(css).toContain(".home-hero__next {");
+    expect(css).toContain(".home-hero:hover .home-hero__next");
+    expect(css).toContain("opacity: 0;");
+    expect(css).toContain("@keyframes hero-dot-fill");
+    expect(css).toContain(".home-hero__dot-fill {");
+    expect(css).toContain("animation-play-state: paused;");
+    expect(css).not.toContain(".home-hero__arrow");
     // 评分角标与已删除的站点小字
     expect(css).toContain(".poster-tile__rating {");
     expect(css).not.toContain(".home-hero__eyebrow");

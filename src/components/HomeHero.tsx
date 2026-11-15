@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Play } from "lucide-react";
+import { ChevronRight, Play } from "lucide-react";
 import useDoubanMeta from "../hooks/useDoubanMeta";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import { formatVotes } from "../lib/douban";
@@ -39,6 +39,35 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
     onError: handleError,
     onLoad: handleLoad,
   } = useDoubanPoster ? doubanImage : source;
+  // 背景层栈：换片时把「刚离开的那张」留在底下慢慢褪，新的一张淡入进来。
+  // 不能用 `items[index - 1]` 反推上一层——反向滚动或点圆点跳转时，那并不是
+  // 用户刚看到的图，会闪出一张无关海报。
+  const [layers, setLayers] = useState<{ id: number; item: VodInfo }[]>([]);
+  const layerSeq = useRef(0);
+
+  // 淡出结束后把旧层从 DOM 里摘掉：动效结束时它本来就是 opacity 0，
+  // 但「减少动效」下没有动画、或动画被打断时，留着就会变成一张不该存在
+  // 的底图——每一帧只该有当前这一张。
+  useEffect(() => {
+    if (layers.length <= 1) return;
+    const timer = window.setTimeout(() => {
+      setLayers((prev) => (prev.length <= 1 ? prev : prev.slice(-1)));
+    }, 760);
+    return () => window.clearTimeout(timer);
+  }, [layers]);
+
+  useEffect(() => {
+    if (!current) return;
+    setLayers((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.item.vod_id === current.vod_id) return prev;
+      // 只保留上一层用于淡出，更早的直接丢掉。
+      return [
+        ...prev.slice(-1),
+        { id: ++layerSeq.current, item: current },
+      ];
+    });
+  }, [current]);
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
 
@@ -83,18 +112,41 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
   // 头图给两行剧情简介：没有简介时整段不渲染，不留空行。
   const intro = plainText(douban?.intro) || plainText(current?.vod_content);
 
-  const step = useCallback(
-    (direction: 1 | -1) => {
-      setIndex((value) => (value + direction + count) % Math.max(count, 1));
-    },
-    [count],
-  );
+  // 轮播永远向前走：只留「下一张」一个入口，圆点负责直接跳转。
+  const next = useCallback(() => {
+    setIndex((value) => (value + 1) % Math.max(count, 1));
+  }, [count]);
+
+  // 只接管横向滑动（触控板双指横滑 / Shift+滚轮），纵向滚动留给页面：
+  // 鼠标往下滚是想看下面的内容，不该被头图吃掉。
+  const heroRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const element = heroRef.current;
+    if (!element || count <= 1) return;
+    let lockUntil = 0;
+    const onWheel = (event: WheelEvent) => {
+      const horizontal = Math.abs(event.deltaX) >= Math.abs(event.deltaY);
+      if (!horizontal && !event.shiftKey) return;
+      const delta = event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)
+        ? event.deltaY
+        : event.deltaX;
+      if (Math.abs(delta) < 4) return;
+      event.preventDefault();
+      const now = Date.now();
+      if (now < lockUntil) return;
+      lockUntil = now + 460;
+      setIndex((value) => (value + (delta > 0 ? 1 : -1) + count) % count);
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [count]);
 
   if (!current) return null;
   const title = current.vod_name || "未命名";
 
   return (
     <section
+      ref={heroRef}
       className="home-hero"
       aria-roledescription="轮播"
       aria-label="推荐内容"
@@ -104,16 +156,26 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
       onBlurCapture={() => setPaused(false)}
     >
       <div className="home-hero__backdrop" aria-hidden="true">
-        {cover && !broken ? (
-          <img src={cover} alt="" onError={handleError} onLoad={handleLoad} />
-        ) : null}
+        {layers.map((layer) => (
+          <HeroBackdrop
+            key={layer.id}
+            item={layer.item}
+            leaving={layer.item.vod_id !== current.vod_id}
+          />
+        ))}
       </div>
       <div className="home-hero__scrim" aria-hidden="true" />
 
       <div className="home-hero__body">
-        <span className="home-hero__poster">
+        <span className="home-hero__poster" key={current.vod_id}>
           {cover && !broken ? (
-            <img src={cover} alt="" referrerPolicy="no-referrer" />
+            <img
+              src={cover}
+              alt=""
+              referrerPolicy="no-referrer"
+              onError={handleError}
+              onLoad={handleLoad}
+            />
           ) : (
             <span className="home-hero__poster-ph" aria-hidden="true" />
           )}
@@ -134,37 +196,50 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
       </div>
 
       {count > 1 ? (
-        <div className="home-hero__controls">
-          <button
-            type="button"
-            className="home-hero__arrow"
-            onClick={() => step(-1)}
-            aria-label="上一张推荐"
-          >
-            <ChevronLeft size={16} aria-hidden="true" />
-          </button>
-          <div className="home-hero__dots">
-            {items.map((vod, dot) => (
-              <button
-                key={String(vod.vod_id)}
-                type="button"
-                className={dot === index ? "home-hero__dot is-active" : "home-hero__dot"}
-                onClick={() => setIndex(dot)}
-                aria-label={`第 ${dot + 1} 张推荐`}
-                aria-current={dot === index}
-              />
-            ))}
+        <>
+          <div className="home-hero__controls">
+            <div className="home-hero__dots">
+              {items.map((vod, dot) => (
+                <button
+                  key={String(vod.vod_id)}
+                  type="button"
+                  className={dot === index ? "home-hero__dot is-active" : "home-hero__dot"}
+                  onClick={() => setIndex(dot)}
+                  aria-label={`第 ${dot + 1} 张推荐`}
+                  aria-current={dot === index}
+                >
+                  {dot === index ? (
+                    <span
+                      className="home-hero__dot-fill"
+                      style={{ animationDuration: `${ROTATE_MS}ms` }}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                </button>
+              ))}
+            </div>
           </div>
           <button
             type="button"
-            className="home-hero__arrow"
-            onClick={() => step(1)}
+            className="home-hero__next"
+            onClick={next}
             aria-label="下一张推荐"
           >
-            <ChevronRight size={16} aria-hidden="true" />
+            <ChevronRight size={18} aria-hidden="true" />
           </button>
-        </div>
+        </>
       ) : null}
     </section>
   );
+}
+
+/**
+ * 头图背景的一层。每层自己取图，`leaving` 表达「这是刚离开的那张，正在褪」。
+ * 单独拆成组件是为了按 item 各自调用 `useProxiedImage`（hook 不能写在 map 里）。
+ */
+function HeroBackdrop({ item, leaving }: { item: VodInfo; leaving: boolean }) {
+  const image = useProxiedImage(item.vod_pic);
+  const cover = image.src && !image.broken ? image.src : "";
+  if (!cover) return null;
+  return <img className={leaving ? "is-leaving" : "is-current"} src={cover} alt="" />;
 }
