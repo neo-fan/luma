@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import useDoubanMeta from "../hooks/useDoubanMeta";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import type { VodInfo } from "../types/tvbox";
@@ -44,34 +44,15 @@ const PosterTile = memo(function PosterTile({ vod, onOpen, site }: PosterTilePro
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
   const handleOpen = useCallback(() => onOpenRef.current(vod), [vod]);
-  const rootRef = useRef<HTMLButtonElement | null>(null);
-  /** 卡片进过视口才发豆瓣请求：一屏十几张，滚不到的地方一个请求都不发。 */
-  const [inView, setInView] = useState(false);
+  /**
+   * 指向（悬停 / 键盘聚焦 / 指针按下）才发豆瓣请求：一屏十几张卡同时取，会把豆瓣搜索
+   * 打到限流（日志里的「搜索访问太频繁」），连累详情页与头图也拿不到数据。
+   * 取到之后保持，指针移开不丢，避免反复请求。
+   */
+  const [doubanArmed, setDoubanArmed] = useState(false);
+  const armDouban = useCallback(() => setDoubanArmed(true), []);
 
-  useEffect(() => {
-    if (inView) return;
-    const node = rootRef.current;
-    if (!node) return;
-    // 没有 IntersectionObserver 的环境（旧 WebView / 测试）直接当作已进视口。
-    if (typeof IntersectionObserver === "undefined") {
-      setInView(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setInView(true);
-          observer.disconnect();
-        }
-      },
-      // 提前一屏开始要：滚到时评分基本已经在路上。
-      { rootMargin: "320px 0px" },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [inView]);
-
-  const douban = useDoubanMeta(vod.vod_name, vod.vod_year, inView);
+  const douban = useDoubanMeta(vod.vod_name, vod.vod_year, doubanArmed);
   const title = vod.vod_name || "未命名";
   // 豆瓣命中优先用它的年份 / 类型；否则保持源站的集数 / 年份 / 地区，最后用站点名兜底。
   const meta = douban
@@ -99,8 +80,10 @@ const PosterTile = memo(function PosterTile({ vod, onOpen, site }: PosterTilePro
       type="button"
       className="poster-tile"
       onClick={handleOpen}
+      onPointerEnter={armDouban}
+      onPointerDown={armDouban}
+      onFocus={armDouban}
       title={title}
-      ref={rootRef}
     >
       <span className="poster-tile__frame">
         {cover && !broken ? (

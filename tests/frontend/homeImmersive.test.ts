@@ -98,9 +98,11 @@ describe("immersive home (hero + horizontal rails)", () => {
     expect(tile).toContain('className="poster-tile__meta"');
     expect(tile).toContain("useProxiedImage(vod.vod_pic)");
     expect(tile).toContain("|| site ||");
-    // 卡片进视口才拉豆瓣；命中评分时在海报右上角显示 ★ 分。
-    expect(tile).toContain("new IntersectionObserver(");
-    expect(tile).toContain("useDoubanMeta(");
+    // 指向（悬停 / 聚焦 / 按下）才拉豆瓣，避免一屏十几张同时打豆瓣搜索；命中评分时显示 ★ 分。
+    expect(tile).toContain("onPointerEnter={armDouban}");
+    expect(tile).toContain("onFocus={armDouban}");
+    expect(tile).toContain("useDoubanMeta(vod.vod_name, vod.vod_year, doubanArmed)");
+    expect(tile).not.toContain("new IntersectionObserver(");
     expect(tile).toContain("poster-tile__rating");
   });
 
