@@ -868,6 +868,24 @@ export default function PlayerPage({
     }
   }, [tryNextLine, tryFailover, ledgerKey]);
 
+  /** 面板里的「换下一条线路」：和自动换线走同一条通道，但由用户触发、不记账。 */
+  const [nextLineBusy, setNextLineBusy] = useState(false);
+  const pickNextLine = useCallback(() => {
+    if (nextLineBusy) {
+      return;
+    }
+    setNextLineBusy(true);
+    setSwitchTip("正在切换到下一条线路…");
+    void tryNextLine()
+      .then((switched) => {
+        if (!switched) {
+          setSwitchTip("");
+          setVideoError("当前源没有其它可播线路了，可以换一个源或稍后重试。");
+        }
+      })
+      .finally(() => setNextLineBusy(false));
+  }, [nextLineBusy, tryNextLine]);
+
   // tryNextLine 依赖异步加载的剧集列表；用 ref 转发，避免播放内核 effect
   // 因 lines 到达而被重新挂载（那会从头开始缓冲）。
   const switchOrFailoverRef = useRef(switchOrFailover);
@@ -1326,6 +1344,8 @@ export default function PlayerPage({
         resolveError={switchedUrlRef.current ? "" : resolveError}
         retryable={resolveRetryable}
         containerRef={containerRef}
+        onNextLine={pickNextLine}
+        nextLineBusy={nextLineBusy}
       />
       <PlayerResolution
         host={playerRoot}

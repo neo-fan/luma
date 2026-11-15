@@ -34,6 +34,8 @@ interface LivePageProps {
   lives: LiveSource[];
   /** 是否停在点播播放页：为 true 时直播必须让出声音（直播与点播只能一个在播）。 */
   vodActive?: boolean;
+  /** 当前路由是否就是直播页：用户主动进来时直播要接管声音，而不是干等。 */
+  liveActive?: boolean;
 }
 
 /**
@@ -50,7 +52,11 @@ interface LivePageProps {
  * 换台只改本页 state（playUrl 变化驱动解析与内核重建），不进路由、不重建页面。
  * 路由仍是 `/live`，侧栏高亮天然正确，也不再有「直播播放页」这个第二入口。
  */
-export default function LivePage({ lives, vodActive = false }: LivePageProps) {
+export default function LivePage({
+  lives,
+  vodActive = false,
+  liveActive = false,
+}: LivePageProps) {
   const catalog = useLiveCatalog(lives);
 
   /** 当前频道 + 线路。只记名字：源每次重拉，地址都可能换。 */
@@ -140,6 +146,7 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
   const pausedForVod = useRef(false);
   /** 点播是否真的在出声（后台也算）。路由之外的这半条件是双声的根治点。 */
   const vodPlaying = useAppStore((state) => state.mediaPlaying.vod);
+  const setMediaPlaying = useAppStore((state) => state.setMediaPlaying);
 
   /**
    * 点播播放器常驻在 AppShell 里（`.player-host`），直播出画时把它按停。
@@ -165,7 +172,10 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     if (!video) {
       return;
     }
-    if (vodActive || vodPlaying) {
+    // 停在直播页时直播说了算：点播要么已经让位，要么马上让它让位（见下一个
+    // effect）。这里只在「人不在直播页」时才为点播退让，否则从播放页切回来
+    // 会因为点播还在后台播而被永久按停，画面停在黑屏、也没有按钮提示。
+    if (!liveActive && (vodActive || vodPlaying)) {
       if (!video.paused) {
         video.pause();
         pausedForVod.current = true;
@@ -178,7 +188,32 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
         /* 被浏览器拦下就停在原地，用户点播放器上的播放即可 */
       });
     }
-  }, [vodActive, vodPlaying, playUrl]);
+  }, [vodActive, vodPlaying, liveActive, playUrl]);
+
+  /**
+   * 用户主动回到直播页 → 直播接管声音：按停后台点播（并清掉侧栏绿点），
+   * 自己重新起播。之前只靠「让路记账」恢复，点播在后台播着时直播永远起不来，
+   * 画面就停在黑屏。
+   */
+  useEffect(() => {
+    if (!liveActive) {
+      return;
+    }
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+    pauseVodMedia();
+    if (vodPlaying) {
+      setMediaPlaying("vod", false);
+    }
+    pausedForVod.current = false;
+    if (video.paused) {
+      void video.play().catch(() => {
+        /* 没有用户手势时可能被拦；用户点播放器上的播放即可 */
+      });
+    }
+  }, [liveActive, pauseVodMedia, setMediaPlaying, vodPlaying, playUrl]);
 
   // 出画即认领声音：此时点播那边（如果还在后台播）必须让位。
   useEffect(() => {
@@ -648,6 +683,9 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
                   }
                   retryable={resolveRetryable}
                   containerRef={containerRef}
+                  onNextLine={() => {
+                    void switchOrFailoverRef.current();
+                  }}
                 />
                 <PlayerResolution
                   host={playerRoot}

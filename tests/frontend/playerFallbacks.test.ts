@@ -1,0 +1,84 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+/**
+ * 播放页的两条「出路」契约：
+ *
+ * 1. 加载过久 / 解析失败时，舞台中间直接给出「换下一条线路」，不要让用户
+ *    自己去右侧线路列表里翻；按钮必须能点到（overlay 是 pointer-events:none）。
+ * 2. 从点播页切回直播页时，直播接管声音：先按停后台点播，再重新起播；否则
+ *    点播还在后台播，直播被让路逻辑按停，画面就停在黑屏。
+ *
+ * 组件测试环境没装 jsdom，这里按项目惯例读源码断言关键结构，避免为了两个
+ * 条件渲染引入整套 DOM 渲染测试。
+ */
+
+const here = dirname(fileURLToPath(import.meta.url));
+const source = (path: string) =>
+  readFileSync(resolve(here, "../../src", path), "utf8");
+const styles = (path: string) =>
+  readFileSync(resolve(here, "../../src/styles", path), "utf8");
+
+describe("player stage fallback action", () => {
+  const stage = source("components/player/PlayerStage.tsx");
+
+  it("offers a next-line button on failure and after five seconds of waiting", () => {
+    expect(stage).toContain("onNextLine?: () => void;");
+    expect(stage).toContain("nextLineBusy?: boolean;");
+    expect(stage).toContain("onNextLine && (!active.busy || waited >= 5)");
+    expect(stage).toContain("换下一条线路");
+    expect(stage).toContain("正在切换线路…");
+    expect(stage).toContain("player-status__action");
+  });
+
+  it("keeps the control bar visible while the line is broken or slow", () => {
+    const css = styles("player.css");
+    expect(css).toContain(".player-stage.is-error .art-video-player .art-bottom,");
+    expect(css).toContain(".player-stage.is-busy .art-video-player .art-bottom {");
+    const block = css.slice(
+      css.indexOf(".player-stage.is-busy .art-video-player .art-bottom {"),
+    );
+    const body = block.slice(0, block.indexOf("}"));
+    expect(body).toContain("opacity: 1 !important;");
+    expect(body).toContain("visibility: visible !important;");
+    expect(body).toContain("pointer-events: auto !important;");
+  });
+
+  it("keeps the button clickable inside a pointer-events-none overlay", () => {
+    const css = styles("player.css");
+    const block = css.slice(css.indexOf(".player-status__action {"));
+    expect(block.slice(0, block.indexOf("}"))).toContain("pointer-events: auto;");
+  });
+
+  it("wires the button to the line switcher on both pages", () => {
+    const page = source("pages/PlayerPage.tsx");
+    expect(page).toContain("const pickNextLine = useCallback(() => {");
+    expect(page).toContain("void tryNextLine()");
+    expect(page).toContain("onNextLine={pickNextLine}");
+    const live = source("pages/LivePage.tsx");
+    expect(live).toContain("onNextLine={() => {");
+  });
+});
+
+describe("live page takes the sound back when it becomes visible", () => {
+  const live = source("pages/LivePage.tsx");
+
+  it("only yields to vod while the user is somewhere else", () => {
+    expect(live).toContain("if (!liveActive && (vodActive || vodPlaying))");
+  });
+
+  it("pauses background vod and restarts itself on entering the live route", () => {
+    expect(live).toContain("if (!liveActive) {\n      return;\n    }");
+    expect(live).toContain("pauseVodMedia();");
+    expect(live).toContain('setMediaPlaying("vod", false);');
+    expect(live).toContain("pausedForVod.current = false;");
+    expect(live).toContain("void video.play().catch(() => {");
+  });
+
+  it("gets the live route flag from the shell", () => {
+    const shell = source("AppShell.tsx");
+    expect(shell).toContain("liveActive={isLiveRoute}");
+  });
+});

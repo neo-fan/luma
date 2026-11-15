@@ -16,6 +16,10 @@ interface PlayerStageProps {
   retryable?: boolean;
   /** ArtPlayer 挂载点：必须绑到 .player-art 这个空 div 本身，不能换成组件根。 */
   containerRef: RefObject<HTMLDivElement>;
+  /** 换下一条线路：播放失败、或等待超过 5s 时给用户一个「别干等」的出口。 */
+  onNextLine?: () => void;
+  /** 正在切换线路：按钮置灰并换成进行中文案，防连点。 */
+  nextLineBusy?: boolean;
 }
 
 /**
@@ -39,6 +43,8 @@ export default function PlayerStage({
   resolveError,
   retryable = false,
   containerRef,
+  onNextLine,
+  nextLineBusy = false,
 }: PlayerStageProps) {
   // 慢源冷启动实测能到 18s：光转圈会被当成卡死，超过 4s 就把已等待秒数报出来，
   // 让用户知道「在动，只是慢」，而不是「点坏了」。解析结束自动归零。
@@ -112,6 +118,16 @@ export default function PlayerStage({
             <p className="player-status__title">{active.title}</p>
             {active.desc ? <p className="player-status__desc">{active.desc}</p> : null}
             {slowHint ? <p className="player-status__desc">{slowHint}</p> : null}
+            {onNextLine && (!active.busy || waited >= 5) ? (
+              <button
+                type="button"
+                className="player-status__action"
+                onClick={onNextLine}
+                disabled={nextLineBusy}
+              >
+                {nextLineBusy ? "正在切换线路…" : "换下一条线路"}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

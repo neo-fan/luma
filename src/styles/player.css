@@ -357,3 +357,40 @@
   transform: translateX(-50%);
   text-align: center;
 }
+
+/* 状态卡片里的「换下一条线路」：加载/失败时最常见的出路，别再让用户去
+   右边的线路列表里找。overlay 整体 pointer-events:none，这里单独放开。 */
+.player-status__action {
+  margin-top: 2px;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f2f3f5;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.player-status__action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
+.player-status__action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 线路异常 / 久等时把控制栏钉住：ArtPlayer 空闲会自动隐藏底栏
+   （opacity 0 + visibility hidden + pointer-events none），用户刚好就在这个
+   时候需要手动换线路/刷新，底栏却先消失了。错误与等待态强制显示，恢复播放
+   后交还给 ArtPlayer 的自动隐藏。 */
+.player-stage.is-error .art-video-player .art-bottom,
+.player-stage.is-busy .art-video-player .art-bottom {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}

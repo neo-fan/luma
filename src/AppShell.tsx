@@ -502,7 +502,11 @@ export default function AppShell() {
                 className={isLiveRoute ? "live-host" : "live-host is-idle"}
                 aria-hidden={!isLiveRoute}
               >
-                <LivePage lives={lives} vodActive={isPlayerRoute} />
+                <LivePage
+                  lives={lives}
+                  vodActive={isPlayerRoute}
+                  liveActive={isLiveRoute}
+                />
               </div>
             </Suspense>
           ) : null}
