@@ -193,9 +193,14 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
    * 说成「只能换频道」）。
    */
   const setEngineVideoError = useCallback<typeof setVideoError>((value) => {
+    // 换源过程中没有频道，旧内核（上一条频道/上一个源）的报错不属于这一轮：
+    // 直接丢掉，避免「正在读取频道…」旁边挂着上一条「播放失败」。
+    if (value && !channel) {
+      return;
+    }
     setVideoStage("play");
     setVideoError(value);
-  }, []);
+  }, [channel]);
 
   const {
     resolved,
@@ -585,37 +590,6 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
         </div>
       </header>
       <div className="page-body">
-        {/* 两类错误分开：
-          · lifetime="timed"＝「此刻这条线路这一下不行」，画面可能已在别的
-            线路上播着，8s 带倒计时自动收起（时长见 lib/notice.ts）；
-          · 默认 sticky＝「该频道所有线路都试过了」或「地址是网页、嗅探不到
-            播放源」，这是要用户动手的结论，常驻到换台为止。
-          主文案与归因由 lib/playErrors 的 classifyLiveFailure 统一给出，
-          原始报错折叠进「技术详情」。 */}
-        {videoFailure && !recovering ? (
-          <ErrorBar
-            message={videoFailure.message}
-            hint={videoFailure.hint}
-            detail={
-              videoError && videoError !== videoFailure.message
-                ? videoError
-                : undefined
-            }
-            lifetime="timed"
-          />
-        ) : null}
-        {resolveFailure && !recovering ? (
-          <ErrorBar
-            message={resolveFailure.message}
-            hint={resolveFailure.hint}
-            detail={resolveError || undefined}
-            lifetime={resolveError ? "timed" : "sticky"}
-          />
-        ) : null}
-        {fatalError && !recovering ? (
-          <ErrorBar message={fatalError.message} hint={fatalError.hint} />
-        ) : null}
-
         <div className="live-layout">
           <LiveChannelRail
             groups={catalog.groups}
@@ -630,6 +604,37 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
           />
 
           <div className="live-main">
+            {/* 两类错误分开：
+          · lifetime="timed"＝「此刻这条线路这一下不行」，画面可能已在别的
+            线路上播着，8s 带倒计时自动收起（时长见 lib/notice.ts）；
+          · 默认 sticky＝「该频道所有线路都试过了」或「地址是网页、嗅探不到
+            播放源」，这是要用户动手的结论，常驻到换台为止。
+          主文案与归因由 lib/playErrors 的 classifyLiveFailure 统一给出，
+          原始报错折叠进「技术详情」。 */}
+            {videoFailure && !recovering && !catalog.loading ? (
+          <ErrorBar
+            message={videoFailure.message}
+            hint={videoFailure.hint}
+            detail={
+              videoError && videoError !== videoFailure.message
+                ? videoError
+                : undefined
+            }
+            lifetime="timed"
+          />
+        ) : null}
+            {resolveFailure && !recovering && !catalog.loading ? (
+          <ErrorBar
+            message={resolveFailure.message}
+            hint={resolveFailure.hint}
+            detail={resolveError || undefined}
+            lifetime={resolveError ? "timed" : "sticky"}
+          />
+        ) : null}
+            {fatalError && !recovering && !catalog.loading ? (
+          <ErrorBar message={fatalError.message} hint={fatalError.hint} />
+        ) : null}
+
             {channel ? (
               <>
                 <PlayerStage
