@@ -10,7 +10,7 @@ import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { usePageState } from "../lib/usePageState";
 import { sameTitle } from "../lib/format";
 import { notify } from "../lib/notify";
-import type { FavoriteItem, HistoryItem, VodRef } from "../types/tvbox";
+import type { FavoriteItem, HistoryItem, VodRef } from "../types/luma";
 
 interface FavoritesPageProps {
   navigate: Navigate;

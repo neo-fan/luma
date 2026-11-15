@@ -6,7 +6,7 @@
 
 ## 1. 范围与交付
 
-- **是什么**：Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用户导入自己的
+- **是什么**：Windows 11 x64 的配置兼容播放框架（空壳框架，兼容 TVBox 系配置）。用户导入自己的
   `api.json` / `box.json` 及变体，应用提供点播浏览 / 搜索 / 详情 / 播放、直播，以及
   CMS / Python / JS 三类源的调度。
 - **不内置**任何配置地址、片源、直播源、API Key。
@@ -60,7 +60,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 | --- | --- |
 | `ping` | 返回 `{ ok: true, result: { version } }`；`version` 来自 `LUMA_VERSION`（宿主注入，回退 `package.json`） |
 | `spider.py` | `params = { source, className?, method, args, ext?, api?, filename?, timeoutMs? }`，结果 = 脚本返回值（已 `json_safe` 净化） |
-| `debug.*` | 仅当 `LUMA_ADAPTER_DEBUG=1` / `TVBOX_ADAPTER_DEBUG=1` 时注册（`echo` / `junk` / `crash`），生产不可见 |
+| `debug.*` | 仅当 `LUMA_ADAPTER_DEBUG=1` 时注册（`echo` / `junk` / `crash`），生产不可见 |
 
 - **帧格式**：一行一个 JSON。请求 `{ id, method, params }`；响应
   `{ id, ok: true, result }` 或 `{ id, ok: false, error: { code, message } }`。
@@ -108,7 +108,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 - 导入链：拉取（10s 超时）→ `infra/textio.rs` 洗 UTF-8 → 解密 → 归一化 → 双快照
   → 站点路由（`.py` → Python，`.js` → QuickJS，`csp_*` / `.jar` → jvm 屏蔽，
   其余 CMS）。
-- 契约单一真源：`contracts/tvbox.schema.json` → `src/types/tvbox.ts` → Rust 序列化，
+- 契约单一真源：`contracts/luma.schema.json` → `src/types/luma.ts` → Rust 序列化，
   `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。
 
 ## 8. 播放与本地反代

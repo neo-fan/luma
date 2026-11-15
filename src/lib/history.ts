@@ -5,7 +5,7 @@
  * 唯一来源；换过源后线路名和剧集地址都会变，历史列表必须把它们显示出来，
  * 用户才能判断要不要继续这条线路。抽成纯函数便于单测。
  */
-import type { HistoryItem } from "../types/tvbox";
+import type { HistoryItem } from "../types/luma";
 
 /** 播放进度：拿不到时长时只显示已看时长。 */
 export function progressText(item: Pick<HistoryItem, "positionMs" | "durationMs">): string {

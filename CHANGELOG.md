@@ -10,6 +10,7 @@
 
 ### 变更
 
+- **品牌统一为 Luma，剥离历史 TVBox 拼写**：产品标题 / meta / `Cargo.toml` 描述、README 与规格书开篇文案不再出现「TVBox 播放器」的品牌位（兼容 TVBox 配置格式这一事实性描述保留）；`contracts/tvbox.schema.json` → `contracts/luma.schema.json`、`src/types/tvbox.ts` → `src/types/luma.ts`，全库 import 与文档路径同步；`env.rs::get/set` 只识别 `LUMA_*` 前缀，`TVBOX_*` 别名从 Rust / Python 适配层 / 探针 / 验收脚本 / 文档中移除；qjs-runner 内部标识符 `__tvbox_*` 与模板占位符 `__TVBOX_*__` 统一改为 `__luma_*` / `__LUMA_*__`；反代响应头 `x-tvbox-proxy` → `x-luma-proxy`；py 模块名 `tvbox_py_spider` → `luma_py_spider`；`server_version` `TVBoxStub` → `LumaStub`；`prepare_runtime.py` 临时目录前缀 `tvbox-py-` → `luma-py-`；T-31 计划协议由 `tvbox://` 改为 `luma://`。**保留的 TVBox 拼写仅两处**：`domain/config/decrypt.rs::XOR_KEY = b"tvbox-stub-key"`（TVBox 社区固定的 `****` 外壳解密密钥，属外部协议字段）与描述上游 `cluntop/tvbox` / TVBox 生态 / TVBox `base.spider` 框架 / `vod_pic` 协议字段等事实性文本。
 - **build 号前后端统一为「本次启动时刻」**：设置页原先分「前端构建 / 后端构建」两行，`tauri dev` 下 Vite 与 cargo 的构建时刻必然不同，两行永远对不上。现在后端在 `run()` 最开始 `started::mark()`（`infra/started.rs`），`Diagnostics` 增加 `startedAt`；前端 `src/lib/appInfo.ts` 取一次诊断快照后缓存，侧栏与设置页共用同一个 14 位 build 号，设置页两行合并为一行「构建号」。`buildHash` / `buildTime` 仍在诊断数据里供排障，界面不展示。
 - **py 源归一化搬进 Rust，`sidecars/py/cms.py` 删除**：1.0.2 已把 CMS 采集解析搬进进程内（`domain/spider/cms_parse.rs`），但 py 源仍走 `pyspider.py::_normalize` → `cms.py` 再映射一次，同一套契约两份实现，改字段要改两处。现在 `cms_parse.rs` 新增 `normalize_spider_result()` / `detail_items()` / `empty_page()`，接管 `detailContent` 的 5 种包裹形状（`list` / `data` / `result` / `vod` / 裸 vod 对象）、`playerContent/liveContent/proxy` 的字典直通、其它方法的 page 形状；`pyspider.py` 只把 `pyrun.py` 的结果（已 `json_safe` 净化）原样交回。`cms.py` 移到 `tools/audit/cms.py`，只给离线审计脚本 `tools/audit/scan_sources.py` 用，运行时不 import。
 - **适配层协议面收敛到 `ping` + `spider.py`**：`site.parseHome/parseCategory/parseDetail/parseSearch` 从 1.0.2 起宿主就不再调用；`config.decrypt` / `config.normalize` / `config.mergeRepos` / `site.route` / `live.parseM3u` / `live.parseEpg` / `parse.resolve` 的重实现早已在 Rust（`domain/config/{decrypt,normalize}.rs`、`domain/live/{m3u,epg}.rs`、`domain/parse.rs`），适配层里只剩一条从宿主不可达的死分支。现在全部删除，任何已删方法都会明确回 `{"code":"INTERNAL","message":"unknown method: …"}`，不会静默成功；`decrypt.py` / `normalize.py` 挪到 `tools/audit/` 供离线审计脚本复用，`live.py` / `parse.py` 直接删（Rust 侧已有移植与单测）；契约（`docs/spec.md` §5）同步改成「`ping` + `spider.py`」。
@@ -200,7 +201,7 @@
 - **jar 源（社区配置）不支持**：Android dex jar 依赖 ART / OkHttp / gson / `android.util.*`，Win x64 无法加载；导入时 `runtime=jvm` 站点自动屏蔽。JVM 通道仅为 `p2.py` 回归与自编纯 class 模板 jar 保留。
 - `parses[]` 只实现 type 0 / 1 / 4；type 2/3 依赖 jar 反射，直接返回「不支持」。
 - JS 源尚未覆盖 drpy2 `initEnv` 完整 polyfill 与 FongMi class-based `Spider` 规范。
-- T-31（`tvbox://` 协议关联、JumpList、全屏勿扰）未实现，规格要求逐项手工验收。
+- T-31（`luma://` 协议关联、JumpList、全屏勿扰）未实现，规格要求逐项手工验收。
 - mpv 不随安装包分发（单文件约 117MB），需要时自行放入安装目录的 `sidecars/mpv/`。
 - 公开源失效频繁，属正常现象；自动换源与源级原因提示是必需能力。
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mergeHomeFallback, normalizeHomeResult } from "./home";
-import type { HomeResult } from "../types/tvbox";
+import type { HomeResult } from "../types/luma";
 
 /**
  * 模拟 homeContent 的返回：classes/filters 是它的职责，list 可能为空。

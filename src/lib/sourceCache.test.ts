@@ -4,7 +4,7 @@ import { SOURCE_CACHE_TTL } from "./sourceCache";
 import type { SourceCacheOptions } from "./sourceCache";
 import type { AggregateRow } from "./sources";
 import { EMPTY_SOURCE_STATS } from "./sources";
-import type { ResultPage, Site, VodInfo } from "../types/tvbox";
+import type { ResultPage, Site, VodInfo } from "../types/luma";
 
 const TITLE = "庆余年 第二季";
 

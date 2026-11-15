@@ -1,7 +1,7 @@
 import * as Select from "@radix-ui/react-select";
 import Icon from "./Icon";
 import { favoriteFirst, useFavoriteSites } from "../lib/siteFavorites";
-import type { Site } from "../types/tvbox";
+import type { Site } from "../types/luma";
 
 const ALL_SITES = "__all__";
 

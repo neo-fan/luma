@@ -1,7 +1,7 @@
 import { memo, useCallback, useRef, useState } from "react";
 import useDoubanMeta from "../hooks/useDoubanMeta";
 import { useProxiedImage } from "../hooks/useProxiedImage";
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 export interface PosterTileProps {
   vod: VodInfo;

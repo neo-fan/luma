@@ -238,8 +238,8 @@ def main() -> int:
         if not source.strip():
             raise ValueError("empty spider source")
 
-        module = types.ModuleType("tvbox_py_spider")
-        module.__dict__["__name__"] = "tvbox_py_spider"
+        module = types.ModuleType("luma_py_spider")
+        module.__dict__["__name__"] = "luma_py_spider"
         filename = str(payload.get("filename") or "<spider>")
         exec(compile(source, filename, "exec"), module.__dict__)  # noqa: S102
 

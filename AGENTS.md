@@ -5,7 +5,7 @@
 
 ## 项目是什么
 
-Luma 是 Windows 11 x64 的 TVBox 配置兼容播放器（空壳框架）。用户自己导入配置（`api.json` / `box.json` 及变体），
+Luma 是 Windows 11 x64 的配置兼容播放框架（空壳框架，兼容 TVBox 系配置）。用户自己导入配置（`api.json` / `box.json` 及变体），
 应用负责点播浏览 / 搜索 / 详情 / 播放、直播，以及 CMS / Python / JS 三类源的调度。
 
 - 不内置、不硬编码任何配置地址、片源、直播源、API Key。
@@ -61,7 +61,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 
 1. **构建与打包只走 Tauri 官方工具链**：`tauri dev`（debug）/ `tauri build`（release）/ `tauri icon`（图标）。裸 `cargo build --release` 不会把 `frontendDist` 嵌进 exe，窗口会回退到 `devUrl` 报 `ERR_CONNECTION_REFUSED`。Cargo profile 用官方 [App Size](https://v2.tauri.app/concept/size/) 建议值，不要加项目私有 tweak。
 2. **随包运行时优先**：sidecar 运行时一律走 `paths::sidecar_roots()`，优先级 = 显式环境变量（`LUMA_PYTHON` / `LUMA_QJS_RUNNER`）→ 随包 `sidecars/python-embed`、exe 同目录 `qjs-runner.exe` → 宿主兜底。用户无需安装 Python；`prepare_runtime.py` 禁止硬编码本机路径。
-3. **契约单一真源** `contracts/tvbox.schema.json`：改字段先改 schema → `src/types/tvbox.ts` → Rust 序列化（`domain/spider/*`、`domain/config/*`）→ `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。字段 camelCase、`additionalProperties: false`；不许删 TS 字段来「修」校验。
+3. **契约单一真源** `contracts/luma.schema.json`：改字段先改 schema → `src/types/luma.ts` → Rust 序列化（`domain/spider/*`、`domain/config/*`）→ `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。字段 camelCase、`additionalProperties: false`；不许删 TS 字段来「修」校验。
 4. **双快照不可越过**：运行策略只改 `runtime_json`，`imported_json` 一个字段都不许动。
 5. **换线只认证据**：`dead` 仅限 4xx/5xx、非 `#EXTM3U`、首分片是图片/HTML；超时算 `unknown`，连续 3 次才换。**慢 ≠ 死**。
 6. **headers 优先级**：爬虫显式 UA/Referer/Cookie > 配置级 `headers[]`（host 精确 → 通配）> 默认值（`okhttp/3.15` + `{scheme}://{host}/`）。默认值必须由反代最后补，不能提前折进 proxyUrl 的 query。

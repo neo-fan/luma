@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Command } from "cmdk";
-import type { Site } from "../types/tvbox";
+import type { Site } from "../types/luma";
 import type { Navigate } from "../lib/nav";
 import Icon from "./Icon";
 import NavIcon from "./NavIcon";

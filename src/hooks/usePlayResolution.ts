@@ -12,7 +12,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
-import type { PlayResolved } from "../types/tvbox";
+import type { PlayResolved } from "../types/luma";
 
 export interface UsePlayResolutionArgs {
   siteKey: string;

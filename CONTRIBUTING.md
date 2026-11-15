@@ -1,6 +1,6 @@
 # 贡献指南（CONTRIBUTING）
 
-感谢愿意花时间。这个项目的目标是「一个老实、可维护的 TVBox 配置播放框架」，
+感谢愿意花时间。这个项目的目标是「一个老实、可维护的配置兼容播放框架」，
 所以**能跑**只是底线，**不留下会误导下一个人（或下一个 AI）的痕迹**才是标准。
 
 ## 1. 先决条件
@@ -59,8 +59,8 @@ node tools/run_probes.mjs --with-ui  # 追加会切桩配置的 UI 冒烟，放�
 
 **契约（最容易踩）**
 
-`contracts/tvbox.schema.json` 是唯一真源，改字段的顺序是：
-schema → `src/types/tvbox.ts` → Rust 序列化（`src-tauri/src/domain/spider/`、`src-tauri/src/domain/config/`）→
+`contracts/luma.schema.json` 是唯一真源，改字段的顺序是：
+schema → `src/types/luma.ts` → Rust 序列化（`src-tauri/src/domain/spider/`、`src-tauri/src/domain/config/`）→
 `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。
 新增 Tauri command 或错误码需要先在文档里写清楚，`contract_check` 与 capabilities 也要同步。
 
@@ -85,7 +85,7 @@ schema → `src/types/tvbox.ts` → Rust 序列化（`src-tauri/src/domain/spide
 ## 6. 明确不接受的改动
 
 - 内置或硬编码任何源的地址 / 片源 / 直播源 / API Key。
-- 绕过 `contracts/tvbox.schema.json` 或双快照隔离（直接改 `imported_json`）。
+- 绕过 `contracts/luma.schema.json` 或双快照隔离（直接改 `imported_json`）。
 - 声称「支持社区 jar 源」——原因见 README「为什么社区 jar 源不支持」，这是运行时依赖问题，不是工作量问题；JVM 运行时已于 1.0.3 移除，jar 站点只保留分类与导入屏蔽，不要重新引入 JVM 通道。
 - 为了让测试变绿而放宽断言、删测试、或把 `FAIL` 改成 `N/A`。
 

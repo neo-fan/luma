@@ -5,7 +5,7 @@ import { useProxiedImage } from "../hooks/useProxiedImage";
 import { plainText } from "../lib/format";
 import { formatVotes } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 export interface VodMetaHeroProps {
   /** 详情页与播放页共用一套「豆瓣优先、源站逐项兜底」的影片信息渲染。 */

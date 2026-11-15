@@ -176,7 +176,7 @@ def step_python(force: bool = False) -> bool:
         urls.append(f"https://www.python.org/ftp/python/{v}/python-{v}-embed-amd64.zip")
     urls.append(PY_MIRROR.format(v=PY_VERSION))
 
-    tmp_root = Path(tempfile.mkdtemp(prefix="tvbox-py-"))
+    tmp_root = Path(tempfile.mkdtemp(prefix="luma-py-"))
     archive = tmp_root / "python-embed.zip"
     if not any(_download(u, archive) for u in urls if not archive.exists() or archive.stat().st_size < 1_000_000):
         shutil.rmtree(tmp_root, ignore_errors=True)

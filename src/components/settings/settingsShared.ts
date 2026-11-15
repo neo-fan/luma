@@ -1,5 +1,5 @@
 import { api } from "../../lib/invoke";
-import type { Site, SiteHealthRow } from "../../types/tvbox";
+import type { Site, SiteHealthRow } from "../../types/luma";
 
 /** 体检状态对应的中文文案（disabled 为前端合成的禁用态）。 */
 export const HEALTH_STATUS_LABEL: Record<SiteHealthRow["status"] | "disabled", string> = {

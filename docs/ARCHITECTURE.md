@@ -33,7 +33,7 @@
 
 - 前端唯一出口 `src/lib/invoke.ts` → Tauri `invoke(cmd, args)` → Rust `generate_handler!` 注册的 37 个 command。禁止前端 `import` Node 内置模块。
 - 主进程 ↔ sidecar：通用 `spawn_stdio` / `call_on` / `kill_conn`（`bridge.rs`）；每行 stdout 是一帧 JSON-RPC，主循环线程池 `max_workers=8`。
-- 归一化契约 `contracts/tvbox.schema.json` 是 TS / Rust 两端唯一真源；`tests/offline/contract_check.py` 校验 TS 侧字段。
+- 归一化契约 `contracts/luma.schema.json` 是 TS / Rust 两端唯一真源；`tests/offline/contract_check.py` 校验 TS 侧字段。
 
 ```text
 用户操作 → 前端 (pages/hooks) → invoke → Rust command
@@ -98,7 +98,7 @@ src/hooks/          跨页复用 hook（usePlayerEngine 等）
 src/lib/            invoke（唯一 IPC）、pageCache、usePageState、playerPrefs、sources、sourceCache、format、logger、clipboard、nav
 src/stores/         zustand：只收编跨页共享态（cache/preferredSite/sidebarCollapsed）
 src/components/     ErrorBar / Spinner / SourcePicker / player/* / settings/*
-src/types/tvbox.ts  归一化契约 TS 侧
+src/types/luma.ts  归一化契约 TS 侧
 ```
 - hash 路由下 `pathname` 恒为 `/`，探针按 URL 选 target 不受影响。
 - 提示分层：事件→toast；需决策错误→`ErrorBar`（图标+主文案+归因+折叠技术详情+复制/重试+倒计时）；说明→`.tip`。

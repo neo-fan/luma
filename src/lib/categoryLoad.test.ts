@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { loadCategoryPage } from "./categoryLoad";
-import type { ResultPage } from "../types/tvbox";
+import type { ResultPage } from "../types/luma";
 
 const pageWith = (count: number): ResultPage => ({
   list: Array.from({ length: count }, (_, i) => ({ vod_id: String(i), vod_name: `片 ${i}` })) as ResultPage["list"],

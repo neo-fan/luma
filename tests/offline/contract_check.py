@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Compare the normalized contract across its three representations.
 
-v1.1 R8: `contracts/tvbox.schema.json` is the single source of truth.
-This script checks that `src/types/tvbox.ts` and (when present) the Rust
+v1.1 R8: `contracts/luma.schema.json` is the single source of truth.
+This script checks that `src/types/luma.ts` and (when present) the Rust
 `src-tauri/src/error.rs` agree with it on field names. It exits non-zero on
 any mismatch so it can be wired into T-04 / T-13 assertions.
 
@@ -18,8 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = ROOT / "contracts" / "tvbox.schema.json"
-TS_TYPES = ROOT / "src" / "types" / "tvbox.ts"
+SCHEMA = ROOT / "contracts" / "luma.schema.json"
+TS_TYPES = ROOT / "src" / "types" / "luma.ts"
 
 # schema 定义名 -> TS interface 名（Category / FilterValue / FilterGroup 在 TS 中是内联结构）
 PAIRS = [

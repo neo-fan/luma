@@ -9,7 +9,7 @@
  */
 import { parsePlayLines } from "./format";
 import type { PlayLine } from "./format";
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 export interface EpisodeLocus {
   line: number;

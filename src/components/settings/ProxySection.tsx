@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import ErrorBar from "../ErrorBar";
 import { api, errorMessage } from "../../lib/invoke";
-import type { ProxyStatus } from "../../types/tvbox";
+import type { ProxyStatus } from "../../types/luma";
 
 interface ProxySectionProps {
   /** 父级 reload 计数：导入/切换配置后重新读取反代状态。 */

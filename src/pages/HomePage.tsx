@@ -16,7 +16,7 @@ import { notify } from "../lib/notify";
 import { leafClasses } from "../lib/categories";
 import { usableHomeSites } from "../lib/format";
 import { usePageState } from "../lib/usePageState";
-import type { HomeResult, ResultPage, Site, VodInfo } from "../types/tvbox";
+import type { HomeResult, ResultPage, Site, VodInfo } from "../types/luma";
 
 interface HomePageProps {
   sites: Site[];
@@ -534,7 +534,7 @@ export default function HomePage({
         </header>
         <Empty
           title="还没有导入配置"
-          description="导入一份 TVBox 配置后，这里会列出可用的站点与推荐内容。"
+          description="导入一份配置后，这里会列出可用的站点与推荐内容。"
           icon={FolderOpen}
           action={
             <button

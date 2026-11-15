@@ -17,7 +17,7 @@ import {
 import type { SourceView } from "../lib/sourceCache";
 import type { SourceOption } from "../lib/sources";
 import { favoriteFirst, toggleFavoriteSite, useFavoriteSites } from "../lib/siteFavorites";
-import type { Site } from "../types/tvbox";
+import type { Site } from "../types/luma";
 
 interface SourcePickerProps {
   /** 默认检索词：当前影片片名。 */

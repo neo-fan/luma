@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import PosterTile from "./PosterTile";
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 export interface PosterRailProps {
   title: string;

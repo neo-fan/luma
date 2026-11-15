@@ -2,7 +2,7 @@ import { useState } from "react";
 import { cleanConfigName, configNameFromUrl } from "../../lib/config";
 import { api, errorMessage } from "../../lib/invoke";
 import { log } from "../../lib/logger";
-import type { ConfigSnapshot } from "../../types/tvbox";
+import type { ConfigSnapshot } from "../../types/luma";
 
 interface ConfigImportSectionProps {
   onImported: (snapshot: ConfigSnapshot) => void;

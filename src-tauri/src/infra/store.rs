@@ -91,8 +91,7 @@ fn merge_meta(dst: &mut VodRef, src: &VodRef) {
 }
 
 pub fn data_dir() -> PathBuf {
-    // `LUMA_DATA_DIR` is the documented override; `env::get` still accepts
-    // the pre-rename `TVBOX_DATA_DIR`.
+    // `LUMA_DATA_DIR` is the documented override.
     if let Some(custom) = crate::env::get("DATA_DIR") {
         return PathBuf::from(custom);
     }

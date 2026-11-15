@@ -152,7 +152,7 @@ const manifest = await cdp.eval(`(async () => {
   return {
     status: res.status,
     type: res.headers.get('content-type'),
-    marker: res.headers.get('x-tvbox-proxy'),
+    marker: res.headers.get('x-luma-proxy'),
     len: text.length,
     key: lines.find((l) => l.startsWith('#EXT-X-KEY')) || '',
     segments: lines.filter((l) => !l.startsWith('#')).slice(0, 2),

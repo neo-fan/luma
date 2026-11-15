@@ -11,7 +11,7 @@
  */
 import { writeFileSync } from "node:fs";
 
-const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "走马上任";
+const KEYWORD = process.env.LUMA_KEYWORD || "走马上任";
 
 class Cdp {
   constructor(wsUrl) {

@@ -1,7 +1,7 @@
 import IconButton from "../IconButton";
 import VodMetaHero from "../VodMetaHero";
 import type { DoubanMeta } from "../../lib/douban";
-import type { VodInfo } from "../../types/tvbox";
+import type { VodInfo } from "../../types/luma";
 
 interface PlayerAboutProps {
   vod: VodInfo | null;

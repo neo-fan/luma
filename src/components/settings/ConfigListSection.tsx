@@ -8,7 +8,7 @@ import Spinner from "../Spinner";
 import { cleanConfigName, describeConfigSource, describeRefreshState, formatImportedAt, formatRelativeTime } from "../../lib/config";
 import { api, errorMessage } from "../../lib/invoke";
 import { log } from "../../lib/logger";
-import type { ConfigMeta, ConfigSnapshot, RefreshSettings } from "../../types/tvbox";
+import type { ConfigMeta, ConfigSnapshot, RefreshSettings } from "../../types/luma";
 
 interface ConfigListSectionProps {
   activeConfigId?: string;

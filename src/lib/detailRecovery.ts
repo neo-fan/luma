@@ -7,7 +7,7 @@
  * 用新 id 再拉详情，是宿主层能做的通用兜底（不需要认识任何具体源）。
  */
 import { rankByTitle, titleMatchScore } from "./format";
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 /** 只允许精确片名或片名包含关键词；弱相关会把用户送到另一部片子上。 */
 export const MIN_RECOVERY_SCORE = 2;

@@ -19,7 +19,7 @@ import {
   primeLiveGroups,
   rememberLiveSource,
 } from "../lib/liveChannels";
-import type { LiveChannel, LiveGroup, LiveSource } from "../types/tvbox";
+import type { LiveChannel, LiveGroup, LiveSource } from "../types/luma";
 
 /** 上次选中的直播源（存 sourceKey，源顺序变了也认得）。 */
 const SOURCE_KEY = "luma:live:source:v1";

@@ -3,7 +3,7 @@ import ChannelLogo from "../ChannelLogo";
 import ErrorBar from "../ErrorBar";
 import Icon from "../Icon";
 import IconButton from "../IconButton";
-import type { LiveChannel, LiveGroup } from "../../types/tvbox";
+import type { LiveChannel, LiveGroup } from "../../types/luma";
 import type { FailureReason } from "../../lib/failureReason";
 
 interface LiveChannelRailProps {

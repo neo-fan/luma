@@ -9,7 +9,7 @@
  * 规则（与 api.detail / 首页空结果一致）：**空结果不入缓存**，空或异常都强制
  * 重试一次；两次都空才把空结果交给 UI。抽成纯函数便于单测，不绑死 pageCache。
  */
-import type { ResultPage } from "../types/tvbox";
+import type { ResultPage } from "../types/luma";
 
 export async function loadCategoryPage(
   load: (force: boolean) => Promise<ResultPage>,

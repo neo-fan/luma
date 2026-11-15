@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mergeMeta } from "./coverMeta";
-import type { HistoryItem } from "../types/tvbox";
+import type { HistoryItem } from "../types/luma";
 
 const base: HistoryItem = {
   siteKey: "cms",

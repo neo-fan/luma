@@ -319,7 +319,7 @@ where
         .with_filter(targets)
 }
 
-/// `LUMA_LOG`/`TVBOX_LOG` 交给 `EnvFilter` 解析：既接受 `debug` 这类级别，
+/// `LUMA_LOG` 交给 `EnvFilter` 解析：既接受 `debug` 这类级别，
 /// 也接受 `luma_lib::spider=debug,info` 这类按模块的指令。
 fn env_filter() -> EnvFilter {
     EnvFilter::builder()

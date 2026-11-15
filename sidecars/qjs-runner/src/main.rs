@@ -9,7 +9,7 @@
 //! Modules are resolved through a custom rquickjs `Resolver`/`Loader` that maps
 //! `assets://js/lib/*` and relative imports onto a bundled asset directory, and
 //! falls back to HTTP for anything else. Only `req`, `local`, `console`, `md5X`
-//! and a few `__tvbox_*` internals are injected; `require`, `process`, `fetch`
+//! and a few `__luma_*` internals are injected; `require`, `process`, `fetch`
 //! stay undefined (verified by `tests/acceptance/p1.py`).
 //!
 //! A hard wall-clock limit interrupts the interpreter, so an infinite loop
@@ -60,7 +60,7 @@ fn umd_global(name: &str) -> &'static str {
         "pako.min.js" => "pako",
         "json5.js" => "JSON5",
         "jinja.js" => "jinja",
-        _ => "__tvbox_unknown",
+        _ => "__luma_unknown",
     }
 }
 
@@ -289,9 +289,9 @@ fn http_request(url: &str, options: &str) -> String {
 /// JS shim injected after the Rust primitives. Kept as text so the public API
 /// stays plain JS objects/functions (the sandbox assertions check `typeof`).
 const HOST_JS: &str = r#"(function () {
-  var DEFAULT_HEADERS = __TVBOX_HEADERS__;
-  var PREFIX = __TVBOX_SITE__ + ':';
-  var PROXY_PORT = __TVBOX_PROXY_PORT__ || 0;
+  var DEFAULT_HEADERS = __luma_HEADERS__;
+  var PREFIX = __luma_SITE__ + ':';
+  var PROXY_PORT = __luma_PROXY_PORT__ || 0;
 
   // -- console ---------------------------------------------------------------
   // Flattened on the JS side: a typed `String` parameter in Rust rejects
@@ -306,7 +306,7 @@ const HOST_JS: &str = r#"(function () {
   var _emit = function (prefix, args) {
     var parts = [], i;
     for (i = 0; i < args.length; i++) parts.push(_fmt(args[i]));
-    __tvbox_log(prefix + parts.join(' '));
+    __luma_log(prefix + parts.join(' '));
   };
   globalThis.console = {
     log: function () { _emit('', arguments); },
@@ -324,7 +324,7 @@ const HOST_JS: &str = r#"(function () {
     if (!PROXY_PORT) return '';
     return 'http://127.0.0.1:' + PROXY_PORT + '/proxy?do=js';
   };
-  var raw = globalThis.__tvbox_req_raw;
+  var raw = globalThis.__luma_req_raw;
   globalThis.req = function (url, options) {
     var opts = options || {}, merged = {}, h = {}, k;
     for (k in opts) merged[k] = opts[k];
@@ -352,12 +352,12 @@ const HOST_JS: &str = r#"(function () {
     return out;
   };
   globalThis.local = {
-    get: function (k) { return globalThis.__tvbox_local_get(PREFIX + String(k)); },
-    set: function (k, v) { return globalThis.__tvbox_local_set(PREFIX + String(k), String(v)); },
-    'delete': function (k) { return globalThis.__tvbox_local_del(PREFIX + String(k)); }
+    get: function (k) { return globalThis.__luma_local_get(PREFIX + String(k)); },
+    set: function (k, v) { return globalThis.__luma_local_set(PREFIX + String(k), String(v)); },
+    'delete': function (k) { return globalThis.__luma_local_del(PREFIX + String(k)); }
   };
   globalThis.md5X = function (s) {
-    if (typeof globalThis.__tvbox_md5 === 'function') return globalThis.__tvbox_md5(String(s));
+    if (typeof globalThis.__luma_md5 === 'function') return globalThis.__luma_md5(String(s));
     if (typeof globalThis.CryptoJS !== 'undefined') return CryptoJS.MD5(String(s)).toString();
     return '';
   };
@@ -585,19 +585,19 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
     let globals = ctx.globals();
 
     globals.set(
-        "__tvbox_req_raw",
+        "__luma_req_raw",
         Function::new(ctx.clone(), |url: String, options: String| -> String {
             http_request(&url, &options)
         })?,
     )?;
     globals.set(
-        "__tvbox_bytes_b64",
+        "__luma_bytes_b64",
         Function::new(ctx.clone(), |bytes: Vec<u8>| -> String {
             base64::engine::general_purpose::STANDARD.encode(bytes)
         })?,
     )?;
     globals.set(
-        "__tvbox_local_get",
+        "__luma_local_get",
         Function::new(ctx.clone(), |key: String| -> String {
             local_store()
                 .lock()
@@ -606,7 +606,7 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
         })?,
     )?;
     globals.set(
-        "__tvbox_local_set",
+        "__luma_local_set",
         Function::new(ctx.clone(), |key: String, value: String| -> bool {
             local_store()
                 .lock()
@@ -618,7 +618,7 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
         })?,
     )?;
     globals.set(
-        "__tvbox_local_del",
+        "__luma_local_del",
         Function::new(ctx.clone(), |key: String| -> bool {
             local_store()
                 .lock()
@@ -633,25 +633,25 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
     // 'string'" and abort the whole script — real sources log optional values
     // all the time, so this was a silent whole-site killer.
     globals.set(
-        "__tvbox_log",
+        "__luma_log",
         Function::new(ctx.clone(), |line: String| {
             eprintln!("[qjs] {line}");
         })?,
     )?;
-    globals.set("__tvbox_ext", request.ext.clone())?;
+    globals.set("__luma_ext", request.ext.clone())?;
     globals.set(
-        "__tvbox_site",
+        "__luma_site",
         if request.site_key.is_empty() {
             "default".to_string()
         } else {
             request.site_key.clone()
         },
     )?;
-    globals.set("__tvbox_api", request.api.clone())?;
+    globals.set("__luma_api", request.api.clone())?;
     // `md5X` is a host helper in FongMi. Use the md-5 crate instead of
     // evaluating the 204 KB crypto-js UMD bundle for every call.
     globals.set(
-        "__tvbox_md5",
+        "__luma_md5",
         Function::new(ctx.clone(), |text: String| -> String {
             Md5::digest(text.as_bytes())
                 .iter()
@@ -667,9 +667,9 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
         request.site_key.clone()
     });
     let shim = HOST_JS
-        .replace("__TVBOX_HEADERS__", &headers)
-        .replace("__TVBOX_SITE__", &site)
-        .replace("__TVBOX_PROXY_PORT__", &request.proxy_port.to_string());
+        .replace("__luma_HEADERS__", &headers)
+        .replace("__luma_SITE__", &site)
+        .replace("__luma_PROXY_PORT__", &request.proxy_port.to_string());
     ctx.eval::<(), _>(shim.as_bytes())?;
     Ok(())
 }
@@ -806,8 +806,8 @@ impl Loader for TvLoader {
 /// TVBox ships four export conventions. Collect every plausible "spider
 /// object" and let dispatch pick the first one exposing the requested method.
 const BOOTSTRAP_JS: &str = r#"(function () {
-  var ext = __TVBOX_EXT__;
-  var mod = globalThis.__tvbox_exports || null;
+  var ext = __luma_EXT__;
+  var mod = globalThis.__luma_exports || null;
   var cands = [];
   function add(x) {
     if (x && (typeof x === 'object' || typeof x === 'function') && cands.indexOf(x) < 0) cands.push(x);
@@ -821,12 +821,12 @@ const BOOTSTRAP_JS: &str = r#"(function () {
   if (globalThis.spider) add(globalThis.spider);
   if (typeof globalThis.Spider === 'function') { try { add(new globalThis.Spider(ext)); } catch (e) {} }
   add(globalThis);
-  globalThis.__tvbox_candidates = cands;
+  globalThis.__luma_candidates = cands;
   for (var i = 0; i < cands.length; i++) {
     var o = cands[i];
-    if (typeof o.init === 'function' && !o.__tvbox_inited) {
+    if (typeof o.init === 'function' && !o.__luma_inited) {
       try { o.init(ext); } catch (e) { console.error('init: ' + e); }
-      try { o.__tvbox_inited = true; } catch (e) {}
+      try { o.__luma_inited = true; } catch (e) {}
     }
   }
   return true;
@@ -834,15 +834,15 @@ const BOOTSTRAP_JS: &str = r#"(function () {
 
 /// Long TVBox method names map to the short names used by JS0 / drpy2 sources.
 const CALL_JS: &str = r#"(async function () {
-  var TARGET = __TVBOX_METHOD__;
-  var ARGS = __TVBOX_ARGS__;
+  var TARGET = __luma_METHOD__;
+  var ARGS = __luma_ARGS__;
   var MAP = {
     homeContent: 'home', homeVideoContent: 'homeVod', categoryContent: 'category',
     detailContent: 'detail', searchContent: 'search', playerContent: 'play',
     liveContent: 'live'
   };
   var short = MAP[TARGET] || TARGET;
-  var pool = globalThis.__tvbox_candidates || [];
+  var pool = globalThis.__luma_candidates || [];
   var fn = null, owner = null;
   for (var i = 0; i < pool.length; i++) {
     var o = pool[i];
@@ -877,8 +877,8 @@ const CALL_JS: &str = r#"(async function () {
 ///   * `{contentType|type, headers, body|content}`;
 ///   * a bare string (body only).
 const PROXY_JS: &str = r#"(async function () {
-  var PARAMS = __TVBOX_PARAMS__;
-  var pool = globalThis.__tvbox_candidates || [];
+  var PARAMS = __luma_PARAMS__;
+  var pool = globalThis.__luma_candidates || [];
   var fn = null, owner = null;
   for (var i = 0; i < pool.length; i++) {
     var o = pool[i];
@@ -913,7 +913,7 @@ const PROXY_JS: &str = r#"(async function () {
     var view = (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer)
       ? new Uint8Array(body)
       : new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
-    try { b64 = globalThis.__tvbox_bytes_b64(Array.prototype.slice.call(view)); }
+    try { b64 = globalThis.__luma_bytes_b64(Array.prototype.slice.call(view)); }
     catch (e) { b64 = null; }
     if (b64 === null) text = '';
   } else {
@@ -972,7 +972,7 @@ fn handle(request: Request) -> Response {
 
         if is_module_source(&request.source, &request.script_kind) {
             let name = if request.api.is_empty() {
-                "tvbox:main.js".to_string()
+                "luma:main.js".to_string()
             } else {
                 request.api.clone()
             };
@@ -990,14 +990,14 @@ fn handle(request: Request) -> Response {
             while ctx.execute_pending_job() {}
             let namespace = evaluated.namespace().catch(&ctx).map_err(|err| err.to_string())?;
             ctx.globals()
-                .set("__tvbox_exports", namespace)
+                .set("__luma_exports", namespace)
                 .catch(&ctx).map_err(|err| err.to_string())?;
         } else {
             ctx.eval::<(), _>(request.source.as_bytes())
                 .catch(&ctx).map_err(|err| err.to_string())?;
         }
 
-        let bootstrap = BOOTSTRAP_JS.replace("__TVBOX_EXT__", &js_literal(&request.ext));
+        let bootstrap = BOOTSTRAP_JS.replace("__luma_EXT__", &js_literal(&request.ext));
         ctx.eval::<bool, _>(bootstrap.as_bytes())
             .catch(&ctx).map_err(|err| err.to_string())?;
 
@@ -1008,11 +1008,11 @@ fn handle(request: Request) -> Response {
                 .first()
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            PROXY_JS.replace("__TVBOX_PARAMS__", &js_literal(&params))
+            PROXY_JS.replace("__luma_PARAMS__", &js_literal(&params))
         } else {
             CALL_JS
-                .replace("__TVBOX_METHOD__", &js_literal(&request.method))
-                .replace("__TVBOX_ARGS__", &js_literal(&request.args))
+                .replace("__luma_METHOD__", &js_literal(&request.method))
+                .replace("__luma_ARGS__", &js_literal(&request.args))
         };
         let value: Value = ctx.eval(call.as_bytes()).catch(&ctx).map_err(|err| err.to_string())?;
         let promise = value

@@ -20,7 +20,7 @@ import {
   seedFromCachedDetail,
   type EpisodeSeed,
 } from "../lib/episodeSeed";
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 export interface EpisodeList {
   lines: PlayLine[];

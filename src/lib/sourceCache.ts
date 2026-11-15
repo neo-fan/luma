@@ -28,7 +28,7 @@ import type {
   SourceSearchStats,
   SourceSite,
 } from "./sources";
-import type { Site } from "../types/tvbox";
+import type { Site } from "../types/luma";
 
 export const SOURCE_CACHE_TTL = 10 * 60_000;
 /** 最多保留最近几次检索的行；一次真实配置约 300~400 条，8 份足够。 */

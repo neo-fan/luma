@@ -15,7 +15,7 @@
  *   没有跨会话价值。
  */
 
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 /** 单站单卡一行；`at` 用于过期淘汰，Map 的插入顺序用于容量淘汰。 */
 interface CardEntry {

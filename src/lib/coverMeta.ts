@@ -1,5 +1,5 @@
 /** 收藏 / 历史条目的封面合并规则（纯函数，便于单测）。 */
-import type { VodRef } from "../types/tvbox";
+import type { VodRef } from "../types/luma";
 
 /**
  * 把回填到的字段合并进列表项：**只覆盖非空值**。

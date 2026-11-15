@@ -12,7 +12,7 @@ import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { historyCoverMeta, historySubtitle } from "../lib/history";
 import { log } from "../lib/logger";
 import { usePageState } from "../lib/usePageState";
-import type { HistoryItem } from "../types/tvbox";
+import type { HistoryItem } from "../types/luma";
 
 interface HistoryPageProps {
   navigate: Navigate;

@@ -20,7 +20,7 @@ fn attr_regex() -> &'static regex::Regex {
     ATTR.get_or_init(|| regex::Regex::new(r#"([\w-]+)="([^"]*)""#).expect("attr regex"))
 }
 
-/// tvbox 的多线路写法：`url1$url2`，每段后面还可能跟线路名
+/// TVBox 的多线路写法：`url1$url2`，每段后面还可能跟线路名
 /// （`https://…/a.m3u8$LR•IPV4•2『线路1』`），所以只认 http(s) 开头的段。
 pub(crate) fn split_streams(text: &str) -> Vec<String> {
     text.split('$')

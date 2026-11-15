@@ -152,7 +152,7 @@ python tools/check.py                          # 9 项一键（契约 / 版本 /
 python tests/offline/py_compat_check.py        # TVBox py 脚本通用兼容 / 子进程信封
 python tests/offline/py_base_spider_check.py   # py 框架与原生对齐
 python tools/prepare_runtime.py --check        # 随包 Python 依赖齐全度（JVM 运行时已移除，不再检查 JRE）
-python tests/offline/contract_check.py         # 校验 contracts/tvbox.schema.json 与 TS 侧字段
+python tests/offline/contract_check.py         # 校验 contracts/luma.schema.json 与 TS 侧字段
 ```
 
 注意：配置解密 / 归一化 / CMS 采集解析 / M3U / XMLTV 的参考实现都在 Rust
@@ -177,7 +177,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 >
 > 少数「真实源」探针（`probe_search_ui` / `probe_playability` / `probe_coverage` 等）默认指向一个**公开示例配置**；要测自己的配置，把它们顶部的 `CONFIG` 换成你的地址，或设 `LUMA_CONFIG`（支持的探针会优先读它）。仓库不内置任何配置地址。
 
-## 6. 环境变量速查（`LUMA_*` 为文档拼写，`TVBOX_*` 仍被读取，仅供旧脚本沿用）
+## 6. 环境变量速查（统一 `LUMA_*` 前缀）
 
 | 变量 | 用途 | 调试常用值 |
 |---|---|---|

@@ -8,7 +8,7 @@ import {
   formatVersion,
   readableBuildTime,
 } from "../../lib/version";
-import type { Diagnostics } from "../../types/tvbox";
+import type { Diagnostics } from "../../types/luma";
 import { copyText, formatBytes } from "./settingsShared";
 
 interface DiagnosticSectionProps {

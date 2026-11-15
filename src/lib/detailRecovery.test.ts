@@ -17,7 +17,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { MIN_RECOVERY_SCORE, pickRecoveryCandidate } from "./detailRecovery";
 import { api } from "./invoke";
 import { pageCache } from "./pageCache";
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const invokeMock = vi.mocked(invoke);

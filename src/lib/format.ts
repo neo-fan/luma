@@ -6,7 +6,7 @@
  *   vod_play_url   剧集，`名称$地址#名称$地址`，线路之间 `$$$` 分隔
  * 任何空串、缺字段一律返回空数组，不抛异常。
  */
-import type { VodInfo, VodRef } from "../types/tvbox";
+import type { VodInfo, VodRef } from "../types/luma";
 
 /** 单集：显示名 + 播放地址 */
 export interface Episode {

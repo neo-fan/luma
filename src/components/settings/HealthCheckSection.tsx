@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ErrorBar from "../ErrorBar";
 import { api, errorMessage } from "../../lib/invoke";
 import { log } from "../../lib/logger";
-import type { ConfigSnapshot, Site, SiteHealthResult, SiteHealthRow } from "../../types/tvbox";
+import type { ConfigSnapshot, Site, SiteHealthResult, SiteHealthRow } from "../../types/luma";
 import { HEALTH_STATUS_LABEL, type HealthDisplayRow, isBlockedSource } from "./settingsShared";
 
 interface HealthCheckSectionProps {

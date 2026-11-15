@@ -27,8 +27,8 @@ PY = ROOT / "sidecars" / "py"
 PASS = 0
 FAIL = 0
 
-ORIGIN = "https://example.com/tvbox/deadbeef/box.json"
-BASE = "https://example.com/tvbox/deadbeef/"
+ORIGIN = "https://example.com/luma/deadbeef/box.json"
+BASE = "https://example.com/luma/deadbeef/"
 PASS = 0
 FAIL = 0
 

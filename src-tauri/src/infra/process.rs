@@ -319,6 +319,5 @@ mod tests {
         crate::env::set("CALL_TIMEOUT_MS", "2500");
         assert_eq!(call_timeout(), Duration::from_millis(2500));
         std::env::remove_var("LUMA_CALL_TIMEOUT_MS");
-        std::env::remove_var("TVBOX_CALL_TIMEOUT_MS");
     }
 }

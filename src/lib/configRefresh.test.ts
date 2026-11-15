@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { describeRefreshState, formatRelativeTime } from "./config";
-import type { ConfigMeta } from "../types/tvbox";
+import type { ConfigMeta } from "../types/luma";
 
 const NOW = new Date("2026-11-13T12:00:00Z").getTime();
 const MINUTE = 60_000;

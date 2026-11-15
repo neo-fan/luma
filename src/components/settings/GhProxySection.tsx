@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import ErrorBar from "../ErrorBar";
 import { api, errorMessage } from "../../lib/invoke";
-import type { ConfigSnapshot, GhProbeResult, GhProxyState } from "../../types/tvbox";
+import type { ConfigSnapshot, GhProbeResult, GhProxyState } from "../../types/luma";
 
 interface GhProxySectionProps {
   /** 父级 reload 计数：换了配置后重新读一次前缀。 */

@@ -15,7 +15,7 @@
  */
 import { api } from "./invoke";
 import { log } from "./logger";
-import type { VodRef } from "../types/tvbox";
+import type { VodRef } from "../types/luma";
 
 export type CoverKind = "history" | "favorites";
 

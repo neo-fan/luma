@@ -1,4 +1,4 @@
-import type { HomeResult } from "../types/tvbox";
+import type { HomeResult } from "../types/luma";
 
 /**
  * TVBox 协议里 `homeContent` 的分类字段叫 `class`，而本项目的内部契约叫

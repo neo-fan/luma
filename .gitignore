@@ -35,9 +35,6 @@ __pycache__/
 
 # SQLite 运行时数据（便携版 data/ 或 dev 回退目录，绝不入库）
 /data/
-tvbox.db
-tvbox.db-wal
-tvbox.db-shm
 luma.db
 luma.db-wal
 luma.db-shm

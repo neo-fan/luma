@@ -14,7 +14,7 @@ import { parsePlayLines } from "./format";
 import { api } from "./invoke";
 import { ensureSources } from "./sourceCache";
 import type { SourceOption } from "./sources";
-import type { Site } from "../types/tvbox";
+import type { Site } from "../types/luma";
 
 /** 最多探 6 个候选：足够覆盖常见「前几个源都只是推荐位」的情况，又不拖慢首屏。 */
 const MAX_PROBES = 6;

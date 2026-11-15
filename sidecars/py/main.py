@@ -170,7 +170,7 @@ def dispatch(method: str, params: dict) -> dict:
         return run_py_spider(params)
 
     if method.startswith("debug."):
-        if (os.environ.get("LUMA_ADAPTER_DEBUG") or os.environ.get("TVBOX_ADAPTER_DEBUG")) != "1":
+        if os.environ.get("LUMA_ADAPTER_DEBUG") != "1":
             raise ValueError(f"unknown method: {method}")
         return debug_handler(method, params)
 

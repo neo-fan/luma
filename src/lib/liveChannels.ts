@@ -15,7 +15,7 @@
  * url）的展开规则只能有一份，两个页面各写一遍必然漂移。
  */
 import { api } from "./invoke";
-import type { LiveChannel, LiveGroup, LiveSource } from "../types/tvbox";
+import type { LiveChannel, LiveGroup, LiveSource } from "../types/luma";
 
 /** 源的稳定标识：有 url 用 url，容器型源退回索引（与 LivePage 一致）。 */
 export function liveSourceKey(source: LiveSource, index: number): string {

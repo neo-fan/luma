@@ -17,7 +17,7 @@ import {
   isDoubanProxyType,
 } from "../lib/doubanSettings";
 import type { DoubanPrefs } from "../lib/doubanSettings";
-import type { ConfigSnapshot, Site } from "../types/tvbox";
+import type { ConfigSnapshot, Site } from "../types/luma";
 
 interface SettingsPageProps {
   activeConfigId?: string;

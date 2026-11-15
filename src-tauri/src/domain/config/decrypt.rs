@@ -14,7 +14,7 @@
 use crate::error::{code, AppError};
 use serde_json::Value;
 
-/// TVBox 社区固定的异或 key（`****` 外壳）。
+/// TVBox 社区固定的异或 key（`****` 外壳）；这是外部协议字段，非本项目品牌名。
 const XOR_KEY: &[u8] = b"tvbox-stub-key";
 
 /// 解密结果：洗干净的 JSON 文本 + 实际命中的那一段（写日志用）。

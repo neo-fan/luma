@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { locateEpisode, seedFromCachedDetail } from "./episodeSeed";
 import type { PlayLine } from "./format";
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 const lines: PlayLine[] = [
   {

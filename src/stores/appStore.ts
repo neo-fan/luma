@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 import { usableHomeSites } from "../lib/format";
-import type { LiveSource, Site } from "../types/tvbox";
+import type { LiveSource, Site } from "../types/luma";
 
 const SITE_CACHE_KEY = "luma:sites:v1";
 const SIDEBAR_KEY = "luma:sidebar:v1";

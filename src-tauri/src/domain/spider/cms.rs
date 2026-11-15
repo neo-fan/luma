@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn search_accepts_both_tvbox_and_legacy_arg_shapes() {
+    fn search_accepts_both_std_and_legacy_arg_shapes() {
         let (url, method, extra) = build(
             "https://x.com/api.php/provide/vod",
             SpiderMethod::SearchContent,

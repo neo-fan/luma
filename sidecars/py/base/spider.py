@@ -115,7 +115,7 @@ class Spider:
             self.host = ""
         self.cache = _Cache()
         self._session = requests.Session() if requests is not None else None
-        port = os.environ.get("LUMA_PROXY_PORT") or os.environ.get("TVBOX_PROXY_PORT") or ""
+        port = os.environ.get("LUMA_PROXY_PORT") or ""
         self.proxy_port = int(port) if port.isdigit() else 0
 
         # TVBox native parity: `header`/`headers` may be a plain CLASS dict OR a

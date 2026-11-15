@@ -22,7 +22,7 @@ import {
 import { publishSearchResults } from "../lib/sourceCache";
 import { classifyFailure, groupFailures } from "../lib/failureReason";
 import { log } from "../lib/logger";
-import type { ResultPage, Site, VodInfo } from "../types/tvbox";
+import type { ResultPage, Site, VodInfo } from "../types/luma";
 
 const ALL_SITES = "__all__";
 // 流式全站搜索不限总墙钟（用户要求）：每站受后端默认 15s 单站超时约束，
@@ -711,7 +711,7 @@ export default function SearchPage({
             <Empty
               icon={FolderOpen}
               title="还没有可搜索的站点"
-              description="导入一份 TVBox 配置后，这里会跨站点检索片名与剧集。"
+              description="导入一份配置后，这里会跨站点检索片名与剧集。"
               action={
                 <button
                   type="button"

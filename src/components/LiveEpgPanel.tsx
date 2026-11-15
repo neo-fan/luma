@@ -3,7 +3,7 @@ import ChannelLogo from "./ChannelLogo";
 import Icon from "./Icon";
 import { api, errorMessage } from "../lib/invoke";
 import { getEpgUrl } from "../lib/epgSettings";
-import type { EpgResult } from "../types/tvbox";
+import type { EpgResult } from "../types/luma";
 
 interface LiveEpgPanelProps {
   /** 当前频道名，用于匹配节目单。 */

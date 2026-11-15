@@ -123,7 +123,7 @@ corepack pnpm tauri build
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `contract_check` MISMATCH | 新增字段只加了 TS 没补 schema | schema 是唯一真源，补 `contracts/tvbox.schema.json`，不要删 TS 字段 |
+| `contract_check` MISMATCH | 新增字段只加了 TS 没补 schema | schema 是唯一真源，补 `contracts/luma.schema.json`，不要删 TS 字段 |
 | 版本探针失败 | 曾把版本号硬编码进断言 | 改为动态读 `package.json`（已在 1.0.0 修复） |
 | 构建时 `resource path ... doesn't exist` | `bundle.externalBin` 指向的二进制未按 `<name>-<triple>.exe` 命名 | 先跑 `prepare_runtime.py` 把 sidecar 二进制 staging 到 `src-tauri/binaries/` |
 | 窗口 `ERR_CONNECTION_REFUSED` | 前端没嵌入 exe（手搓 `cargo build` 不会嵌入） | 一律用 `tauri build`，不要 `cargo build --release` 直接打包 |

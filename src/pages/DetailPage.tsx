@@ -35,7 +35,7 @@ import { usePageState } from "../lib/usePageState";
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
-import type { HistoryItem, Site, VodInfo } from "../types/tvbox";
+import type { HistoryItem, Site, VodInfo } from "../types/luma";
 
 interface DetailPageProps {
   siteKey: string;

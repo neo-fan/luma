@@ -34,7 +34,7 @@ import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
 import { DEFAULT_PREFS, readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import type { VideoMeta } from "../lib/resolution";
-import type { PlayResolved } from "../types/tvbox";
+import type { PlayResolved } from "../types/luma";
 
 /** 内置播放器能直接解码的 kind；page/share 之类要交给解析池或外部播放。 */
 export const BUILTIN_KINDS = ["hls", "flv", "file"];

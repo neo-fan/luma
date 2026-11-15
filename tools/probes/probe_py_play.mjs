@@ -7,9 +7,8 @@
  */
 const CONFIG =
   process.env.LUMA_CONFIG ||
-  process.env.TVBOX_CONFIG ||
   "https://raw.githubusercontent.com/cluntop/tvbox/a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8/box.json";
-const KEYWORD = process.env.LUMA_KEYWORD || process.env.TVBOX_KEYWORD || "走马上任";
+const KEYWORD = process.env.LUMA_KEYWORD || "走马上任";
 
 let passed = 0;
 let failed = 0;
@@ -116,7 +115,7 @@ async function main() {
   check(Number(count) > 0, "search returned cards", `${count} cards`);
 
   // 找一个 py 源的卡片（卡片 sub 行显示站点名，含 [py]）
-  const siteHint = process.env.LUMA_SITE || process.env.TVBOX_SITE || "[py]";
+  const siteHint = process.env.LUMA_SITE || "[py]";
   const picked = await cdp.eval(`(() => {
     const cards = [...document.querySelectorAll('.vod-card')];
     const target = cards.find((c) => (c.innerText || '').includes(${JSON.stringify(siteHint)}));

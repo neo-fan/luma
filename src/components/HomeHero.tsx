@@ -4,7 +4,7 @@ import useDoubanMeta from "../hooks/useDoubanMeta";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import { formatVotes } from "../lib/douban";
 import { plainText } from "../lib/format";
-import type { VodInfo } from "../types/tvbox";
+import type { VodInfo } from "../types/luma";
 
 export interface HomeHeroProps {
   /** 轮播候选项（通常取推荐列表前几条）；第一张作为首帧。 */

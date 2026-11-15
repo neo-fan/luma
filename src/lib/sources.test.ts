@@ -7,7 +7,7 @@ import {
 } from "./sources";
 import type { AggregateRow, SourceSite } from "./sources";
 import type { PlayLine } from "./format";
-import type { ResultPage, VodInfo } from "../types/tvbox";
+import type { ResultPage, VodInfo } from "../types/luma";
 
 const keyword = "嫁金钗";
 

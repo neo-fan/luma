@@ -327,7 +327,7 @@ async fn image_response(
             .header("cache-control", "public, max-age=604800")
             .header("access-control-allow-origin", "*")
             .header("access-control-expose-headers", "*")
-            .header("x-tvbox-proxy", "image")
+            .header("x-luma-proxy", "image")
             .body(Body::from_stream(stream))
             .map_err(|_| (ImageFailure::Other, "response build failed".into()));
     }
@@ -358,7 +358,7 @@ async fn image_response(
         .header("cache-control", "public, max-age=604800")
         .header("access-control-allow-origin", "*")
         .header("access-control-expose-headers", "*")
-        .header("x-tvbox-proxy", "image")
+        .header("x-luma-proxy", "image")
         .body(Body::from(body))
         .map_err(|_| (ImageFailure::Other, "response build failed".into()))
 }
@@ -537,7 +537,7 @@ pub(super) async fn handle_proxy(
             .header("cache-control", "no-store")
             .header("access-control-allow-origin", "*")
             .header("access-control-expose-headers", "*")
-            .header("x-tvbox-proxy", "playlist")
+            .header("x-luma-proxy", "playlist")
             .body(Body::from(rewritten))
             .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"));
     }
@@ -611,7 +611,7 @@ pub(super) async fn handle_proxy(
     builder
         .header("access-control-allow-origin", "*")
         .header("access-control-expose-headers", "*")
-        .header("x-tvbox-proxy", "1")
+        .header("x-luma-proxy", "1")
         .body(Body::from_stream(body_stream))
         .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "response build failed"))
 }
@@ -926,7 +926,7 @@ pub(super) async fn handle_spider_proxy(kind: &str, pairs: &[(String, String)]) 
                 .header("cache-control", "no-store")
                 .header("access-control-allow-origin", "*")
                 .header("access-control-expose-headers", "*")
-                .header("x-tvbox-proxy", format!("spider-{kind}"))
+                .header("x-luma-proxy", format!("spider-{kind}"))
                 .body(Body::from(payload.body))
                 .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "proxy response build failed"))
         }

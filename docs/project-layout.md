@@ -63,7 +63,7 @@ luma/
 │   └── spec.md                           # 实现规格（现状唯一基线，不按版本号切分）
 │
 ├── contracts/
-│   └── tvbox.schema.json                  # 归一化契约唯一真源（TS 类型 ↔ Rust 序列化）
+│   └── luma.schema.json                  # 归一化契约唯一真源（TS 类型 ↔ Rust 序列化）
 │
 ├── src/                                   # React + TypeScript + Vite
 │   ├── main.tsx  App.tsx  AppShell.tsx    # 入口 / RouterProvider / 布局壳（侧栏·同步·Esc·滚动）
@@ -83,7 +83,7 @@ luma/
 │   ├── lib/                               # invoke（唯一 IPC）、pageCache、usePageState、playerPrefs、
 │   │                                      #   sources、sourceCache、format、logger…（纯逻辑为主，
 │   │                                      #   与被测模块同目录的 *.test.ts 也放这里）
-│   └── types/tvbox.ts                     # 归一化契约 TS 侧
+│   └── types/luma.ts                     # 归一化契约 TS 侧
 │
 ├── src-tauri/
 │   ├── Cargo.toml / Cargo.lock  build.rs

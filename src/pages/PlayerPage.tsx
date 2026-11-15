@@ -41,7 +41,7 @@ import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
 import { fetchDoubanMeta } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
-import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
+import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/luma";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { usePlaybackIndicator } from "../hooks/usePlaybackIndicator";
 import { useEpisodeList } from "../hooks/useEpisodeList";

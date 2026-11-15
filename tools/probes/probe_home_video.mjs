@@ -166,7 +166,7 @@ try {
     fetch(`http://localhost:1420/src/lib/home.ts?p=${bust}`).then((r) => r.text()).catch(() => ""),
   ]);
   // 泛型 <HomeResult> 会被 Vite 擦除，用转译后仍稳定的调用片段；不 fetch
-  // src/types/tvbox.ts（纯 type 文件转译后为空，断言必 false）。
+  // src/types/luma.ts（纯 type 文件转译后为空，断言必 false）。
   const fresh =
     invokeSrc.includes('siteKey, "homeVideoContent", []') &&
     invokeSrc.includes("mergeHomeFallback") &&

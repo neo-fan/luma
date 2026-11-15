@@ -1,12 +1,12 @@
 //! 统一错误类型（规格书 6.3 / 7.2）。
 //!
 //! 所有 command 返回 `Result<T, AppError>`；序列化后与前端 `AppError`、
-//! Python error 帧保持同名字段（v1.1 R8：以 `contracts/tvbox.schema.json` 为真源）。
+//! Python error 帧保持同名字段（v1.1 R8：以 `contracts/luma.schema.json` 为真源）。
 
 use serde::Serialize;
 use std::fmt;
 
-/// 错误码常量。新增错误码须同步 6.3 表格、`contracts/tvbox.schema.json` 与前端类型。
+/// 错误码常量。新增错误码须同步 6.3 表格、`contracts/luma.schema.json` 与前端类型。
 pub mod code {
     pub const CONFIG_FETCH_FAIL: &str = "CONFIG_FETCH_FAIL";
     pub const CONFIG_DECRYPT_FAIL: &str = "CONFIG_DECRYPT_FAIL";

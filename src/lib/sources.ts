@@ -9,7 +9,7 @@
 import { titleMatchScore } from "./format";
 import type { Episode, PlayLine } from "./format";
 import { api } from "./invoke";
-import type { ResultPage, Site, SpiderRequest } from "../types/tvbox";
+import type { ResultPage, Site, SpiderRequest } from "../types/luma";
 
 /** `spider_invoke({ siteKey: "all" })` 返回的单站结果行。 */
 export interface AggregateRow {

@@ -2,7 +2,7 @@
  * 归一化数据契约（规格书 6.2 + 7.1）。
  *
  * 本文件是前端唯一的数据形状来源；字段变更须同步：
- *   contracts/tvbox.schema.json（真源）
+ *   contracts/luma.schema.json（真源）
  *   src-tauri/src/error.rs 等 serde 结构
  *   sidecars/py 的输出 JSON
  * 三者由 tests/offline/contract_check.py 比对（v1.1 R8）。
@@ -147,7 +147,7 @@ export interface FetchRequest {
 }
 
 /**
- * 下列类型对应 Rust 侧 serde 结构与 contracts/tvbox.schema.json（契约真源）。
+ * 下列类型对应 Rust 侧 serde 结构与 contracts/luma.schema.json（契约真源）。
  * 字段随真实配置兼容需求增补，改动时三处须同步。
  */
 

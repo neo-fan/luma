@@ -404,7 +404,7 @@ def make_routes(port: int) -> dict[str, tuple[bytes, str]]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TVBoxStub/1.0"
+    server_version = "LumaStub/1.0"
 
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]

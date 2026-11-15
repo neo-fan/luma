@@ -14,7 +14,7 @@ import { findPlayableSource } from "./crossSourceRecovery";
 import { ensureSources } from "./sourceCache";
 import { api } from "./invoke";
 import type { SourceOption } from "./sources";
-import type { Site } from "../types/tvbox";
+import type { Site } from "../types/luma";
 
 const sites = [] as Site[];
 const site = (key: string, changeable?: boolean) =>

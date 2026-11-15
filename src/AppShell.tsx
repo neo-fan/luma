@@ -37,7 +37,7 @@ import {
 import { currentStartedAt, loadStartedAt, unifiedBuildStamp } from "./lib/appInfo";
 import { navBack, registerNav, viewToLocation, type View } from "./lib/nav";
 import { useAppStore, useSiteState, selectLives } from "./stores/appStore";
-import type { ConfigSnapshot, LiveSource } from "./types/tvbox";
+import type { ConfigSnapshot, LiveSource } from "./types/luma";
 
 /**
  * 直播播放页按需加载（ArtPlayer + hls.js 约 750 kB，不能挂在启动路径上），

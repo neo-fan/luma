@@ -45,7 +45,7 @@ import type {
   SpiderRequest,
   VodInfo,
   VodRef,
-} from "../types/tvbox";
+} from "../types/luma";
 
 /** 把 invoke 抛出的任意错误收敛成 AppError。 */
 export function toAppError(err: unknown): AppError {

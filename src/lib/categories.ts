@@ -6,7 +6,7 @@
  * 把这些「有子分类的父级」从 chip 行里去掉，用户才不会点进一个永远为空、
  * 分页也永远禁用的类目。py/js 源的 classes 没有 type_pid，全部原样保留。
  */
-import type { CategoryClass } from "../types/tvbox";
+import type { CategoryClass } from "../types/luma";
 
 export interface DisplayClass {
   type_id: string;

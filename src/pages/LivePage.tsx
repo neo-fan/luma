@@ -28,7 +28,7 @@ import type {
 import { resolutionBadge, resolutionDetail } from "../lib/resolution";
 import type { VideoMeta } from "../lib/resolution";
 import { api } from "../lib/invoke";
-import type { LiveChannel, LiveSource } from "../types/tvbox";
+import type { LiveChannel, LiveSource } from "../types/luma";
 
 interface LivePageProps {
   lives: LiveSource[];

@@ -5,7 +5,7 @@
  * `name` 常常是 `box`、`api` 甚至缺失，所以导入时默认用域名当名字，
  * 用户可以在导入前改掉，也可以在设置页随时重命名。
  */
-import type { ConfigMeta, ConfigSource } from "../types/tvbox";
+import type { ConfigMeta, ConfigSource } from "../types/luma";
 
 /** 把用户输入/粘贴的配置名收敛成列表里能直接显示的形式。 */
 export function cleanConfigName(value: string, limit = 48): string {

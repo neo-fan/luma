@@ -1,6 +1,6 @@
 # TVBox / FongMi JS 源支持机制与随包资源交付说明
 
-> 适用对象：Luma（TVBox 桌面端）的 QuickJS ESM 模块加载链路。
+> 适用对象：Luma 的 QuickJS ESM 模块加载链路（兼容 TVBox / FongMi JS 源）。
 > 资源基线：上游仓库 `cluntop/tvbox` 固定提交 `a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8`。
 > 文档状态：本轮按约定**停在 debug 联调、不打包**；交付包实机验证尚未执行，详见第 6 节。
 > 编码约定：本文件 UTF-8 无 BOM、LF 换行。
@@ -18,7 +18,7 @@ FongMi/TV 的 JS 爬虫引擎使用 **QuickJS**，源码不是当普通 classic 
 本仓库的 `sidecars/qjs-runner/src/main.rs` 用 `rquickjs` 做等价实现：`Module::declare(...)`
 声明模块 → `eval()` 求值 → **必须排空 pending job 队列**（`while ctx.execute_pending_job() {}`）
 并 `finish()` 求值 promise，否则带 `import` 的模块链接不完整，`default` 导出尚未初始化就会
-在后续报出难以定位的 TDZ 错误。求值完成后把模块 namespace 挂到 `globalThis.__tvbox_exports`
+在后续报出难以定位的 TDZ 错误。求值完成后把模块 namespace 挂到 `globalThis.__luma_exports`
 供导出发现使用。脚本形态由 `looks_like_esm()` 自动判定（`export default` / `export function` /
 `export{` / 文件头 `import`），也可用 `script_kind` 显式指定 `auto | classic | module`。
 
@@ -62,7 +62,7 @@ TVBox 生态里 JS 源导出「爬虫对象」的写法并不统一，客户端�
 
 候选池顺序为：模块 `default`（非函数）→ `__jsEvalReturn()` 结果 → 模块 namespace 本身 →
 `__JS_SPIDER__` → `spider` → `new Spider(ext)` → `globalThis`。对每个候选若存在 `init` 且未
-标记 `__tvbox_inited`，会先以 `ext` 调用一次 `init(ext)`。
+标记 `__luma_inited`，会先以 `ext` 调用一次 `init(ext)`。
 
 ### 1.5 短名 / 长名方法映射
 
@@ -176,8 +176,8 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 |------|------|
 | **Resolver / Loader** | `TvResolver::resolve` 调 `normalize_module()` 把说明符归一化为 `asset:<file>` / `net:<url>`；`TvLoader::load` 用 `load_source()` 从 `assets_dir/js/lib/` 读本地文件或 `ureq` 走 HTTP（10s 超时） |
 | **UMD 包装** | 非 ESM 的 UMD 包（无 `export`）被包成 `(function(){...}).call(globalThis); export default (globalThis.<全局名> || {});`，使 `import cheerio from ...` 之类可用；全局名由 `umd_global()` 给出：`crypto-js.js→CryptoJS`、`node-rsa.js→JSEncrypt`、`pako.min.js→pako`、`json5.js→JSON5`、`jinja.js→jinja`。**不做全量预加载**：只有脚本真的 import 时才由 Loader 加载（每帧 eval 500 KB UMD 纯属浪费） |
-| **宿主注入 API** | `install_host()` 注入 `req`、`local`、`md5X`、`console`、`__tvbox_ext / __tvbox_site / __tvbox_api`，并 `eval` `HOST_JS` 垫片；`md5X` 走 `md-5` crate（不为了一个 md5 去 eval 204 KB crypto-js）；垫片还预置 `__JS_SPIDER__ = undefined` 和一组惰性 STUBS（`pdfh/pdfa/pd/jsp/print/log/VERSION/RKEY/OCR_API/OcrApi/getProxyUrl/rule/os/initEnv/_ENV/joinUrl`），让 drpy2 顶层代码在严格 ESM 作用域里能求值完；**不定义 `require/process/fetch`** |
-| **导出发现** | `BOOTSTRAP_JS` 收集第 1.4 节的四类候选到 `globalThis.__tvbox_candidates`，并对有 `init` 的候选调用 `init(ext)` 一次 |
+| **宿主注入 API** | `install_host()` 注入 `req`、`local`、`md5X`、`console`、`__luma_ext / __luma_site / __luma_api`，并 `eval` `HOST_JS` 垫片；`md5X` 走 `md-5` crate（不为了一个 md5 去 eval 204 KB crypto-js）；垫片还预置 `__JS_SPIDER__ = undefined` 和一组惰性 STUBS（`pdfh/pdfa/pd/jsp/print/log/VERSION/RKEY/OCR_API/OcrApi/getProxyUrl/rule/os/initEnv/_ENV/joinUrl`），让 drpy2 顶层代码在严格 ESM 作用域里能求值完；**不定义 `require/process/fetch`** |
+| **导出发现** | `BOOTSTRAP_JS` 收集第 1.4 节的四类候选到 `globalThis.__luma_candidates`，并对有 `init` 的候选调用 `init(ext)` 一次 |
 | **短名映射 / 派发** | `CALL_JS` 的 `MAP` 实现第 1.5 节长名→短名回退；`detailContent` / `playerContent` 拆数组首参；结果 `await` + `JSON.stringify` |
 | **墙钟超时** | `DEFAULT_TIMEOUT_MS = 15000`；`runtime.set_interrupt_handler` 以 `Instant::now() + timeout` 为硬截止中断解释器，宿主另会 kill 整个进程树。超时返回 `SITE_TIMEOUT`，其它异常返回 `SPIDER_CRASH` |
 
@@ -285,7 +285,7 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 
 | 环节 | 改动 |
 |---|---|
-| `qjs-runner` | 新增 `PROXY_JS`：按 `[contentType, headers, body]` / 数字状态码前缀 / `{contentType, headers, body}` / 裸字符串四种形态归一化为 `{contentType, headers, text\|b64}`；字节体经 `__tvbox_bytes_b64` 转 base64 过 JSON 帧 |
+| `qjs-runner` | 新增 `PROXY_JS`：按 `[contentType, headers, body]` / 数字状态码前缀 / `{contentType, headers, body}` / 裸字符串四种形态归一化为 `{contentType, headers, text\|b64}`；字节体经 `__luma_bytes_b64` 转 base64 过 JSON 帧 |
 | `qjs-runner` | `HOST_JS` 的 `getProxyUrl(from)` 改为返回 `http://127.0.0.1:<宿主真实端口>/proxy?do=js[&from=…]`；端口由帧字段 `proxy_port` 注入 |
 | Rust 宿主 | `SpiderMethod::Proxy`（wire 名 `proxy`）；`QuickJsRuntime::proxy()` 走同一把 runner 串行锁，响应经 `proxy_payload_from_js()` 还原成 `ProxyPayload` |
 | Rust 宿主 | `proxy::active_port()`：9978 被占用而回退到临时端口时，sidecar 拿到的是**实际**端口，不是配置值 |
@@ -327,7 +327,7 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 | `HOST_JS.req` | 改为**同步返回结果对象**，并挂一个不递归的 `then`/`catch`，让 `req(x).content` 与 `await req(x)` 两种写法同时成立 |
 | `HOST_JS` | 新增 `console`（JS 侧扁平化任意参数/undefined/Error）、`atob`/`btoa`（保留 `=` 判边界）、`TextEncoder`/`TextDecoder`（UTF-8 + 代理对；`gbk` 走引擎自带的 `gbkTool().decode`，输入是 percent 串不是字节）、`URLSearchParams`、`setTimeout`（微任务降级，无事件循环） |
 | `HOST_JS` | 新增 `getProxy(true)`：引擎自己的 `getProxyUrl()` 优先调它、**fallback 硬编码 9978**；不提供时端口回退就会指向错端口 |
-| Rust | 去掉 `console` Object，改为单一 `__tvbox_log` 字符串 sink |
+| Rust | 去掉 `console` Object，改为单一 `__luma_log` 字符串 sink |
 
 端到端证据（真实引擎 + 配置里的真实 CMS `cj.ffzyapi.com`，非 fixture）：
 
