@@ -1,4 +1,5 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import useDoubanMeta from "../hooks/useDoubanMeta";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import type { VodInfo } from "../types/tvbox";
 
@@ -43,16 +44,50 @@ const PosterTile = memo(function PosterTile({ vod, onOpen, site }: PosterTilePro
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
   const handleOpen = useCallback(() => onOpenRef.current(vod), [vod]);
+  const rootRef = useRef<HTMLButtonElement | null>(null);
+  /** 卡片进过视口才发豆瓣请求：一屏十几张，滚不到的地方一个请求都不发。 */
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    if (inView) return;
+    const node = rootRef.current;
+    if (!node) return;
+    // 没有 IntersectionObserver 的环境（旧 WebView / 测试）直接当作已进视口。
+    if (typeof IntersectionObserver === "undefined") {
+      setInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      // 提前一屏开始要：滚到时评分基本已经在路上。
+      { rootMargin: "320px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [inView]);
+
+  const douban = useDoubanMeta(vod.vod_name, vod.vod_year, inView);
   const title = vod.vod_name || "未命名";
-  // 推荐列表常常只有片名和封面（集数年份地区都不带），这时用站点名兜底，
-  // 保证「悬停有信息」而不是空一条。
-  const meta =
-    [vod.vod_remarks, vod.vod_year, vod.vod_area].filter(Boolean).join(" · ") || site || "";
+  // 豆瓣命中优先用它的年份 / 类型；否则保持源站的集数 / 年份 / 地区，最后用站点名兜底。
+  const meta = douban
+    ? [douban.year, douban.genres.join(" · ")].filter(Boolean).join(" · ")
+    : [vod.vod_remarks, vod.vod_year, vod.vod_area].filter(Boolean).join(" · ") || site || "";
   /** 失败时的锚点：用片名首字，比统一灰块更容易认出是哪张。 */
   const initial = title.trim().charAt(0) || "?";
 
   return (
-    <button type="button" className="poster-tile" onClick={handleOpen} title={title}>
+    <button
+      type="button"
+      className="poster-tile"
+      onClick={handleOpen}
+      title={title}
+      ref={rootRef}
+    >
       <span className="poster-tile__frame">
         {cover && !broken ? (
           <>
@@ -75,6 +110,11 @@ const PosterTile = memo(function PosterTile({ vod, onOpen, site }: PosterTilePro
         ) : (
           <span className="poster-tile__ph" aria-hidden="true" />
         )}
+        {douban && douban.rating > 0 ? (
+          <span className="poster-tile__rating" aria-hidden="true">
+            ★ {douban.rating.toFixed(1)}
+          </span>
+        ) : null}
         <span className="poster-tile__scrim" aria-hidden="true" />
         <span className="poster-tile__info">
           <span className="poster-tile__title">{title}</span>

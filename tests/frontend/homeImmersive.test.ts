@@ -31,7 +31,7 @@ describe("immersive home (hero + horizontal rails)", () => {
     expect(home).toContain("<VodCard");
   });
 
-  it("rotates the hero and exposes play / detail actions", () => {
+  it("rotates the hero and keeps a single play action", () => {
     expect(hero).toContain("const ROTATE_MS = 6500;");
     expect(hero).toContain("window.setInterval");
     expect(hero).toContain("prefers-reduced-motion: reduce");
@@ -39,8 +39,16 @@ describe("immersive home (hero + horizontal rails)", () => {
     expect(hero).toContain('className="home-hero__scrim"');
     expect(hero).toContain('className="home-hero__title"');
     expect(hero).toContain("立即观看");
-    expect(hero).toContain("查看详情");
+    // 「立即观看」本身就是进详情/播放页，不再重复一个「查看详情」按钮。
+    expect(hero).not.toContain("查看详情");
     expect(hero).toContain("home-hero__dot");
+    // 站点小字整行去掉，不再渲染 eyebrow。
+    expect(hero).not.toContain("home-hero__eyebrow");
+    // 头图补豆瓣数据：评分 / 评价人数 / 年份 / 类型，主海报缺失时用豆瓣海报兜底。
+    expect(hero).toContain("useDoubanMeta(");
+    expect(hero).toContain("formatVotes(");
+    expect(hero).toContain("rating.toFixed(1)");
+    expect(hero).toContain("useProxiedImage(douban?.pic)");
   });
 
   it("scrolls rails horizontally with arrows only when content overflows", () => {
@@ -74,6 +82,10 @@ describe("immersive home (hero + horizontal rails)", () => {
     expect(tile).toContain('className="poster-tile__meta"');
     expect(tile).toContain("useProxiedImage(vod.vod_pic)");
     expect(tile).toContain("|| site ||");
+    // 卡片进视口才拉豆瓣；命中评分时在海报右上角显示 ★ 分。
+    expect(tile).toContain("new IntersectionObserver(");
+    expect(tile).toContain("useDoubanMeta(");
+    expect(tile).toContain("poster-tile__rating");
   });
 
   it("styles the hero full-bleed and the rail as a horizontal scroller", () => {
@@ -98,5 +110,8 @@ describe("immersive home (hero + horizontal rails)", () => {
     expect(css).toContain(".poster-rail__track:focus-visible");
     // 换片时只让文字入场
     expect(css).toContain("@keyframes hero-text-in");
+    // 评分角标与已删除的站点小字
+    expect(css).toContain(".poster-tile__rating {");
+    expect(css).not.toContain(".home-hero__eyebrow");
   });
 });
