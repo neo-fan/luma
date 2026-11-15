@@ -5,7 +5,8 @@ import AsyncBoundary from "../components/AsyncBoundary";
 import Empty from "../components/Empty";
 import IconButton from "../components/IconButton";
 import SiteSelect from "../components/SiteSelect";
-import PosterWall from "../components/PosterWall";
+import HomeHero from "../components/HomeHero";
+import PosterRail from "../components/PosterRail";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -67,6 +68,9 @@ export async function findHomeSiteWithList(
  * 正常切换显得迟钝。
  */
 const SWITCH_DEBOUNCE_MS = 300;
+
+/** 沉浸式首页：推荐列表前 5 条进头图轮播，其余进横排。 */
+const HERO_COUNT = 5;
 
 /** 首页内联的分类选择：tid="" 表示回到推荐流。存站点 key 是为了切站后
  *  不把上一个站点的 type_id 带过去（TVBox 的 tid 只在产生它的站点有效）。
@@ -380,8 +384,12 @@ export default function HomePage({
   const shownList = isCategory ? catList : list;
   const busy = isCategory ? catLoading || catLoadingMore : loading;
   const shownError = isCategory ? catError : error;
+  // 沉浸式首页：头图轮播吃掉前 5 条，剩下的铺成横排（不够 5 条时只出头图）。
+  const heroItems = list.slice(0, HERO_COUNT);
+  const railItems = list.length > HERO_COUNT ? list.slice(HERO_COUNT) : [];
+  const siteLabel = site?.name ?? siteKey;
 
-  /** 推荐区海报墙与分类区卡片共用同一个进详情入口。 */
+  /** 推荐区头图/横排与分类区卡片共用同一个进详情入口。 */
   const openVod = useCallback(
     (vod: VodInfo) => {
       navigate({
@@ -517,7 +525,7 @@ export default function HomePage({
 
   if (sites.length === 0) {
     return (
-      <section className="page">
+      <section className="page page--home">
         <header className="page-head">
           <h1 className="page-title">首页</h1>
         </header>
@@ -541,7 +549,7 @@ export default function HomePage({
 
   if (sites.length > 0 && !siteKey) {
     return (
-      <section className="page">
+      <section className="page page--home">
         <header className="page-head">
           <h1 className="page-title">首页</h1>
         </header>
@@ -555,7 +563,7 @@ export default function HomePage({
   }
 
   return (
-    <section className="page">
+    <section className="page page--home">
       {/* 页头 + 分类 chip 在滚动区之外：滚多长的网格都能换站 / 刷新 / 切分类。 */}
       <header className="page-head">
         <div className="page-head__main">
@@ -643,13 +651,19 @@ export default function HomePage({
               ))}
             </div>
           ) : (
-            // 推荐区改成纯海报墙（需求 2026-11-15）：1440 宽下 8 列，分类 tab 不变。
-            // 推荐条目不带宽高信息时，悬停用站点名兜底。
-            <PosterWall
-              items={shownList}
-              onOpen={openVod}
-              site={site?.name ?? siteKey}
-            />
+            // 沉浸式首页（需求 2026-11-15）：整幅头图轮播 + 横向推荐条，像腾讯视频那样
+            // 一行一行左右翻，而不是一屏格子；分类 tab 仍是卡片网格。
+            <>
+              <HomeHero items={heroItems} onOpen={openVod} site={siteLabel} />
+              {railItems.length > 0 ? (
+                <PosterRail
+                  title="为你推荐"
+                  items={railItems}
+                  onOpen={openVod}
+                  site={siteLabel}
+                />
+              ) : null}
+            </>
           )}
         </AsyncBoundary>
 

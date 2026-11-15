@@ -2,25 +2,19 @@ import { memo, useCallback, useRef } from "react";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import type { VodInfo } from "../types/tvbox";
 
-export interface PosterWallProps {
-  items: readonly VodInfo[];
+export interface PosterTileProps {
+  vod: VodInfo;
   onOpen: (vod: VodInfo) => void;
   /** 当前站点名：推荐条目不带宽高信息（没有集数/年份/地区）时，悬停至少能显示来源。 */
   site?: string;
 }
 
-interface PosterTileProps {
-  vod: VodInfo;
-  onOpen: (vod: VodInfo) => void;
-  site?: string;
-}
-
 /**
- * 首页推荐区的纯海报墙。
+ * 首页推荐里的单张海报（墙 / 横排共用）。
  *
- * 跟 `.vod-grid` + `VodCard` 的区别：没有卡片外壳、没有角标和第二行标题，
- * 只留封面；片名压在海报底部的渐隐条上，其余信息（集数 / 年份 / 地区）
- * 悬停或键盘聚焦时才露出。分类 tab 继续用原来的卡片，不参与这里。
+ * 跟 `.vod-card` 的区别：没有卡片外壳、没有角标和第二行标题，只留封面；片名
+ * 压在海报底部的渐隐条上，其余信息（集数 / 年份 / 地区）悬停或键盘聚焦时才
+ * 露出。分类 tab 继续用原来的卡片，不参与这里。
  */
 
 /** 只比较会影响渲染的字段：父组件因为加载态 / 筛选变化重渲染时跳过重渲染。 */
@@ -91,14 +85,4 @@ const PosterTile = memo(function PosterTile({ vod, onOpen, site }: PosterTilePro
   );
 }, sameTile);
 
-const PosterWall = memo(function PosterWall({ items, onOpen, site }: PosterWallProps) {
-  return (
-    <div className="poster-wall">
-      {items.map((vod) => (
-        <PosterTile key={String(vod.vod_id)} vod={vod} onOpen={onOpen} site={site} />
-      ))}
-    </div>
-  );
-});
-
-export default PosterWall;
+export default PosterTile;

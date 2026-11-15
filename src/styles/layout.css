@@ -380,6 +380,13 @@
   padding-inline: 28px;
 }
 
+/* 首页走满宽：推荐海报墙要贴到窗口边缘才像一面墙，1360 的居中栏会在两侧留下
+   一条空带。左右各留 12px 只是为了让滚动条/焦点环不贴死边缘。 */
+.page--home {
+  max-width: none;
+  --page-pad-x: 12px;
+}
+
 .page--player .page-body {
   padding-bottom: 36px;
 }
