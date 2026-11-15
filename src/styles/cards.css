@@ -281,6 +281,19 @@
   gap: 8px;
   min-width: 0;
   padding-bottom: 2px;
+  /* 换片时的文字入场：只有文字层重建，封面留在原地不重挂，避免图片闪一下。 */
+  animation: hero-text-in 320ms var(--ease) both;
+}
+
+@keyframes hero-text-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .home-hero__eyebrow {
@@ -415,6 +428,37 @@
   background: var(--panel-hover);
 }
 
+.poster-rail__arrow:disabled {
+  color: var(--faint);
+  background: var(--panel);
+  border-color: var(--border);
+  cursor: default;
+}
+
+.poster-rail__window {
+  position: relative;
+}
+
+/* 两侧渐隐：告诉用户「这边还有内容」；滚到头就自动收起，不做永久暗角。 */
+.poster-rail__fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 48px;
+  pointer-events: none;
+}
+
+.poster-rail__fade--start {
+  left: 0;
+  background: linear-gradient(to right, var(--bg), transparent);
+}
+
+.poster-rail__fade--end {
+  right: 0;
+  background: linear-gradient(to left, var(--bg), transparent);
+}
+
 .poster-rail__track {
   display: flex;
   gap: 8px;
@@ -424,6 +468,13 @@
   scroll-behavior: smooth;
   scrollbar-width: none;
   padding-bottom: 2px;
+}
+
+/* 横排本身可聚焦：左右方向键翻页，焦点环画在容器外沿。 */
+.poster-rail__track:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 6px;
+  border-radius: var(--r-md);
 }
 
 .poster-rail__track .poster-tile {
@@ -570,6 +621,10 @@
   .poster-tile__frame,
   .poster-tile__meta {
     transition: none;
+  }
+
+  .home-hero__text {
+    animation: none;
   }
 }
 

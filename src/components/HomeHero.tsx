@@ -93,7 +93,7 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
           {loading ? <span className="home-hero__poster-skeleton" aria-hidden="true" /> : null}
         </span>
 
-        <div className="home-hero__text">
+        <div className="home-hero__text" key={current.vod_id}>
           <p className="home-hero__eyebrow">{site || "推荐"}</p>
           <h2 className="home-hero__title">{title}</h2>
           {meta ? <p className="home-hero__meta">{meta}</p> : null}

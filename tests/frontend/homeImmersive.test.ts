@@ -52,6 +52,22 @@ describe("immersive home (hero + horizontal rails)", () => {
     expect(rail).toContain("<PosterTile");
   });
 
+  it("hints scrollable edges, disables spent arrows and supports keyboard paging", () => {
+    // 到头之后箭头置灰，而不是让人点了没反应
+    expect(rail).toContain("disabled={atStart}");
+    expect(rail).toContain("disabled={atEnd}");
+    // 左右边缘渐隐提示，滚到那一侧就收起
+    expect(rail).toContain('className="poster-rail__fade poster-rail__fade--start"');
+    expect(rail).toContain('className="poster-rail__fade poster-rail__fade--end"');
+    expect(rail).toContain("is-overflow");
+    // 横排本身可聚焦，左右方向键翻页
+    expect(rail).toContain("tabIndex={0}");
+    expect(rail).toContain('event.key === "ArrowLeft"');
+    expect(rail).toContain('event.key === "ArrowRight"');
+    // 只有文字层随片重挂，封面不重挂（避免换片时图片闪一下）
+    expect(hero).toContain('className="home-hero__text" key={current.vod_id}');
+  });
+
   it("keeps poster tiles shared between wall and rail", () => {
     expect(tile).toContain('className="poster-tile__frame"');
     expect(tile).toContain('className="poster-tile__title"');
@@ -75,5 +91,12 @@ describe("immersive home (hero + horizontal rails)", () => {
     // 悬停放大 + 其余压暗（沉浸式焦点）
     expect(css).toContain("transform: scale(1.045);");
     expect(css).toContain(".poster-rail__track:has(.poster-tile:hover)");
+    // 可滚动的视觉提示与键盘焦点
+    expect(css).toContain(".poster-rail__fade {");
+    expect(css).toContain(".poster-rail__fade--end");
+    expect(css).toContain(".poster-rail__arrow:disabled");
+    expect(css).toContain(".poster-rail__track:focus-visible");
+    // 换片时只让文字入场
+    expect(css).toContain("@keyframes hero-text-in");
   });
 });
