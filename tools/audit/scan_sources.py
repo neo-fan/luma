@@ -19,11 +19,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "sidecars" / "py"))
-# `cms.py` here is a developer-tool copy (the app parses CMS responses in Rust,
-# `src-tauri/src/domain/spider/cms_parse.rs`); the audit script only needs it
-# offline, so it lives next to this file instead of in the shipped sidecar.
+# 这三份都是「开发工具副本」：应用运行时的配置解密 / 方言归一化 / CMS 解析
+# 全在 Rust（`src-tauri/src/domain/{config,spider}/`），sidecar 里不再有它们。
+# 审计脚本只在自己进程里跑，所以就地放在本目录。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cms  # noqa: E402

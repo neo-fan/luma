@@ -187,42 +187,10 @@ def main() -> int:
     check("missing_method" in text, "log", "capability gap logged")
     check("unsafe_result" in text and "$.list:method" in text, "log", "unsafe return logged with JSON path")
 
-    # ---- EPG：频道匹配与按天裁剪（真实节目单是 9 天整表，不裁会把 2000+ 条
-    # 节目推给前端；而 `CCTV1` 用朴素子串匹配会把 CCTV11/12… 的节目收进来）。----
-    from datetime import date, timedelta
-
-    from live import parse_epg
-
-    today = date.today().isoformat()
-    today_key = today.replace("-", "")
-    yesterday_key = (date.today() - timedelta(days=1)).isoformat().replace("-", "")
-    tomorrow_key = (date.today() + timedelta(days=1)).isoformat().replace("-", "")
-    epg = f"""<?xml version="1.0" encoding="UTF-8"?>
-<tv>
-  <channel id="CCTV1"><display-name>CCTV1</display-name></channel>
-  <channel id="CCTV11"><display-name>CCTV11</display-name></channel>
-  <channel id="东方卫视"><display-name>东方卫视</display-name></channel>
-  <programme channel="CCTV1" start="{today_key}230000 +0800" stop="{tomorrow_key}001000 +0800"><title>晚间新闻</title></programme>
-  <programme channel="CCTV1" start="{yesterday_key}120000 +0800" stop="{yesterday_key}130000 +0800"><title>昨天的节目</title></programme>
-  <programme channel="CCTV11" start="{today_key}200000 +0800" stop="{today_key}210000 +0800"><title>戏曲</title></programme>
-  <programme channel="东方卫视" start="{today_key}193000 +0800" stop="{today_key}203000 +0800"><title>东方剧场</title></programme>
-</tv>"""
-
-    cctv1 = parse_epg(epg, "CCTV1", today)
-    titles = [item["title"] for item in cctv1["programs"]]
-    check(titles == ["晚间新闻"], "epg", "keeps only the requested day", str(titles))
-    check("戏曲" not in titles, "epg", "CCTV1 does not swallow CCTV11 programmes")
-    check(
-        [item["title"] for item in parse_epg(epg, "CCTV-1 综合", today)["programs"]] == ["晚间新闻"],
-        "epg",
-        "aliases like CCTV-1 综合 resolve to CCTV1",
-    )
-    check(
-        [item["title"] for item in parse_epg(epg, "东方卫视4K", today)["programs"]] == ["东方剧场"],
-        "epg",
-        "quality suffix is ignored when matching (东方卫视4K → 东方卫视)",
-    )
-    check(parse_epg(epg, "不存在的台", today)["programs"] == [], "epg", "unknown channel yields no programmes")
+    # EPG 的频道匹配 / 按天裁剪已由 Rust `domain/live/epg.rs` 的单测覆盖
+    # （`xmltv_time_is_localized` / `channel_names_are_normalized_for_matching` /
+    # `programmes_are_filtered_by_channel` / `unknown_channel_yields_empty_list`），
+    # 适配层不再带 `live.py`，这里不再重复。
 
     print(f"\npy_compat_check: {PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0

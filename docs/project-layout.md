@@ -60,10 +60,10 @@ luma/
 │   ├── js-support.md                      # JS 源机制、ESM 加载与随包资源清单（含 SHA256）
 │   ├── size-report.md                     # 体积实测报告
 │   ├── verification-config.md             # [本地] 抓取记录（含真实地址，gitignore）
-│   └── spec-v1.1/                        # 需求文档基线（v1.0 已归档至私有目录）
+│   └── spec.md                           # 实现规格（现状唯一基线，不按版本号切分）
 │
 ├── contracts/
-│   └── tvbox.schema.json                  # 归一化契约唯一真源（R8）
+│   └── tvbox.schema.json                  # 归一化契约唯一真源（TS 类型 ↔ Rust 序列化）
 │
 ├── src/                                   # React + TypeScript + Vite
 │   ├── main.tsx  App.tsx  AppShell.tsx    # 入口 / RouterProvider / 布局壳（侧栏·同步·Esc·滚动）
@@ -104,7 +104,9 @@ luma/
 │                                          #   clipboard/ghproxy/spider/{mod,cms,python,quickjs}
 │
 ├── sidecars/                              # 随包分发的 sidecar
-│   ├── py/  qjs-runner/                   # 源码（入库）
+│   ├── py/  qjs-runner/                   # 源码（入库）；py/ 只执行第三方脚本：
+│   │                                      #   main.py（stdio 协议）、pyspider.py、pyrun.py、
+│   │                                      #   adapterlog.py、base/spider.py
 │   ├── qjs-assets/                        # [入库资源] 8 个 JS 依赖 + manifest.json，SHA256 校验
 │   ├── python-embed/                      # [产物] 3.11 embeddable + site-packages 第三方依赖，gitignore
 │   │                                      #   dev/交付统一用它（bridge.rs::embedded_python 自动探测）
@@ -117,14 +119,15 @@ luma/
 │   │   ├── manual/                        # 真实配置样本（不入库）
 │   │   ├── configs/  spiders/            # 脱敏 fixture / py spider
 │   │   └── media/                         # m3u8 / flv / mp4 / ts 解码与解析样本
-│   └── e2e/                               # p0/p1/p3、contract_check、config_compat、parse_check、
-│                                          #   py_compat_check、py_base_spider_check、capabilities_check
+│   └── offline/                           # 离线确定性检查（全部进 check.py）：contract_check、
+│                                          #   py_compat_check、py_base_spider_check、adapter_isolation、
+│                                          #   config_compat、capabilities_check
 │
 └── tools/                                 # 离线辅助脚本（不参与构建）
     ├── prepare_runtime.py                 # 重建 python-embed 等产物；含 Python 依赖安装 + .pth 修正
     ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
     ├── inspect_config.py                  # 离线解码配置（图种 / 方言），只读不发网络
-    ├── check.py                           # 离线一键回归（7 项门禁）
+    ├── check.py                           # 离线一键回归（9 项门禁）
     ├── run_probes.mjs                     # 窗口探针一键回归（唯一入口）
     ├── bundle_report.mjs                  # 前端体积对比
     ├── probes/                            # 窗口探针：probe_*.mjs（50 个，按功能命名）
@@ -145,15 +148,15 @@ luma/
 
 | 类别 | 放置位置 | 说明 |
 |---|---|---|
-| 需求文档与修订稿 | `docs/spec-v1.1/` | 按版本号分目录；文件名用 ASCII |
+| 实现规格 | `docs/spec.md` | 单一文件、只写现状；历史看 `CHANGELOG.md` 与 git |
 | 项目协作说明 | 根目录 `AGENTS.md` | 给 AI 协作者/维护者的当前规范（≤ 20 KB） |
 | 真实配置样本 | `tests/fixtures/manual/` | 含外部地址，**不入库、不被代码引用** |
 | 构造 fixture | `tests/fixtures/configs/` | 必须脱敏，网络目标只指向 `127.0.0.1` |
-| 契约 | `contracts/` | 归一化契约唯一真源；TS/Rust/Python 三端一致 |
+| 契约 | `contracts/` | 归一化契约唯一真源；TS 类型与 Rust 序列化两端一致（适配层只原样交回脚本结果） |
 | 前端源码 | `src/` | React + TypeScript + Vite |
 | Rust 宿主源码 | `src-tauri/src/{infra,domain}/` | 命令、进程管理、proxy、运行时，按层归档 |
 | sidecar 源码 | `sidecars/{py,qjs-runner}/` | 入库；二进制产物目录见 §1 |
-| 离线检查脚本 | `tests/offline/` | 契约、py 兼容、解析池、适配层隔离等确定性检查，全部接进 `tools/check.py` |
+| 离线检查脚本 | `tests/offline/` | 契约、版本一致性、py 兼容、适配层协议等确定性检查，全部接进 `tools/check.py` |
 | 阶段验收脚本 | `tests/acceptance/p0.py~p3.py` | 规格书 12.2 累积断言；stub 在 `tests/stub_server.py` |
 | 前端单测 | 与被测模块同目录 `*.test.ts`（`src/lib`、`src/pages`、`src/stores`） | 只测本模块；不为了放测试而新建目录 |
 | 跨文件约定测试 | `tests/frontend/` | 读源码文本断言「哪些文件里必须出现什么」，不属于任何单模块 |
@@ -177,7 +180,7 @@ luma/
 
 - 源码与配置文件：ASCII，小写蛇形 `snake_case`（`.rs`/`.py`）或小写 kebab `kebab-case`（目录、`.json`/`.toml`、前端文件名）。
 - 禁止中文文件名、空格、大写开头与盘符/绝对路径写进源码。
-- 文档文件名用 ASCII，标题与正文用简体中文；需求文档按版本号分目录（当前只有 `spec-v1.1`）。
+- 文档文件名用 ASCII，标题与正文用简体中文；实现规格是单一文件 `docs/spec.md`，不按版本号切分。
 
 ## 7. 不入库（.gitignore）范围
 
@@ -201,4 +204,4 @@ luma/
 ## 8. 与既有文档的关系
 
 - 本文是目录/产物/编码约定的权威；`AGENTS.md` 的「目录结构」段只指向本文，不另抄一份，避免两处漂移。
-- 工程实现以本地 `docs/spec-v1.1/` 为唯一依据；若本文与规格书冲突，按 `AGENTS.md`「本地需求文档优先」处理。
+- 工程实现以本地 `docs/spec.md` 为唯一依据；若本文与规格冲突，按 `AGENTS.md`「本地需求文档优先」处理。

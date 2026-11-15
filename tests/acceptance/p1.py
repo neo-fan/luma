@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P1 stage acceptance (spec 12.2, cumulative).
+"""P1 stage acceptance (spec §11, cumulative).
 
 Two phases:
   adapter  — drives `sidecars/py/main.py` over stdio directly: frame protocol,
@@ -133,44 +133,28 @@ def adapter_phase() -> None:
         pong = adapter.call("ping")
         check(pong.get("ok") is True, "T-14 adapter", "ping", json.dumps(pong.get("result"))[:80])
 
-        # full method table: every method must at least answer with a frame.
-        # `site.parse*` 已随 CMS 解析搬进 Rust 一并删除（适配层只执行源脚本），
-        # 所以协议面是 7 个业务方法 + `ping`。
-        methods = [
+        # 适配层只剩「执行第三方脚本」：协议面 = `spider.py` + `ping`（+ 门控的 `debug.*`）。
+        # config.* / site.route / live.* / parse.resolve 全部随 1.0.4 的 Rust 化删除，
+        # 现在再调用必须明确失败，而不是静默回旧结果。
+        source = (ROOT / "tests" / "fixtures" / "spiders" / "template.py").read_text(encoding="utf-8")
+        frame = adapter.call("spider.py", {"source": source, "method": "homeContent", "args": [], "ext": "stub-ext-py"})
+        check(frame.get("ok") is True, "T-14 adapter", "spider.py executes a script", json.dumps(frame)[:120])
+
+        missing = []
+        for method, params in (
             ("config.decrypt", {"raw": '{"sites":[]}'}),
             ("config.normalize", {"raw": '{"sites":[]}', "origin": "stub"}),
             ("config.mergeRepos", {"snapshots": []}),
             ("site.route", {"site": {"jar": "py", "api": "http://127.0.0.1:8787/x.py"}}),
-            ("live.parseM3u", {"raw": '#EXTM3U\n#EXTINF:-1 group-title="G",Ch\nhttp://127.0.0.1:8787/play.m3u8\n', "url": "stub"}),
-            ("parse.resolve", {"url": "http://127.0.0.1:8787/page/play.html", "rule": {"url": "http://127.0.0.1:8787/parse?url=${url}"}}),
-            ("spider.py", {"source": (ROOT / "tests" / "fixtures" / "spiders" / "template.py").read_text(encoding="utf-8"), "method": "homeContent", "args": [], "ext": "stub-ext-py"}),
-        ]
-        missing = []
-        for method, params in methods:
-            frame = adapter.call(method, params)
-            if "id" not in frame:
+            ("live.parseM3u", {"raw": "#EXTM3U\n"}),
+            ("live.parseEpg", {"raw": "<tv/>", "channel": "x"}),
+            ("parse.resolve", {"url": "http://127.0.0.1:8787/page/play.html"}),
+            ("site.parseHome", {"site": {}, "raw": '{"class":[],"list":[]}'}),
+        ):
+            gone = adapter.call(method, params)
+            if gone.get("ok") is not False or "unknown method" not in str(gone.get("error", {}).get("message", "")):
                 missing.append(method)
-            elif method == "site.route" and frame.get("result", {}).get("runtime") != "python":
-                missing.append(f"{method}(runtime)")
-        check(not missing, "T-14 adapter", "7 method table", ",".join(missing) or "all answered")
-
-        # Removed protocol must fail loudly instead of silently answering.
-        gone = adapter.call("site.parseHome", {"site": {}, "raw": '{"class":[],"list":[]}'})
-        check(
-            gone.get("ok") is False and "unknown method" in str(gone.get("error", {}).get("message", "")),
-            "T-14 adapter",
-            "site.parse* removed from the adapter protocol",
-            json.dumps(gone)[:120],
-        )
-
-        # 纯分类断言：1.0.3 起不再随包 JVM 运行时，但 site.route 仍需把 jar
-        # 站点识别为 jvm（宿主据此在导入时屏蔽并给出原因）。
-        route = adapter.call("site.route", {"site": {"key": "csp_x", "api": "http://127.0.0.1/a"}})
-        check(route.get("result", {}).get("runtime") == "jvm", "T-14 adapter", "site.route jvm (classification)")
-
-        m3u = adapter.call("live.parseM3u", {"raw": http_text(f"{STUB}/live/list.m3u")})
-        groups = m3u.get("result", {}).get("groups", [])
-        check(bool(groups) and len(groups[0]["channels"]) >= 1, "T-14 adapter", "live.parseM3u groups", f"{len(groups)} group(s)")
+        check(not missing, "T-14 adapter", "removed methods fail loudly", ",".join(missing) or "all rejected")
 
         # out-of-order: two concurrent calls, ids must route correctly
         slow = adapter.send("debug.echo", {"value": "slow", "delayMs": 400})

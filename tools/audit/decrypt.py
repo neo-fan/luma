@@ -1,4 +1,8 @@
-"""Configuration decrypt chain (spec 8.1).
+"""Configuration decrypt chain (spec 8.1) — developer-tool copy.
+
+The shipped decrypt chain is `src-tauri/src/domain/config/decrypt.rs` (moved to
+Rust on 2026-11-14); this copy exists so `tools/audit/scan_sources.py` can read
+community configs offline. Nothing in `sidecars/` imports it any more.
 
 Order: trim -> image seed (`<image>**<base64>`) -> plain JSON -> `****` shell ->
 digit-prefixed shell -> base64 -> gzip+base64. Every stage validates with

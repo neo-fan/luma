@@ -1,4 +1,8 @@
-"""Field-dialect normalization (spec 6.1 / 6.2 / 8.2 / 8.3).
+"""Field-dialect normalization (spec 6.1 / 6.2 / 8.2 / 8.3) — developer-tool copy.
+
+The shipped implementation is `src-tauri/src/domain/config/normalize.rs` (moved
+to Rust on 2026-11-14); this copy only serves `tools/audit/scan_sources.py` and
+the offline config-shape checks. Nothing in `sidecars/` imports it any more.
 
 Converges community aliases into the normalized contract. Unknown fields are
 kept under `_raw` instead of being dropped, so later adapters can use them.

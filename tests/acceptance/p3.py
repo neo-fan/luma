@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P3 stage acceptance (spec 12.2 cumulative matrix, T-28 ~ T-34).
+"""P3 stage acceptance (spec §11 cumulative matrix, T-28 ~ T-34).
 
 Cumulative: every earlier stage is re-run and must stay green, then the P3
 groups are added. The only N/A left is T-31, which the spec itself marks as

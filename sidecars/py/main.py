@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""Python adapter layer: stdio JSON-RPC (spec 7.2 / 7.2.1).
+"""Python adapter layer: stdio JSON-RPC, one job only — run third-party scripts.
+
+Protocol surface (see `docs/spec.md` §5):
+
+* `ping` — health/version probe;
+* `spider.py` — execute a Python source script in a child process;
+* `debug.*` — fault injection for acceptance tests, gated behind
+  `LUMA_ADAPTER_DEBUG=1`.
+
+Everything else that used to live here (config decrypt/normalize/mergeRepos,
+site routing, m3u/XMLTV parsing, parse resolution, CMS field mapping) is now
+plain Rust in the host process. Keeping a second implementation in the sidecar
+meant two places to fix for one contract — the 1.0.1 "import timeout" bug was a
+symptom of the old design.
 
 One JSON frame per line on stdin/stdout. stdout carries protocol frames only;
-logs go to stderr. Spider requests run on a thread pool of 8; Python spiders
-(`spider.py`) are dispatched to a short-lived child process by `pyspider.run`,
-so a broken third-party script cannot take down this bridge.
-
-`config.*` (and `ping`) get a **separate** lane. A spider call can hold a worker
-for its whole child timeout, and the host's per-call wall clock is the same
-15 s, so keeping imports in the same FIFO queue made "the worker was busy"
-indistinguishable from "decrypting took 15 s" — see the 1.0.1 import timeout.
+logs go to stderr. Requests run on a thread pool of 8; `spider.py` hands each
+script to a short-lived child process (`pyspider.run` → `pyrun.py`), so a broken
+third-party script cannot take down this bridge.
 """
 
 from __future__ import annotations
@@ -24,9 +32,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from decrypt import DecryptError, decrypt  # noqa: E402
-from normalize import merge_repos, normalize_config  # noqa: E402
 
 try:
     from adapterlog import log_event as _log_event
@@ -86,10 +91,9 @@ VERSION = _read_version()
 _write_lock = threading.Lock()
 _cancel_lock = threading.Lock()
 _cancelled: set[str] = set()
-# 爬虫车道：一次调用能占住 worker 到子进程结束（最长 15s）。
-_spider_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="spider")
-# 导入车道：永不排在爬虫后面，导入/体检的耗时才是真实耗时。
-_config_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="config")
+# 单个车道：一次调用能占住 worker 到子进程结束（最长 15s），但这里已经不再托管
+# 配置导入之类的短调用 —— 那些在宿主进程内同步做完，不会和爬虫抢队列。
+_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="spider")
 # 超过这个耗时就记一条 adapter_latency，慢调用不必再靠猜。
 SLOW_CALL_MS = 3000
 # 帧解析失败时用来抢救 request id：有 id 才能回一帧，否则宿主只能干等。
@@ -112,26 +116,19 @@ def is_cancelled(request_id: object) -> bool:
         return str(request_id) in _cancelled
 
 
-def lane_for(method: str) -> ThreadPoolExecutor:
-    """`config.*` / `ping` 走导入车道，其余（`spider.py` / `site.route` / `live.*` / `parse.resolve`）走爬虫车道。"""
-    if method == "ping" or method.startswith("config."):
-        return _config_executor
-    return _spider_executor
-
-
 def note_latency(method: str, started: float, params: dict, failed: bool) -> None:
-    """`config.*` 每次记耗时/字节数；其它方法只在慢到可疑时记一条。
+    """慢调用记一条 `adapter_latency`（方法、耗时、入参字节数）。
 
-    1.0.1 那次「导入失败：config.decrypt exceeded 15000ms」查不动，就是因为适
-    配层对耗时零记录：宿主只能看到「我放弃了」，看不到「它排了多久队」。
+    这条日志是 1.0.1 那次「导入超时」复盘时补的：宿主只能看到「我放弃了」，
+    适配层自己不说话就没人知道它排了多久队。现在只剩脚本执行，慢调用同样值得记。
     """
     elapsed_ms = int((time.perf_counter() - started) * 1000)
-    if not method.startswith("config.") and elapsed_ms < SLOW_CALL_MS:
+    if elapsed_ms < SLOW_CALL_MS:
         return
-    raw = params.get("raw")
+    raw = params.get("source") or params.get("raw")
     _log_event(
         {
-            "level": "WARN" if elapsed_ms >= SLOW_CALL_MS else "INFO",
+            "level": "WARN",
             "kind": "adapter_latency",
             "method": method,
             "elapsedMs": elapsed_ms,
@@ -144,8 +141,8 @@ def note_latency(method: str, started: float, params: dict, failed: bool) -> Non
 def reply_bad_frame(line: str, reason: str) -> None:
     """帧解析失败也要回一帧（能从残帧里捞出 id 时）。
 
-    静默 `continue` 会让宿主等满自己的墙钟预算（15s）才报「config.decrypt
-    exceeded 15000ms」，把「帧坏了」伪装成「调用很慢」，现场无从复盘。
+    静默 `continue` 会让宿主等满自己的墙钟预算（15s）才报超时，把「帧坏了」
+    伪装成「调用很慢」，现场无从复盘。
     """
     hint = _ID_HINT.search(line[:4096])
     if hint is None:
@@ -166,64 +163,6 @@ def reply_bad_frame(line: str, reason: str) -> None:
 def dispatch(method: str, params: dict) -> dict:
     if method == "ping":
         return {"ok": True, "version": VERSION}
-
-    if method == "config.decrypt":
-        plain, how = decrypt(str(params.get("raw") or ""))
-        return {"plain": plain, "method": how}
-
-    if method == "config.normalize":
-        raw = params.get("raw")
-        origin = str(params.get("origin") or "")
-        if isinstance(raw, str):
-            raw_obj = json.loads(raw)
-        elif isinstance(raw, dict):
-            raw_obj = raw
-        else:
-            raise ValueError("raw must be a JSON string or object")
-        return normalize_config(raw_obj, origin)
-
-    if method == "config.mergeRepos":
-        snapshots = params.get("snapshots") or []
-        if not isinstance(snapshots, list):
-            raise ValueError("snapshots must be an array")
-        return merge_repos([s for s in snapshots if isinstance(s, dict)])
-
-    if method == "site.route":
-        from normalize import route as route_site
-
-        site = params.get("site")
-        if not isinstance(site, dict):
-            raise ValueError("site must be an object")
-        runtime = route_site(site, params.get("globalSpider"))
-        return {"runtime": runtime, "reason": "8.3 priority order"}
-
-    if method == "live.parseM3u":
-        from live import parse_m3u
-
-        raw = params.get("raw")
-        if not isinstance(raw, str):
-            raise ValueError("raw must be a string")
-        return parse_m3u(raw, str(params.get("url") or ""))
-
-    if method == "live.parseEpg":
-        from live import parse_epg
-
-        raw = params.get("raw")
-        if not isinstance(raw, str):
-            raise ValueError("raw must be a string")
-        channel = str(params.get("channel") or "")
-        date = params.get("date")
-        return parse_epg(raw, channel, str(date) if date else None)
-
-    if method == "parse.resolve":
-        from parse import resolve
-
-        url = str(params.get("url") or "")
-        if not url:
-            raise ValueError("url is required")
-        rule = params.get("rule") if isinstance(params.get("rule"), dict) else {}
-        headers = params.get("headers") if isinstance(params.get("headers"), dict) else {}
-        return resolve(url, rule, headers)
 
     if method == "spider.py":
         from pyspider import run as run_py_spider
@@ -260,8 +199,6 @@ def debug_handler(method: str, params: dict) -> dict:
 
 
 def error_code(exc: Exception) -> str:
-    if isinstance(exc, DecryptError):
-        return "CONFIG_DECRYPT_FAIL"
     if isinstance(exc, json.JSONDecodeError):
         return "DIALECT_UNKNOWN"
     return "INTERNAL"
@@ -315,10 +252,9 @@ def serve() -> int:
             write_frame({"id": request_id, "ok": True, "result": {"cancelled": target}})
             continue
 
-        lane_for(method).submit(run_request, request_id, method, params)
+        _executor.submit(run_request, request_id, method, params)
 
-    _spider_executor.shutdown(wait=False)
-    _config_executor.shutdown(wait=False)
+    _executor.shutdown(wait=False)
     return 0
 
 

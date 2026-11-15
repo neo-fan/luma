@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Offline regression for real-world (box.json-style) config compatibility.
+"""Offline regression for the Python-source compatibility layer.
 
-Stub fixtures use absolute URLs and self-contained spiders; community configs
-do not. This script locks down the two gaps that make a real config look broken:
+配置的方言归一化 / 相对地址解析已经搬进 Rust（`domain/config/normalize.rs`，
+由 Rust 单测覆盖），适配层只剩「执行第三方脚本」这一条职责。所以这里只守
+脚本执行侧的兼容性——社区 `.py` 源真实依赖的那几件事：
 
-* relative `./py/*.py`, `./jar/*.jar`, `./lib/*.m3u` references;
-* the vendored `base.spider` framework (BOM source, zero-arg `__init__`,
-  `init(ext)` hook and `self.html(...).xpath(...)`).
+* 带 BOM 的源码（社区文件经常这么存）；
+* `from base.spider import Spider` 与零参 `__init__`；
+* `init(ext)` 钩子；
+* `self.html(...).xpath(...)`。
 
 No network access is needed. Usage:  python tests/offline/config_compat.py
 """
@@ -14,20 +16,42 @@ No network access is needed. Usage:  python tests/offline/config_compat.py
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PY = ROOT / "sidecars" / "py"
-sys.path.insert(0, str(PY))
 
-from normalize import normalize_config  # noqa: E402
+PASS = 0
+FAIL = 0
 
 ORIGIN = "https://example.com/tvbox/deadbeef/box.json"
 BASE = "https://example.com/tvbox/deadbeef/"
 PASS = 0
 FAIL = 0
+
+
+def interpreter() -> str:
+    """Child interpreter for `pyrun.py`.
+
+    The spider needs `lxml` (for `self.html(...).xpath(...)`), which only the
+    bundled embeddable ships. Prefer `LUMA_PYTHON` then the bundled binary so
+    this script behaves the same when run with the host Python 3.14.
+    """
+    override = os.environ.get("LUMA_PYTHON")
+    if override and Path(override).is_file():
+        return override
+    for name in ("python.exe", "python"):
+        candidate = ROOT / "sidecars" / "python-embed" / name
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
+
+
+PYTHON = interpreter()
+
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -40,42 +64,6 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         print(f"FAIL  {name}  {detail}")
 
 
-def test_relative_paths() -> None:
-    raw = {
-        "spider": "./jar/custom.jar",
-        "sites": [
-            {"key": "py_demo", "name": "PY", "api": "./py/demo.py", "ext": "./py/demo.json"},
-            {"key": "cms_demo", "name": "CMS", "api": "https://cms.example/api.php/provide/vod"},
-            {"key": "csp_XBPQ", "name": "XBPQ", "api": "csp_XBPQ", "ext": '{"token":"x"}'},
-        ],
-        "lives": [{"name": "live", "url": "./lib/iptv.m3u"}],
-        "parses": [{"name": "p", "url": "./js/parse.js"}],
-    }
-    snap = normalize_config(raw, ORIGIN)
-    sites = {site["key"]: site for site in snap["sites"]}
-
-    check("global spider resolved", snap["spider"] == BASE + "jar/custom.jar", str(snap["spider"]))
-    check(
-        "py site api resolved and routed",
-        sites["py_demo"]["api"] == BASE + "py/demo.py" and sites["py_demo"]["runtime"] == "python",
-        json.dumps(sites["py_demo"], ensure_ascii=False)[:160],
-    )
-    check(
-        "absolute api untouched",
-        sites["cms_demo"]["api"] == "https://cms.example/api.php/provide/vod",
-        str(sites["cms_demo"]["api"]),
-    )
-    check(
-        "bare csp class name and inline ext untouched",
-        sites["csp_XBPQ"]["api"] == "csp_XBPQ" and sites["csp_XBPQ"]["ext"] == '{"token":"x"}',
-        json.dumps(sites["csp_XBPQ"], ensure_ascii=False)[:160],
-    )
-    check("live playlist resolved", snap["lives"][0]["url"] == BASE + "lib/iptv.m3u")
-    check("parse script resolved", snap["parses"][0]["url"] == BASE + "js/parse.js")
-    check("inline configs have no base to resolve against",
-          normalize_config({"sites": [{"key": "x", "api": "./py/x.py"}]}, "inline")["sites"][0]["api"] == "./py/x.py")
-
-
 def pyrun(source: str, method: str = "homeContent", args: list | None = None) -> dict:
     payload = {
         "source": source,
@@ -85,7 +73,7 @@ def pyrun(source: str, method: str = "homeContent", args: list | None = None) ->
         "ext": "ext-token",
     }
     completed = subprocess.run(
-        [sys.executable, str(PY / "pyrun.py")],
+        [PYTHON, str(PY / "pyrun.py")],
         input=json.dumps(payload).encode("utf-8"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -135,7 +123,6 @@ class Spider:
 
 
 def main() -> int:
-    test_relative_paths()
     test_python_framework()
     print(f"\n{PASS} passed, {FAIL} failed")
     return 0 if FAIL == 0 else 1

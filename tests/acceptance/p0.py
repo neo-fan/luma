@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""P0 stage acceptance (spec 12.2, cumulative assertion matrix).
+"""P0 stage acceptance (spec §11, cumulative assertion matrix).
 
 Only capabilities delivered in P0 are asserted. Everything that belongs to a
-later phase is reported as N/A instead of FAIL, which is the v1.1 wording of
-12.2 (`docs/spec-v1.1/replacements.md`, R1).
+later phase is reported as N/A instead of FAIL (`docs/spec.md` §11).
 
 Usage:
     python3 tests/acceptance/p0.py            # full run, needs stub + running app for HTTP parts
@@ -99,7 +98,8 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true", help="skip checks that need the running app")
     args = parser.parse_args()
 
-    run_script("T-05 config", "six shapes + normalization", ROOT / "tests/offline/config_shapes_check.py")
+    # 六种配置形状的归一化现在只在 Rust（domain/config/normalize.rs 单测），
+    # 离线脚本不再保留 Python 副本，这里只跑契约与权限闭集。
     run_script("T-04 contract", "schema <-> types alignment", ROOT / "tests/offline/contract_check.py")
     run_script("T-03 capabilities", "closed permission set", ROOT / "tests/offline/capabilities_check.py")
 
