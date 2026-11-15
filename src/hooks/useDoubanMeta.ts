@@ -10,6 +10,7 @@ export default function useDoubanMeta(
   title: string | undefined,
   year: string | undefined,
   enabled = true,
+  priority = false,
 ): DoubanMeta | null {
   const [meta, setMeta] = useState<DoubanMeta | null>(null);
   const name = (title ?? "").trim();
@@ -26,7 +27,7 @@ export default function useDoubanMeta(
     }
     // 换片先清空，否则新片会短暂顶着上一部的评分/类型。
     setMeta(null);
-    fetchDoubanMeta(name, yearText || undefined).then((next) => {
+    fetchDoubanMeta(name, yearText || undefined, { priority }).then((next) => {
       if (alive) {
         setMeta(next);
       }
@@ -34,7 +35,7 @@ export default function useDoubanMeta(
     return () => {
       alive = false;
     };
-  }, [enabled, name, yearText]);
+  }, [enabled, name, yearText, priority]);
 
   return meta;
 }

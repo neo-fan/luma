@@ -325,7 +325,10 @@ export default function PlayerPage({
       return;
     }
     let alive = true;
-    void fetchDoubanMeta(name, vod?.vod_year?.trim() || undefined).then(
+    void fetchDoubanMeta(name, vod?.vod_year?.trim() || undefined, {
+      // 用户已经在看这一部了：别让首页推荐卡的预取排在前面。
+      priority: true,
+    }).then(
       (meta) => {
         if (alive && meta) {
           setDoubanMeta(meta);

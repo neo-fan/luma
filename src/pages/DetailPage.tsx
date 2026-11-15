@@ -331,17 +331,21 @@ export default function DetailPage({
    */
   const doubanTitle = (vod?.vod_name || emptyCard?.vod_name || title || "").trim();
   const doubanYear = (vod?.vod_year || emptyCard?.vod_year || "").trim();
-  const doubanReady = !loading && (!!vod || empty || !!error);
   useEffect(() => {
     // 片名/年份变了先清空：详情页在同一条路由上换片时组件不卸载，
     // 不清会出现「上一部片的评分挂在新片下面」。
     setDoubanMeta(null);
-    if (!doubanReady || !doubanTitle) {
+    // 片名一到位就并行去拉豆瓣，**不等详情加载完**：源站详情慢的时候
+    // （布布追剧实测 9s）先按源站字段把这一屏画出来，豆瓣到了再升级，
+    // 而不是「豆瓣没回来就一直空着 / 等详情回来才发豆瓣」。
+    if (!doubanTitle) {
       return;
     }
     let alive = true;
     void (async () => {
-      const meta = await fetchDoubanMeta(doubanTitle, doubanYear || undefined);
+      const meta = await fetchDoubanMeta(doubanTitle, doubanYear || undefined, {
+        priority: true,
+      });
       if (alive && meta) {
         setDoubanMeta(meta);
       }
@@ -349,7 +353,7 @@ export default function DetailPage({
     return () => {
       alive = false;
     };
-  }, [doubanReady, doubanTitle, doubanYear]);
+  }, [doubanTitle, doubanYear]);
 
   // 简介的溢出测量、展开/收起都在 `VodMetaHero` 里做：详情页与播放页共用
   // 同一份实现，避免两处口径漂移。

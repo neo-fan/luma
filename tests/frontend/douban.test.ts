@@ -334,7 +334,10 @@ describe("douban fetch contract", () => {
     expect(source).toContain("const HIT_TTL_MS = 10 * 60_000;");
     // 同时在途数量有限，避免一屏海报把豆瓣打到限流。
     expect(source).toContain("const MAX_PARALLEL = 2;");
-    expect(source).toContain("await acquireSlot();");
+    expect(source).toContain("await acquireSlot(options.priority === true);");
+    // 播放页/详情页的请求可以插队到一屏推荐卡的预取之前。
+    expect(source).toContain("const index = waiters.findIndex((waiter) => waiter.priority);");
+    expect(source).toContain("const next = waiters.splice(index >= 0 ? index : 0, 1)[0];");
   });
 
   it("falls back to direct when a custom prefix is empty", () => {
@@ -360,8 +363,9 @@ describe("douban ui contract", () => {
     expect(detail).toContain('variant="detail"');
     expect(detail).toContain("douban={doubanMeta}");
     expect(detail).toContain('descriptionFallback="暂无简介"');
-    // 等详情落地再问一次（年份到位才有消歧能力，也保证一次访问只发一次）。
-    expect(detail).toContain("if (!doubanReady || !doubanTitle)");
+    // 片名一到位就并行拉豆瓣，不等详情落地：先画源站数据，豆瓣到了再升级。
+    expect(detail).toContain("if (!doubanTitle) {");
+    expect(detail).not.toContain("doubanReady");
     // 独立的豆瓣块已并入 hero，不再单独渲染。
     expect(detail).not.toContain("DoubanMetaBlock");
     expect(detail).not.toContain("douban-meta");

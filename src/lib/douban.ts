@@ -52,23 +52,34 @@ interface CachedMeta {
 const cache = new Map<string, CachedMeta>();
 const inflight = new Map<string, Promise<DoubanMeta | null>>();
 let running = 0;
-const waiters: (() => void)[] = [];
+interface Waiter {
+  grant: () => void;
+  priority: boolean;
+}
 
-async function acquireSlot(): Promise<void> {
+const waiters: Waiter[] = [];
+
+/**
+ * 排队等一个在途名额。`priority` 是给播放页/详情页这种「用户正在看的
+ * 那一个」用的：一屏推荐卡的预取不能把它们挤出十几秒。
+ */
+async function acquireSlot(priority = false): Promise<void> {
   if (running < MAX_PARALLEL) {
     running += 1;
     return;
   }
   await new Promise<void>((resolve) => {
-    waiters.push(resolve);
+    waiters.push({ grant: resolve, priority });
   });
 }
 
 function releaseSlot(): void {
   running -= 1;
-  const next = waiters.shift();
+  // 高优先级先出队：播放页简介不该排在一屏推荐卡的预取后面。
+  const index = waiters.findIndex((waiter) => waiter.priority);
+  const next = waiters.splice(index >= 0 ? index : 0, 1)[0];
   if (next) {
-    next();
+    next.grant();
   }
 }
 
@@ -169,10 +180,16 @@ export function formatVotes(count: number): string {
  *
  * @param title 片名（详情页优先用 `vod_name`，回退到列表带来的 title）
  * @param year  年份，可空；同名片（如翻拍）靠它区分
+ * @param options `priority` 表示用户正在看这个详情，排在前面的预取之前
  */
+export interface FetchDoubanOptions {
+  priority?: boolean;
+}
+
 export async function fetchDoubanMeta(
   title: string,
   year?: string,
+  options: FetchDoubanOptions = {},
 ): Promise<DoubanMeta | null> {
   const word = (title ?? "").trim();
   if (!word) {
@@ -200,7 +217,7 @@ export async function fetchDoubanMeta(
   }
 
   const task = (async (): Promise<DoubanMeta | null> => {
-    await acquireSlot();
+    await acquireSlot(options.priority === true);
     try {
       const raw = await api.doubanMeta(
         word,

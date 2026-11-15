@@ -43,7 +43,13 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
   const current = count > 0 ? items[safeIndex] : undefined;
 
   const source = useProxiedImage(current?.vod_pic);
-  const douban = useDoubanMeta(current?.vod_name, current?.vod_year, Boolean(current));
+  const douban = useDoubanMeta(
+    current?.vod_name,
+    current?.vod_year,
+    Boolean(current),
+    // 头图是首页第一屏，评分/简介要与推荐卡的预取抢同一条队列时优先。
+    true,
+  );
   const doubanImage = useProxiedImage(douban?.pic);
   // 豆瓣命中就用豆瓣海报：版式统一、裁切标准（2:3）；豆瓣没给 / 图裂 / 还没到货时用源站封面兜底。
   const useDoubanPoster =

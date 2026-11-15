@@ -78,8 +78,8 @@ const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 const CACHE_CAP: usize = 128;
 
 /// 豆瓣搜索有频率限制：几十张海报同时进视口会一次性发出几十个搜索请求，
-/// 命中「搜索访问太频繁」之后所有搜索都返回空。这里串行节流并在被限流时整体冷却。
-const SEARCH_MIN_GAP: Duration = Duration::from_millis(1200);
+/// 命中「搜索访问太频繁」之后所有搜索都返回空。用全局令牌桶限速（不是
+/// 每个请求都机械地睡到上一个请求之后），并在被限流时整体冷却。
 const THROTTLE_COOLDOWN: Duration = Duration::from_secs(180);
 
 /// 前端传参（camelCase）。`proxyType` 缺省 = 直连。
@@ -879,19 +879,61 @@ fn trailing_year(title: &str) -> String {
     }
 }
 
-static DOUBAN_GATE: OnceLock<tokio::sync::Mutex<Instant>> = OnceLock::new();
+/// 令牌桶：容量 4，每 350ms 补 1 个（平均约 2.9 次/秒）。
+///
+/// 为什么不继续用「每个请求都 sleep 到上一个 + 1.2s」：一次详情页要发
+/// 搜索 + 详情 + 摘要三四个请求，机械串行就是 3.6s 起步，用户看到的就是
+/// 「豆瓣很慢」。桶允许一次页面加载的几个请求立刻发出，只有持续刷首页
+/// 那种真的高频场景才排队等补充，限流风险不变。
+const DOUBAN_BURST: f64 = 4.0;
+const DOUBAN_REFILL: Duration = Duration::from_millis(350);
+
+struct DoubanBucket {
+    tokens: f64,
+    last: Instant,
+}
+
+static DOUBAN_GATE: OnceLock<Mutex<DoubanBucket>> = OnceLock::new();
 static DOUBAN_COOLDOWN: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 
-/// 所有豆瓣搜索串行发送，且两次之间至少间隔 `SEARCH_MIN_GAP`。
-async fn pace_douban() {
-    let gate = DOUBAN_GATE
-        .get_or_init(|| tokio::sync::Mutex::new(Instant::now() - SEARCH_MIN_GAP));
-    let mut last = gate.lock().await;
-    let wait = (*last + SEARCH_MIN_GAP).saturating_duration_since(Instant::now());
-    if !wait.is_zero() {
-        tokio::time::sleep(wait).await;
+fn douban_bucket() -> &'static Mutex<DoubanBucket> {
+    DOUBAN_GATE.get_or_init(|| {
+        Mutex::new(DoubanBucket {
+            tokens: DOUBAN_BURST,
+            last: Instant::now(),
+        })
+    })
+}
+
+/// 取一个令牌；取不到返回还要等多久。锁只覆盖记账，不覆盖 sleep。
+fn take_token(bucket: &mut DoubanBucket, now: Instant) -> Option<Duration> {
+    let elapsed = now.saturating_duration_since(bucket.last);
+    let refill = elapsed.as_secs_f64() / DOUBAN_REFILL.as_secs_f64();
+    bucket.tokens = (bucket.tokens + refill).min(DOUBAN_BURST);
+    bucket.last = now;
+    if bucket.tokens >= 1.0 {
+        bucket.tokens -= 1.0;
+        None
+    } else {
+        Some(DOUBAN_REFILL.mul_f64(1.0 - bucket.tokens))
     }
-    *last = Instant::now();
+}
+
+fn take_douban_token() -> Option<Duration> {
+    let mut bucket = douban_bucket()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    take_token(&mut bucket, Instant::now())
+}
+
+/// 拿到一个令牌再发请求：桶里还有就直接过，没有才等补满这一个。
+async fn pace_douban() {
+    loop {
+        match take_douban_token() {
+            None => return,
+            Some(wait) => tokio::time::sleep(wait).await,
+        }
+    }
 }
 
 /// 豆瓣已经在限流窗口里：这期间不再发搜索，直接回退到源站数据。
@@ -1168,6 +1210,24 @@ fn clear_cache() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn token_bucket_allows_burst_then_waits() {
+        let start = Instant::now();
+        let mut bucket = DoubanBucket {
+            tokens: DOUBAN_BURST,
+            last: start,
+        };
+        // 一次页面加载的几个请求可以立刻发出。
+        for _ in 0..4 {
+            assert!(take_token(&mut bucket, start).is_none());
+        }
+        // 桶空了才等，且等待不超过补一个令牌的时间。
+        let wait = take_token(&mut bucket, start).expect("burst 用完后应等待");
+        assert!(wait > Duration::ZERO && wait <= DOUBAN_REFILL);
+        // 补满一个令牌后又能立刻过。
+        assert!(take_token(&mut bucket, start + DOUBAN_REFILL).is_none());
+    }
+
     use super::*;
     use serde_json::json;
 
