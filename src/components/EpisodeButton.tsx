@@ -31,14 +31,23 @@ export default function EpisodeButton({
     }
     const overflow = el.scrollWidth - el.clientWidth;
     if (overflow > 1) {
-      el.scrollTo({ left: overflow, behavior: "smooth" });
+      // 减弱动效时降级为瞬时定位：平滑滚动不在全局动画降级覆盖范围内。
+      const options: ScrollToOptions = { left: overflow, behavior: "smooth" };
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        options.behavior = "auto";
+      }
+      el.scrollTo(options);
     }
   }, []);
 
   const reset = useCallback(() => {
     const el = ref.current;
     if (el && el.scrollLeft > 0) {
-      el.scrollTo({ left: 0, behavior: "smooth" });
+      const options: ScrollToOptions = { left: 0, behavior: "smooth" };
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        options.behavior = "auto";
+      }
+      el.scrollTo(options);
     }
   }, []);
 

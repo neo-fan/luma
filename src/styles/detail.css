@@ -195,3 +195,11 @@
 .episode:active {
   background: var(--panel-raised);
 }
+
+/* ---------- 内容容器入场（2026-11-15 动效统一） ----------
+   骨架 → 真实内容的硬切是「跳变感」主因之一：内容容器挂与 .page 同一套
+   入场（keyframes 在 layout.css 末尾），挂载即淡入。骨架退场不追——
+   卸载时机难捕获，内容柔现足以消除硬切。 */
+.detail-hero {
+  animation: page-in var(--dur-slow) var(--ease-out) both;
+}

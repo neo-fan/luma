@@ -168,7 +168,9 @@
 }
 
 /* 骨架卡片：与 .vod-grid 同布局，结果到达时位置不跳变。
- * 扫光复用 vod-skeleton 关键帧（封面加载中那套）。 */
+ * 呼吸复用 sk-breathe 关键帧（详情骨架那套）：原 vod-skeleton 扫光已被
+ * 删除（一屏十几张同时扫光=闪烁，用户明确反馈过），这里曾残留死引用，
+ * 渐变底实际是静止的。统一改挂 opacity 呼吸，静态渐变底保留。 */
 .sk-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--cover-w-grid-min), 1fr));
@@ -191,7 +193,7 @@
     var(--panel-sunken) 68%
   );
   background-size: 220% 100%;
-  animation: vod-skeleton 1.4s linear infinite;
+  animation: sk-breathe 1.8s var(--ease) infinite;
 }
 
 .sk-card__line {
@@ -215,8 +217,8 @@
 /* ---------- 详情页等待骨架 ----------
 
    版式与 `.detail-hero` / 剧集格一一对应（左 210px 海报 + 右侧信息 + 操作行，
-   下面线路 chip 与集数格），加载完成时位置不跳变。扫光动画复用
-   `vod-skeleton`，和封面加载中的骨架同一套语言。 */
+   下面线路 chip 与集数格），加载完成时位置不跳变。海报呼吸与下方占位块
+   同一套 `sk-breathe`（原 vod-skeleton 扫光已删除，死引用一并清理）。 */
 
 .sk-detail {
   display: flex;
@@ -246,7 +248,7 @@
     var(--panel-sunken) 68%
   );
   background-size: 220% 100%;
-  animation: vod-skeleton 1.4s linear infinite;
+  animation: sk-breathe 1.8s var(--ease) infinite;
 }
 
 .sk-detail__info {
@@ -378,6 +380,8 @@
   background: rgba(255, 123, 131, 0.07);
   color: #ffb0b5;
   font-size: var(--fs-sm);
+  /* 入场柔现：阻断型错误条不该「啪」地出现（bar-in 定义在本模块末尾）。 */
+  animation: bar-in var(--dur-slow) var(--ease-out);
 }
 
 /* 图标与首行文字视觉基线对齐（行高 20 → 顶部留 2px 补偿）。 */
@@ -609,5 +613,51 @@
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+/* ---------- 入场 / 退场动效（2026-11-15 动效统一） ---------- */
+
+/* 错误条入场：opacity + 轻微上移，只动合成属性，不碰 height。 */
+@keyframes bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* timed 错误条两段式退场：先挂 is-leaving 淡出（180ms，见 ErrorBar.tsx），
+   再由 TSX 卸载。只动 opacity/transform——动画 height 会触发布局，
+   整条下方内容会跟着抖。 */
+.error-bar.is-leaving {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 180ms var(--ease-in), transform 180ms var(--ease-in);
+}
+
+/* 空态也是「状态切换的结果」：复用页面级入场，消除硬出现。 */
+.empty {
+  animation: page-in var(--dur-slow) var(--ease-out) both;
+}
+
+/* 确认弹层入场从纯 opacity 升级为轻微缩放 + 位移（panel-in）。
+   原块的 overlay-in 声明保留，这里同选择器按模块末尾覆盖；
+   panel-in 同时给 player-panels.css 的 .source-picker 复用。 */
+.confirm {
+  animation: panel-in var(--dur-slow) var(--ease-out);
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(var(--enter-shift));
+  }
+}
+
+/* sonner 运行时注入的过渡是 0.4s（比全应用节奏慢一倍），这里把时长压到
+   slow 档。双属性选择器特异性 (0,2,0) 压过 sonner 的 (0,1,0)，与其注入
+   顺序无关；只调时长、不新增布局属性（height 过渡是库行为，保持原样）。
+   进度线选择器（.notice-toast.notice-toast::after）是契约，一字不动。 */
+[data-sonner-toaster] [data-sonner-toast] {
+  transition-duration: var(--dur-slow);
 }
 

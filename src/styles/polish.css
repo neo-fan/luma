@@ -21,6 +21,10 @@ button:focus:not(:focus-visible) {
     transition-duration: 0.01ms !important;
     /* 侧栏文字的淡入带 90ms 延迟，只清时长会留下「晚一拍才出现」的空白帧。 */
     transition-delay: 0ms !important;
+    /* CSS 平滑滚动（海报横排 / 剧集格 scroll-behavior:smooth）不在
+       transition/animation 降级范围内，这里一并关掉；JS 平滑滚动由
+       各组件的 matchMedia 守卫降级（SettingsPage/PosterRail/EpisodeButton）。 */
+    scroll-behavior: auto !important;
   }
 }
 
@@ -80,7 +84,11 @@ button:focus:not(:focus-visible) {
   padding: 9px 12px;
   border-radius: var(--r-sm);
   color: var(--muted);
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  /* padding 项是回归修复：本覆盖块曾把 layout.css 的 padding 过渡整条顶掉，
+     侧栏收放时导航项 padding 14→12 瞬跳，与「图标轴不动」的设计矛盾。
+     补回后与侧栏 width / 内容区 padding-left 同拍。 */
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+    padding var(--sidebar-dur) var(--sidebar-ease);
 }
 
 .nav__item:hover {

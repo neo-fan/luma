@@ -12,14 +12,31 @@ interface PlayerStageProps {
   recovering?: boolean;
   playable: boolean;
   resolveError: string;
+  /**
+   * 还没有任何解析结果（resolved === null）。选台/换地址后的第一帧 effect
+   * 尚未把 resolving 翻 true，此时 !playable 只是「还没开始解析」，不是
+   * 「解析出了不能播的地址」——不能闪一帧「无法播放」结论卡。
+   */
+  pending?: boolean;
   /** 解析失败的成因是「源还没答完」（可重试），标题别提成「无法解析」。 */
   retryable?: boolean;
   /** ArtPlayer 挂载点：必须绑到 .player-art 这个空 div 本身，不能换成组件根。 */
   containerRef: RefObject<HTMLDivElement>;
+  /**
+   * 解析期背景海报（影片封面，调用方已过 /image 代理）。换集/换线/换源
+   * remount 后的 3~50s 解析期实例还没建，画面不该是纯黑。可选：没有海报
+   * （直播 / 封面缺失）维持原样。
+   */
+  poster?: string;
   /** 换下一条线路：播放失败、或等待超过 5s 时给用户一个「别干等」的出口。 */
   onNextLine?: () => void;
   /** 正在切换线路：按钮置灰并换成进行中文案，防连点。 */
   nextLineBusy?: boolean;
+  /**
+   * 原地换集进行中：控制栏钉住不自动收起（等待期唯一常驻的「还在动」证据）。
+   * 与 busy 区分——换集时播放实例还活着，不该盖状态卡、也不该铺海报。
+   */
+  switching?: boolean;
 }
 
 /**
@@ -41,10 +58,13 @@ export default function PlayerStage({
   recovering = false,
   playable,
   resolveError,
+  pending = false,
   retryable = false,
   containerRef,
+  poster,
   onNextLine,
   nextLineBusy = false,
+  switching = false,
 }: PlayerStageProps) {
   // 慢源冷启动实测能到 18s：光转圈会被当成卡死，超过 4s 就把已等待秒数报出来，
   // 让用户知道「在动，只是慢」，而不是「点坏了」。解析结束自动归零。
@@ -75,15 +95,17 @@ export default function PlayerStage({
     : reloading
       ? { busy: true, title: "正在重新获取播放地址…", desc: "" }
       : !playable
-        ? {
-            busy: false,
-            title: resolveError
-              ? retryable
-                ? "源响应较慢，暂未拿到播放地址"
-                : "无法解析播放地址"
-              : EXTERNAL_PLAY_FALLBACK.title,
-            desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
-          }
+        ? pending && !resolveError
+          ? { busy: true, title: "正在解析播放源…", desc: "" }
+          : {
+              busy: false,
+              title: resolveError
+                ? retryable
+                  ? "源响应较慢，暂未拿到播放地址"
+                  : "无法解析播放地址"
+                : EXTERNAL_PLAY_FALLBACK.title,
+              desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
+            }
         : null;
 
   const active = status;
@@ -104,11 +126,25 @@ export default function PlayerStage({
    */
   const stageClass = active
     ? `player-stage ${active.busy ? "is-busy" : "is-error"}`
-    : "player-stage";
+    : switching
+      ? "player-stage is-switching"
+      : "player-stage";
 
   return (
     <div className={stageClass}>
       <div ref={containerRef} className="player-art" />
+
+      {/* 解析期（实例还没建）铺封面当背景：模糊 + 暗化，参考首页 Hero 的氛围
+          做法但保持简单。只在 busy 且 !playable 时出现——软刷新 / 自愈期间
+          实例还在播，不能用海报盖住活画面。backgroundImage 是按数据拼的
+          地址（同 ArtPlayer 自己的 poster），属于内联样式的例外情形。 */}
+      {busy && poster && !playable ? (
+        <div
+          className="player-stage-poster"
+          style={{ backgroundImage: `url("${poster}")` }}
+          aria-hidden="true"
+        />
+      ) : null}
 
       {active ? (
         <div className="player-overlay" aria-live="polite">

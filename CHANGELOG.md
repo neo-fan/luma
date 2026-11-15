@@ -28,6 +28,10 @@
 - **站点收藏**：首页站点下拉旁、换源弹窗每一行、搜索结果排序共用一份收藏（`localStorage`，键 `luma:favorite-sites`），收藏星与影片收藏同一套视觉；不新建页面、不改后端配置。
 - **封面走 HTTP 缓存**：反代 `/image` 的请求改走带 `http-cache-reqwest`（cacache 磁盘后端）的独立客户端，按 `Cache-Control` / `ETag` / `Vary` 自动存取，缓存目录 `<data>/cache/http-images`；同一张海报在首页、搜索、详情之间不再反复回源。缓存键、过期、条件请求都交给中间件，宿主不维护自己的索引。
 - **1.1.0 安装器：一键装到当前用户**：`installMode: currentUser`（`%LOCALAPPDATA%\Luma`，不需要管理员、不弹目录选择），`languages: ["SimpChinese"]`，`compression: lzma`，WebView2 用 `downloadBootstrapper`（缺运行时时在线引导）。为了去掉「欢迎」「选择安装目录」两页，把官方 `installer.nsi`（`@tauri-cli` v2.12.4）vendor 到 `src-tauri/nsis/installer.nsi`，只删这两页，完成页仍是官方的「运行 Luma」+「创建桌面快捷方式」（都默认勾选），升级遵循官方 `RestorePreviousInstallLocation`。
+- **首页换源 / 切站骨架屏**：沉浸式首页新增 `HomeSkeleton`（头图 + 横排占位，`sk-home*` 类名与探针契约隔离），分类态复用搜索卡片骨架；`AsyncBoundary` 在「空列表 + 加载中」即出骨架，不再只等首次加载。配套修掉两处让骨架永远排不上队的时序：`usePageState` 的换键重置从 effect 挪进**渲染期**（旧版在 key 切换后的一帧里仍返回旧站点的值，首页把旧数据当新数据、直接闪现空态）；首页推荐值改为携带归属站点键（`ScopedHome`）。`probe_home_video` / `probe_playback_ux` 的首页断言同步改成沉浸式口径（头图 / 横排 tile 任一即算出内容）。
+- **播放器「下一集」点击后的持续反馈**：原地换集有一条完整的「切换中」链——按钮图标叠加转圈（描弧 `player-next-spin`，与 `.is-disabled` 撞相的压暗方案弃用）、控制栏在切换期间钉住不自动收起、`switchSource` 的 promise 等到新集**真正出画**（15s 封顶）才收口；期间重复点击（按钮与选集面板两个入口）被代次守卫吞掉，不再出现两路 `switchUrl` 竞态「点了没反应 / 画面切回旧集」。自动接下一集补回「已自动播放下一集」toast（原地切换改版时被弄丢）。控制栏钉住规则不再给全幅的 `.art-bottom` 放开 `pointer-events`（常驻层后台播放时它悬在其它页面之上，会吞光整页点击），只放开进度条 / 控制栏两行。
+- **系统过渡动效统一**：新增 motion token（`--dur-fast/--dur-slow/--ease-out/--ease-in`）；页面与内容容器级入场（`page-in`，容器一条动画、2900+ 频道项零逐条动画）、常驻播放/直播层 opacity 淡入淡出、头图轮播双层交叉淡入（常驻 4 个 img、连点不涨节点）、Ctrl+K / 确认弹层 / 换源面板 / 下拉菜单入场、ErrorBar 两段式退场、按钮按压与收藏星 pop、toast 时长收口；清掉 3 处引用已删除 `vod-skeleton` 关键帧的「静止骨架」；`prefers-reduced-motion` 全局降级补强（含 JS 平滑滚动）。
+- **豆瓣元数据不再拖慢首页轮播**：每 60s 的轮播刷新加「前台可见才刷」；搜索链去掉恒 404 的 suggest 前置、rexxar 路径按 subject_id 记忆（电影不再白跑 tv 路径）、无匹配 / 404 / 限流进负缓存——稳态下轮播期豆瓣请求为 0，单次获取 2.5~4s 降到亚秒。
 
 ### 修复
 

@@ -900,3 +900,10 @@
   font-size: var(--fs-xs);
   line-height: 1.5;
 }
+
+/* ---------- 续播主卡入场（2026-11-15 动效统一） ----------
+   注意：本文件尾部处于豆瓣契约（douban.test.ts tail()）监视范围，
+   追加的新规则一律走 token，不得出现裸色值。 */
+.resume-hero {
+  animation: page-in var(--dur-slow) var(--ease-out) both;
+}

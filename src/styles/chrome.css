@@ -580,3 +580,19 @@
   width: 19px;
   height: 19px;
 }
+
+/* ---------- 内容容器入场（2026-11-15 动效统一） ---------- */
+
+/* 豆瓣详情页（发现型源）与失败源明细：同一套页面级入场，消除硬出现。 */
+.detail-douban-page {
+  animation: page-in var(--dur-slow) var(--ease-out) both;
+}
+
+.failure-list {
+  animation: page-in var(--dur-slow) var(--ease-out) both;
+}
+
+/* 节目单展开入场：容器级一条动画，不逐条动画 30+ 节目项。 */
+.epg-list {
+  animation: page-in var(--dur-slow) var(--ease-out) both;
+}

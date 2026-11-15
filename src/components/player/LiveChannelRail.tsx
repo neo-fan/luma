@@ -168,9 +168,11 @@ export default function LiveChannelRail({
                   className="live-rail__group-caret"
                 />
               </button>
-              {folded
-                ? null
-                : group.channels.map((channel) => {
+              {folded ? null : (
+                /* 频道容器：展开时条件挂载，入场动画挂在这一层（每组一条），
+                   绝不逐频道项动画——上千条逐项入场会让动画数量爆炸。 */
+                <div className="live-rail__channels">
+                  {group.channels.map((channel) => {
                     const active = channel.name === currentName;
                     return (
                       <button
@@ -205,6 +207,8 @@ export default function LiveChannelRail({
                       </button>
                     );
                   })}
+                </div>
+              )}
             </div>
           );
         })}

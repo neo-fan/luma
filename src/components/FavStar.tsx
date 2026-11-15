@@ -6,6 +6,7 @@
  * `aria-label` / `aria-pressed`。探针也按 `aria-pressed` 判断状态 ——
  * 图标按钮没有 `textContent`，按文案断言的旧写法会全红。
  */
+import { useEffect, useRef, useState } from "react";
 import { Star } from "lucide-react";
 import { ICON_PROPS } from "./icons";
 
@@ -18,12 +19,34 @@ interface FavStarProps {
 }
 
 export default function FavStar({ on, busy = false, onToggle, className }: FavStarProps) {
+  // 「点亮」反馈只在点击瞬间：瞬态 is-pop 挂 250ms 后移除（star-pop 动画
+  // 240ms）。不做成 .is-on 常驻动画——收藏页整页 is-on 星挂载会齐刷刷 pop。
+  const [popping, setPopping] = useState(false);
+  const popTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (popTimer.current !== null) {
+        window.clearTimeout(popTimer.current);
+      }
+    },
+    [],
+  );
+
+  const handleClick = () => {
+    setPopping(true);
+    if (popTimer.current !== null) {
+      window.clearTimeout(popTimer.current);
+    }
+    popTimer.current = window.setTimeout(() => setPopping(false), 250);
+    onToggle();
+  };
+
   const label = on ? "取消收藏" : "加入收藏";
   return (
     <button
       type="button"
-      className={`fav-star${on ? " is-on" : ""}${className ? ` ${className}` : ""}`}
-      onClick={onToggle}
+      className={`fav-star${on ? " is-on" : ""}${popping ? " is-pop" : ""}${className ? ` ${className}` : ""}`}
+      onClick={handleClick}
       disabled={busy}
       aria-pressed={on}
       aria-label={label}

@@ -716,3 +716,133 @@
   backdrop-filter: blur(6px);
   pointer-events: none;
 }
+
+/* ---------- 内容容器入场 + 头图交叉淡入（2026-11-15 动效统一） ---------- */
+
+/* 网格入场只挂容器：子项带 content-visibility:auto，逐卡动画会在滚动时
+   变成持续 pop-in。流式追加不重挂网格，不会反复入场。 */
+.vod-grid {
+  animation: page-in var(--dur-slow) var(--ease-out) both;
+}
+
+/* 两侧渐隐常渲染，is-visible 控 opacity（PosterRail 用 classList 切换）：
+   滚到头是淡出收起，不再瞬隐。className 字面量是探针契约，保持不变。 */
+.poster-rail__fade {
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.poster-rail__fade.is-visible {
+  opacity: 1;
+}
+
+/* 头图双缓冲交叉淡入：两层 img 常驻（backdrop 与 poster 各双层），激活层
+   opacity 1、闲置层 0，换帧只翻转类名，过渡由合成器完成；blur(36px) 在
+   每层保持静态，绝不动画 filter（全屏重绘每帧都付不起）。 */
+.home-hero__backdrop img,
+.home-hero__poster img {
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+
+.home-hero__backdrop img.is-active,
+.home-hero__poster img.is-active {
+  opacity: 1;
+}
+
+/* 海报双层必须叠在同一帧里：原 img 是普通流，两张会上下堆叠撑破容器。 */
+.home-hero__poster img {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------- 首页等待骨架（2026-11-15） ----------
+   版式与沉浸式首页一一对应（整幅头图 + 为你推荐横排），加载完成时位置
+   不跳变。不复用 .home-hero / .poster-rail：探针靠这些选择器判定就绪。
+   呼吸沿用 sk-breathe（feedback.css），与搜索/详情骨架节奏一致。 */
+
+.sk-home {
+  display: flex;
+  flex-direction: column;
+}
+
+.sk-home__hero {
+  display: flex;
+  align-items: flex-end;
+  gap: 26px;
+  min-height: var(--home-hero-h);
+  margin: 4px calc(var(--page-pad-x) * -1) 0;
+  padding: 30px 34px 28px;
+  overflow: hidden;
+  /* 无封面图可模糊，用静态渐变垫底，色雾感与 backdrop 的 blur 底色接近 */
+  background: linear-gradient(160deg, var(--panel-raised) 0%, var(--panel-sunken) 55%, var(--bg) 100%);
+}
+
+.sk-home__poster {
+  flex: 0 0 var(--cover-w-hero);
+  width: var(--cover-w-hero);
+  aspect-ratio: var(--cover-ratio);
+  border-radius: var(--r-md);
+  background: linear-gradient(
+    100deg,
+    var(--panel-sunken) 28%,
+    var(--panel-raised) 48%,
+    var(--panel-sunken) 68%
+  );
+  background-size: 220% 100%;
+  animation: sk-breathe 1.8s var(--ease) infinite;
+}
+
+.sk-home__text {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  padding-bottom: 4px;
+}
+
+.sk-home__chips {
+  display: flex;
+  gap: 8px;
+}
+
+.sk-home__rail {
+  margin-top: 34px;
+}
+
+.sk-home__track {
+  display: flex;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.sk-home__tile {
+  flex: 0 0 var(--cover-w-rail);
+  width: var(--cover-w-rail);
+  aspect-ratio: var(--cover-ratio);
+  border-radius: var(--r-md);
+  background: linear-gradient(
+    100deg,
+    var(--panel-sunken) 28%,
+    var(--panel-raised) 48%,
+    var(--panel-sunken) 68%
+  );
+  background-size: 220% 100%;
+  animation: sk-breathe 1.8s var(--ease) infinite;
+}
+
+.sk-home .sk-line,
+.sk-home .sk-pill {
+  animation: sk-breathe 1.8s var(--ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-home__poster,
+  .sk-home__tile,
+  .sk-home .sk-line,
+  .sk-home .sk-pill {
+    animation: none;
+    background: var(--panel-sunken);
+  }
+}

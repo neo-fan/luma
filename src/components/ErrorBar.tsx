@@ -76,6 +76,22 @@ export default function ErrorBar({
     ttlMs ?? (lifetime === "timed" ? noticeTtl("warn") : 0),
   );
 
+  // timed 到期两段式退场：先挂 is-leaving 淡出（180ms，只动 opacity/transform，
+  // 见 feedback.css），再真正卸载——直接 return null 是硬消失。倒计时重置
+  // （ttl 变化）时对称复位，不留下「半退场」状态。
+  const [leaving, setLeaving] = useState(false);
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    if (!countdown.expired) {
+      setLeaving(false);
+      setGone(false);
+      return;
+    }
+    setLeaving(true);
+    const timer = window.setTimeout(() => setGone(true), 180);
+    return () => window.clearTimeout(timer);
+  }, [countdown.expired]);
+
   useEffect(
     () => () => {
       if (resetTimer.current !== null) {
@@ -96,14 +112,15 @@ export default function ErrorBar({
     resetTimer.current = window.setTimeout(() => setCopyState("idle"), 1800);
   }, [message, hint, detail]);
 
-  if (countdown.expired) {
+  if (gone) {
     return null;
   }
 
   return (
     <div
       className={
-        size === "compact" ? "error-bar error-bar--compact" : "error-bar"
+        (size === "compact" ? "error-bar error-bar--compact" : "error-bar") +
+        (leaving ? " is-leaving" : "")
       }
       role="alert"
       data-lifetime={lifetime}

@@ -21,6 +21,14 @@ const SWIPE_MIN_PX = 48;
 /** 滚轮翻页节流，避免一次触控板滑动连翻好几张。 */
 const WHEEL_LOCK_MS = 460;
 
+/** 双缓冲里的一帧：key 标识作品（换帧判据），src 是已过代理的封面地址。 */
+interface HeroFrame {
+  key: string;
+  src: string;
+}
+
+const EMPTY_FRAME: HeroFrame = { key: "", src: "" };
+
 /**
  * 首页沉浸头图。
  *
@@ -31,9 +39,11 @@ const WHEEL_LOCK_MS = 460;
  * 2. 手动：右侧贴边、平时隐形的「下一张」按钮，或底部圆点直接跳转；
  * 3. 手势：触控板双指横滑 / Shift+滚轮，或按住海报横向拖动。
  *
- * 刻意保持 DOM 稳定 —— 背景与海报都只有**一个** img 节点，换片只改 `src`，
- * 不按 key 重新挂载节点；否则在 dev 热更新/连续切换时容易留下上一帧的残留节点，
- * 看起来就像「一堆海报平铺在头图里」。
+ * DOM 稳定 + 交叉淡入（2026-11-15 动效统一）：背景与海报各有**两个常驻**
+ * img 层（双缓冲），换帧只把新帧写进闲置层并翻转激活层，260ms opacity
+ * 过渡由 CSS 完成，transitionend 后清掉闲置层的 src。绝不按帧新建/重挂
+ * 节点——历史教训：逐帧 remount 在热更新/连续切换时留下残留节点，看起来
+ * 像「一堆海报平铺在头图里」。reduced-motion 时直接改写激活层（直切）。
  */
 export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
   const [index, setIndex] = useState(0);
@@ -61,6 +71,83 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
     onError: handleError,
     onLoad: handleLoad,
   } = useDoubanPoster ? doubanImage : source;
+
+  // ---------- 双缓冲交叉淡入 ----------
+  // 两个 img 层常驻：激活层 opacity 1、闲置层 0。换帧（key 变化）时把新帧
+  // 写进闲置层并翻转激活层，CSS opacity 过渡完成交叉淡入；同帧封面更新
+  // （豆瓣海报到货 / 代理补齐 / 裂图兜底）只原位改写激活层，不触发淡入淡出。
+  const [frames, setFrames] = useState<[HeroFrame, HeroFrame]>([
+    EMPTY_FRAME,
+    EMPTY_FRAME,
+  ]);
+  const [activeFrame, setActiveFrame] = useState(0);
+  const activeFrameRef = useRef(0);
+
+  const frame: HeroFrame = {
+    key: current ? String(current.vod_id) : "",
+    src: cover && !broken ? cover : "",
+  };
+  let activeSlot = activeFrame;
+  if (frames[activeFrame].key !== frame.key) {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      // 减弱动效：原位改写激活层，直切，不做交叉淡入。
+      const slot = activeFrame;
+      setFrames((prev) => {
+        const next: [HeroFrame, HeroFrame] = [prev[0], prev[1]];
+        next[slot] = frame;
+        return next;
+      });
+    } else {
+      activeSlot = activeFrame === 0 ? 1 : 0;
+      const idle = activeSlot;
+      setFrames((prev) => {
+        const next: [HeroFrame, HeroFrame] = [prev[0], prev[1]];
+        next[idle] = frame;
+        return next;
+      });
+      setActiveFrame(activeSlot);
+    }
+  } else if (frames[activeFrame].src !== frame.src) {
+    const slot = activeFrame;
+    setFrames((prev) => {
+      const next: [HeroFrame, HeroFrame] = [prev[0], prev[1]];
+      next[slot] = frame;
+      return next;
+    });
+  }
+  // 渲染期同步 ref（与 onOpenRef 同一模式）：transitionend 回调据此判断
+  // 「这一层现在是不是闲置层」，防止过期事件误清已重新激活的层。
+  activeFrameRef.current = activeSlot;
+
+  /** 淡出完成（opacity 过渡结束）后清掉闲置层的 src，释放旧图解码内存。 */
+  const handleLayerTransitionEnd = useCallback(
+    (slot: number, event: React.TransitionEvent<HTMLImageElement>) => {
+      if (event.propertyName !== "opacity") return;
+      if (slot === activeFrameRef.current) return;
+      setFrames((prev) => {
+        if (!prev[slot].src) return prev;
+        const next: [HeroFrame, HeroFrame] = [prev[0], prev[1]];
+        next[slot] = { key: prev[slot].key, src: "" };
+        return next;
+      });
+    },
+    [],
+  );
+
+  // 兜底清理：transitionend 在后台标签页等极端情况下可能丢失，
+  // 闲置层的旧图不该常驻内存。460ms > 260ms 过渡，正常路径由事件先清。
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const idle = activeFrameRef.current === 0 ? 1 : 0;
+      setFrames((prev) => {
+        if (!prev[idle].src) return prev;
+        const next: [HeroFrame, HeroFrame] = [prev[0], prev[1]];
+        next[idle] = { key: prev[idle].key, src: "" };
+        return next;
+      });
+    }, 460);
+    return () => window.clearTimeout(timer);
+  }, [frames, activeFrame]);
 
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
@@ -184,23 +271,34 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
       onPointerCancel={handlePointerCancel}
     >
       <div className="home-hero__backdrop" aria-hidden="true">
-        {hasCover ? <img src={cover ?? undefined} alt="" referrerPolicy="no-referrer" /> : null}
+        {frames.map((layer, slot) => (
+          <img
+            key={slot}
+            src={layer.src || undefined}
+            alt=""
+            referrerPolicy="no-referrer"
+            className={slot === activeSlot ? "is-active" : undefined}
+            onTransitionEnd={(event) => handleLayerTransitionEnd(slot, event)}
+          />
+        ))}
       </div>
       <div className="home-hero__scrim" aria-hidden="true" />
 
       <div className="home-hero__body">
         <span className="home-hero__poster">
-          {hasCover ? (
+          {frames.map((layer, slot) => (
             <img
-              src={cover ?? undefined}
+              key={slot}
+              src={layer.src || undefined}
               alt=""
               referrerPolicy="no-referrer"
-              onError={handleError}
-              onLoad={handleLoad}
+              className={slot === activeSlot ? "is-active" : undefined}
+              onError={slot === activeSlot ? handleError : undefined}
+              onLoad={slot === activeSlot ? handleLoad : undefined}
+              onTransitionEnd={(event) => handleLayerTransitionEnd(slot, event)}
             />
-          ) : (
-            <span className="home-hero__poster-ph" aria-hidden="true" />
-          )}
+          ))}
+          {!hasCover ? <span className="home-hero__poster-ph" aria-hidden="true" /> : null}
           {loading ? <span className="home-hero__poster-skeleton" aria-hidden="true" /> : null}
         </span>
 

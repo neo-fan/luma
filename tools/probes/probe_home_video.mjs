@@ -127,6 +127,10 @@ const snapshot = (cdp) =>
   cdp.eval(`JSON.stringify({
     selected: document.querySelector('.site-select')?.getAttribute('data-value') || null,
     cards: document.querySelectorAll('.vod-card').length,
+    // 沉浸式首页（2026-11-15）：推荐流渲染为头图 + poster-rail 横排，不再是
+    // .vod-card 网格；推荐内容的存在性要一并算这两类节点。
+    tiles: document.querySelectorAll('.poster-tile').length,
+    hero: !!document.querySelector('.home-hero'),
     chips: document.querySelectorAll('.chip:not(.chip--muted)').length,
     empty: !!document.querySelector('.empty'),
   })`);
@@ -136,7 +140,8 @@ async function waitForCards(cdp, want = 1, timeoutMs = 25000) {
   let last = { cards: 0 };
   while (Date.now() < deadline) {
     last = JSON.parse((await snapshot(cdp)) || "{}");
-    if ((last.cards ?? 0) >= want) return last;
+    const homeUnits = (last.cards ?? 0) + (last.tiles ?? 0) + (last.hero ? 1 : 0);
+    if (homeUnits >= want) return last;
     await sleep(400);
   }
   return last;
@@ -227,9 +232,11 @@ try {
     "homeVideoContent method returns the recommendation list", JSON.stringify(r.video));
 
   // 3. UI 兜底：首页出 2 卡片 + 分类 chip 保留（base 未被覆盖）。
-  const strict = await waitForCards(cdp, 2, 25000);
-  assert((strict.cards ?? 0) === 2,
-    "home renders 2 cards via homeVideoContent fallback", JSON.stringify(strict));
+  const strict = await waitForCards(cdp, 1, 25000);
+  // 沉浸式口径：推荐流前 5 条进头图轮播（整块 1 个 .home-hero），超过 5 条
+  // 才有横排 .poster-tile；2 条 fixture 的正确形态 = hero 在位 + 分类保留。
+  assert(strict.hero === true,
+    "home renders recommendation via homeVideoContent fallback (hero present)", JSON.stringify(strict));
   assert((strict.chips ?? 0) >= 2,
     "home classes preserved (not overwritten by fallback)", JSON.stringify(strict));
 

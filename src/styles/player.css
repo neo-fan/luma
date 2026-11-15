@@ -204,6 +204,9 @@
   gap: 10px;
   max-width: min(78%, 460px);
   text-align: center;
+  /* 状态卡入场：复用 overlay-in（纯 opacity），换集/换线时柔现而非硬出现。
+     退场保持硬切（卸载时机由解析状态驱动，presence 管理成本 > 收益）。 */
+  animation: overlay-in var(--dur) var(--ease);
 }
 
 .player-status.is-busy {
@@ -384,13 +387,93 @@
   cursor: default;
 }
 
-/* 线路异常 / 久等时把控制栏钉住：ArtPlayer 空闲会自动隐藏底栏
-   （opacity 0 + visibility hidden + pointer-events none），用户刚好就在这个
-   时候需要手动换线路/刷新，底栏却先消失了。错误与等待态强制显示，恢复播放
-   后交还给 ArtPlayer 的自动隐藏。 */
+/* 线路异常 / 久等时把控制栏钉住：ArtPlayer 空闲会自动隐藏底栏，用户刚好就
+   在这个时刻需要手动换线路/刷新，底栏却先消失了。错误与等待态强制显示，
+   恢复播放后交还给 ArtPlayer 的自动隐藏。
+   ⚠️ pointer-events 只给真正要点的两行（进度条 / 控制栏），绝不给 .art-bottom
+   本体——它是 inset:0 的全幅层，常驻层在后台播放时它悬在其它页面之上，
+   放开会把整个页面的点击吞光（2026-11-16 实测搜索页错误条点不到）。 */
 .player-stage.is-error .art-video-player .art-bottom,
 .player-stage.is-busy .art-video-player .art-bottom {
   opacity: 1 !important;
   visibility: visible !important;
+}
+
+.player-stage.is-error .art-video-player .art-progress,
+.player-stage.is-error .art-video-player .art-controls,
+.player-stage.is-busy .art-video-player .art-progress,
+.player-stage.is-busy .art-video-player .art-controls {
   pointer-events: auto !important;
+}
+
+/* 原地换集进行中：控制栏同样钉住——慢源缓冲十几秒里，这是「还在动」唯一
+   的常驻证据（notice 两秒就淡、画面停在冻结帧，用户读作点击丢失，
+   2026-11-16 反馈）。只钉底栏，不盖状态卡、不铺海报（实例还活着）；
+   pointer-events 同上只放开两行可点区。 */
+.player-stage.is-switching .art-video-player .art-bottom {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.player-stage.is-switching .art-video-player .art-progress,
+.player-stage.is-switching .art-video-player .art-controls {
+  pointer-events: auto !important;
+}
+
+/* 常驻层收起时（.is-idle）钉住规则必须失效：host 的 pointer-events:none
+   挡不住后代自己声明 auto（CSS 规范行为），否则换集态卡在别的页面上方
+   时，整块 art-bottom 会把该页面的点击全部吞掉（2026-11-16 实测搜索页
+   错误条的复制按钮点不到）。 */
+.player-host.is-idle .art-bottom {
+  pointer-events: none !important;
+}
+
+/* 切换期间 notice 不再闪隐：ArtPlayer 内建 2s 淡出是为瞬态提示设计的，
+   这里的 notice 由 1.5s 心跳重发维持，淡出曲线必须压掉，否则每两秒
+   闪进闪出，比没有更刺眼。 */
+.player-stage.is-switching .art-video-player .art-notice {
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+/* 「下一集」按钮的进行中态：图标叠一圈描弧转钟（图标内 .player-next-spin，
+   默认隐藏）。不用 opacity 压暗——那与 .is-disabled 撞相，用户会读成
+   「最后一集」而不是「正在切」。 */
+.art-control-next-episode .player-next-spin {
+  display: none;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.art-control-next-episode.is-switching .player-next-spin {
+  display: block;
+  animation: player-next-spin 0.9s linear infinite;
+}
+
+@keyframes player-next-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- 解析期海报背景 --------------------------------------------------------
+   换集 / 换线路 / 换源 remount 后，实例建成前的 3~50s 解析期原来是纯黑。
+   把影片封面（已过 /image 代理）铺在舞台底层：模糊 + 暗化当氛围，不抢中间
+   状态文案的焦点。层级在 .player-art（z-index:0，自带隔离上下文）之上、
+   .player-overlay（z-index:4）之下；只在「忙且没有播放实例」时渲染，实例
+   建好后交给 ArtPlayer 自己的 poster（见 usePlayerEngine 的 poster hold）。 */
+.player-stage-poster {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  /* blur 会吃出透明边，放大一圈盖住；暗化保证白色状态文字在任何封面上可读。 */
+  transform: scale(1.06);
+  filter: blur(18px) brightness(0.42);
+  pointer-events: none;
+  /* 解析期海报入场：与状态卡同一套 overlay-in（只动 opacity，不碰上面的
+     静态 scale/blur——动画 filter 每帧全屏重绘，红线禁止）。 */
+  animation: overlay-in var(--dur) var(--ease);
 }

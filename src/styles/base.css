@@ -124,6 +124,17 @@
   --sidebar-w-collapsed: 68px;
   --sidebar-dur: 0.28s;
   --sidebar-ease: cubic-bezier(0.32, 0.08, 0.18, 1);
+
+  /* ---------- 动效分档（2026-11-15 普查后统一） ----------
+     深色媒体播放器、信息密度高：主区间 120–260ms、位移 ≤8px、只动
+     opacity/transform。fast 给微交互（按压），slow 给浮层/页面/内容入场；
+     入场强调减速（ease-out）、退场加速（ease-in）。既有 --ease 保留给
+     hover 类状态过渡，--enter-shift 是入场位移幅度上限。 */
+  --dur-fast: 0.12s;
+  --dur-slow: 0.26s;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --enter-shift: 6px;
 }
 
 * {

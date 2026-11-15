@@ -324,6 +324,14 @@
   overflow: hidden;
   background: var(--bg);
   overscroll-behavior: contain;
+  /* 显隐不再硬切：opacity 淡入淡出。显示态 visibility 立即翻正（0 延迟），
+     否则淡入全程被 hidden 盖住、结束才「啪」地出现；隐藏态的延迟在
+     .is-idle 块尾覆盖（等淡出走完再藏）。left 与侧栏同曲线同时长，
+     收放侧栏时播放层左缘平滑让位，不再瞬跳。 */
+  transition:
+    opacity var(--dur) var(--ease),
+    visibility 0s linear 0s,
+    left var(--sidebar-dur) var(--sidebar-ease);
 }
 
 .app.is-sidebar-collapsed .player-host {
@@ -333,6 +341,13 @@
 .player-host.is-idle {
   visibility: hidden;
   pointer-events: none;
+  opacity: 0;
+  /* 隐藏时 visibility 等淡出走完再翻（延迟 = 淡出时长）；
+     切回显示态走上面基础块的 0 延迟，立即出现并开始淡入。 */
+  transition:
+    opacity var(--dur) var(--ease),
+    visibility 0s linear var(--dur),
+    left var(--sidebar-dur) var(--sidebar-ease);
 }
 
 /* 直播常驻层：挂在 AppShell 的 .content 里（与普通页面同一套骨架）。
@@ -345,6 +360,8 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
+  /* 与播放常驻层同一套显隐过渡：显示态 visibility 立即翻正，不延迟淡入。 */
+  transition: opacity var(--dur) var(--ease), visibility 0s linear 0s;
 }
 
 .live-host.is-idle {
@@ -355,6 +372,9 @@
   left: 0;
   visibility: hidden;
   pointer-events: none;
+  opacity: 0;
+  /* 隐藏时等淡出走完再翻 visibility；切回显示态走基础块的 0 延迟。 */
+  transition: opacity var(--dur) var(--ease), visibility 0s linear var(--dur);
 }
 
 .page {
@@ -402,5 +422,22 @@
 .page--player .page-body > * {
   width: var(--player-width);
   margin-inline: auto;
+}
+
+/* ---------- 页面级入场（2026-11-15 动效统一） ----------
+   路由重挂载（含详情页 key={location.key}、播放页换源/换集 remount、
+   Suspense fallback）自动触发入场，消除整页硬切。不做退场：Outlet 即时
+   卸载，退场需要 presence 管理，成本 > 收益（普查报告结论）。
+   只挂容器级一条动画：网格子项带 content-visibility:auto、直播有上千
+   频道，逐卡/逐条入场会在滚动时变成持续 pop-in 且动画数量爆炸。 */
+.page {
+  animation: page-in var(--dur-slow) var(--ease-out) both;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--enter-shift));
+  }
 }
 

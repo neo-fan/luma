@@ -213,3 +213,11 @@
   overflow: hidden;
 }
 
+/* ---------- 换源面板入场（2026-11-15 动效统一） ----------
+   panel-in 定义在 feedback.css 末尾（与 .confirm 共用）；原块无动画声明，
+   这里按模块末尾追加。退场保持硬切——Radix 关闭即卸载，presence 管理
+   成本 > 收益（普查报告结论）。 */
+.source-picker {
+  animation: panel-in var(--dur-slow) var(--ease-out);
+}
+

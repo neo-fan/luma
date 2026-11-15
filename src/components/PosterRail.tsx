@@ -27,6 +27,8 @@ const INITIAL_EDGES: Edges = { overflow: false, atStart: true, atEnd: true };
  */
 export default function PosterRail({ title, items, onOpen, site }: PosterRailProps) {
   const trackRef = useRef<HTMLDivElement>(null);
+  const fadeStartRef = useRef<HTMLSpanElement>(null);
+  const fadeEndRef = useRef<HTMLSpanElement>(null);
   const [edges, setEdges] = useState<Edges>(INITIAL_EDGES);
 
   const sync = useCallback(() => {
@@ -53,10 +55,19 @@ export default function PosterRail({ title, items, onOpen, site }: PosterRailPro
     };
   }, [sync, items.length]);
 
+  // 两侧渐隐常渲染，is-visible 控 opacity：滚到头是淡出收起，不再瞬隐。
+  // className 字面量是窗口探针契约（homeImmersive），状态类走 classList 切换。
+  useEffect(() => {
+    fadeStartRef.current?.classList.toggle("is-visible", edges.overflow && !edges.atStart);
+    fadeEndRef.current?.classList.toggle("is-visible", edges.overflow && !edges.atEnd);
+  }, [edges]);
+
   const scrollPage = useCallback((direction: 1 | -1) => {
     const track = trackRef.current;
     if (!track) return;
-    track.scrollBy({ left: direction * track.clientWidth * 0.82, behavior: "smooth" });
+    // 减弱动效时降级为瞬时翻页：平滑滚动不在全局动画降级覆盖范围内。
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    track.scrollBy({ left: direction * track.clientWidth * 0.82, behavior: reduced ? "auto" : "smooth" });
   }, []);
 
   const handleKeyDown = useCallback(
@@ -119,12 +130,16 @@ export default function PosterRail({ title, items, onOpen, site }: PosterRailPro
             <PosterTile key={String(vod.vod_id)} vod={vod} onOpen={onOpen} site={site} />
           ))}
         </div>
-        {overflow && !atStart ? (
-          <span className="poster-rail__fade poster-rail__fade--start" aria-hidden="true" />
-        ) : null}
-        {overflow && !atEnd ? (
-          <span className="poster-rail__fade poster-rail__fade--end" aria-hidden="true" />
-        ) : null}
+        <span
+          className="poster-rail__fade poster-rail__fade--start"
+          aria-hidden="true"
+          ref={fadeStartRef}
+        />
+        <span
+          className="poster-rail__fade poster-rail__fade--end"
+          aria-hidden="true"
+          ref={fadeEndRef}
+        />
       </div>
     </section>
   );

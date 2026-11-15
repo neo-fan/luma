@@ -13,8 +13,11 @@
   color: var(--text-soft);
   cursor: pointer;
   white-space: nowrap;
+  /* transform 补进过渡列表：主按钮按压位移（translateY 0.5px）不再瞬变，
+     与 icon-btn 的按压缩放同一节奏（fast 档）。 */
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), opacity var(--dur) var(--ease);
+    color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), opacity var(--dur) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .btn:hover:not(:disabled) {
@@ -705,4 +708,41 @@
   color: var(--accent);
   font-size: 11px;
   line-height: 1;
+}
+
+/* ---------- 下拉菜单入场升级 + 收藏星点亮（2026-11-15 动效统一） ---------- */
+
+/* overlay-in（纯 opacity）→ menu-in（带轻微上移）。原块的 overlay-in 声明
+   保留，这里同选择器按模块末尾覆盖。
+   ⚠️ 位移用独立 translate 属性而不是 transform：Radix popper 在本节点上
+   写内联 transform 做定位，keyframes 动画 transform 会在入场期间覆盖内联
+   定位、菜单从屏幕左上角飞入；translate 与 transform 叠加生效，互不打架。 */
+.app-select__menu {
+  animation: menu-in var(--dur-slow) var(--ease-out);
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+}
+
+/* 收藏星「点亮」反馈：点击瞬间挂 250ms 瞬态 is-pop（FavStar.tsx 到时移除）。
+   不挂 .is-on——收藏页整页 is-on 星挂载会齐刷刷 pop。只动 transform，
+   不碰 fill 规则（lucideIcons / historyLine 契约）。 */
+.fav-star.is-pop svg {
+  animation: star-pop 0.24s var(--ease-out);
+}
+
+@keyframes star-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.22);
+  }
+  100% {
+    transform: scale(1);
+  }
 }

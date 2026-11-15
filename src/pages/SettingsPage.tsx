@@ -258,12 +258,18 @@ export default function SettingsPage({
                     ? "settings-nav__item is-active"
                     : "settings-nav__item"
                 }
-                onClick={() =>
+                onClick={() => {
+                  // 减弱动效时降级为瞬时定位：平滑滚动不在全局动画降级范围内。
+                  const behavior: ScrollBehavior = window.matchMedia(
+                    "(prefers-reduced-motion: reduce)",
+                  ).matches
+                    ? "auto"
+                    : "smooth";
                   document.getElementById(item.id)?.scrollIntoView({
-                    behavior: "smooth",
+                    behavior,
                     block: "start",
-                  })
-                }
+                  });
+                }}
               >
                 {item.label}
               </button>

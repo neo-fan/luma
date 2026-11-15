@@ -8,7 +8,9 @@ import FavStar from "../components/FavStar";
 import SiteSelect from "../components/SiteSelect";
 import { toggleFavoriteSite, useFavoriteSites } from "../lib/siteFavorites";
 import HomeHero from "../components/HomeHero";
+import HomeSkeleton from "../components/HomeSkeleton";
 import PosterRail from "../components/PosterRail";
+import SearchSkeleton from "../components/Skeleton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
@@ -74,6 +76,14 @@ const SWITCH_DEBOUNCE_MS = 300;
 /** 沉浸式首页：推荐列表前 5 条进头图轮播，其余进横排。 */
 const HERO_COUNT = 5;
 
+/**
+ * 首页推荐数据 + 归属站点键。存储随站点换键（usePageState 渲染期取值），
+ * 但「这份数据由哪个站点拉回」仍要由值自己携带：跨挂载、自动顺延等路径里
+ * siteKey 与数据并非原子变化，归属判断以数据为准才不会把旧站列表当成新站
+ * 结果（跳过请求 / 闪现空态，2026-11-15 CDP 实测）。
+ */
+type ScopedHome = { siteKey: string; data: HomeResult | null };
+
 /** 首页内联的分类选择：tid="" 表示回到推荐流。存站点 key 是为了切站后
  *  不把上一个站点的 type_id 带过去（TVBox 的 tid 只在产生它的站点有效）。
  *  page 字段在无限滚动下复用为「已加载页数」，而非「当前页码」。 */
@@ -107,9 +117,9 @@ export default function HomePage({
 }: HomePageProps) {
   // 首页推荐内容按站点保留，返回首页时直接出结果；站点 key 变化时自然失效。
   const favoriteSites = useFavoriteSites();
-  const [home, setHome] = usePageState<HomeResult | null>(
-    `home:${siteKey}:data`,
-    null,
+  const [homeState, setHomeState] = usePageState<ScopedHome>(
+    `home:${siteKey}:data:v2`,
+    { siteKey: "", data: null },
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -155,14 +165,23 @@ export default function HomePage({
    * 「按钮没反应」。
    */
   const manualRefreshRef = useRef(false);
+  /**
+   * 本次挂载内「加载 effect 已排上过号」的站点。加载 effect 只在
+   * siteKey/reload 变化时运行，同一次挂载里空结果不会再排号；用它区分
+   * 「这一帧还没排号（pendingHome）」和「请求已结束但确实是空（该出空态）」。
+   */
+  const loadScheduledRef = useRef<Set<string>>(new Set());
 
   const site = sites.find((item) => item.key === siteKey);
   // CMS 的父级分类（有子分类）在 `ac=videolist&t=<父级>` 上返回空列表，
   // 只展示叶子分类，避免用户点进一个永远为空、分页也永远禁用的类目。
   const classes = leafClasses(
-    home?.classes?.length ? home.classes : (site?.categories ?? []),
+    homeState.data?.classes?.length ? homeState.data.classes : (site?.categories ?? []),
   );
-  const list = home?.list ?? [];
+  // 值的归属以数据自己携带的 siteKey 为准：usePageState 现在在渲染期换值，
+  // 键一变这份读回的就是新站点的数据（没有则为 null），不存在旧数据串页。
+  const homeForSite = homeState.siteKey === siteKey ? homeState.data : null;
+  const list = homeForSite?.list ?? [];
   /** 空结果不算有效缓存：只有真正拉到列表才阻止重复请求。 */
   const hasList = list.length > 0;
   const selectedSite = sites.some((item) => item.key === draftSite)
@@ -230,10 +249,13 @@ export default function HomePage({
     if (force) {
       forceNextRef.current = null;
     }
+    if (siteKey) {
+      loadScheduledRef.current.add(siteKey);
+    }
     // 已有「有内容」缓存、且不是手动刷新 / 主动切站点：跳过整个请求。
     // 注意用 hasList 而非 home：空结果（如只给分类的豆瓣源、或一次网络
     // 抖动）绝不缓存，否则「有缓存就跳过」会让首页永久停在空态、无法自愈。
-    if (home && hasList && reload === 0 && !force) {
+    if (homeForSite && hasList && reload === 0 && !force) {
       // 走到这里说明本次不需要请求，但上一个 effect 可能在被取消时留下
       // loading=true（切站/StrictMode 双跑都会）：不清掉的话刷新图标会一直
       // 转、按钮一直 disabled，用户点不动刷新。命中缓存直接收敛成静止态。
@@ -243,7 +265,7 @@ export default function HomePage({
     let alive = true;
     const run = async () => {
       if (!siteKey) {
-        setHome(null);
+        setHomeState({ siteKey: "", data: null });
         setError("");
         setLoading(false);
         return;
@@ -263,7 +285,10 @@ export default function HomePage({
             // 看起来像这个源彻底坏了。
             const cards = (result?.list ?? []).length;
             const cats = (result?.classes ?? []).length;
-            setHome(cards > 0 || cats > 0 ? result : null);
+            setHomeState({
+              siteKey,
+              data: cards > 0 || cats > 0 ? result : null,
+            });
             setError("");
             setLoading(false);
             if (manualRefreshRef.current) {
@@ -306,7 +331,7 @@ export default function HomePage({
             return;
           }
           if (attempt === 1) {
-            setHome(null);
+            setHomeState({ siteKey, data: null });
             setError(errorMessage(err));
             setLoading(false);
             return;
@@ -385,7 +410,17 @@ export default function HomePage({
   const isCategory = activeTid !== "";
   const catList = catItems;
   const shownList = isCategory ? catList : list;
-  const busy = isCategory ? catLoading || catLoadingMore : loading;
+  /**
+   * 首页请求是否「在途但 loading 还没置上」。setLoading(true) 发生在 effect
+   * 回调里，切站/换源后的第一帧它还是 false——骨架必须从这一帧就顶上，
+   * 否则 AsyncBoundary 会先闪一帧空态。
+   */
+  const pendingHome =
+    !isCategory &&
+    !hasList &&
+    Boolean(siteKey) &&
+    !loadScheduledRef.current.has(siteKey);
+  const busy = isCategory ? catLoading || catLoadingMore : loading || pendingHome;
   const shownError = isCategory ? catError : error;
   // 沉浸式首页：头图轮播吃掉前 5 条，剩下的铺成横排（不够 5 条时只出头图）。
   const heroItems = list.slice(0, HERO_COUNT);
@@ -634,11 +669,14 @@ export default function HomePage({
 
       <div className="page-body">
         <AsyncBoundary
-          loading={busy}
+          loading={busy || pendingHome}
           error={shownError}
           errorTitle={isCategory ? "分类内容加载失败" : "首页内容加载失败"}
           isEmpty={shownList.length === 0}
           loadingLabel={isCategory ? "正在加载分类内容…" : "正在加载首页内容…"}
+          skeleton={
+            isCategory ? <SearchSkeleton count={12} /> : <HomeSkeleton />
+          }
           emptyTitle={isCategory ? "该分类暂无内容" : "该站点暂无推荐内容"}
           emptyDescription={
             isCategory

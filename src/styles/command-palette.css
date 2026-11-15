@@ -603,7 +603,9 @@
     #1c1c20 68%
   );
   background-size: 220% 100%;
-  animation: vod-skeleton 1.4s linear infinite;
+  /* 原 vod-skeleton 扫光已删除（死引用，实际静止）：统一改挂 sk-breathe
+     呼吸，与搜索/详情骨架同一套语言，静态渐变底保留。 */
+  animation: sk-breathe 1.8s var(--ease) infinite;
 }
 
 .source-skel__avatar {
@@ -649,5 +651,27 @@
   border-top: 1px solid var(--border);
   color: var(--faint);
   font-size: var(--fs-2xs);
+}
+
+/* ---------- 浮层入场（2026-11-15 动效统一） ----------
+   Radix/cmdk 关闭即卸载，退场需要 forceMount + 自管 presence，
+   成本 > 收益，只做入场（普查报告结论）。 */
+
+[cmdk-overlay] {
+  animation: overlay-in var(--dur) var(--ease);
+}
+
+[cmdk-root] {
+  animation: palette-in var(--dur-slow) var(--ease-out);
+}
+
+/* 命令面板入场：opacity + 轻微上移 + 微缩，比纯 opacity 更有「浮层落下」感。
+   [cmdk-root] 是 [cmdk-dialog]（fixed 定位壳）的普通 flex 子项，没有内联
+   transform，动画 transform 安全。 */
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
 }
 
