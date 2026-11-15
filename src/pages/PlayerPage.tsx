@@ -7,8 +7,8 @@ import PlayerStage from "../components/player/PlayerStage";
 import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
 import PlayerResolution from "../components/player/PlayerResolution";
-import PlayerSpeed from "../components/player/PlayerSpeed";
 import { parsePlayLines, sameEpisodeName, sameTitle, toVodRef } from "../lib/format";
+import type { PlayLine } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
@@ -45,7 +45,6 @@ import type { HistoryItem, ResultPage, Site, VodInfo } from "../types/tvbox";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
-import { useCacheSpeed } from "../hooks/useCacheSpeed";
 import type { EpisodeNavControl } from "../hooks/usePlayerEngine";
 
 interface PlayerPageProps {
@@ -152,6 +151,28 @@ export default function PlayerPage({
    */
   const [recovering, setRecovering] = useState(false);
   const [showSources, setShowSources] = useState(false);
+  /**
+   * 原地换集时覆盖「当前线路/集」：路由里的 playUrl 仍指向进入本页时那一集，
+   * 但播放器已经换到新地址；显示、历史标签、下一集按钮都以这里为准。
+   */
+  const [manualPick, setManualPick] = useState<{
+    lineIndex: number;
+    episodeIndex: number;
+  } | null>(null);
+  /**
+   * 原地换源：跨站切换后路由身份（siteKey/vodId/vodName）还是进入本页时那一份，
+   * 但播放器已经在放新源。显示、历史、收藏都以这份覆盖值为准，免得「换源后
+   * 历史记到旧站」或信息卡写着旧站名。
+   */
+  const [switchedSource, setSwitchedSource] = useState<{
+    siteKey: string;
+    siteName: string;
+    vodId: string;
+    vodName: string;
+    lines: PlayLine[];
+    lineIndex: number;
+    episodeIndex: number;
+  } | null>(null);
   /** 收藏状态：与详情页共用同一份 SQLite 数据，这里只做镜像。 */
   const [favorite, setFavorite] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
@@ -179,6 +200,8 @@ export default function PlayerPage({
    * reloadRef 写入当前进度。消费一次即清零（见 usePlayerEngine.applyResume）。
    */
   const resumeMsRef = useRef(0);
+  /** 原地换集后的真实播放地址（路由里的 playUrl 不跟着改）。 */
+  const switchedUrlRef = useRef<string | null>(null);
   /**
    * 立即写一次历史的通道。切集 / 换源会用 navigate 重建本页，若只靠 5 秒
    * 节流，切换瞬间的进度可能丢；history effect 把 write 挂到这里，
@@ -299,9 +322,24 @@ export default function PlayerPage({
     panelLine,
     setPanelLine,
     currentLine,
-    canNext,
     vod,
   } = useEpisodeList(siteKey, vodId, playUrl, episodeName, playFrom);
+
+  const activeSiteKey = switchedSource?.siteKey ?? siteKey;
+  const activeSiteName = switchedSource?.siteName ?? siteName;
+  const activeVodId = switchedSource?.vodId ?? vodId;
+  const activeVodName = switchedSource?.vodName || vodName;
+  const activeLines = switchedSource?.lines ?? lines;
+  const activeLineIndex =
+    manualPick?.lineIndex ?? switchedSource?.lineIndex ?? lineIndex;
+  const activeEpisodeIndex =
+    manualPick?.episodeIndex ?? switchedSource?.episodeIndex ?? episodeIndex;
+  const activeLine = activeLines[activeLineIndex] ?? currentLine;
+  const activeEpisode = activeLine?.episodes[activeEpisodeIndex];
+  const activeEpisodeName = activeEpisode?.name || episodeName;
+  const canPlayNext = Boolean(
+    activeLine && activeEpisodeIndex + 1 < activeLine.episodes.length,
+  );
 
   /**
    * 历史写入需要「当前线路名 / 当前集名」，但两个值随异步剧集列表到达才确定。
@@ -310,8 +348,8 @@ export default function PlayerPage({
    */
   const historyLabelRef = useRef({ episodeName: "", playFrom: "" });
   historyLabelRef.current = {
-    episodeName: currentLine?.episodes[episodeIndex]?.name || episodeName,
-    playFrom: currentLine?.name || playFrom || "",
+    episodeName: activeEpisodeName,
+    playFrom: activeLine?.name || playFrom || "",
   };
 
   /**
@@ -368,7 +406,7 @@ export default function PlayerPage({
   historyMetaRef.current = {
     pic: vod?.vod_pic?.trim() || "",
     remarks: vod?.vod_remarks?.trim() || "",
-    siteName: siteName || "",
+    siteName: activeSiteName || "",
   };
 
   /**
@@ -381,10 +419,10 @@ export default function PlayerPage({
       return;
     }
     favNeedsCover.current = false;
-    void api.favoritesPatchMeta(toVodRef(siteKey, siteName, vod)).catch(() => {
+    void api.favoritesPatchMeta(toVodRef(activeSiteKey, activeSiteName, vod)).catch(() => {
       // 补封面失败不影响收藏本身。
     });
-  }, [favorite, vod, siteKey, siteName]);
+  }, [favorite, vod, activeSiteKey, activeSiteName]);
 
   useEffect(() => {
     let alive = true;
@@ -397,7 +435,7 @@ export default function PlayerPage({
             list.some(
               (item) =>
                 sameTitle(item.name, vod?.vod_name || vodName) ||
-                (item.siteKey === siteKey && item.vodId === vodId),
+                (item.siteKey === activeSiteKey && item.vodId === activeVodId),
             ),
           );
         }
@@ -410,7 +448,7 @@ export default function PlayerPage({
     return () => {
       alive = false;
     };
-  }, [siteKey, vodId]);
+  }, [activeSiteKey, activeVodId]);
 
   const toggleFavorite = async () => {
     if (!favVod || favBusy) {
@@ -418,7 +456,7 @@ export default function PlayerPage({
     }
     setFavBusy(true);
     try {
-      const favRef = toVodRef(siteKey, siteName, favVod);
+      const favRef = toVodRef(activeSiteKey, activeSiteName, favVod);
       const next = await api.favoritesToggle(favRef);
       setFavorite(next);
       // 加收藏时详情还没到（没有封面）：等详情回来补，别让收藏列表留空图。
@@ -438,10 +476,6 @@ export default function PlayerPage({
   };
 
   const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
-
-  // 缓存速度：反代 `/meter` 给真实下载速率，`<video>.buffered` 给已缓冲时长。
-  // 只在可播时轮询，解析中/换源中不显示，避免和 ArtPlayer 的 loading 抢画面。
-  const cacheSpeed = useCacheSpeed(videoRef, playable);
 
   /**
    * 与详情页共用的换源候选缓存：播放页多是从详情跳转过来，缓存已就绪；
@@ -874,7 +908,11 @@ export default function PlayerPage({
    * effect 体逐字保留在 usePlayerEngine，声明顺序须先于 history
    * 与 ended 两个 effect（它们直接读内核写入的 videoRef.current）。
    */
-  usePlayerEngine({
+  /**
+   * 换集/换源提示与「源侧慢」都塞进播放器 notice 层：提示贴着画面、全屏也可见，
+   * 页面顶部不再挂一条与播放器分离的文案。
+   */
+  const engine = usePlayerEngine({
     containerRef,
     videoRef,
     lastMediaRef,
@@ -882,7 +920,7 @@ export default function PlayerPage({
     lineSwitchStarted,
     switchOrFailoverRef,
     episodeNavRef,
-    canNext,
+    canNext: canPlayNext,
     reloadRef,
     resumeMsRef,
     resolved,
@@ -930,9 +968,9 @@ export default function PlayerPage({
       lastWrite = now;
       knownResolution = resolutionFromVideo(video) || knownResolution;
       const item: HistoryItem = {
-        siteKey,
-        vodId,
-        name: vodName,
+        siteKey: activeSiteKey,
+        vodId: activeVodId,
+        name: activeVodName,
         pic: historyMetaRef.current.pic,
         remarks: historyMetaRef.current.remarks,
         siteName: historyMetaRef.current.siteName,
@@ -996,7 +1034,7 @@ export default function PlayerPage({
       video.removeEventListener("loadedmetadata", onMeta);
       void write(true, lastMediaRef.current);
     };
-  }, [resolved, siteKey, vodId, vodName, playUrl, ledgerKey]);
+  }, [resolved, activeSiteKey, activeVodId, activeVodName, playUrl, ledgerKey]);
 
   /**
    * 看完一集自动接下一集：连看时不必每集回来点按钮。
@@ -1010,37 +1048,50 @@ export default function PlayerPage({
       return;
     }
     const onEnded = () => {
-      if (!canNext || !currentLine) {
-        return;
-      }
-      const next = currentLine.episodes[episodeIndex + 1];
-      // navigate 会重建本页，[siteKey, playUrl] effect 会清空 switchTip；提示必须
-      // 像手动换源那样经 sessionStorage 带过去一次，否则用户永远看不到。
-      window.sessionStorage.setItem(
-        "luma:autoSwitch",
-        `已自动播放下一集：${next?.name ?? ""}`,
-      );
-      const target = lines[lineIndex];
-      if (!target) {
-        return;
-      }
-      const episode = target.episodes[episodeIndex + 1];
-      if (!episode) {
+      if (!canPlayNext || !activeLine) {
         return;
       }
       log.info("auto next episode", {
         siteKey,
         vodId,
-        from: episodeIndex,
-        to: episodeIndex + 1,
+        from: activeEpisodeIndex,
+        to: activeEpisodeIndex + 1,
       });
+      goToEpisode(activeLineIndex, activeEpisodeIndex + 1);
+    };
+    video.addEventListener("ended", onEnded);
+    return () => video.removeEventListener("ended", onEnded);
+    // navigate / lines 随集数变化，但真正需要重挂的只有播放内核与当前集。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolved, canPlayNext, activeLineIndex, activeEpisodeIndex, siteKey, vodId, activeLine]);
+
+  /**
+   * 选集面板里点任意线路 / 任意一集。
+   *
+   * 优先原地换：解析出新地址后交给同一个 ArtPlayer 实例（`engine.switchSource`），
+   * 控制栏、全屏、音量都不重建——重建后没有用户手势，全屏再也进不去。
+   * 只有解析失败、类型变化或播放器还没就绪时才退回整页 navigate。
+   */
+  const goToEpisode = (targetLine: number, index: number) => {
+    const target = activeLines[targetLine];
+    if (!target || index < 0 || index >= target.episodes.length) {
+      return;
+    }
+    const episode = target.episodes[index];
+    flushHistoryRef.current?.();
+    setManualPick({ lineIndex: targetLine, episodeIndex: index });
+    setSwitchTip(`正在切换到「${episode.name}」…`);
+
+    const fallback = () => {
+      setManualPick(null);
+      setSwitchTip("");
       videoRef.current = null;
       navigate(
         {
           name: "player",
-          siteKey,
-          vodId,
-          vodName,
+          siteKey: activeSiteKey,
+          vodId: activeVodId,
+          vodName: activeVodName,
           playUrl: episode.url,
           episodeName: episode.name,
           playFrom: target.name,
@@ -1048,43 +1099,46 @@ export default function PlayerPage({
         true,
       );
     };
-    video.addEventListener("ended", onEnded);
-    return () => video.removeEventListener("ended", onEnded);
-    // navigate / lines 随集数变化，但真正需要重挂的只有播放内核与当前集。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, canNext, lineIndex, episodeIndex, siteKey, vodId, vodName]);
 
-  /** 选集面板里点任意线路 / 任意一集，直接替换当前播放页。 */
-  const goToEpisode = (targetLine: number, index: number) => {
-    const target = lines[targetLine];
-    if (!target || index < 0 || index >= target.episodes.length) {
+    if (!resolved) {
+      fallback();
       return;
     }
-    const episode = target.episodes[index];
-    // 切换前把当前进度落库，别等 5 秒节流（页面马上会被 key 重建）。
-    flushHistoryRef.current?.();
-    videoRef.current = null;
-    // 换集不盖幕、不延迟：同源同一份剧集列表，新地址立刻交给播放器，
-    // 缓冲进度由 ArtPlayer 自己的 loading 呈现。
-    navigate(
-      {
-        name: "player",
-        siteKey,
-        vodId,
-        vodName,
-        playUrl: episode.url,
-        episodeName: episode.name,
-        playFrom: target.name,
-      },
-      true,
-    );
+    const previousKind = resolved.kind;
+    void (async () => {
+      try {
+        const next = await resolveEpisodeTarget(activeSiteKey, target.name, episode.url);
+        if (next.unresolvable) {
+          throw new Error("线路不可解析");
+        }
+        const play = await api.resolvePlay({
+          siteKey: activeSiteKey,
+          url: next.url,
+          ua: next.ua,
+          referer: next.referer,
+          cookie: next.cookie,
+        });
+        if (play.kind !== previousKind || play.kind === "page") {
+          throw new Error(`播放类型变化：${previousKind} → ${play.kind}`);
+        }
+        resumeMsRef.current = 0;
+        await engine.switchSource(play.proxyUrl);
+        switchedUrlRef.current = play.proxyUrl;
+        setSwitchTip("");
+      } catch (err) {
+        log.warn("in-place episode switch failed", {
+          message: errorMessage(err),
+        });
+        fallback();
+      }
+    })();
   };
 
   const goEpisode = (delta: number) => {
-    if (!currentLine) {
+    if (!activeLine) {
       return;
     }
-    goToEpisode(lineIndex, episodeIndex + delta);
+    goToEpisode(activeLineIndex, activeEpisodeIndex + delta);
   };
 
   /**
@@ -1097,14 +1151,15 @@ export default function PlayerPage({
     // 不压暗播放器 —— 视频加载交给播放器自己显示。
     setSwitchTip(`正在切换到「${option.siteName}」…`);
     let matched: ReturnType<typeof pickMatchingEpisode> | null = null;
+    let nextLines: PlayLine[] = [];
     try {
       const list = await api.detail(option.siteKey, option.vodId);
-      const nextLines = list?.[0]
+      nextLines = list?.[0]
         ? parsePlayLines(list[0].vod_play_from, list[0].vod_play_url)
         : [];
       matched = pickMatchingEpisode(nextLines, {
-        name: episodeName,
-        index: episodeIndex,
+        name: activeEpisodeName,
+        index: activeEpisodeIndex,
       });
     } catch (err) {
       setSwitchTip("");
@@ -1117,32 +1172,76 @@ export default function PlayerPage({
       notify.error("该源没有可播放剧集，请换一个片源");
       return;
     }
-    // 换源会重建页面，提示沿用自动换源的通道带过去一次。
     log.info("manual source switch", {
-      from: siteKey,
+      from: activeSiteKey,
       to: option.siteKey,
       vodId: option.vodId,
-      episode: episodeName,
+      episode: activeEpisodeName,
     });
-    window.sessionStorage.setItem(
-      "luma:autoSwitch",
-      `已手动切换到「${option.siteName}」`,
-    );
     // 换源前先落库：历史按剧名合并，这条进度就是新源的续播起点。
     flushHistoryRef.current?.();
-    videoRef.current = null;
-    navigate(
-      {
-        name: "player",
-        siteKey: option.siteKey,
+    const nextVodName = option.vodName || activeVodName;
+    const nextSiteKey = option.siteKey;
+    // 兜底：新线路解析失败（跨协议 / 还没拿到播放器）才整页重建。
+    const fallback = () => {
+      setSwitchedSource(null);
+      setSwitchTip("");
+      videoRef.current = null;
+      navigate(
+        {
+          name: "player",
+          siteKey: nextSiteKey,
+          vodId: option.vodId,
+          vodName: nextVodName,
+          playUrl: match.episode.url,
+          episodeName: match.episode.name,
+          playFrom: match.line.name,
+        },
+        true,
+      );
+    };
+    if (!resolved) {
+      fallback();
+      return;
+    }
+    const previousKind = resolved.kind;
+    try {
+      const next = await resolveEpisodeTarget(
+        nextSiteKey,
+        match.line.name,
+        match.episode.url,
+      );
+      if (next.unresolvable) {
+        throw new Error("线路不可解析");
+      }
+      const play = await api.resolvePlay({
+        siteKey: nextSiteKey,
+        url: next.url,
+        ua: next.ua,
+        referer: next.referer,
+        cookie: next.cookie,
+      });
+      if (play.kind !== previousKind || play.kind === "page") {
+        throw new Error(`播放类型变化：${previousKind} → ${play.kind}`);
+      }
+      resumeMsRef.current = 0;
+      await engine.switchSource(play.proxyUrl);
+      switchedUrlRef.current = play.proxyUrl;
+      setSwitchedSource({
+        siteKey: nextSiteKey,
+        siteName: option.siteName,
         vodId: option.vodId,
-        vodName: option.vodName || vodName,
-        playUrl: match.episode.url,
-        episodeName: match.episode.name,
-        playFrom: match.line.name,
-      },
-      true,
-    );
+        vodName: nextVodName,
+        lines: nextLines,
+        lineIndex: Math.max(0, nextLines.indexOf(match.line)),
+        episodeIndex: nextLines.indexOf(match.line) >= 0 ? match.index : 0,
+      });
+      setManualPick(null);
+      setSwitchTip("");
+    } catch (err) {
+      log.warn("in-place source switch failed", { message: errorMessage(err) });
+      fallback();
+    }
   };
 
   const playExternal = async () => {
@@ -1151,7 +1250,7 @@ export default function PlayerPage({
     if (!EXTERNAL_PLAY_ENABLED) {
       return;
     }
-    const target = resolved?.url || playUrl;
+    const target = switchedUrlRef.current || resolved?.url || playUrl;
     try {
       await api.openExternal(target);
     } catch (err) {
@@ -1159,13 +1258,22 @@ export default function PlayerPage({
     }
   };
 
+  useEffect(() => {
+    const text = switchTip || slowNotice;
+    if (!text) {
+      return;
+    }
+    // 源侧慢的文案每 2s 变一次，跟着刷新 notice 的自动隐藏计时。
+    engine.notice(text);
+  }, [engine, switchTip, slowNotice]);
+
   /** 当前集名：剧集列表到达后用列表里的名字，否则用路由参数。 */
-  const nowEpisode = currentLine?.episodes[episodeIndex]?.name || episodeName;
+  const nowEpisode = activeEpisode?.name || episodeName;
 
   // 「下一集」按钮：详情未到时 lines 为空，按钮先以禁用态存在——控件由内核
   // 实例创建时一次性生成，不能等剧集列表到了再「补一个」，否则永远不会出现。
   episodeNavRef.current = {
-    canNext: canNext && Boolean(currentLine),
+    canNext: canPlayNext,
     onNext: () => goEpisode(1),
   };
 
@@ -1187,19 +1295,14 @@ export default function PlayerPage({
         label={resolutionBadge(videoMeta)}
         detail={resolutionDetail(videoMeta.width, videoMeta.height)}
       />
-      <PlayerSpeed
-        host={playerRoot}
-        bytesPerSec={cacheSpeed.bytesPerSec}
-        bufferedSec={cacheSpeed.bufferedSec}
-      />
     </>
   );
 
   return (
     <section className="page page--player">
       <PlayerHeader
-        vodName={vodName}
-        episodeName={episodeName}
+        vodName={activeVodName}
+        episodeName={activeEpisodeName}
         onBack={onBack}
         favorite={favorite}
         favBusy={favBusy}
@@ -1207,11 +1310,6 @@ export default function PlayerPage({
       />
 
       <div className="page-body">
-        {/* 换源提示与「源侧慢、已等待 Ns」共用一行文案：视频本身的缓冲由
-           ArtPlayer 内建的 loading 呈现，这里只负责说清楚在等什么。 */}
-        {switchTip || slowNotice ? (
-          <p className="tip">{switchTip || slowNotice}</p>
-        ) : null}
         {/* 与直播页同一口径：播放失败/解析失败是「这一下这条线路不行」的时效
           结论（自动换源可能已经把你救回来了），8s 带倒计时收起；hover 面板
           上时倒计时冻结。真正要用户决策的错误由 PlayerStage 面板常驻呈现。 */}
@@ -1229,10 +1327,10 @@ export default function PlayerPage({
         {/* 影片信息卡：片名/年份/简介 + 换源，紧跟在播放器下方。 */}
         <PlayerAbout
           vod={vod}
-          fallbackName={vodName}
-          siteKey={siteKey}
-          siteName={siteName}
-          lineName={currentLine?.name}
+          fallbackName={activeVodName}
+          siteKey={activeSiteKey}
+          siteName={activeSiteName}
+          lineName={activeLine?.name}
           episodeLabel={nowEpisode || undefined}
           douban={doubanMeta}
           onSwitchSource={() => setShowSources(true)}
@@ -1242,12 +1340,12 @@ export default function PlayerPage({
         />
 
         {/* 选集常驻在信息卡下面：不再需要「选集」按钮展开一层。 */}
-        {lines.length > 0 ? (
+        {activeLines.length > 0 ? (
           <EpisodePanel
-            lines={lines}
+            lines={activeLines}
             panelLine={panelLine}
-            lineIndex={lineIndex}
-            episodeIndex={episodeIndex}
+            lineIndex={activeLineIndex}
+            episodeIndex={activeEpisodeIndex}
             setPanelLine={setPanelLine}
             goToEpisode={goToEpisode}
           />
@@ -1255,9 +1353,9 @@ export default function PlayerPage({
 
         {showSources ? (
           <SourcePicker
-            title={vodName}
-            currentSiteKey={siteKey}
-            currentSiteName={siteName}
+            title={activeVodName}
+            currentSiteKey={activeSiteKey}
+            currentSiteName={activeSiteName}
             sites={sites}
             notice={
               allowFailover

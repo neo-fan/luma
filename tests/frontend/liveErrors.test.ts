@@ -154,8 +154,11 @@ describe("LivePage 接入分类文案", () => {
     expect(page).not.toContain('setFatalError("")');
   });
 
-  it("保留换线提示 .tip 与 ErrorBar 的主文案 / 归因 / 详情结构", () => {
-    expect(page).toContain('<p className="tip">{switchTip}</p>');
+  it("换线/换台提示进播放器 notice，ErrorBar 保留主文案 / 归因 / 详情结构", () => {
+    // 2026-11-15 用户要求「播放相关的尽量放在播放器里面」：提示不再挂在页顶 .tip。
+    expect(page).not.toContain('<p className="tip">');
+    expect(page).toContain("engine.notice(text)");
+    expect(page).toContain("const text = switchTip || slowNotice;");
     expect(page).toContain('lifetime="timed"');
     expect(page).toContain('lifetime={resolveError ? "timed" : "sticky"}');
     expect(page).toContain("resolveFailure?.message");

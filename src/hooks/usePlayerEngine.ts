@@ -26,7 +26,8 @@ import Hls from "hls.js";
 import { PLAYER_NEXT_ICON, PLAYER_RELOAD_ICON } from "../components/icons";
 import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { registerPlayer, stopActivePlayer } from "../lib/playerRegistry";
-import { errorMessage } from "../lib/invoke";
+import { api, errorMessage } from "../lib/invoke";
+import { formatBytesPerSec } from "../lib/bytes";
 import { log } from "../lib/logger";
 import { mediaIsAdvancing } from "../lib/mediaAlive";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
@@ -156,6 +157,20 @@ export interface UsePlayerEngineArgs {
   setVideoError: Dispatch<SetStateAction<string>>;
 }
 
+export interface UsePlayerEngineHandle {
+  /**
+   * 原地换集：复用同一个 ArtPlayer 实例（控制栏、全屏、音量都不重建），
+   * 只更换播放源。跨协议（hls → mp4）或播放器未就绪时 reject，由调用方
+   * 决定是否退回整页重建。
+   */
+  switchSource: (url: string) => Promise<void>;
+  /**
+   * 播放器内的短提示（换集/换源进度、源侧慢）。走 ArtPlayer 自带的 notice 层：
+   * 提示出现在画面里而不是页面顶部，全屏时也看得见；样式与播放器一致。
+   */
+  notice: (text: string | null) => void;
+}
+
 /** 挂载 / 销毁播放内核。纯 effect hook，无返回值。 */
 export function usePlayerEngine({
   containerRef,
@@ -178,12 +193,16 @@ export function usePlayerEngine({
   onPlayerRoot,
   onSlowNotice,
   setVideoError,
-}: UsePlayerEngineArgs): void {
+}: UsePlayerEngineArgs): UsePlayerEngineHandle {
   /** 控制栏「下一集」按钮的 DOM：mounted 时拿到，供禁用态同步用。 */
   const nextButtonRef = useRef<HTMLElement | null>(null);
   /** 软提示回调放 ref：它的身份每次渲染都会变，不能进内核 effect 的依赖。 */
   const slowNoticeRef = useRef(onSlowNotice);
   slowNoticeRef.current = onSlowNotice;
+  /** 原地换集的命令句柄：实例在 effect 里创建，ref 负责把命令送到它手上。 */
+  const switchRef = useRef<((url: string) => Promise<void>) | null>(null);
+  /** 播放器内提示通道：同样由 effect 里创建实例时挂上。 */
+  const noticeRef = useRef<((text: string | null) => void) | null>(null);
 
   /**
    * 剧集列表是异步到的：播放器实例创建时 lines 可能还是空的，到达 / 切到最后一集
@@ -266,6 +285,29 @@ export function usePlayerEngine({
         },
       });
     }
+
+    /**
+     * 缓存速度：挂在 ArtPlayer 控制栏右侧，和直播线路 / 清晰度同一排。
+     *
+     * 缓冲进度已经由进度条本身画出来，这里只报「从源站下了多快」。数值取自
+     * 反代 `/meter`：hls.js 读的是 127.0.0.1，它自己的带宽估算没有意义。
+     */
+    let speedEl: HTMLElement | null = null;
+    controls.push({
+      name: "net-speed",
+      position: "right",
+      index: 12,
+      html: `<span class="player-net-speed">--</span>`,
+      style: {
+        padding: "0 8px",
+        fontSize: "12px",
+        color: "var(--muted)",
+        fontVariantNumeric: "tabular-nums",
+      },
+      mounted(el) {
+        speedEl = el.querySelector<HTMLElement>(".player-net-speed") ?? el;
+      },
+    });
 
     /**
      * 点播「下一集」：走 ArtPlayer 原生 controls，不用贴在画面上的自绘浮层。
@@ -995,7 +1037,7 @@ export function usePlayerEngine({
      * 触发，但用户仍然面对黑屏；反过来看门狗又绝不能因为「等得久」就换源。
      * 两件事各管一头，8s 起显示，出画即撤。
      */
-    const loadStartedAt = Date.now();
+    let loadStartedAt = Date.now();
     const hintTimer = window.setInterval(() => {
       if (video.readyState >= 2 || mediaIsAdvancing(video)) {
         clearSlowNotice();
@@ -1015,6 +1057,49 @@ export function usePlayerEngine({
         );
       }
     }, 2_000);
+    // 每秒问一次反代吞吐；控件收起时也继续更新，展开控制栏立刻是最新读数。
+    let meterBase = "http://127.0.0.1:9978";
+    void api
+      .proxyStatus()
+      .then((status) => {
+        meterBase = status.baseUrl;
+      })
+      .catch(() => {
+        /* 反代还没起来：沿用默认端口 */
+      });
+    const speedTimer = window.setInterval(() => {
+      if (!speedEl) return;
+      void fetch(`${meterBase}/meter`, { cache: "no-store" })
+        .then((res) => res.json())
+        .then((body: { bytesPerSec?: number }) => {
+          const rate = formatBytesPerSec(Number(body.bytesPerSec ?? 0));
+          if (rate && speedEl) speedEl.textContent = `↓ ${rate}`;
+        })
+        .catch(() => {
+          /* 反代重启中：保持上一次读数，不闪 0 */
+        });
+    }, 1_000);
+
+    /**
+     * 原地换集：同一条线路的下一集只是换一个 m3u8 地址，销毁重建会把
+     * 控制栏、全屏、音量全部重置，而且重建后没有用户手势、无法再次进入
+     * 全屏。这里只停旧解码器、把新地址交给 ArtPlayer 的 switchUrl。
+     */
+    noticeRef.current = (text: string | null) => {
+      art.notice.show = text ?? "";
+    };
+    switchRef.current = async (url: string) => {
+      if (!videoRef.current) {
+        throw new Error("player is not ready");
+      }
+      teardownDecoders?.();
+      teardownDecoders = null;
+      declaredHeight = 0;
+      lastAliveAt = Date.now();
+      loadStartedAt = Date.now();
+      clearSlowNotice();
+      await art.switchUrl(url);
+    };
     video.addEventListener("progress", onMediaAlive);
     video.addEventListener("loadeddata", onMediaAlive);
     video.addEventListener("loadedmetadata", onMediaAlive);
@@ -1024,6 +1109,9 @@ export function usePlayerEngine({
     return () => {
       window.clearInterval(watchTimer);
       window.clearInterval(hintTimer);
+      switchRef.current = null;
+      noticeRef.current = null;
+      window.clearInterval(speedTimer);
       clearSlowNotice();
       window.clearTimeout(rateReplay);
       if (volumeTrailing !== null) {
@@ -1071,4 +1159,11 @@ export function usePlayerEngine({
     // 其余都是稳定引用（ref / setter），或仅用于日志与回调闭包（vodId）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved, resolving, siteKey, vodName]);
+
+  return {
+    switchSource: (url: string) =>
+      switchRef.current?.(url) ??
+      Promise.reject(new Error("播放器尚未就绪，暂时不能原地换集")),
+    notice: (text: string | null) => noticeRef.current?.(text),
+  };
 }

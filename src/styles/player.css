@@ -322,44 +322,10 @@
   margin-bottom: 10px;
 }
 
-/* ---- 缓存速度 HUD ----------------------------------------------------------
-   反代吞吐 + 已缓冲时长，压在画面左下角、控制栏上方。React 只在有读数时挂载，
-   所以这里没有空态；全屏时整体上移，避开 ArtPlayer 的进度条。 */
-.player-speed {
-  position: absolute;
-  left: 16px;
-  bottom: 64px;
-  z-index: 35;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 8px;
-  border-radius: var(--r-sm);
-  background: rgba(10, 12, 18, 0.55);
-  backdrop-filter: blur(6px);
-  color: var(--text-soft);
-  font-size: var(--fs-2xs);
+/* ---- 控制栏吞吐读数 --------------------------------------------------------
+   反代 `/meter` 的真实下载速率，挂在 ArtPlayer 控制栏右侧（与线路/清晰度同一
+   排）。缓冲进度由进度条自己画，这里不再重复一行「已缓冲 Ns」。 */
+.player-net-speed {
   font-variant-numeric: tabular-nums;
-  pointer-events: none;
-}
-
-.player-speed__rate {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--text);
-}
-
-.player-speed__arrow {
-  color: var(--accent);
-}
-
-.player-speed__buffer {
-  color: var(--muted);
-}
-
-.art-fullscreen .player-speed,
-.art-fullscreen-web .player-speed {
-  bottom: 76px;
-  left: 24px;
+  letter-spacing: 0.01em;
 }

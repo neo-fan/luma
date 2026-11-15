@@ -57,7 +57,7 @@ await cdp.eval(`(() => {
 await cdp.eval(`(async () => { ${sleep(300)} })()`);
 const opened = await cdp.eval(`Boolean(document.querySelector("[cmdk-dialog], [cmdk-root]"))`);
 check(opened === true, "Ctrl+K 打开命令面板");
-await cdp.screenshot("palette.png");
+await cdp.screenshot(".agents/palette.png");
 await cdp.eval(`(() => {
   const event = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true });
   window.dispatchEvent(event);
@@ -78,6 +78,6 @@ check(
   JSON.stringify(meter),
 );
 
-await cdp.screenshot("webview-guards.png");
+await cdp.screenshot(".agents/webview-guards.png");
 await cdp.close();
 process.exit(finish(problems, `probe_webview_guards: ${problems.length === 0 ? "all good" : "failed"}`));

@@ -57,7 +57,7 @@ describe("player favourites & history line contract", () => {
 
   it("toggles favourites through the shared library store", () => {
     const page = read("src/pages/PlayerPage.tsx");
-    expect(page).toContain("toVodRef(siteKey, siteName, favVod)");
+    expect(page).toContain("toVodRef(activeSiteKey, activeSiteName, favVod)");
     expect(page).toContain("api.favoritesToggle(favRef)");
     expect(page).toContain("api.favoritesList()");
   });
@@ -68,7 +68,7 @@ describe("player favourites & history line contract", () => {
     expect(page).toContain("remarks: historyMetaRef.current.remarks");
     expect(page).toContain("siteName: historyMetaRef.current.siteName");
     // 详情没到就点收藏时，等详情回来补一次元数据。
-    expect(page).toContain("api.favoritesPatchMeta(toVodRef(siteKey, siteName, vod))");
+    expect(page).toContain("api.favoritesPatchMeta(toVodRef(activeSiteKey, activeSiteName, vod))");
   });
 
   it("backfills covers on both list pages", () => {
@@ -84,8 +84,8 @@ describe("player favourites & history line contract", () => {
     expect(page).toContain("episodeName: historyLabelRef.current.episodeName");
     expect(page).toContain("playFrom: historyLabelRef.current.playFrom");
     // 自动换线路时 navigate 不带 playFrom，必须优先取当前线路名。
-    expect(page).toContain("currentLine?.name || playFrom");
-    expect(page).toContain("currentLine?.episodes[episodeIndex]?.name || episodeName");
+    expect(page).toContain("activeLine?.name || playFrom");
+    expect(page).toContain("activeEpisodeName");
   });
 
   it("resumes on the recorded line before falling back to the first one", () => {

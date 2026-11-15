@@ -83,13 +83,6 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
 
   /** 上次渲染的源：换源后必须重新落点，别把 A 源的选中台带到 B 源。 */
   const lastSourceRef = useRef(sourceKey);
-  useEffect(() => {
-    if (lastSourceRef.current === sourceKey) {
-      return;
-    }
-    lastSourceRef.current = sourceKey;
-    setPick(null);
-  }, [sourceKey]);
 
   /**
    * 落点：优先回到上次看的那个台（按源记忆），它已不在列表里就第一个台。
@@ -243,6 +236,32 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     }
   }, []);
 
+  /**
+   * 换源 = 一次全新的播放尝试：上一源的错误、提示、换线记账全部作废。
+   *
+   * 这段必须放在 `clearVerdict` / `triedRef` 之后定义（它们是 const），
+   * 但逻辑上就是「sourceKey 变了」。漏掉它会先看到上一条「播放失败」，
+   * 而画面中央还是新源的「没有可播放的频道」——两个不同源的结论同屏。
+   */
+  useEffect(() => {
+    if (lastSourceRef.current === sourceKey) {
+      return;
+    }
+    lastSourceRef.current = sourceKey;
+    clearVerdict();
+    triedRef.current.clear();
+    setPick(null);
+    setVideoError("");
+    lastErrorRef.current = "";
+    setVideoStage("play");
+    setFatalError(null);
+    setSlowNotice("");
+    setSwitchTip("");
+    setRecovering(false);
+    failoverStarted.current = false;
+    lineSwitchStarted.current = false;
+  }, [sourceKey, clearVerdict]);
+
   const selectLine = useCallback(
     (name: string, next: number, total: number) => {
       if (total <= 0) {
@@ -366,7 +385,7 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     return () => window.clearTimeout(timer);
   }, [switchTip]);
 
-  usePlayerEngine({
+  const engine = usePlayerEngine({
     containerRef,
     videoRef,
     lastMediaRef,
@@ -385,6 +404,18 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
     onSlowNotice: (text) => setSlowNotice(text ?? ""),
     setVideoError: setEngineVideoError,
   });
+
+  /**
+   * 换台/换线与「源侧慢」的提示统一进播放器 notice：贴着画面、全屏可见。
+   * 页面顶部只留错误条（那是需要用户决策的信息，不适合 2 秒自动消失）。
+   */
+  useEffect(() => {
+    const text = switchTip || slowNotice;
+    if (!text) {
+      return;
+    }
+    engine.notice(text);
+  }, [engine, switchTip, slowNotice]);
 
   /**
    * 解析失败也换线路——但要与「源还没答完」区分开。
@@ -547,8 +578,6 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
         </div>
       </header>
       <div className="page-body">
-        {switchTip ? <p className="tip">{switchTip}</p> : null}
-        {!switchTip && slowNotice ? <p className="tip">{slowNotice}</p> : null}
         {/* 两类错误分开：
           · lifetime="timed"＝「此刻这条线路这一下不行」，画面可能已在别的
             线路上播着，8s 带倒计时自动收起（时长见 lib/notice.ts）；
@@ -616,9 +645,11 @@ export default function LivePage({ lives, vodActive = false }: LivePageProps) {
                 />
                 <LiveEpgPanel channelName={channel.name} />
               </>
-            ) : catalog.loading ? (
+            ) : catalog.loading || flat.length > 0 ? (
               <div className="live-main__placeholder">
-                <Spinner label="正在读取频道…" />
+                <Spinner
+                  label={catalog.loading ? "正在读取频道…" : "正在选择频道…"}
+                />
               </div>
             ) : (
               <div className="live-main__placeholder">
