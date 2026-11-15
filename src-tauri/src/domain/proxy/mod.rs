@@ -73,9 +73,16 @@ pub fn active_port() -> u16 {
 
 impl ProxyState {
     fn client() -> reqwest::Client {
+        // 反代是「原样搬运」：绝不能在这里打开 gzip/brotli 自动解码。
+        // reqwest 的压缩特性会在客户端解码、但 `content-length` / `range`
+        // 仍是我们透传上游头，长度对不上会让播放器截断分片。压缩只开在
+        // `infra/http.rs` 的取数客户端上（配置 / CMS / 豆瓣）。
         reqwest::Client::builder()
             .timeout(UPSTREAM_TIMEOUT)
             .pool_idle_timeout(Duration::from_secs(60))
+            .no_gzip()
+            .no_brotli()
+            .no_zstd()
             .build()
             .unwrap_or_else(|_| reqwest::Client::new())
     }
@@ -84,15 +91,19 @@ impl ProxyState {
     /// 但响应由 `http-cache-reqwest` 按 HTTP 语义缓存到 `<data>/cache/http-images`。
     /// 缓存键、Vary、ETag 复核、过期都由中间件处理，宿主不维护自己的索引。
     fn image_client() -> ClientWithMiddleware {
+        Self::image_client_in(&crate::store::data_dir().join("cache").join("http-images"))
+    }
+
+    /// 缓存目录可注入：测试用临时目录，生产用 `<data>/cache/http-images`。
+    fn image_client_in(dir: &std::path::Path) -> ClientWithMiddleware {
         let base = reqwest::Client::builder()
             .pool_idle_timeout(Duration::from_secs(60))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        let dir = crate::store::data_dir().join("cache").join("http-images");
         reqwest_middleware::ClientBuilder::new(base)
             .with(http_cache_reqwest::Cache(http_cache_reqwest::HttpCache {
                 mode: http_cache_reqwest::CacheMode::Default,
-                manager: http_cache_reqwest::CACacheManager::new(dir, false),
+                manager: http_cache_reqwest::CACacheManager::new(dir.to_path_buf(), false),
                 options: http_cache_reqwest::HttpCacheOptions::default(),
             }))
             .build()

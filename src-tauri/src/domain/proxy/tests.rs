@@ -1,5 +1,54 @@
 use super::*;
 
+/// 封面缓存的可量化证据：同一个 URL 打两次，上游只被请求一次。
+/// 第二次命中 `http-cache-reqwest` 的磁盘缓存（cacache），不再回源。
+#[tokio::test]
+async fn image_cache_serves_repeat_requests_without_hitting_upstream() {
+    use std::sync::atomic::AtomicUsize;
+
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+
+    async fn poster() -> impl IntoResponse {
+        HITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        (
+            [
+                ("content-type", "image/png"),
+                ("cache-control", "public, max-age=604800"),
+            ],
+            vec![0x89u8, b'P', b'N', b'G', 1, 2, 3],
+        )
+    }
+
+    let app = Router::new().route("/poster.png", get(poster));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let dir = std::env::temp_dir().join(format!("luma-image-cache-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let client = ProxyState::image_client_in(&dir);
+    let url = format!("http://{addr}/poster.png");
+
+    let first = client.get(&url).send().await.expect("first");
+    assert!(first.status().is_success());
+    assert_eq!(&first.bytes().await.expect("body")[..4], b"\x89PNG");
+
+    let second = client.get(&url).send().await.expect("second");
+    assert!(second.status().is_success());
+    assert_eq!(&second.bytes().await.expect("body")[..4], b"\x89PNG");
+
+    assert_eq!(
+        HITS.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "second request must be a cache hit, not another upstream fetch"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn urlencode_keeps_unreserved_only() {
     assert_eq!(urlencode("a-b_c.d~e"), "a-b_c.d~e");
