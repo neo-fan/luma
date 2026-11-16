@@ -140,7 +140,7 @@ const HOME_TITLE_SELECTOR = ".home-hero__title, .poster-tile__title, .vod-card__
 
 const snapshot = (cdp) =>
   cdp.eval(`JSON.stringify({
-    selected: document.querySelector('.site-select')?.getAttribute('data-value') || null,
+    selected: document.querySelector('.app-select--site')?.getAttribute('data-value') || null,
     cards: [...document.querySelectorAll(${JSON.stringify(HOME_TITLE_SELECTOR)})].map(c => c.textContent || ''),
     chips: document.querySelectorAll('.chip:not(.chip--muted)').length,
     empty: !!document.querySelector('.empty'),
@@ -204,7 +204,7 @@ try {
 
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
-  await cdp.eval(WAIT("return document.querySelector('.site-select__trigger') ? 'OK' : null;", 30000));
+  await cdp.eval(WAIT("return document.querySelector('.app-select--site .app-select__trigger') ? 'OK' : null;", 30000));
   const activeName = await cdp.eval(
     `window.__TAURI_INTERNALS__.invoke('config_active').then(a => a ? a.name : '')`,
   );
@@ -235,14 +235,15 @@ try {
   // 3. UI 兜底：切到 header_probe，出 1 卡片且卡片名回显自定义 UA，分类 chip 保留。
   //    站点选择已是自研下拉（SiteSelect）：点触发器 → 点 data-key 菜单项。
   await cdp.eval(`(() => {
-    const t = document.querySelector('.site-select__trigger');
+    const t = document.querySelector('.app-select--site .app-select__trigger');
     if (!t) return 'NO_TRIGGER';
     t.click();
     return 'OPENED';
   })()`);
   await sleep(300);
   await cdp.eval(`(() => {
-    const item = document.querySelector('.site-select__item[data-key=${JSON.stringify(PROBE_KEY)}]');
+    // 菜单 Portal 到 body，用常量无障碍名 scope，避免选到常驻直播层等其它下拉。
+    const item = document.querySelector('.app-select__menu[aria-label="选择站点"] .app-select__item[data-value=${JSON.stringify(PROBE_KEY)}]');
     if (!item) return 'NO_ITEM';
     item.click();
     return 'OK';

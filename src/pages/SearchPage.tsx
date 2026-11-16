@@ -6,7 +6,7 @@ import Empty from "../components/Empty";
 import ErrorBar from "../components/ErrorBar";
 import Icon from "../components/Icon";
 import IconButton from "../components/IconButton";
-import SiteSelect from "../components/SiteSelect";
+import SiteSelect, { ALL_SITES } from "../components/SiteSelect";
 import SearchSkeleton from "../components/Skeleton";
 import VodCard from "../components/VodCard";
 import { api, errorMessage, toAppError } from "../lib/invoke";
@@ -24,7 +24,6 @@ import { classifyFailure, groupFailures } from "../lib/failureReason";
 import { log } from "../lib/logger";
 import type { ResultPage, Site, VodInfo } from "../types/luma";
 
-const ALL_SITES = "__all__";
 // 流式全站搜索不限总墙钟（用户要求）：每站受后端默认 15s 单站超时约束，
 // 结果陆续上屏、全部站点跑完才收尾；用户随时可取消。
 

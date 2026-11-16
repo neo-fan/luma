@@ -125,7 +125,7 @@ async function waitForPage() {
 
 const snapshot = (cdp) =>
   cdp.eval(`JSON.stringify({
-    selected: document.querySelector('.site-select')?.getAttribute('data-value') || null,
+    selected: document.querySelector('.app-select--site')?.getAttribute('data-value') || null,
     cards: document.querySelectorAll('.vod-card').length,
     // 沉浸式首页（2026-11-15）：推荐流渲染为头图 + poster-rail 横排，不再是
     // .vod-card 网格；推荐内容的存在性要一并算这两类节点。
@@ -205,7 +205,7 @@ try {
 
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
-  await cdp.eval(WAIT("return document.querySelector('.site-select__trigger') ? 'OK' : null;", 30000));
+  await cdp.eval(WAIT("return document.querySelector('.app-select--site .app-select__trigger') ? 'OK' : null;", 30000));
   const activeName = await cdp.eval(
     `window.__TAURI_INTERNALS__.invoke('config_active').then(a => a ? a.name : '')`,
   );

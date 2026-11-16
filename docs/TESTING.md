@@ -68,3 +68,44 @@ tools/
 
 `python tools/check.py` 9/9、`pnpm test` 449（54 个文件）、`cargo test --lib` 193 passed / 2 ignored。
 数字随提交变化，以 `AGENTS.md`「当前状态」为准。
+
+## 6. 探针依赖的 DOM 契约
+
+窗口探针只能按 DOM 定位节点，所以有一小撮选择器是**产品对测试网的承诺**。它们集中登记在这里；
+组件源码里不再各写各的「勿改」。
+
+### 6.1 原则
+
+1. **契约集中、实现单一**：新增/修改契约，同一笔提交里改本文档 + 受影响的探针。
+2. **不为探针新增类名**。能用 `role` / `aria-label` / `data-value` 表达的，不用自造 BEM 名。
+   教训：站点选择器曾为迁就探针在通用下拉之外另养一套 `.site-select*` 双类名，
+   结果多出一个 105 行的平行组件和一套只为契约存在的类名（2026-11-16 收敛进 `AppSelect`）。
+3. **同类控件必须共用一个组件**。通用组件缺能力时补通用组件，不要在调用方复制实现。
+4. 探针**只读**这些属性；产品改版时先判定「是口径过期还是真回归」，禁止为了让探针变绿放宽断言。
+
+### 6.2 下拉（`AppSelect`；`SiteSelect` 只是它的站点适配层）
+
+| 节点 | 选择器 |
+|---|---|
+| 根 | `.app-select[data-value="<当前值>"]` |
+| 触发器 | `.app-select__trigger`，`aria-label` = 当前项文案 |
+| 菜单 | `.app-select__menu`，`role="listbox"` |
+| 选项 | `.app-select__item[data-value="<选项值>"]` |
+| 选项状态 | 选中 `.is-active`；不可选 `.is-disabled` + `aria-disabled="true"` |
+| 选项附加 | 后置内容 `.app-select__note`（如收藏 ★）、右对齐标签 `.app-select__tag` |
+
+程序化 `.click()` 可以开菜单也可以选中（Radix 的 `pointerTypeRef` 初值是 `"touch"`，
+没有 `pointerdown` 的 click 会正常走 `onClick → handleOpen`）——探针因此不需要真实鼠标序列。
+
+### 6.3 其它定位点
+
+| 场景 | 契约 | 出处 |
+|---|---|---|
+| 首页内容 | 三形态 `.home-hero` / `.poster-tile` / `.vod-card`（推荐流出头图，分类/数据站出卡片） | `HomePage.tsx`、`HomeHero.tsx`、`PosterTile.tsx`、`VodCard.tsx` |
+| 首页分页 | 无限滚动哨兵 `.infinite-sentinel`、收尾 `.infinite-foot`（无 `.pager`） | `HomePage.tsx` |
+| 站点体检行 | `.health-item[data-site-key="<siteKey>"]`（列表行不是下拉选项，用语义主键） | `HealthCheckSection.tsx` |
+| 滚动 | 唯一的滚动容器是 `.page-body`；`.content` 是 `overflow:hidden`，在它上面滚永远得 0 | `layout.css` |
+| 常驻播放层 | 判页用 `location.hash` + `.player-host:not(.is-idle)`；详情页/选集查询必须 scope 到 `.content`（后台层不随切页卸载，全局查会把两份选集数在一起） | `AppShell.tsx`、`PlayerHost.tsx` |
+| 版本 | 侧栏 `version: <x.y.z>`，**无 `v` 前缀** | `AppShell.tsx`、`lib/version.ts` |
+| 日志 | 三通道 `logs/{app,spider,ui}/<name>.<date>.log` | `infra/logging/` |
+

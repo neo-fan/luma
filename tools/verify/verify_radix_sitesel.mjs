@@ -64,17 +64,17 @@ await cmd("Emulation.setDeviceMetricsOverride", {
 });
 
 // 1. 打开菜单并量测
-await ev(`document.querySelector(".site-select__trigger")?.click()`);
+await ev(`document.querySelector(".app-select--site .app-select__trigger")?.click()`);
 await sleep(600);
 const geo = await ev(`(() => {
-  const menu = document.querySelector(".site-select__menu");
+  const menu = document.querySelector(".app-select__menu");
   if (!menu) return { open: false };
   const r = menu.getBoundingClientRect();
-  const first = menu.querySelector(".site-select__item .site-select__name")?.textContent;
+  const first = menu.querySelector(".app-select__item .app-select__name")?.textContent;
   return {
     open: true,
     left: Math.round(r.left), right: Math.round(r.right),
-    width: Math.round(r.width), items: menu.querySelectorAll(".site-select__item").length,
+    width: Math.round(r.width), items: menu.querySelectorAll(".app-select__item").length,
     first,
     inViewport: r.left >= 0 && r.right <= window.innerWidth,
   };
@@ -84,30 +84,30 @@ ok("菜单打开且完整在视口内（贴左缘不被裁）", geo?.open && geo
 
 // 2. 程序化点 data-key 项（探针路径）
 const picked = await ev(`(() => {
-  const item = document.querySelector(".site-select__item[data-key]");
+  const item = document.querySelector(".app-select__item[data-value]");
   if (!item) return null;
   const key = item.getAttribute("data-key");
   item.click();
   return key;
 })()`);
 await sleep(1200);
-const after = await ev(`document.querySelector(".site-select")?.getAttribute("data-value")`);
+const after = await ev(`document.querySelector(".app-select--site")?.getAttribute("data-value")`);
 ok("程序化 click 选中生效（探针契约）", !!picked && after === picked, `picked=${picked} data-value=${after}`);
 
 // 3. 键盘导航（Radix 高亮）
-await ev(`document.querySelector(".site-select__trigger")?.click()`);
+await ev(`document.querySelector(".app-select--site .app-select__trigger")?.click()`);
 await sleep(400);
 await cmd("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 });
 await cmd("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 });
 await sleep(300);
-const hl = await ev(`document.querySelector(".site-select__item[data-highlighted]")?.textContent?.trim() || null`);
+const hl = await ev(`document.querySelector(".app-select__item[data-highlighted]")?.textContent?.trim() || null`);
 ok("键盘 ↓ 移动 Radix 高亮", !!hl, `highlighted="${hl}"`);
 // 收起
 await cmd("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
 await cmd("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
 
 // 截图（菜单开着的样子）
-await ev(`document.querySelector(".site-select__trigger")?.click()`);
+await ev(`document.querySelector(".app-select--site .app-select__trigger")?.click()`);
 await sleep(500);
 const shot = await cmd("Page.captureScreenshot", { format: "png" });
 if (shot?.data) {

@@ -381,7 +381,8 @@
 /* 搜索页站点选择：globe 图标触发 + 下拉菜单，贴合图标语言，替代原生 select */
 /* ---------- 通用下拉（AppSelect/SiteSelect 共用视觉） ---------- */
 /* 触发器宽度随文案自适应、320px 封顶（超长省略号）；菜单项选中高亮、禁用置灰。
-   SiteSelect 保留 .site-select* 双类名仅为探针 DOM 契约，样式一律走 .app-select。 */
+   下拉只有这一套命名：站点选择是 AppSelect 的适配层（SiteSelect.tsx），
+   DOM 契约统一写在 AppSelect 上，见 docs/TESTING.md §6。 */
 .app-select {
   position: relative;
 }
@@ -703,7 +704,11 @@
 }
 
 
-.site-select__favorite {
+/* 选项的后置内容（站点选择的收藏 ★ 等）。原名 .site-select__favorite，
+   是「为迁就探针另起一套类名」留下的最后一处残迹；能力已并进 AppSelect。
+   `margin-left: auto` 与 __tag 同源：两者同时存在时按剩余空间分摊，
+   与原 .site-select__favorite + .app-select__tag 的排版一致。 */
+.app-select__note {
   margin-left: auto;
   color: var(--accent);
   font-size: 11px;

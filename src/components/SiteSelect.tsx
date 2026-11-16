@@ -1,9 +1,13 @@
-import * as Select from "@radix-ui/react-select";
 import Icon from "./Icon";
+import AppSelect, { type AppSelectOption } from "./AppSelect";
 import { favoriteFirst, useFavoriteSites } from "../lib/siteFavorites";
 import type { Site } from "../types/luma";
 
-const ALL_SITES = "__all__";
+/**
+ * 「全部站点」聚合项的取值。搜索页用它做聚合检索，首页不提供。
+ * 单一来源：调用方从这里 import，不再各自写 `__all__` 字面量。
+ */
+export const ALL_SITES = "__all__";
 
 interface SiteSelectProps {
   /** 站点列表（含禁用/屏蔽项——它们由 disabledKeys 标灰）。 */
@@ -20,17 +24,16 @@ interface SiteSelectProps {
 }
 
 /**
- * 站点选择：基于 @radix-ui/react-select 的下拉。
+ * 站点选择：`AppSelect` 的领域适配层。
  *
- * 定位/碰撞翻转（贴窗口边缘不被裁）、焦点管理、键盘导航（↑↓/Home/End/
- * 首字母 typeahead）、Esc/点外关闭全部交给 Radix，不再手写量测 clamp。
+ * 只负责「站点」这件事特有的语义，渲染与交互一律交给通用下拉：
+ * - 「全部站点」聚合项（allowAll）；
+ * - 收藏源置顶（favoriteFirst 是稳定排序，同组内保持配置原顺序）；
+ * - jvm 源标「jar 源」、禁用/屏蔽源置灰并给出原因。
  *
- * DOM 契约（探针依赖，勿改）：
- * - 根节点 `.site-select` 带 `data-value={value}`
- * - 菜单项 `.site-select__item` 带 `data-key={site.key}`；
- *   屏蔽项 `aria-disabled="true"` + `.is-disabled`
- * - 程序化 `.click()` 可开菜单与选中（Radix pointerTypeRef 初值 "touch"，
- *   无 pointerdown 的 click 会走 onClick → handleOpen；Item 有 onClick 选中）
+ * DOM 契约（含探针依赖的 `data-value` 定位）统一写在 `AppSelect` 上，
+ * 这里不再自定类名 —— 曾经为了迁就探针另起 `.site-select*` 双类名，
+ * 结果是多养一份平行实现，见 docs/TESTING.md §6。
  */
 export default function SiteSelect({
   sites,
@@ -40,85 +43,52 @@ export default function SiteSelect({
   disabledKeys,
   disabledHints,
 }: SiteSelectProps) {
-  const isAll = value === ALL_SITES;
   const favorites = useFavoriteSites();
-  // 收藏源排前面；同组内保持配置原顺序（favoriteFirst 是稳定排序）。
   const ordered = favoriteFirst(sites, (site) => site.key);
-  const current = isAll ? null : sites.find((item) => item.key === value);
-  const triggerLabel = isAll ? "全部站点" : current?.name ?? "选择站点";
+  const current = sites.find((item) => item.key === value);
+  const triggerLabel =
+    value === ALL_SITES ? "全部站点" : current?.name ?? "选择站点";
+
+  const options: AppSelectOption[] = [
+    ...(allowAll
+      ? [
+          {
+            value: ALL_SITES,
+            label: "全部站点",
+            icon: <Icon name="globe" />,
+          },
+        ]
+      : []),
+    ...ordered.map((site) => {
+      const blocked = disabledKeys?.has(site.key) ?? false;
+      return {
+        value: site.key,
+        label: site.name,
+        disabled: blocked,
+        disabledHint: disabledHints?.get(site.key) ?? "不可选",
+        tag: blocked ? undefined : site.runtime === "jvm" ? "jar 源" : undefined,
+        note: favorites.includes(site.key) ? "★" : undefined,
+      };
+    }),
+  ];
 
   return (
-    <div className="site-select app-select" data-value={value}>
-      <Select.Root value={value} onValueChange={onChange}>
-        <Select.Trigger asChild aria-label={triggerLabel} title={triggerLabel}>
-          <button type="button" className="site-select__trigger app-select__trigger">
-            <Icon name="globe" />
-            <span className="site-select__label app-select__label">{triggerLabel}</span>
-            <Icon name="chevron" />
-          </button>
-        </Select.Trigger>
-        <Select.Portal>
-          <Select.Content
-            className="site-select__menu app-select__menu"
-            role="listbox"
-            aria-label="选择站点"
-            position="popper"
-            sideOffset={8}
-            collisionPadding={8}
-          >
-            <Select.Viewport>
-              {allowAll ? (
-                <Select.Item
-                  value={ALL_SITES}
-                  className={
-                    isAll ? "site-select__item app-select__item is-active" : "site-select__item app-select__item"
-                  }
-                >
-                  <Icon name="globe" />
-                  <Select.ItemText asChild>
-                    <span className="site-select__name app-select__name">全部站点</span>
-                  </Select.ItemText>
-                </Select.Item>
-              ) : null}
-              {ordered.map((site) => {
-                const blocked = disabledKeys?.has(site.key) ?? false;
-                return (
-                  <Select.Item
-                    key={site.key}
-                    value={site.key}
-                    data-key={site.key}
-                    disabled={blocked}
-                    aria-disabled={blocked || undefined}
-                    title={site.name}
-                    className={
-                      (site.key === value
-                        ? "site-select__item app-select__item is-active"
-                        : "site-select__item app-select__item") +
-                      (blocked ? " is-disabled" : "")
-                    }
-                  >
-                    <Select.ItemText asChild>
-                      <span className="site-select__name app-select__name">{site.name}</span>
-                    </Select.ItemText>
-                    {favorites.includes(site.key) ? (
-                      <small className="site-select__favorite" aria-hidden="true">
-                        ★
-                      </small>
-                    ) : null}
-                    {blocked ? (
-                      <small className="site-select__tag app-select__tag">
-                        {disabledHints?.get(site.key) ?? "不可选"}
-                      </small>
-                    ) : site.runtime === "jvm" ? (
-                      <small className="site-select__tag app-select__tag">jar 源</small>
-                    ) : null}
-                  </Select.Item>
-                );
-              })}
-            </Select.Viewport>
-          </Select.Content>
-        </Select.Portal>
-      </Select.Root>
-    </div>
+    <AppSelect
+      options={options}
+      value={value}
+      onChange={onChange}
+      ariaLabel={triggerLabel}
+      triggerTitle={triggerLabel}
+      triggerIcon={<Icon name="globe" />}
+      // 语义修饰符：一个页面可能同时存在多个下拉（首页站点 + 常驻直播层的频道组），
+      // 调用方要能指认「这是站点选择」。只加一个修饰类，不再另起一套 BEM 命名。
+      className="app-select--site"
+      // 菜单是 Portal 到 body 的，根类覆盖不到；用常量无障碍名定位弹层。
+      // 原先这里就是写死的「选择站点」，不能跟着选中项漂移。
+      menuAriaLabel="选择站点"
+      // value 不在 options 里时（例如首页偏好残留了 `__all__`）仍按站点语义回显，
+      // 不用通用组件的「请选择」占位——那是表单场景的文案，不是这里的。
+      placeholder={triggerLabel}
+    />
   );
 }

@@ -117,20 +117,21 @@ console.log("\n== S3 首页 SiteSelect ==");
 await nav("首页");
 for (let i = 0; i < 25; i++) {
   await sleep(500);
-  if (await ev(`!!document.querySelector('.site-select__trigger')`)) break;
+  if (await ev(`!!document.querySelector('.app-select--site .app-select__trigger')`)) break;
 }
 out.homeSelect = await ev(`({
-  trigger: !!document.querySelector('.site-select__trigger'),
-  value: document.querySelector('.site-select')?.getAttribute('data-value') || null,
+  trigger: !!document.querySelector('.app-select--site .app-select__trigger'),
+  value: document.querySelector('.app-select--site')?.getAttribute('data-value') || null,
   nativeSelectGone: !document.querySelector('select.select'),
-  label: document.querySelector('.site-select__trigger')?.getAttribute('aria-label') || ''
+  label: document.querySelector('.app-select--site .app-select__trigger')?.getAttribute('aria-label') || ''
 })`);
-await ev(`document.querySelector('.site-select__trigger')?.click()`);
+await ev(`document.querySelector('.app-select--site .app-select__trigger')?.click()`);
 await sleep(500);
+// 菜单 Portal 到 body，用站点下拉的常量无障碍名 scope，别数到其它下拉的项。
 out.menu = await ev(`({
-  items: document.querySelectorAll('.site-select__item').length,
-  disabled: document.querySelectorAll('.site-select__item.is-disabled').length,
-  withDataKey: document.querySelectorAll('.site-select__item[data-key]').length
+  items: document.querySelectorAll('.app-select__menu[aria-label="选择站点"] .app-select__item').length,
+  disabled: document.querySelectorAll('.app-select__menu[aria-label="选择站点"] .app-select__item.is-disabled').length,
+  withDataValue: document.querySelectorAll('.app-select__menu[aria-label="选择站点"] .app-select__item[data-value]').length
 })`);
 await shot("62-home-siteselect");
 await ev(`document.body.click()`);

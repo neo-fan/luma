@@ -107,7 +107,7 @@ async function coldStart(cdp) {
   await cdp.eval(`localStorage.removeItem(${JSON.stringify(HOME_SITE_KEY)})`);
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
-  await cdp.eval(WAIT("return document.querySelector('.site-select__trigger') ? 'OK' : null;", 30000));
+  await cdp.eval(WAIT("return document.querySelector('.app-select--site .app-select__trigger') ? 'OK' : null;", 30000));
 }
 
 /**
@@ -116,7 +116,7 @@ async function coldStart(cdp) {
  */
 async function selectSite(cdp, key) {
   const opened = await cdp.eval(`(() => {
-    const t = document.querySelector('.site-select__trigger');
+    const t = document.querySelector('.app-select--site .app-select__trigger');
     if (!t) return 'NO_TRIGGER';
     t.click();
     return 'OPENED';
@@ -124,7 +124,9 @@ async function selectSite(cdp, key) {
   if (opened !== "OPENED") return opened;
   await sleep(300);
   return cdp.eval(`(() => {
-    const item = document.querySelector('.site-select__item[data-key=${JSON.stringify(key)}]');
+    // 菜单是 Radix Portal 到 body 的，不在根节点子树内 → 用常量无障碍名 scope，
+    // 否则当页面同时存在别的下拉（如常驻直播层的频道组）时会选错列表。
+    const item = document.querySelector('.app-select__menu[aria-label="选择站点"] .app-select__item[data-value=${JSON.stringify(key)}]');
     if (!item) return 'NO_ITEM';
     if (item.getAttribute('aria-disabled') === 'true') return 'DISABLED';
     item.click();
@@ -143,7 +145,7 @@ async function selectSite(cdp, key) {
  */
 const snapshot = (cdp) =>
   cdp.eval(`JSON.stringify({
-    selected: document.querySelector('.site-select')?.getAttribute('data-value') || null,
+    selected: document.querySelector('.app-select--site')?.getAttribute('data-value') || null,
     cards: document.querySelectorAll('.vod-card').length,
     hero: !!document.querySelector('.home-hero'),
     tiles: document.querySelectorAll('.poster-tile').length,
@@ -244,7 +246,7 @@ try {
 
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
-  await cdp.eval(WAIT("return document.querySelector('.site-select__trigger') ? 'OK' : null;", 30000));
+  await cdp.eval(WAIT("return document.querySelector('.app-select--site .app-select__trigger') ? 'OK' : null;", 30000));
   // reload 后首屏请求需要几秒，立即快照会读到空。轮询到 selected 与
   // 内容（hero/tiles/cards 任一）同时就位才下结论。
   let afterReload = null;

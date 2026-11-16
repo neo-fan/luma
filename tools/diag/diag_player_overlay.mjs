@@ -208,7 +208,7 @@ const gotoPlayer = `(async () => {
     clickText('首页');
     await sleep(500);
   }
-  if (!(await waitFor('.site-select__trigger', 30000))) return 'NO_HOME';
+  if (!(await waitFor('.app-select--site .app-select__trigger', 30000))) return 'NO_HOME';
 
   const want = ${JSON.stringify(WANT_SITE)};
   const pickKey = async () => {
@@ -234,8 +234,8 @@ const gotoPlayer = `(async () => {
     const key = await pickKey();
     if (!key) return 'NO_DATA_SITE';
     const before = document.querySelector('.vod-card')?.textContent?.trim() || '';
-    document.querySelector('.site-select__trigger').click();
-    const item = await waitFor('.site-select__item[data-key=' + JSON.stringify(key) + ']', 8000);
+    document.querySelector('.app-select--site .app-select__trigger').click();
+    const item = await waitFor('.app-select__menu[aria-label="选择站点"] .app-select__item[data-value=' + JSON.stringify(key) + ']', 8000);
     if (!item) return 'NO_SITE_ITEM';
     item.click();
     // 「见卡片 ≠ 切站完成」：旧站的卡片还在 DOM 里，必须等 data-value 落到
@@ -243,7 +243,7 @@ const gotoPlayer = `(async () => {
     const switched = await (async () => {
       const end = Date.now() + 45000;
       while (Date.now() < end) {
-        const cur = document.querySelector('.site-select')?.getAttribute('data-value');
+        const cur = document.querySelector('.app-select--site')?.getAttribute('data-value');
         const first = document.querySelector('.vod-card')?.textContent?.trim() || '';
         if (cur === key && first && first !== before) return true;
         await sleep(250);

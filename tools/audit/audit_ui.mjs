@@ -169,7 +169,7 @@ report.pages.homeMeta = await ev(`(() => {
     chipCount: document.querySelectorAll('.chip-row .chip').length,
     posters: imgs.length,
     postersLoaded: imgs.filter(i => i.complete && i.naturalWidth > 0).length,
-    siteSelect: (() => { const s = document.querySelector('.site-select'); if (!s) return null; const r = s.getBoundingClientRect();
+    siteSelect: (() => { const s = document.querySelector('.app-select--site'); if (!s) return null; const r = s.getBoundingClientRect();
       return { w: Math.round(r.width), h: Math.round(r.height), value: s.getAttribute('data-value') }; })()
   };
 })()`);
