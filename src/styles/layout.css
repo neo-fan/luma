@@ -377,6 +377,24 @@
   transition: opacity var(--dur) var(--ease), visibility 0s linear var(--dur);
 }
 
+/* 常驻层隐藏 = 整棵子树不接收指针。这两条必须写给后代，不能只写给宿主：
+   ArtPlayer 的控制条自带 `visibility: visible; pointer-events: auto`（它假设自己
+   永远在可见播放器里），会逐节点覆盖宿主上的 hidden/none；而宿主隐藏用的是
+   `opacity: 0`（淡出动效）而非 `display: none`，元素仍然参与命中测试。两者叠加的
+   结果是：从点播/直播页离开后，一条看不见的全屏控制栏仍悬在所有页面之上抢点击
+   —— 实测 Esc 回首页后进搜索页，点错误条上的「复制」被 `.art-control-fullscreen`
+   吃掉，复制从来没发生过。
+   用 `!important` 是因为要压过 ArtPlayer 运行时注入的同名声明，而不是压我们自己
+   的样式表。可见性走 visibility（保留布局盒，播放器不会按 0×0 重排版），音频照播
+   不变——这两个宿主的设计都是「只藏不卸载」。 */
+.player-host.is-idle,
+.player-host.is-idle *,
+.live-host.is-idle,
+.live-host.is-idle * {
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
 .page {
   /* 页面骨架：padding 内边距 + 固定区（页头/工具栏）+ 滚动区（.page-body）。
      所有页面共用这一套，单页只覆盖变量或头部高度，不再各自拼布局。 */
