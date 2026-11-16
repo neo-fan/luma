@@ -34,6 +34,8 @@ import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
 import { decideWatchdogVerdict } from "../lib/watchdogVerdict";
 import { DEFAULT_PREFS, readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
+import { createActor } from "xstate";
+import { playerSessionMachine } from "../lib/playerSessionMachine";
 import type { VideoMeta } from "../lib/resolution";
 import type { PlayResolved } from "../types/luma";
 
@@ -224,6 +226,32 @@ export function usePlayerEngine({
   const switchRef = useRef<((url: string) => Promise<void>) | null>(null);
   /** 播放器内提示通道：同样由 effect 里创建实例时挂上。 */
   const noticeRef = useRef<((text: string | null) => void) | null>(null);
+
+  /**
+   * 影子模式（2.0.0 内核重构·接线第 1 步）：并行跑一个 `playerSessionMachine`，
+   * 把生命周期事件喂进去，**只观测、不改任何现有行为**（多余的 send 在 XState 里
+   * 是无害 no-op）。dev 下把机器快照暴露到 `window.__lumaPlayerSession`，供 CDP
+   * 探针对比「机器状态 vs 现实行为」；确认模型与现实一致后，才进第 2 步（把真源
+   * 切成 actor、逐簇删掉散落的守卫）。
+   */
+  const sessionActorRef = useRef<ReturnType<typeof createActor> | null>(null);
+  useEffect(() => {
+    const actor = createActor(playerSessionMachine);
+    sessionActorRef.current = actor;
+    actor.subscribe((snap) => {
+      if (import.meta.env.DEV) {
+        (window as unknown as { __lumaPlayerSession?: unknown }).__lumaPlayerSession = {
+          value: snap.value,
+          context: snap.context,
+        };
+      }
+    });
+    actor.start();
+    return () => {
+      sessionActorRef.current = null;
+      actor.stop();
+    };
+  }, []);
 
   /**
    * 剧集列表是异步到的：播放器实例创建时 lines 可能还是空的，到达 / 切到最后一集
@@ -1265,6 +1293,7 @@ export function usePlayerEngine({
     const onMediaAlive = () => {
       if (video.currentTime > 0) {
         hasPlayed = true;
+        sessionActorRef.current?.send({ type: "MEDIA_ALIVE" });
       }
       noteAlive();
     };
@@ -1351,6 +1380,8 @@ export function usePlayerEngine({
       // 否则缓冲完成了却停在暂停态，用户看到的就是「换集后黑屏不动」
       // （2026-11-15 实测）。
       const wasPlaying = !video.paused && !video.ended;
+      // 影子：换集 = USER_SWITCH，续播意图如实带入（机器据此决定是否 resumePlayback）。
+      sessionActorRef.current?.send({ type: "USER_SWITCH", url, resumeIntent: wasPlaying });
       /**
        * 偏好沿用（与新建实例同一套纪律）：原地换集同样会被 ArtPlayer 把
        * playbackRate 重置回 1、把 volume 恢复成它缓存的 100%——那不是用户
@@ -1491,6 +1522,8 @@ export function usePlayerEngine({
         let resumeCancelled = false;
         const cancelResume = () => {
           resumeCancelled = true;
+          // 影子：用户在切换期主动暂停 → 放弃续播，映射成 AUTOPLAY_BLOCKED。
+          sessionActorRef.current?.send({ type: "AUTOPLAY_BLOCKED" });
         };
         video.addEventListener("pause", cancelResume, { once: true });
         const resumePlay = () => {
@@ -1533,6 +1566,8 @@ export function usePlayerEngine({
         };
         const onAlive = () => {
           if (!video.paused && video.readyState >= 2 && video.videoWidth > 0) {
+            // 影子：新集真正出画 → MEDIA_ALIVE，机器 switching→playing 收口。
+            sessionActorRef.current?.send({ type: "MEDIA_ALIVE" });
             finish(true);
           }
         };
@@ -1549,6 +1584,11 @@ export function usePlayerEngine({
         onAlive();
       });
     };
+    // 影子：此刻实例已建、解码器已挂（url 早已 resolved）。把「建实例」这段映射成
+    // LOAD→RESOLVED→ATTACHED，让机器进 buffering；首帧由 onMediaAlive 推 MEDIA_ALIVE。
+    sessionActorRef.current?.send({ type: "LOAD", url: resolved.proxyUrl });
+    sessionActorRef.current?.send({ type: "RESOLVED", url: resolved.proxyUrl });
+    sessionActorRef.current?.send({ type: "ATTACHED" });
     video.addEventListener("progress", onMediaAlive);
     video.addEventListener("loadeddata", onMediaAlive);
     video.addEventListener("loadedmetadata", onMediaAlive);
