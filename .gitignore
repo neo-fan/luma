@@ -8,6 +8,9 @@ docs/verification-config.md
 # 窗口探针 / 诊断脚本的截图与临时产物：统一落在 tools/.out/，可随时整目录删除
 tools/.out/
 
+# 会话内上传的图片附件缓存（工具生成，非项目内容，不入库）
+.qoder-input-images/
+
 # ---- 编译产物（三类，各自唯一位置，均可重建）----
 # ① 前端：Vite 产出，tauri.conf.json 的 frontendDist 指向 ../dist
 dist/
