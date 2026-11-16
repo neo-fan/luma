@@ -24,12 +24,16 @@ pub mod db;
 pub mod env;
 #[path = "infra/error.rs"]
 pub mod error;
+#[path = "infra/flights.rs"]
+pub(crate) mod flights;
 #[path = "infra/http.rs"]
 pub mod http;
 #[path = "infra/logging/mod.rs"]
 pub mod logging;
 #[path = "infra/netrules.rs"]
 pub mod netrules;
+#[path = "infra/pct.rs"]
+pub(crate) mod pct;
 #[path = "infra/paths.rs"]
 pub mod paths;
 #[path = "infra/process.rs"]

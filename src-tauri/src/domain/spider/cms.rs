@@ -153,16 +153,8 @@ fn separator_for(api: &str) -> &'static str {
 }
 
 fn encode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.as_bytes() {
-        let ch = *byte as char;
-        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '~') {
-            out.push(ch);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
+    // 与反代 / 豆瓣同一套百分号编码（`infra::pct`），不再各自抄一份。
+    crate::pct::percent_encode(value)
 }
 
 #[cfg(test)]
