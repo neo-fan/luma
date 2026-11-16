@@ -64,6 +64,18 @@ describe("playerSessionMachine", () => {
     expect(a.getSnapshot().matches("playing")).toBe(true);
   });
 
+  it("AUTOPLAY_BLOCKED 置 resumeAborted，下次换集复位", () => {
+    const a = fresh();
+    toPlaying(a);
+    a.send({ type: "USER_SWITCH", url: "e2", resumeIntent: true });
+    expect(a.getSnapshot().context.resumeAborted).toBe(false);
+    a.send({ type: "AUTOPLAY_BLOCKED" });
+    expect(a.getSnapshot().context.resumeAborted).toBe(true);
+    // 新一轮换集 bumpSession 复位，不带着上一轮的「已放弃续播」
+    a.send({ type: "USER_SWITCH", url: "e3", resumeIntent: true });
+    expect(a.getSnapshot().context.resumeAborted).toBe(false);
+  });
+
   it("dead 探测一次即换线；alive 探测复位计数", () => {
     const a = fresh();
     toPlaying(a);

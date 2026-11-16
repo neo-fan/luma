@@ -1525,16 +1525,17 @@ export function usePlayerEngine({
         // 续播：switchUrl 返回时新解码器可能还没把 src 挂上（HLS 清单异步），
         // 此刻 play() 会被拒且不再重试，画面就停在暂停态。立即试一次 +
         // canplay 兜底；期间用户主动暂停则放弃续播，别跟用户抢控制权。
-        let resumeCancelled = false;
+        // 续播取消真源 = actor.resumeAborted（由 AUTOPLAY_BLOCKED 事件置位），
+        // 不再本地维护 resumeCancelled。
         const cancelResume = () => {
-          resumeCancelled = true;
-          // 影子：用户在切换期主动暂停 → 放弃续播，映射成 AUTOPLAY_BLOCKED。
+          // 用户在切换期主动暂停 → 放弃续播，别跟用户抢控制权。
           sessionActorRef.current?.send({ type: "AUTOPLAY_BLOCKED" });
         };
         video.addEventListener("pause", cancelResume, { once: true });
         const resumePlay = () => {
           video.removeEventListener("pause", cancelResume);
-          if (!resumeCancelled && videoRef.current === video && video.paused) {
+          const aborted = sessionActorRef.current?.getSnapshot().context.resumeAborted ?? false;
+          if (!aborted && videoRef.current === video && video.paused) {
             void video.play().catch(() => {});
           }
         };

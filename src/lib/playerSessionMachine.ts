@@ -46,6 +46,8 @@ export interface PlayerSessionContext {
   unresponsiveProbes: number;
   /** 音量淡入是否完成（取代 `fadeDone`）。 */
   fadeDone: boolean;
+  /** 本轮切换是否被用户暂停打断过续播（取代 `resumeCancelled`）。 */
+  resumeAborted: boolean;
 }
 
 /** 「未知」探测累计到几次判死换线（对齐内核 STALL_UNRESPONSIVE_LIMIT）。 */
@@ -58,6 +60,7 @@ const initialContext: PlayerSessionContext = {
   resumeIntent: false,
   unresponsiveProbes: 0,
   fadeDone: false,
+  resumeAborted: false,
 };
 
 export const playerSessionMachine = setup({
@@ -79,6 +82,7 @@ export const playerSessionMachine = setup({
       hasPlayed: () => false,
       unresponsiveProbes: () => 0,
       fadeDone: () => false,
+      resumeAborted: () => false,
     }),
     setTarget: assign({ targetUrl: ({ event }) => (event as { url: string }).url }),
     setResumeIntent: assign({
@@ -90,6 +94,7 @@ export const playerSessionMachine = setup({
       unresponsiveProbes: ({ context }) => context.unresponsiveProbes + 1,
     }),
     resetProbe: assign({ unresponsiveProbes: () => 0 }),
+    markResumeAborted: assign({ resumeAborted: () => true }),
     // 副作用动作名：由解释器执行，机器不实现（保持可单测、无 DOM 依赖）。
     acquireDecoder: () => undefined,
     releaseDecoders: () => undefined,
@@ -174,7 +179,7 @@ export const playerSessionMachine = setup({
         },
         AUTOPLAY_BLOCKED: {
           target: "playing",
-          actions: ["hideSpinner", "cancelResume"],
+          actions: ["hideSpinner", "markResumeAborted", "cancelResume"],
         },
         STALL: "probing",
         FAILED: "recovering",
