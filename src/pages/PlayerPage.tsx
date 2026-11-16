@@ -173,8 +173,33 @@ export default function PlayerPage({
    * 会闪 2 秒的 notice，用户读作「点了没反应」（2026-11-16 反馈）。
    */
   const [episodeSwitching, setEpisodeSwitching] = useState(false);
+  /**
+   * 「切换中」的同步真源。
+   *
+   * 为什么不能只靠上面的 state：state 要等本次渲染提交后才读得到，用户在同一
+   * tick（或一次重渲染之前）连点两下「下一集」时，两次 `goToEpisode` 读到的
+   * `episodeSwitching` 都是 false —— 双路 `switchSource` 协程并发起飞、互相覆盖
+   * （后完成者赢），正是注释里反复要防的「点了没反应 / 画面切回旧集」。控制栏
+   * click 那道守卫读的是 `episodeNavRef.current.switching`，而 `episodeNavRef`
+   * 只在 render 期赋值，同样慢一拍。
+   *
+   * 所以锁走 ref（写入同步），`episodeSwitching` state 仅用于渲染按钮转圈与
+   * PlayerStage 覆盖层。二者一律通过 `markSwitching` 一起改，不允许分别 set，
+   * 否则锁与视图会分叉。
+   */
+  const switchingRef = useRef(false);
   /** 切换代次：只有最新一次切换的收尾才允许解除「切换中」，防在途旧协程误清。 */
   const episodeSwitchGenRef = useRef(0);
+  /** 统一改「切换中」：ref 当场生效（挡重复点击），state 负责渲染，ref 镜像喂控制栏守卫。 */
+  const markSwitching = useCallback((value: boolean) => {
+    switchingRef.current = value;
+    // episodeNavRef 此刻已指向上一轮渲染写入的对象；直接改字段，让控制栏 click
+    // 在重渲染之前就读到最新的 switching，而不是等 render 期重新赋值。
+    if (episodeNavRef.current) {
+      episodeNavRef.current.switching = value;
+    }
+    setEpisodeSwitching(value);
+  }, []);
   /**
    * 「切换中」的兜底解除：完成路径（switchSource 出画 / 15s 封顶 / 退回重建）
    * 都收不回 true 的极端情况（HMR 丢掉在途 promise、异常路径遗漏）会把控制栏
@@ -185,11 +210,24 @@ export default function PlayerPage({
       return;
     }
     const timer = window.setTimeout(() => {
-      setEpisodeSwitching(false);
+      markSwitching(false);
       setSwitchTip("");
     }, 30000);
     return () => window.clearTimeout(timer);
-  }, [episodeSwitching]);
+  }, [episodeSwitching, markSwitching]);
+  /**
+   * 冷路径「下一集」走 `fallback()` → navigate 重建整页：路由 `playUrl` 一变就
+   * 代表新页面接管了加载态，这里释放切换锁，否则按钮会被钉到 30s 兜底才转停。
+   * 原地快路径不改 `playUrl`（见 switchedUrlRef 注释），由协程 finally 释放，
+   * 两条路径各管各的，不会互相误清。
+   */
+  useEffect(() => {
+    if (switchingRef.current) {
+      markSwitching(false);
+    }
+    // 仅跟随路由集身份变化触发；markSwitching 恒定，不需要进依赖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playUrl]);
   /**
    * 原地换源：跨站切换后路由身份（siteKey/vodId/vodName）还是进入本页时那一份，
    * 但播放器已经在放新源。显示、历史、收藏都以这份覆盖值为准，免得「换源后
@@ -668,7 +706,7 @@ export default function PlayerPage({
     failoverStarted.current = true;
     // 换源接管：收回可能挂着的「换集进行中」，否则控制栏会被钉住到兜底超时。
     episodeSwitchGenRef.current += 1;
-    setEpisodeSwitching(false);
+    markSwitching(false);
     // `changeable: 0`：配置明确不允许换源，别再对其它站点发搜索。
     if (!allowFailover) {
       setSwitchTip("");
@@ -794,7 +832,7 @@ export default function PlayerPage({
       setSwitchTip("");
       setVideoError(`换源失败：${errorMessage(err)}`);
     }
-  }, [episodeName, navigate, vodName, siteKey, allowFailover, ledgerKey]);
+  }, [episodeName, navigate, vodName, siteKey, allowFailover, ledgerKey, markSwitching]);
 
   /**
    * 真实配置里同一部剧常有多条线路：第一条是「分享页」，第二条才是直链
@@ -959,7 +997,7 @@ export default function PlayerPage({
     setNextLineBusy(true);
     // 手动换线接管：同 tryFailover，收回挂起的「换集进行中」。
     episodeSwitchGenRef.current += 1;
-    setEpisodeSwitching(false);
+    markSwitching(false);
     setSwitchTip("正在切换到下一条线路…");
     void tryNextLine()
       .then((switched) => {
@@ -969,7 +1007,7 @@ export default function PlayerPage({
         }
       })
       .finally(() => setNextLineBusy(false));
-  }, [nextLineBusy, tryNextLine]);
+  }, [nextLineBusy, tryNextLine, markSwitching]);
 
   // tryNextLine 依赖异步加载的剧集列表；用 ref 转发，避免播放内核 effect
   // 因 lines 到达而被重新挂载（那会从头开始缓冲）。
@@ -1220,8 +1258,11 @@ export default function PlayerPage({
    */
   const goToEpisode = (targetLine: number, index: number) => {
     // 一次只跑一个切换协程：双路 switchUrl 竞态会互相覆盖（后完成者赢），
-    // 用户看到「画面切回旧集」。控制栏按钮侧另有同态守卫，这里兜住选集面板。
-    if (episodeSwitching) {
+    // 用户看到「画面切回旧集」。读 ref 而不是 state——同一 tick 内的第二次点击
+    // 还看不到上一次 setEpisodeSwitching 的结果，state 守卫会漏。控制栏按钮侧
+    // 另有 click 守卫（读 episodeNavRef.current.switching，已被 markSwitching
+    // 当场改写），这里兜住选集面板与自动换集入口。
+    if (switchingRef.current) {
       return;
     }
     const target = activeLines[targetLine];
@@ -1229,6 +1270,9 @@ export default function PlayerPage({
       return;
     }
     const episode = target.episodes[index];
+    // 立刻上锁并点亮 loading，且必须在下面 `!resolved` 分支之前——冷路径直接
+    // navigate 重建，若等到快路径才置真，这一路既不转圈也不挡连点。
+    markSwitching(true);
     flushHistoryRef.current?.();
     setManualPick({ lineIndex: targetLine, episodeIndex: index });
     setSwitchTip(`正在切换到「${episode.name}」…`);
@@ -1258,7 +1302,6 @@ export default function PlayerPage({
     const previousKind = resolved.kind;
     const gen = episodeSwitchGenRef.current + 1;
     episodeSwitchGenRef.current = gen;
-    setEpisodeSwitching(true);
     void (async () => {
       try {
         // 按集缓存：预解析 / 探活 / 上次访问可能已解析过这一集。命中且类型
@@ -1305,7 +1348,7 @@ export default function PlayerPage({
         // 出画 / 退回整页重建 / 15s 封顶：三条路都要收回「切换中」态；
         // 被更新的切换（或换线/换源接管）顶掉代次时不清——那是别人的状态。
         if (episodeSwitchGenRef.current === gen) {
-          setEpisodeSwitching(false);
+          markSwitching(false);
         }
       }
     })();
