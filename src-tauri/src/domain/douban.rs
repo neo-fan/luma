@@ -1589,7 +1589,24 @@ fn search_cache() -> &'static Cache<String, Option<SuggestItem>> {
 }
 
 fn cache_key(title: &str, year: Option<&str>) -> String {
-    format!("{}|{}", normalize_title(title), year.unwrap_or(""))
+    format!("{}|{}", cache_title_key(title), year.unwrap_or(""))
+}
+
+/// 缓存键专用的片名归一：与 `normalize_title` 同法（去年份括号、半角、去噪声、
+/// 小写），但**保留季/部标记**（第一季 / 第二季 / Season 2）。
+///
+/// 关键区别：`normalize_title` 剥季是给 `pick_candidate` 打分用的（选季在打分
+/// 阶段做）；但缓存是在打分**之前**查的——键若也剥季，无年份时「庆余年 第一季」
+/// 与「庆余年 第二季」会撞成同一个键，后查的一季直接命中前一季的条目（拿错数据）。
+/// 年份仍是首选区分，季标记是无年份/同年份多季时的兜底。
+fn cache_title_key(raw: &str) -> String {
+    let stripped = drop_year_brackets(raw);
+    let half_width = to_half_width(&stripped);
+    half_width
+        .chars()
+        .filter(|ch| !is_title_noise(*ch))
+        .collect::<String>()
+        .to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -2371,12 +2388,20 @@ mod tests {
     async fn cache_roundtrip_uses_normalized_key() {
         // moka 读取是 async：本测试只碰自己的三个 key（全局缓存、并行用例，
         // 不能再用整表清空/随机 key 断言 miss）。
-        let key = cache_key("庆余年 第一季", Some("2019"));
+        // 同季的不同写法共用一个键（空格/全角括号差异）。
         assert_eq!(
-            key,
-            cache_key("庆余年（第二季）", Some("2019")),
-            "同剧不同季共用一个键"
+            cache_key("庆余年 第一季", Some("2019")),
+            cache_key("庆余年第一季", Some("2019")),
+            "同季不同写法共用一个键"
         );
+        // 不同季必须分开：缓存早于 pick_candidate 打分命中，键若剥季，无年份时
+        // 第二季会拿到第一季的条目。
+        assert_ne!(
+            cache_key("庆余年 第一季", Some("2019")),
+            cache_key("庆余年（第二季）", Some("2019")),
+            "同剧不同季必须分键"
+        );
+        let key = cache_key("庆余年 第一季", Some("2019"));
         cache_put(key.clone(), Some(meta()));
         assert_eq!(cache_get(&key).await.expect("hit").expect("positive"), meta());
         assert!(cache_get("roundtrip-missing-key|").await.is_none());
