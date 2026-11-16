@@ -54,9 +54,36 @@ const DOWNSTREAM: [&str; 10] = [
 pub struct ProxyState {
     port: AtomicU16,
     allow_local: bool,
+    /// 分片/清单客户端：原样搬运（禁自动解压），带每跳重定向守卫与
+    /// 已审查 IP 钉住的 DNS resolver（见 guard）。
     client: reqwest::Client,
-    /// 封面专用：带 HTTP 缓存中间件（cacache 磁盘后端）。
-    image_client: ClientWithMiddleware,
+    /// 封面专用：带 HTTP 缓存中间件（cacache 磁盘后端），守卫同上。
+    image_client: Arc<ClientWithMiddleware>,
+}
+
+/// 「原样搬运」的流式客户端构造。绝不能打开 gzip/brotli 自动解码：
+/// reqwest 在客户端解码、但 `content-length` / `range` 仍是我们透传上游
+/// 头，长度对不上会让播放器截断分片。压缩只开在 `infra/http.rs` 的取数
+/// 客户端上（配置 / CMS / 豆瓣）。
+fn streaming_builder(allow_local: bool) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .timeout(UPSTREAM_TIMEOUT)
+        .pool_idle_timeout(Duration::from_secs(60))
+        .redirect(guard::redirect_guard(allow_local))
+        .dns_resolver(guard::pinned_resolver())
+        .no_gzip()
+        .no_brotli()
+        .no_zstd()
+}
+
+fn wrap_image(base: reqwest::Client, dir: &std::path::Path) -> ClientWithMiddleware {
+    reqwest_middleware::ClientBuilder::new(base)
+        .with(http_cache_reqwest::Cache(http_cache_reqwest::HttpCache {
+            mode: http_cache_reqwest::CacheMode::Default,
+            manager: http_cache_reqwest::CACacheManager::new(dir.to_path_buf(), false),
+            options: http_cache_reqwest::HttpCacheOptions::default(),
+        }))
+        .build()
 }
 
 /// Port the proxy actually bound. Sidecars need it to build
@@ -72,41 +99,15 @@ pub fn active_port() -> u16 {
 }
 
 impl ProxyState {
-    fn client() -> reqwest::Client {
-        // 反代是「原样搬运」：绝不能在这里打开 gzip/brotli 自动解码。
-        // reqwest 的压缩特性会在客户端解码、但 `content-length` / `range`
-        // 仍是我们透传上游头，长度对不上会让播放器截断分片。压缩只开在
-        // `infra/http.rs` 的取数客户端上（配置 / CMS / 豆瓣）。
-        reqwest::Client::builder()
-            .timeout(UPSTREAM_TIMEOUT)
-            .pool_idle_timeout(Duration::from_secs(60))
-            .no_gzip()
-            .no_brotli()
-            .no_zstd()
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
-    }
-
-    /// 封面客户端：请求本身仍由 `handle_image` 决定（UA / Referer / 重试），
-    /// 但响应由 `http-cache-reqwest` 按 HTTP 语义缓存到 `<data>/cache/http-images`。
-    /// 缓存键、Vary、ETag 复核、过期都由中间件处理，宿主不维护自己的索引。
-    fn image_client() -> ClientWithMiddleware {
-        Self::image_client_in(&crate::store::data_dir().join("cache").join("http-images"))
-    }
-
-    /// 缓存目录可注入：测试用临时目录，生产用 `<data>/cache/http-images`。
+    /// 测试/降级入口：独立构建一个带守卫与钉住 resolver 的封面客户端。
     fn image_client_in(dir: &std::path::Path) -> ClientWithMiddleware {
         let base = reqwest::Client::builder()
             .pool_idle_timeout(Duration::from_secs(60))
+            .redirect(guard::redirect_guard(false))
+            .dns_resolver(guard::pinned_resolver())
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        reqwest_middleware::ClientBuilder::new(base)
-            .with(http_cache_reqwest::Cache(http_cache_reqwest::HttpCache {
-                mode: http_cache_reqwest::CacheMode::Default,
-                manager: http_cache_reqwest::CACacheManager::new(dir.to_path_buf(), false),
-                options: http_cache_reqwest::HttpCacheOptions::default(),
-            }))
-            .build()
+        wrap_image(base, dir)
     }
 
     pub fn port(&self) -> u16 {
@@ -148,11 +149,20 @@ pub fn start() -> Result<Arc<ProxyState>, AppError> {
         .map_err(|err| AppError::new(code::INTERNAL, "proxy local_addr failed").with_cause(err.to_string()))?
         .port();
 
+    let image_dir = crate::store::data_dir().join("cache").join("http-images");
+    let image_base = reqwest::Client::builder()
+        .pool_idle_timeout(Duration::from_secs(60))
+        .redirect(guard::redirect_guard(allow_local))
+        .dns_resolver(guard::pinned_resolver())
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     let state = Arc::new(ProxyState {
         port: AtomicU16::new(port),
         allow_local,
-        client: ProxyState::client(),
-        image_client: ProxyState::image_client(),
+        client: streaming_builder(allow_local)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new()),
+        image_client: Arc::new(wrap_image(image_base, &image_dir)),
     });
     ACTIVE_PORT.store(port, Ordering::Relaxed);
 
@@ -227,16 +237,8 @@ pub fn build_proxy_url(
 }
 
 fn urlencode(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for byte in input.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char)
-            }
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
+    // 唯一实现在 `infra::pct`（与 CMS 查询串、豆瓣内联头共用同一套转义口径）。
+    crate::pct::percent_encode(input)
 }
 
 #[tauri::command]

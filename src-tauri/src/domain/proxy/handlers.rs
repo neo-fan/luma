@@ -647,33 +647,11 @@ pub(super) fn disguised_ts_offset(buffer: &[u8]) -> Option<usize> {
 
 /// Decode a percent-encoded fragment (TVBox embeds URL-encoded header values,
 /// e.g. `User-Agent=Mozilla/5.0%20(...)`). Hand-rolled to avoid pulling in a
-/// new dependency: `%XX` -> byte, `+` stays literal (header values, not form
+/// `%XX` -> byte, `+` stays literal (header values, not form
 /// data), then UTF-8 decode. Invalid UTF-8 falls back to the raw input rather
-/// than rejecting the header.
+/// than rejecting the header. 唯一实现在 `infra::pct`。
 pub(super) fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = |b: u8| -> Option<u8> {
-                match b {
-                    b'0'..=b'9' => Some(b - b'0'),
-                    b'a'..=b'f' => Some(b - b'a' + 10),
-                    b'A'..=b'F' => Some(b - b'A' + 10),
-                    _ => None,
-                }
-            };
-            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
-                out.push((hi << 4) | lo);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    crate::textio::decode_relaxed(&out).unwrap_or_else(|| input.to_string())
+    crate::pct::percent_decode(input)
 }
 
 /// Parse a TVBox `vod_pic` that may carry inline request headers.

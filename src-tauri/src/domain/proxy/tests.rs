@@ -122,6 +122,120 @@ fn blocked_ranges_cover_private_and_loopback() {
     }
 }
 
+/// SSRF 回归：过审的初始 URL 用 302 把宿主打向 loopback（dev 的 CDP 9222
+/// 或本机任意 HTTP 服务）时，重定向每一跳必须被 `redirect_guard` 拦死，
+/// 绝不让 127.0.0.1 的响应体回流到播放器/网页。
+///
+/// 「合法初跳」用 Windows 非本机地址绑定（8.8.8.8:port）伪造：本机栈直接
+/// 终结连接，reqwest 把它当公网 IP 字面量放行，随后 302 指向 127.0.0.1
+/// 触发守卫。绑定失败的机器（路由严格 / 非 Windows）直接跳过。
+#[tokio::test]
+async fn redirect_to_loopback_is_refused_not_followed() {
+    let flippy = match std::net::TcpListener::bind(("8.8.8.8", 0)) {
+        Ok(listener) => listener,
+        Err(_) => {
+            eprintln!("[skip] cannot bind non-local address on this machine");
+            return;
+        }
+    };
+    let flippy_port = flippy.local_addr().expect("addr").port();
+    let victim = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind loop");
+    let victim_port = victim.local_addr().expect("victim addr").port();
+    let secret = "SSRF-PAYLOAD-MUST-NOT-FLOW-BACK";
+
+    {
+        let secret = secret.to_string();
+        std::thread::spawn(move || {
+            for stream in flippy.incoming().take(4) {
+                let Ok(mut stream) = stream else { continue };
+                use std::io::Read;
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let body = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    victim_port
+                );
+                let _ = std::io::Write::write_all(&mut stream, body.as_bytes());
+                let _ = secret;
+            }
+        });
+    }
+    {
+        let secret = secret.to_string();
+        tauri::async_runtime::spawn(async move {
+            for _ in 0..4 {
+                let Ok((mut sock, _)) = victim.accept().await else { break };
+                use tokio::io::AsyncWriteExt;
+                let _ = sock
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            secret.len(),
+                            secret
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+            }
+        });
+    }
+
+    // 与生产客户端同一构造路径（ClientCache::new → redirect_guard(false)）。
+    let state = ProxyState {
+        port: AtomicU16::new(0),
+        allow_local: false,
+        client: streaming_builder(false)
+            .build()
+            .expect("streaming client"),
+        image_client: std::sync::Arc::new(wrap_image(
+            reqwest::Client::builder()
+                .redirect(guard::redirect_guard(false))
+                .dns_resolver(guard::pinned_resolver())
+                .build()
+                .expect("image client"),
+            &std::env::temp_dir().join("luma-ssrf-test-unused"),
+        )),
+    };
+    let jump = Url::parse(&format!("http://8.8.8.8:{flippy_port}/jump")).expect("parse");
+    // 初跳 IP 字面量 8.8.8.8 合法（is_blocked=false），守卫必须只在「跳转」处生效。
+    check_target(&jump, false).await.expect("initial hop allowed");
+    let result = state
+        .client
+        .get(jump.clone())
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await;
+    match result {
+        Err(err) => {
+            let text = err.to_string();
+            assert!(
+                text.contains("redirect refused") || text.contains("not allowed") || text.contains("blocked"),
+                "expected redirect guard error, got: {text}"
+            );
+        }
+        Ok(response) => {
+            let body = response.bytes().await.expect("bytes");
+            panic!(
+                "redirect to loopback must fail the request, got: {}",
+                String::from_utf8_lossy(&body)
+            );
+        }
+    }
+}
+
+/// `check_target` 通过后必须把已校验 IP 登记进钉住表，
+/// `client_for` 据此构建「解析-建连同址」客户端；IP 轮换 → 新 key → 新客户端。
+#[test]
+fn validated_registry_roundtrip_and_expiry() {
+    let host = "pin.roundtrip.example";
+    let ips = vec!["93.184.216.34".parse().unwrap()];
+    pin(host, &ips, PIN_TTL);
+    let got = pinned(host).expect("fresh pin");
+    assert_eq!(&*got.ips, ips.as_slice());
+    pin(host, &ips, Duration::ZERO);
+    assert!(pinned(host).is_none(), "expired pin must drop");
+}
+
 #[test]
 fn playlist_rewrites_relative_segments_and_key_uris() {
     let base = Url::parse("https://cdn.example/x/playlist.m3u8").unwrap();

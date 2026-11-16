@@ -34,7 +34,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
 ] }
 tracing-appender = "0.2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip", "brotli"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip", "brotli", "hickory-dns"] }
 # 封面 HTTP 缓存：按 HTTP 语义（Cache-Control / ETag / Vary）自动存取，
 # 磁盘后端用 cacache（npm/cargo 同款），我们不自己算 key / TTL / 淘汰。
 http-cache-reqwest = { version = "0.16", default-features = false, features = ["manager-cacache"] }
