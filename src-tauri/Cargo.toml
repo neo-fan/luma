@@ -54,6 +54,10 @@ encoding_rs = "0.8"
 # 2.0.0 起取代旧的 sha1[..12]：换算法会让已导入配置换 id，用户重新初始化，已授权。
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 base64 = "0.22"
+# RFC 3986 百分号编码用社区标准实现（`NON_ALPHANUMERIC` 集的保留字符正好是
+# `A-Za-z0-9-_.~`，与原先手搓的那份逐字节一致）。解码不走它——见 `infra/pct.rs`
+# 里对「非法 UTF-8 回落原文」这条宽容语义的说明。
+percent-encoding = "2.3"
 flate2 = "1"
 # importedAt 用 RFC3339；只借用来格式化，不碰时区数据库。
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

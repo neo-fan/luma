@@ -1,23 +1,35 @@
-//! Percent-encoding 的统一实现（RFC 3986 unreserved 之外全编码）。
+//! Percent-encoding 的统一入口（RFC 3986 unreserved 之外全编码）。
 //!
 //! 此前这个「encodeURIComponent 保守版」在仓库里有三份逐字相同的实现
 //! （反代 `urlencode`、CMS 查询串 `encode`、豆瓣 `percent_encode`），外加
 //! 一份解码。同一套规则抄三遍的代价不是行数，是改字段/改转义口径时要同时
-//! 记得改三处（2026-11-16 评审 P2）。解码侧保留「非法 UTF-8 回落原文」的
-//! 宽容语义——头值不是表单数据，宁可带着 `%ZZ` 原样发出去，也不能因为
-//! 一个坏转义把整个请求头丢掉。
+//! 记得改三处（2026-11-16 评审 P2）。
+//!
+//! 编码交给 `percent-encoding`，但**用修正过的 unreserved 集**：库的
+//! `NON_ALPHANUMERIC` 连 `- _ . ~` 也编掉（实测 `a-b` → `a%2Db`），与这里的
+//! 口径不同，所以 `remove` 回那四个字节。替换前它编出的串与手搓实现不一致，
+//! 被 `pct::tests::encode_keeps_unreserved_only` 直接打回（2026-11-17）。
+//!
+//! **解码刻意不用库**：这里要的是「坏转义或非法 UTF-8 就整串原样退回」——
+//! 头值不是表单数据，宁可带着 `%ZZ` 发出去，也不能因为一个坏转义丢掉整个
+//! 请求头。库给的 `decode_utf8_lossy` 是另一种语义（插 U+FFFD，原文已经
+//! 回不来），`decode` 系列也只处理合法序列，套上去反而要为这条宽容语义
+//! 写更多适配代码，所以保留这段显式实现。
+
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+
+/// RFC 3986 的 unreserved 集。库给的 `NON_ALPHANUMERIC` 连 `- _ . ~` 一起编掉
+/// （实测 `a-b` → `a%2Db`），这里显式放回来，口径与替换前的手搓实现逐字一致，
+/// 由 `pct::tests::encode_keeps_unreserved_only` 钉住。
+const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
 
 /// unreserved：`A-Z a-z 0-9 - _ . ~`，其余按 UTF-8 字节逐个转义。
 pub(crate) fn percent_encode(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len() * 3);
-    for byte in raw.as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(*byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
+    utf8_percent_encode(raw, UNRESERVED).to_string()
 }
 
 /// `%XX` → 字节；`+` 保持字面量（头值不是表单数据）。连续 `%XX` 解出来的
