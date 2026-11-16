@@ -167,6 +167,9 @@ export const vodSessionMachine = setup({
       },
     },
     switching: {
+      // 兜底超时：即便漏喂退出事件，15s 后也自动离开 switching（撤 spinner/钉住），
+      // 绝不让按钮转环或控制栏钉住永久卡住（对齐引擎 switchSource 的 15s 封顶）。
+      after: { 15000: { target: "playing", actions: ["hideSpinner", "unpinControls"] } },
       on: {
         MEDIA_ALIVE: {
           target: "playing",

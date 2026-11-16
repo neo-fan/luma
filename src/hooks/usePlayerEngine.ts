@@ -12,7 +12,7 @@
  * 逻辑时须同步更新探针的 fetch 目标，且不要在注释里复刻同样的字面串，
  * 否则会让自检形同虚设。
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   Dispatch,
   MutableRefObject,
@@ -201,7 +201,6 @@ export function usePlayerEngine({
   liveLineRef,
   episodeNavRef,
   canNext,
-  switching,
   reloadRef,
   resumeMsRef,
   resolved,
@@ -217,6 +216,8 @@ export function usePlayerEngine({
 }: UsePlayerEngineArgs): UsePlayerEngineHandle {
   /** 控制栏「下一集」按钮的 DOM：mounted 时拿到，供禁用态同步用。 */
   const nextButtonRef = useRef<HTMLElement | null>(null);
+  /** 「切换中」真源：机器 matches("switching")，由 actor 订阅更新（带兜底超时）。 */
+  const [machineSwitching, setMachineSwitching] = useState(false);
   /** 软提示回调放 ref：它的身份每次渲染都会变，不能进内核 effect 的依赖。 */
   const slowNoticeRef = useRef(onSlowNotice);
   slowNoticeRef.current = onSlowNotice;
@@ -255,6 +256,9 @@ export function usePlayerEngine({
           context: snap.context,
         };
       }
+      // 解释器化：按钮「切换中」转环改由机器的 switching 状态驱动（带 15s 兜底超时，
+      // 见 vodSessionMachine），不再依赖外部传入的 switching prop。
+      setMachineSwitching(snap.matches("switching"));
     });
     actor.start();
     return () => {
@@ -278,8 +282,8 @@ export function usePlayerEngine({
    * cleanup 顺序是回归探针的固定契约，不能被状态同步污染。
    */
   useEffect(() => {
-    syncNextButton(nextButtonRef.current, Boolean(canNext), Boolean(switching));
-  }, [canNext, resolved, switching]);
+    syncNextButton(nextButtonRef.current, Boolean(canNext), machineSwitching);
+  }, [canNext, resolved, machineSwitching]);
 
   useEffect(() => {
     const container = containerRef.current;

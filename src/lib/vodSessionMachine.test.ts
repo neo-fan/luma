@@ -1,5 +1,5 @@
 import { createActor } from "xstate";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { UNRESPONSIVE_LIMIT, vodSessionMachine } from "./vodSessionMachine";
 
 function fresh() {
@@ -74,6 +74,22 @@ describe("vodSessionMachine", () => {
     // 新一轮换集 bumpSession 复位，不带着上一轮的「已放弃续播」
     a.send({ type: "USER_SWITCH", url: "e3", resumeIntent: true });
     expect(a.getSnapshot().context.resumeAborted).toBe(false);
+  });
+
+  it("switching 有 15s 兜底超时：漏喂退出事件也绝不会让转环卡死", () => {
+    vi.useFakeTimers();
+    try {
+      const a = fresh();
+      toPlaying(a);
+      a.send({ type: "USER_SWITCH", url: "e2", resumeIntent: true });
+      expect(a.getSnapshot().matches("switching")).toBe(true);
+      // 不发 MEDIA_ALIVE/AUTOPLAY_BLOCKED/FAILED —— 只靠兜底超时
+      vi.advanceTimersByTime(15_000);
+      expect(a.getSnapshot().matches("switching")).toBe(false);
+      expect(a.getSnapshot().matches("playing")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("dead 探测一次即换线；alive 探测复位计数", () => {
