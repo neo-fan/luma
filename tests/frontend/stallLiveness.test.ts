@@ -17,13 +17,21 @@ import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const engine = readFileSync(resolve(here, "../../src/hooks/usePlayerEngine.ts"), "utf8");
+// 判决规则（阈值计数、三态映射）抽成了纯模块，便于在 node 下直接跑行为单测
+// （src/lib/watchdogVerdict.test.ts）；这里继续钉「引擎确实把判决交了出去、
+// 而且交的是同一套阈值」，副作用顺序仍由下面几条源码契约守护。
+const verdict = readFileSync(resolve(here, "../../src/lib/watchdogVerdict.ts"), "utf8");
 
 describe("stall watchdog", () => {
   it("needs repeated unknown probes before switching lines", () => {
     expect(engine).toContain("const STALL_UNRESPONSIVE_LIMIT = 3;");
-    expect(engine).toContain("unresponsiveProbes += 1;");
-    expect(engine).toContain("unresponsiveProbes >= STALL_UNRESPONSIVE_LIMIT");
+    // 引擎侧：阈值传给了判决模块，unknown 累计与到阈值判死都在那里发生。
+    expect(engine).toContain("decideWatchdogVerdict({");
+    expect(engine).toContain("limit: STALL_UNRESPONSIVE_LIMIT,");
     expect(engine).toContain("stall probe unresponsive");
+    // 判决侧：unknown 累计、达阈值才 dead、计数不清零就不跳。
+    expect(verdict).toContain("const next = unresponsiveProbes + 1;");
+    expect(verdict).toContain("if (next >= limit) {");
   });
 
   it("never treats a paused video as a dead line", () => {
@@ -70,12 +78,17 @@ describe("sidebar playing dot", () => {
 
 describe("source picker row", () => {
   it("keeps avatar, name, favourite star and switch button on one row", () => {
-    const css = readFileSync(resolve(here, "../../src/styles/command-palette.css"), "utf8");
-    const block = css.slice(css.indexOf(".source-item {"), css.indexOf("}", css.indexOf(".source-item {")));
+    // 换源面板的样式住在 player-panels.css（组件归属），2026-11-16 从
+    // command-palette.css 搬来；这里跟着换文件。
+    const css = readFileSync(resolve(here, "../../src/styles/player-panels.css"), "utf8");
+    const itemAt = css.indexOf(".source-item {");
+    expect(itemAt, "锚点丢失：.source-item 基础规则去哪了？").toBeGreaterThanOrEqual(0);
+    const block = css.slice(itemAt, css.indexOf("}", itemAt));
     // 四列固定：头像 32 / 名称弹性 / 星 30 / 按钮 76。少写一列时按钮会折到第二行压住站点名。
     expect(block).toContain("grid-template-columns: 32px minmax(0, 1fr) 30px 76px;");
-    expect(css).toContain(".source-item__fav.fav-star {");
-    const fav = css.slice(css.indexOf(".source-item__fav.fav-star {"), css.indexOf("}", css.indexOf(".source-item__fav.fav-star {")));
+    const favAt = css.indexOf(".source-item__fav.fav-star {");
+    expect(favAt, "锚点丢失：收藏星的行内布局规则没了？").toBeGreaterThanOrEqual(0);
+    const fav = css.slice(favAt, css.indexOf("}", favAt));
     expect(fav).not.toContain("flex:");
   });
 });
