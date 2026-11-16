@@ -12,12 +12,12 @@
 
 - **配置 id 哈希 `sha1[..12]` → XXH3（`xxhash-rust`）**：配置快照 id、EPG 磁盘缓存文件名、spider-src 快照文件名统一改用 XXH3，**移除 `sha1` 直接依赖**。换算法会让所有已导入配置换 id、收藏与历史对不上——需重新初始化配置（已授权）。spider-src 原先手搓的 FNV-1a 一并换成 XXH3（非加密的稳定指纹场景，XXH3 比加密哈希更合适、更快）。
 - **豆瓣取数改为「后端主动推」**：移除 1.x 里为「封面两段式」临时加的 `douban_cover` 命令，改为单一入口 `douban_request` + `douban-meta` 事件（四相 `cover`/`full`/`none`/`error`）。并发/限流从前端队列上收到后端优先级调度器（2 worker + 全局令牌桶 + `active` 去重）。前端 `useDoubanMeta` 走中心 store（`useSyncExternalStore`），`fetchDoubanMeta` 保留为同一 store 的 Promise 视图。
-- **播放内核引入 XState 会话状态机**：新增 `playerSessionMachine`（idle/resolving/attaching/buffering/playing/probing/switching/recovering/failed）。当前进度为「地基 + 影子模式 + 切真源第 1 簇」——会话身份 `switchGeneration` 已由 `actor.sessionId` 取代；写策略时间窗、resume、watchdog 三簇**尚未切完**（需先在机器里补齐时间态）。
+- **播放内核引入 XState 会话状态机（按点播 / 直播拆两台）**：`vodSessionMachine`（idle/resolving/attaching/buffering/playing/probing/switching/recovering/failed）与 `liveSessionMachine`（直播无「下一集」语义）两台机器，按 `siteKey` 选用，各带 node 下行为测试。已从影子模式切真源的有：会话身份 `switchGeneration → actor.sessionId`、续播取消 `resumeCancelled → resumeAborted`、首帧标志 `hasPlayed → actor.hasPlayed`、切集按钮转环与控制栏钉住（由 `actor.matches("switching")` 驱动，CDP 真实播放端到端验证：换集进 switching、退出清除、sessionId 自增、自动续播正常）。**刻意不入机器**（非进度）：写策略三时间窗 `fadeDone`/`volumeFadeUntil`/`rateReadyAt` 与 watchdog 三态判决（纯函数 `lib/watchdogVerdict.ts` 承载）。
 
 ### 新增
 
 - **豆瓣封面两段式到货**：搜索级封面（1 跳）先出、详情级评分/简介后补，实测《庆余年》封面 1.36s vs 完整 2.70s，海报出现快约 2 倍；搜索经后端 `search_cache` 合并，总豆瓣请求量不增。
-- **`playerSessionMachine` + 8 条行为测试**：播放内核第一次有可脱离 DOM、在 node 下单测的行为模型（换集 / 续播 / 自动播放受阻 / 探测判决 / 写策略 / 失败重开）。
+- **`vodSessionMachine` / `liveSessionMachine` 两台机器 + node 行为测试**：播放内核第一次有可脱离 DOM、在 node 下单测的行为模型（换集 / 续播 / 自动播放受阻 / 探测判决 / 失败重开；直播机器覆盖冷启动与直播换线）。「写策略时间窗 / watchdog 三态判决」按设计不进机器，故不在此测试范围。
 
 ### 变更
 
