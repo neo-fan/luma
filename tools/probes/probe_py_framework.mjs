@@ -132,10 +132,16 @@ async function waitForPage() {
   throw new Error("no luma CDP page");
 }
 
+// 首页内容三形态（契约 3）：头图 .home-hero、推荐海报 .poster-tile、分类网格 .vod-card。
+// header_probe 的 homeVideoContent 只有 1 条 → 走推荐 tab 的 .home-hero，旧口径只认
+// .vod-card 必然取空。这里按形态读标题载体：.home-hero__title / .poster-tile__title /
+// .vod-card__title，三选一都覆盖到，语义（卡片名回显 UA）不变，只是寻址对齐当前 DOM。
+const HOME_TITLE_SELECTOR = ".home-hero__title, .poster-tile__title, .vod-card__title";
+
 const snapshot = (cdp) =>
   cdp.eval(`JSON.stringify({
     selected: document.querySelector('.site-select')?.getAttribute('data-value') || null,
-    cards: [...document.querySelectorAll('.vod-card')].map(c => c.textContent || ''),
+    cards: [...document.querySelectorAll(${JSON.stringify(HOME_TITLE_SELECTOR)})].map(c => c.textContent || ''),
     chips: document.querySelectorAll('.chip:not(.chip--muted)').length,
     empty: !!document.querySelector('.empty'),
   })`);

@@ -143,6 +143,13 @@ assert(boot === "OK", "page reloaded with latest bundle", String(boot));
 
 // 1. 真实配置全站搜索（沿用 SQLite active 配置，不重复导入）。
 assert((await cdp.eval(CLICK("搜索", ".nav__item"))) === "CLICKED", "open search page");
+// 搜索页是 lazy 路由：点导航后 React 才异步挂出 .search-bar，CLICKED 立刻读
+// DOM 会拿到 MISSING（旧版从「select all sites」起整串假失败就是这个）。先等搜索栏
+// 真的挂上再操作（与已修好的 probe_search_ui 同一口径，只是这里 reload 后是冷块）。
+const searchMounted = await cdp.eval(
+  WAIT("return document.querySelector('.search-bar input.input') ? 'OK' : null;", 20000),
+);
+assert(searchMounted === "OK", "search page mounted", String(searchMounted));
 assert((await cdp.eval(SELECT(".search-bar select", "__all__"))) === "__all__", "select all sites");
 assert((await cdp.eval(TYPE(".search-bar input.input", KEYWORD))) === "TYPED", "type keyword");
 assert((await cdp.eval(CLICK("搜索", ".search-bar button"))) === "CLICKED", "submit search");
@@ -170,7 +177,7 @@ const detail = await cdp.eval(
 );
 assert(detail === "OK", "detail page rendered", String(detail));
 const episodeClicked = await cdp.eval(`(() => {
-  const el = document.querySelector('.episode');
+  const el = document.querySelector('.content .episode');
   if (!el) return 'MISSING';
   el.click();
   return 'CLICKED';

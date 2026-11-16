@@ -17,6 +17,10 @@
  *     `LUMA_KEYWORD`（默认「庆余年」）搜片再点「下一集」逐拍采样信息卡；后者依赖 active
  *     配置的 `lives[]`，没有直播源时记 SKIP 不算失败。`probe_log_channels` 只往
  *     `logs/ui/` 写一条带随机标记的日志，再核对三通道是否各归各位。
+ *   - `probe_artplayer` / `probe_player_nav` 也吃真实点播：控制栏的「下一集/刷新」是
+ *     ArtPlayer 播放实例就绪后才 push 的（usePlayerEngine.ts:340/370），源解析慢时单帧读会
+ *     假红，故改成带超时轮询。player_nav 在控制项超时仍缺失时按视频态分流——在播却没按钮判
+ *     真回归（FAIL），根本没出画判环境（SKIP），与 episode_switch 同一口径。
  *   - `probe_search_history` 只改 localStorage 的搜索词历史并在收尾恢复；点历史词会触发一次
  *     后台聚合搜索，探针随即 reload 打断、不等待 20s 结果。
  *

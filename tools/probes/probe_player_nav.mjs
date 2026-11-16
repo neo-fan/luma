@@ -161,7 +161,7 @@ try {
   );
   assert(episodesReady === 'OK', 'episode list ready', String(episodesReady));
 
-  const layout = await cdp.eval(`(() => {
+  const LAYOUT = `(() => {
     const stage = document.querySelector('.player-stage');
     const about = document.querySelector('.player-about');
     const episodes = document.querySelector('.player-episodes');
@@ -186,54 +186,107 @@ try {
       activeCount: episodes.querySelectorAll('.episode.is-active').length,
       hasSelectToggle: !![...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '选集'),
     });
-  })()`);
-  const info = JSON.parse(layout || "{}");
-  assert(info.nextInControls === true, "下一集在控制栏里", layout);
-  assert(info.reloadInControls === true, "刷新在控制栏里", layout);
-  assert(info.noPrevButton === true && info.noOldNav === true, "旧的上一集浮层已删除", layout);
-  assert(info.nextRightOfPlay === true, "下一集紧挨暂停右侧", layout);
-  assert(info.reloadRightOfNext === true, "刷新紧随下一集", layout);
-  assert(info.aboutBelowStage === true, "影片信息卡在播放器下方", layout);
-  assert(info.episodesBelowAbout === true, "选集在信息卡下方", layout);
-  assert((info.episodeCount ?? 0) > 0, "选集常驻，无需展开", layout);
-  assert(info.activeCount >= 1, "当前集高亮", layout);
-  assert(info.hasSelectToggle === false, "旧的「选集」按钮已移除", layout);
+  })()`;
 
-  // 点播放器里的「下一集」：标题副标题 + 徽标都要变成第 2 集。
-  const advanced = await cdp.eval(`(() => {
-    const btn = document.querySelector('.art-control-next-episode[aria-label="下一集"]');
-    if (!btn || btn.getAttribute('aria-disabled') === 'true') return 'MISSING';
-    btn.click();
-    return 'CLICKED';
-  })()`);
-  assert(advanced === "CLICKED", "click 下一集 inside the player", String(advanced));
-  if (advanced === "CLICKED") {
-    const after = await cdp.eval(
-      WAIT(
-        "const sub = document.querySelector('.page-title__sub')?.textContent?.trim() || ''; return sub.includes('2') ? sub : null;",
-        25000,
-      ),
-    );
-    assert(!!after, "title subtitle switched to episode 2", String(after));
-    // 应用走内部路由状态（不改 location.hash），用信息卡上的「线路 · 集名」判断换集生效。
-    // 集名不一定是「第 N 集」（采集源常见「第 N 期 / 第 N 话」），所以比对副标题里的
-    // 实际集名，而不是写死「第 2 集」的正则——否则换个源就假红。
-    const aboutNow = await cdp.eval(
-      WAIT(
-        `const el = document.querySelector('.player-about__now');
-         const t = el ? el.textContent.trim() : '';
-         return t && t.includes(${JSON.stringify(String(after))}) ? t : null;`,
-        20000,
-      ),
-    );
-    assert(!!aboutNow, "about card follows the new episode", String(aboutNow));
-    const activeAfter = await cdp.eval(
-      WAIT("return document.querySelector('.player-episodes .episode.is-active')?.textContent?.trim() || null;", 25000),
-    );
-    assert(!!activeAfter, "episode panel highlights the new episode", String(activeAfter));
+  // 「下一集 / 刷新」是 ArtPlayer 在播放实例建好且 episodeNav 就绪后才 push 进 controls 的
+  // （src/hooks/usePlayerEngine.ts:340/370）。源解析普遍要数秒~十几秒，单帧采样会读到还没挂好的
+  // 控制条（nextInControls:false，2026-11-16 套件里就是这样 24s 假红）。带超时轮询、每拍先
+  // mouseMoved 唤出可能自动隐藏的控制条再读几何；超时后必须分流：
+  //   · 视频真在播却仍没有按钮 = 真回归，保留 FAIL（不放宽）；
+  //   · 真实点播源根本没解出画面 = 网络/源站限制，如实 [SKIP] 归环境。
+  // （分流写法对齐已实现的 probe_episode_switch.mjs。）
+  const revealControls = async () => {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 640, y: 360, buttons: 0 }).catch(() => {});
+    await sleep(300);
+  };
+  let info = null;
+  const ctrlDeadline = Date.now() + 45000;
+  while (Date.now() < ctrlDeadline) {
+    await revealControls();
+    info = JSON.parse((await cdp.eval(LAYOUT)) || "{}");
+    if (info.nextInControls && info.reloadInControls) break;
   }
 
-  assert(cdp.errors.length === 0, "no uncaught exceptions", cdp.errors.join(" | ").slice(0, 400));
+  const playerState = JSON.parse(
+    (await cdp.eval(`(() => {
+      const v = document.querySelector('.player-art video') || document.querySelector('video');
+      const playing = !!v && ((v.currentSrc || v.src) && (v.currentTime > 0 || v.readyState >= 2));
+      return JSON.stringify({
+        hasVideo: !!v,
+        playing: !!playing,
+        t: v ? Number((v.currentTime || 0).toFixed(1)) : null,
+        rs: v ? v.readyState : null,
+        src: v ? (v.currentSrc || v.src || '').slice(0, 18) : '',
+        err: document.querySelector('.error-bar__text')?.textContent?.trim().slice(0, 40) || null,
+      });
+    })()`)) || "{}",
+  );
+
+  // 结构类断言只依赖应用渲染的 .player-about / .player-episodes，与播放实例无关，始终校验。
+  assert(info.noPrevButton === true && info.noOldNav === true, "旧的上一集浮层已删除", JSON.stringify(info));
+  assert(info.aboutBelowStage === true, "影片信息卡在播放器下方", JSON.stringify(info));
+  assert(info.episodesBelowAbout === true, "选集在信息卡下方", JSON.stringify(info));
+  assert((info.episodeCount ?? 0) > 0, "选集常驻，无需展开", JSON.stringify(info));
+  assert(info.activeCount >= 1, "当前集高亮", JSON.stringify(info));
+  assert(info.hasSelectToggle === false, "旧的「选集」按钮已移除", JSON.stringify(info));
+
+  const controlsMissing = !info.nextInControls || !info.reloadInControls;
+  if (controlsMissing && !playerState.playing) {
+    // 没出画 → 控制项没机会挂载，属环境（真实点播源不可用），不算产品回归。
+    console.log(
+      `[SKIP] 控制项未挂载：真实点播源未出画（hasVideo=${playerState.hasVideo} playing=${playerState.playing} ` +
+        `src=${playerState.src || "-"} err=${playerState.err || "-"}），属网络/源站限制非产品回归`,
+    );
+    assert(cdp.errors.length === 0, "no uncaught exceptions", cdp.errors.join(" | ").slice(0, 400));
+  } else {
+    // 控制项已挂载（正常），或在播却没挂载（真回归）——两种都要断言，不许因为「轮询到超时」就放行。
+    assert(info.nextInControls === true, "下一集在控制栏里", `${JSON.stringify(info)} player=${JSON.stringify(playerState)}`);
+    assert(info.reloadInControls === true, "刷新在控制栏里", `${JSON.stringify(info)} player=${JSON.stringify(playerState)}`);
+    assert(info.nextRightOfPlay === true, "下一集紧挨暂停右侧", JSON.stringify(info));
+    assert(info.reloadRightOfNext === true, "刷新紧随下一集", JSON.stringify(info));
+
+    // 点播放器里的「下一集」：标题副标题 + 徽标都要变成第 2 集。
+    if (info.nextInControls) {
+      const advanced = await cdp.eval(`(() => {
+        const btn = document.querySelector('.art-control-next-episode[aria-label="下一集"]');
+        if (!btn || btn.getAttribute('aria-disabled') === 'true') return 'MISSING';
+        btn.click();
+        return 'CLICKED';
+      })()`);
+      assert(advanced === "CLICKED", "click 下一集 inside the player", String(advanced));
+      if (advanced === "CLICKED") {
+        const after = await cdp.eval(
+          WAIT(
+            "const sub = document.querySelector('.page-title__sub')?.textContent?.trim() || ''; return sub.includes('2') ? sub : null;",
+            25000,
+          ),
+        );
+        assert(!!after, "title subtitle switched to episode 2", String(after));
+        // 应用走内部路由状态（不改 location.hash），用信息卡上的「线路 · 集名」判断换集生效。
+        // 集名不一定是「第 N 集」（采集源常见「第 N 期 / 第 N 话」），所以比对副标题里的
+        // 实际集名，而不是写死「第 2 集」的正则——否则换个源就假红。
+        const aboutNow = await cdp.eval(
+          WAIT(
+            `const el = document.querySelector('.player-about__now');
+             const t = el ? el.textContent.trim() : '';
+             return t && t.includes(${JSON.stringify(String(after))}) ? t : null;`,
+            20000,
+          ),
+        );
+        assert(!!aboutNow, "about card follows the new episode", String(aboutNow));
+        const activeAfter = await cdp.eval(
+          WAIT("return document.querySelector('.player-episodes .episode.is-active')?.textContent?.trim() || null;", 25000),
+        );
+        assert(!!activeAfter, "episode panel highlights the new episode", String(activeAfter));
+      }
+    } else {
+      // 视频确实在播却没有「下一集」控制项 → 真回归，保留 FAIL 不写成 SKIP。
+      assert(false, "click 下一集 inside the player",
+        `视频在播(${playerState.t}s/rs${playerState.rs})却没有可点的「下一集」控制项 -- ${JSON.stringify(playerState)}`);
+    }
+    assert(cdp.errors.length === 0, "no uncaught exceptions", cdp.errors.join(" | ").slice(0, 400));
+  }
+
 } catch (err) {
   failures += 1;
   console.error(`[FAIL] probe crashed: ${err && err.message ? err.message : err}`);
