@@ -188,6 +188,11 @@ export interface UsePlayerEngineHandle {
    * 提示出现在画面里而不是页面顶部，全屏时也看得见；样式与播放器一致。
    */
   notice: (text: string | null) => void;
+  /**
+   * 「切换中」真源（机器 matches("switching")，带 15s 兜底超时）。PlayerStage 用它
+   * 钉住控制栏；与按钮转环同源，避免 prop/lock 与机器两处来源不一致。
+   */
+  switching: boolean;
 }
 
 /** 挂载 / 销毁播放内核。纯 effect hook，无返回值。 */
@@ -1688,5 +1693,6 @@ export function usePlayerEngine({
       switchRef.current?.(url) ??
       Promise.reject(new Error("播放器尚未就绪，暂时不能原地换集")),
     notice: (text: string | null) => noticeRef.current?.(text),
+    switching: machineSwitching,
   };
 }

@@ -1655,7 +1655,7 @@ export default function PlayerPage({
         resolving={resolving}
         stage={stage}
         reloading={reloading}
-        switching={episodeSwitching}
+        switching={engine.switching}
         playable={playable}
         recovering={recovering}
         pending={resolved === null}
