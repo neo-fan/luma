@@ -16,6 +16,16 @@ function toPlaying(actor: ReturnType<typeof fresh>, url = "e1") {
   actor.send({ type: "MEDIA_ALIVE" });
 }
 
+/**
+ * 把机器推到「解码器已挂上、首帧还没来」（buffering，hasPlayed=false）。
+ * 看门狗在现实里只在这一段判决：出画之后 `stallCheck` 直接让路，不再探活。
+ */
+function toWaiting(actor: ReturnType<typeof fresh>, url = "e1") {
+  actor.send({ type: "LOAD", url });
+  actor.send({ type: "RESOLVED", url });
+  actor.send({ type: "ATTACHED" });
+}
+
 describe("vodSessionMachine", () => {
   it("idle → playing 走通完整首帧链路", () => {
     const a = fresh();
@@ -92,12 +102,13 @@ describe("vodSessionMachine", () => {
     }
   });
 
-  it("dead 探测一次即换线；alive 探测复位计数", () => {
+  it("出画前探活：dead 一次即判死换线；ok 复位计数", () => {
+    // 看门狗只在「还没出画」这一段判决（现实中 stallCheck 出画后直接让路）。
     const a = fresh();
-    toPlaying(a);
+    toWaiting(a);
     a.send({ type: "STALL" });
     expect(a.getSnapshot().matches("probing")).toBe(true);
-    a.send({ type: "PROBE", verdict: "alive" });
+    a.send({ type: "PROBE", verdict: "ok" });
     expect(a.getSnapshot().matches("playing")).toBe(true);
     expect(a.getSnapshot().context.unresponsiveProbes).toBe(0);
     a.send({ type: "STALL" });
@@ -107,7 +118,7 @@ describe("vodSessionMachine", () => {
 
   it(`unknown 探测累计到 ${UNRESPONSIVE_LIMIT} 次才判死换线`, () => {
     const a = fresh();
-    toPlaying(a);
+    toWaiting(a);
     for (let i = 0; i < UNRESPONSIVE_LIMIT - 1; i++) {
       a.send({ type: "STALL" });
       a.send({ type: "PROBE", verdict: "unknown" });
@@ -116,6 +127,68 @@ describe("vodSessionMachine", () => {
     expect(a.getSnapshot().context.unresponsiveProbes).toBe(UNRESPONSIVE_LIMIT - 1);
     a.send({ type: "STALL" });
     a.send({ type: "PROBE", verdict: "unknown" });
+    expect(a.getSnapshot().matches("recovering")).toBe(true);
+  });
+
+  it("红线：出过画之后 STALL 进不了 probing，坏到底也不自动换线", () => {
+    // 这条原先只活在解释器的一个 if 里（删掉就破）。现在写在转换表上：
+    // 「已经能播放了就不要切源」是产品要求，不是调用方的自觉。
+    const a = fresh();
+    toPlaying(a);
+    a.send({ type: "STALL" });
+    expect(a.getSnapshot().matches("playing")).toBe(true);
+    a.send({ type: "PROBE", verdict: "dead" });
+    expect(a.getSnapshot().matches("playing")).toBe(true);
+  });
+
+  it("反代字节在涨 = 极慢但活着，复位 unknown 累计", () => {
+    // 1~2 KB/s 的源若不复位会被三次超时熬死；现实中这条证据来自 /meter。
+    const a = fresh();
+    toWaiting(a);
+    a.send({ type: "STALL" });
+    a.send({ type: "PROBE", verdict: "unknown" });
+    expect(a.getSnapshot().context.unresponsiveProbes).toBe(1);
+    a.send({ type: "FRAG_GROWTH" });
+    expect(a.getSnapshot().context.unresponsiveProbes).toBe(0);
+  });
+
+  it("判死交棒后的现实恢复路径：LOAD 开新会话、USER_SWITCH 进切换", () => {
+    const a = fresh();
+    toWaiting(a);
+    a.send({ type: "STALL" });
+    a.send({ type: "PROBE", verdict: "dead" });
+    expect(a.getSnapshot().matches("recovering")).toBe(true);
+    const before = a.getSnapshot().context.sessionId;
+    // 上层换源成功 → 重建实例 → 新的 LOAD。
+    a.send({ type: "LOAD", url: "e1-other.m3u8" });
+    expect(a.getSnapshot().matches("resolving")).toBe(true);
+    expect(a.getSnapshot().context.sessionId).toBe(before + 1);
+    expect(a.getSnapshot().context.unresponsiveProbes).toBe(0);
+    // 另一条恢复路径：recovering 期间用户直接点下一集。
+    const b = fresh();
+    toWaiting(b);
+    b.send({ type: "STALL" });
+    b.send({ type: "PROBE", verdict: "dead" });
+    b.send({ type: "USER_SWITCH", url: "e2", resumeIntent: false });
+    expect(b.getSnapshot().matches("switching")).toBe(true);
+  });
+
+  it("复核在途时用户换集：跟新会话走，旧结论不再判死", () => {
+    const a = fresh();
+    toWaiting(a);
+    a.send({ type: "STALL" });
+    a.send({ type: "USER_SWITCH", url: "e2", resumeIntent: true });
+    expect(a.getSnapshot().matches("switching")).toBe(true);
+    // 迟到的 dead 落在 switching 上：没有 PROBE 转换，不会把新集判死。
+    a.send({ type: "PROBE", verdict: "dead" });
+    expect(a.getSnapshot().matches("switching")).toBe(true);
+  });
+
+  it("复核在途解码器直接报错 = 最硬的证据，直接 recovering", () => {
+    const a = fresh();
+    toWaiting(a);
+    a.send({ type: "STALL" });
+    a.send({ type: "FAILED", reason: "media decode" });
     expect(a.getSnapshot().matches("recovering")).toBe(true);
   });
 

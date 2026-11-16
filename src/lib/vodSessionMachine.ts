@@ -1,4 +1,5 @@
 import { setup, assign, type ActorRefFrom } from "xstate";
+import type { LineVerdict } from "./playProbe";
 
 /**
  * 播放会话状态机（2.0.0 内核重构的地基）。
@@ -18,21 +19,25 @@ import { setup, assign, type ActorRefFrom } from "xstate";
  * （`fadeDone`、`sessionId`、`resumeIntent`、`unresponsiveProbes`）。
  */
 
-export type ProbeVerdict = "dead" | "unknown" | "alive";
+/**
+ * 探活结论直接用 `playProbe.LineVerdict`，机器不自造词汇——解释器不必再翻译
+ * 一层 `ok`↔`alive`（那种翻译正是「同一套契约两份实现」的产地）。
+ */
+export type ProbeVerdict = LineVerdict;
 
 export type VodSessionEvent =
   | { type: "LOAD"; url: string }
   | { type: "RESOLVED"; url: string }
   | { type: "ATTACHED" }
   | { type: "MEDIA_ALIVE" }
+  /** 反代字节在涨（极慢源也是硬证据）：把 unknown 累计清零。 */
   | { type: "FRAG_GROWTH" }
   | { type: "STALL" }
   | { type: "PROBE"; verdict: ProbeVerdict }
   | { type: "USER_SWITCH"; url: string; resumeIntent: boolean }
   | { type: "AUTOPLAY_BLOCKED" }
   | { type: "FADE_DONE" }
-  | { type: "FAILED"; reason: string }
-  | { type: "RECOVERED" };
+  | { type: "FAILED"; reason: string };
 
 export interface VodSessionContext {
   /** 会话身份：每次换集/重载自增，取代散落的 `switchGeneration` 代数比较。 */
@@ -50,7 +55,12 @@ export interface VodSessionContext {
   resumeAborted: boolean;
 }
 
-/** 「未知」探测累计到几次判死换线（对齐内核 STALL_UNRESPONSIVE_LIMIT）。 */
+/**
+ * 连续多少次「复核也拿不到任何响应」才算确认失效。**这里是唯一真源**：
+ * 解释器不再自带常量，也不另有判决模块——单次超时永远不是证据（慢源冷启必然
+ * 超时），但同一地址连续三次、跨 60s 连一个字节都不回，就不是「慢」了；
+ * 明确失败（4xx / 非 m3u8 / 占位图）一次就够。
+ */
 export const UNRESPONSIVE_LIMIT = 3;
 
 const initialContext: VodSessionContext = {
@@ -68,13 +78,19 @@ export const vodSessionMachine = setup({
   guards: {
     wantsResume: ({ context }) => context.resumeIntent,
     canPersistVolume: ({ context }) => context.fadeDone,
+    /**
+     * 「出过画就再也不自动换线」是产品红线（用户明确要求）。此前它只写在解释器
+     * `stallCheck` 的一个 `if` 里——机器收到 dead 照样进 recovering。现在把它写进
+     * 转换表：机器层面就不可能判死，删掉那个 `if` 也不会破。
+     */
+    notPlayed: ({ context }) => !context.hasPlayed,
     isDead: ({ event }) => event.type === "PROBE" && event.verdict === "dead",
     isUnknownExhausted: ({ context, event }) =>
       event.type === "PROBE" &&
       event.verdict === "unknown" &&
       context.unresponsiveProbes + 1 >= UNRESPONSIVE_LIMIT,
     isUnknown: ({ event }) => event.type === "PROBE" && event.verdict === "unknown",
-    isAlive: ({ event }) => event.type === "PROBE" && event.verdict === "alive",
+    isOk: ({ event }) => event.type === "PROBE" && event.verdict === "ok",
   },
   actions: {
     bumpSession: assign({
@@ -138,13 +154,16 @@ export const vodSessionMachine = setup({
             { type: "resumePlayback", guard: "wantsResume" },
           ],
         },
-        STALL: "probing",
+        // 反代字节在涨 = 极慢但活着：清零 unknown 累计，别把它熬成死线。
+        FRAG_GROWTH: { actions: "resetProbe" },
+        STALL: { target: "probing", guard: "notPlayed" },
         FAILED: "recovering",
       },
     },
     playing: {
       on: {
-        STALL: "probing",
+        // 出过画之后看门狗不再介入（红线见 notPlayed guard）：卡顿按网络抖动处理。
+        STALL: { target: "probing", guard: "notPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
         FADE_DONE: { actions: "completeFade" },
         USER_SWITCH: {
@@ -160,10 +179,18 @@ export const vodSessionMachine = setup({
           { guard: "isDead", target: "recovering", actions: "incrementProbe" },
           { guard: "isUnknownExhausted", target: "recovering", actions: "incrementProbe" },
           { guard: "isUnknown", target: "playing", actions: "incrementProbe" },
-          { guard: "isAlive", target: "playing", actions: "resetProbe" },
+          { guard: "isOk", target: "playing", actions: "resetProbe" },
         ],
         MEDIA_ALIVE: { target: "playing", actions: "resetProbe" },
         FRAG_GROWTH: { target: "playing", actions: "resetProbe" },
+        // 探活期间解码器直接报错 = 比任何复核都硬的证据。
+        FAILED: { target: "recovering", actions: "incrementProbe" },
+        // 复核在途时用户换集 / 换源：本轮结论作废，跟着新会话走。
+        USER_SWITCH: {
+          target: "switching",
+          actions: ["setTarget", "setResumeIntent", "bumpSession", "showSpinner", "pinControls"],
+        },
+        LOAD: { target: "resolving", actions: ["setTarget", "bumpSession"] },
       },
     },
     switching: {
@@ -184,14 +211,21 @@ export const vodSessionMachine = setup({
           target: "playing",
           actions: ["hideSpinner", "markResumeAborted", "cancelResume"],
         },
-        STALL: "probing",
+        STALL: { target: "probing", guard: "notPlayed" },
+        FRAG_GROWTH: { actions: "resetProbe" },
         FAILED: "recovering",
       },
     },
     recovering: {
+      // 进入即「这条线已判死、交棒换线」。真实的恢复路径不是某个 RECOVERED 信号，
+      // 而是上层换源后重建实例（LOAD）或用户手动换集（USER_SWITCH）——出边按现实写。
       entry: "navigateFailover",
       on: {
-        RECOVERED: { target: "resolving", actions: "bumpSession" },
+        LOAD: { target: "resolving", actions: ["setTarget", "bumpSession"] },
+        USER_SWITCH: {
+          target: "switching",
+          actions: ["setTarget", "setResumeIntent", "bumpSession", "showSpinner", "pinControls"],
+        },
         FAILED: "failed",
       },
     },

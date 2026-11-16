@@ -5,7 +5,7 @@
  *
  * 1. `unknown` 要累计到阈值才换线，不能一次探活失败就跳；
  * 2. 暂停不参与判死，且暂停期间存活计时不能继续老化；
- * 3. 反代字节在涨（极慢源）也算活：`/meter` 的 `bytesTotal` 增长要把
+ * 3. 反代字节在涨（极慢源）也算活：`/meter` 的 `bytesTotal` 增长要把机器里的
  *    `unresponsiveProbes` 清零，否则 1~2 KB/s 的源会被误判成死线；
  * 4. 出过画就再也不自动换线/换源（用户明确要求「已经能播放了 就不要切源」），
  *    后续卡顿按网络抖动处理。
@@ -17,21 +17,24 @@ import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const engine = readFileSync(resolve(here, "../../src/hooks/usePlayerEngine.ts"), "utf8");
-// 判决规则（阈值计数、三态映射）抽成了纯模块，便于在 node 下直接跑行为单测
-// （src/lib/watchdogVerdict.test.ts）；这里继续钉「引擎确实把判决交了出去、
-// 而且交的是同一套阈值」，副作用顺序仍由下面几条源码契约守护。
-const verdict = readFileSync(resolve(here, "../../src/lib/watchdogVerdict.ts"), "utf8");
+// 判决（unknown 累计、阈值、出画后不判死、判死后交棒）2.0.0 起只在会话状态机的
+// 转换表里发生，由 node 下的行为单测直接跑（src/lib/vodSessionMachine.test.ts /
+// liveSessionMachine.test.ts）；这里钉「引擎把结论交给了机器、且不再自带阈值与
+// 计数器副本」，副作用顺序仍由下面几条源码契约守护。
+const vodMachine = readFileSync(resolve(here, "../../src/lib/vodSessionMachine.ts"), "utf8");
 
 describe("stall watchdog", () => {
   it("needs repeated unknown probes before switching lines", () => {
-    expect(engine).toContain("const STALL_UNRESPONSIVE_LIMIT = 3;");
-    // 引擎侧：阈值传给了判决模块，unknown 累计与到阈值判死都在那里发生。
-    expect(engine).toContain("decideWatchdogVerdict({");
-    expect(engine).toContain("limit: STALL_UNRESPONSIVE_LIMIT,");
+    // 唯一真源在机器：解释器不留阈值副本、不留计数器副本，也没有第二个判决模块。
+    expect(engine).not.toContain("STALL_UNRESPONSIVE_LIMIT");
+    expect(engine).not.toContain("let unresponsiveProbes");
+    expect(engine).not.toContain("decideWatchdogVerdict");
+    expect(vodMachine).toContain("export const UNRESPONSIVE_LIMIT = 3;");
+    expect(vodMachine).toContain("context.unresponsiveProbes + 1 >= UNRESPONSIVE_LIMIT");
+    // 引擎侧：结论原样喂进机器（不再翻译 ok↔alive），交棒与否由机器的状态说话。
+    expect(engine).toContain('actor.send({ type: "PROBE", verdict })');
+    expect(engine).toContain('actor.getSnapshot().matches("recovering")');
     expect(engine).toContain("stall probe unresponsive");
-    // 判决侧：unknown 累计、达阈值才 dead、计数不清零就不跳。
-    expect(verdict).toContain("const next = unresponsiveProbes + 1;");
-    expect(verdict).toContain("if (next >= limit) {");
   });
 
   it("never treats a paused video as a dead line", () => {
@@ -49,6 +52,9 @@ describe("stall watchdog", () => {
     expect(guard).toBeGreaterThan(-1);
     expect(probe).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(probe);
+    // 同一条红线还写进了转换表：就算解释器漏掉那个 if，机器也进不了判死路径。
+    expect(vodMachine).toContain('STALL: { target: "probing", guard: "notPlayed" }');
+    expect(vodMachine).toContain("notPlayed: ({ context }) => !context.hasPlayed");
     // hls 致命错误在播过之后也只提示、不跳源。
     expect(engine).toContain("网络波动导致播放中断");
   });
@@ -62,7 +68,9 @@ describe("stall watchdog", () => {
     expect(totalCheck).toBeGreaterThan(-1);
     expect(elementGuard).toBeGreaterThan(-1);
     expect(totalCheck).toBeLessThan(elementGuard);
-    expect(engine).toContain("unresponsiveProbes = 0;");
+    // 涨了就把「极慢但活着」这条证据交给机器复位，解释器不自己清零。
+    expect(engine).toContain('send({ type: "FRAG_GROWTH" })');
+    expect(engine).not.toContain("unresponsiveProbes = 0;");
   });
 });
 

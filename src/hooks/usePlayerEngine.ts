@@ -32,7 +32,6 @@ import { log } from "../lib/logger";
 import { mediaIsAdvancing } from "../lib/mediaAlive";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
-import { decideWatchdogVerdict } from "../lib/watchdogVerdict";
 import { DEFAULT_PREFS, readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import { createActor } from "xstate";
 import { vodSessionMachine } from "../lib/vodSessionMachine";
@@ -279,6 +278,12 @@ export function usePlayerEngine({
   const sessionGen = () => sessionActorRef.current?.getSnapshot().context.sessionId ?? 0;
   /** 首帧真源：actor.hasPlayed（MEDIA_ALIVE 置位、bumpSession 复位），取代本地 hasPlayed。 */
   const sessionHasPlayed = () => sessionActorRef.current?.getSnapshot().context.hasPlayed ?? false;
+  /**
+   * 「连续无响应」计数真源：actor.unresponsiveProbes。解释器只在日志里读它，
+   * 不再持副本——阈值与「累计到几次判死」全在机器转换表里（UNRESPONSIVE_LIMIT）。
+   */
+  const sessionUnresponsiveProbes = () =>
+    sessionActorRef.current?.getSnapshot().context.unresponsiveProbes ?? 0;
 
   /**
    * 剧集列表是异步到的：播放器实例创建时 lines 可能还是空的，到达 / 切到最后一集
@@ -721,6 +726,10 @@ export function usePlayerEngine({
               return;
             }
             setVideoError(`HLS 播放失败：${reason}，正在切换线路`);
+            // hls 自己报致命 = 有明确证据，报 FAILED 让机器进 recovering。
+            // 出画后那条分支不报：红线是「已能播放就不自动跳」，机器侧同样由
+            // notPlayed guard 兜住，两边口径一致。
+            sessionActorRef.current?.send({ type: "FAILED", reason: "hls fatal" });
             void switchOrFailoverRef.current();
           });
         },
@@ -1174,6 +1183,8 @@ export function usePlayerEngine({
       });
       // 解码失败要换线了：先撤掉冻结帧，别让静帧盖住错误提示与后续画面。
       finishPoster(false);
+      // 解码器直接报错比任何复核都硬：报 FAILED，机器进 recovering（让模型跟上现实）。
+      sessionActorRef.current?.send({ type: "FAILED", reason: "media decode" });
       setVideoError(`播放器加载失败，${PLAY_FAILURE_HINT}。`);
       void switchOrFailoverRef.current();
     };
@@ -1194,17 +1205,15 @@ export function usePlayerEngine({
     const STALL_RECHECK_MS = 20_000;
     const STALL_TICK_MS = 4_000;
     /**
-     * 连续多少次「复核也拿不到任何响应」才算确认失效。
-     *
-     * 单次超时永远不是证据（慢源冷启必然超时）；但同一个地址、连续三次、
-     * 跨 60 秒都连一个字节都拿不到，就不是「慢」了——吊死型 CDN 只有这样
-     * 才能和慢源区分开。明确失败（4xx / 非 m3u8 / 占位图）一次就够。
+     * 连续多少次「复核也拿不到任何响应」才算确认失效，以及 unknown 的累计与判死
+     * 转移，都在会话状态机里（`UNRESPONSIVE_LIMIT` / `vodSessionMachine.probing`）。
+     * 这里不复制阈值，也不另有判决模块：解释器只负责取证据（下面的计时闸门 +
+     * `probeLineVerdict`），把三态结论喂给机器，由转换表决定「继续等 / 累计 / 交棒」。
      */
-    const STALL_UNRESPONSIVE_LIMIT = 3;
     let probeBusy = false;
     let lastProbeAt = 0;
+    /** 本轮会话的看门狗一次性闸门：已交棒或已确认存活就不再探。 */
     let watchStopped = false;
-    let unresponsiveProbes = 0;
     /** 收尾：停止看门狗、报原因、交棒给换线/换源链路。 */
     const giveUpLine = (message: string, stage: string) => {
       watchStopped = true;
@@ -1212,7 +1221,7 @@ export function usePlayerEngine({
         siteKey,
         vodId,
         quietMs: Date.now() - lastAliveAt,
-        unresponsiveProbes,
+        unresponsiveProbes: sessionUnresponsiveProbes(),
       });
       // 看门狗确认线路失效：冻结帧的使命结束，撤掉后交给换线链路。
       finishPoster(false);
@@ -1252,8 +1261,8 @@ export function usePlayerEngine({
       if (probeBusy || Date.now() - lastProbeAt < STALL_RECHECK_MS) {
         return;
       }
-      // 影子：真正开始探活才报 STALL（前面 hasPlayed/alive/failover 早退都不报），
-      // 机器 playing/buffering → probing。
+      // 只有真正开始探活才报 STALL（前面 hasPlayed / alive / failover 早退都不报）：
+      // 机器据此从 playing/buffering 进 probing。
       sessionActorRef.current?.send({ type: "STALL" });
       probeBusy = true;
       lastProbeAt = Date.now();
@@ -1274,48 +1283,39 @@ export function usePlayerEngine({
           if (failoverStarted.current || lineSwitchStarted.current) {
             return;
           }
-          // 影子：把探活判决喂进机器。LineVerdict 的 "ok" 对应机器的 "alive"。
-          sessionActorRef.current?.send({
-            type: "PROBE",
-            verdict: verdict === "ok" ? "alive" : verdict,
-          });
-          const decision = decideWatchdogVerdict({
-            verdict,
-            unresponsiveProbes,
-            limit: STALL_UNRESPONSIVE_LIMIT,
-            hasPlayed: sessionHasPlayed(),
-            isLive: siteKey === "live",
-          });
-          if (verdict === "unknown") {
-            // unknown：还是没回话。累计到阈值前一律继续等，绝不跳走。
-            unresponsiveProbes = decision.unresponsiveProbes;
-            log.info("stall probe inconclusive", {
-              siteKey,
-              vodId,
-              unresponsiveProbes,
-              quietMs: Date.now() - lastAliveAt,
-            });
-          } else {
-            unresponsiveProbes = decision.unresponsiveProbes;
-          }
-          if (decision.action === "stay") {
-            // 清单和分片都拿得到 → 只是慢，继续等（这也是 life signal）。
-            noteAlive();
-            log.info("stall probe alive but slow", {
-              siteKey,
-              vodId,
-              quietMs: Date.now() - lastAliveAt,
-            });
+          // 判决交给机器：三态结论原样喂进去（不再翻译 ok↔alive，也没有第二个判决
+          // 模块）。unknown 的累计、达阈值判死、出画后不判死，全在转换表里。
+          const actor = sessionActorRef.current;
+          if (!actor) {
             return;
           }
-          if (decision.action === "dead") {
-            giveUpLine(
-              verdict === "dead"
-                ? "当前线路已确认无法加载，正在切换…"
-                : "当前线路多次无响应，正在切换…",
-              verdict === "dead" ? "stall probe dead" : "stall probe unresponsive",
-            );
+          actor.send({ type: "PROBE", verdict });
+          if (!actor.getSnapshot().matches("recovering")) {
+            if (verdict === "ok") {
+              // 清单和分片都拿得到 → 只是慢，继续等（这也是 life signal）。
+              noteAlive();
+              log.info("stall probe alive but slow", {
+                siteKey,
+                vodId,
+                quietMs: Date.now() - lastAliveAt,
+              });
+            } else {
+              // unknown：还是没回话。累计到阈值前一律继续等，绝不跳走。
+              log.info("stall probe inconclusive", {
+                siteKey,
+                vodId,
+                unresponsiveProbes: sessionUnresponsiveProbes(),
+                quietMs: Date.now() - lastAliveAt,
+              });
+            }
+            return;
           }
+          giveUpLine(
+            verdict === "dead"
+              ? "当前线路已确认无法加载，正在切换…"
+              : "当前线路多次无响应，正在切换…",
+            verdict === "dead" ? "stall probe dead" : "stall probe unresponsive",
+          );
         })
         .catch(() => {
           probeBusy = false;
@@ -1379,7 +1379,9 @@ export function usePlayerEngine({
           if (Number.isFinite(total) && total > lastMeterTotal) {
             lastMeterTotal = total;
             noteAlive();
-            unresponsiveProbes = 0;
+            // 字节在涨 = 极慢但活着：交给机器复位 unknown 累计（阈值真源在转换表，
+            // 解释器不再自己清零计数器）。
+            sessionActorRef.current?.send({ type: "FRAG_GROWTH" });
           }
           if (!speedEl) return;
           const rate = formatBytesPerSec(Number(body.bytesPerSec ?? 0));
@@ -1475,8 +1477,7 @@ export function usePlayerEngine({
        * （dead 一次即换 / unknown 累计三次 / 出画后只提示不换）必须从
        * 「未知」重新开始，watchStopped 也要复位。
        */
-      // hasPlayed 由 USER_SWITCH→bumpSession 复位（本函数开头已 send）。
-      unresponsiveProbes = 0;
+      // hasPlayed 与 unknown 累计都由 USER_SWITCH→bumpSession 复位（本函数开头已 send）。
       measuredKbps = 0;
       watchStopped = false;
       lastProbeAt = 0;
