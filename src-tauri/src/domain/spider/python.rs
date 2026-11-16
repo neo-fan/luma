@@ -23,6 +23,13 @@ const MAX_SOURCES: usize = 64;
 /// Caps how many py child processes one fan-out may start at once.
 static PY_CONCURRENCY: OnceLock<Semaphore> = OnceLock::new();
 
+/// 同 URL 的并发下载去重（表按 `api` 建键，完成后即摘除，不承担缓存职责）。
+static SOURCE_FLIGHTS: OnceLock<crate::flights::Flights<Result<String, AppError>>> = OnceLock::new();
+
+fn source_flights() -> &'static crate::flights::Flights<Result<String, AppError>> {
+    SOURCE_FLIGHTS.get_or_init(Default::default)
+}
+
 fn concurrency() -> &'static Semaphore {
     PY_CONCURRENCY.get_or_init(|| Semaphore::new(4))
 }
@@ -96,6 +103,21 @@ async fn source_for(site: &Value) -> Result<String, AppError> {
     if api.is_empty() {
         return Err(AppError::new(code::INVALID_ARGUMENT, "py site has no api"));
     }
+    // 冷 key 去重：一次 fan-out 里多个任务首次触达同一个脚本地址时，只跑
+    // 一次下载，其余等待同一个结果（含失败）。脚本下载不在 `PY_CONCURRENCY`
+    // 信号量的覆盖范围内，所以这里不去重就会并发重复抓同一个 URL。
+    source_flights().dedupe(&api, || cold_source(site)).await
+}
+
+/// `source_for` 的实际取数链（内存 → 磁盘快照 → 网络 → 过期快照兜底）。
+/// 进去之前 `source_for` 已经验过 `api` 非空；重新查一遍缓存是必要的——
+/// 等待 leader 期间缓存可能已被填上。
+async fn cold_source(site: &Value) -> Result<String, AppError> {
+    let api = site
+        .get("api")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     if let Some(hit) = cache()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

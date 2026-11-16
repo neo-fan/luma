@@ -206,17 +206,9 @@ fn rewrite_cdn_host(kind: ProxyKind, target: &str) -> Option<String> {
 }
 
 /// RFC 3986 unreserved 之外全编码（`encodeURIComponent` 的保守版）。
+/// 唯一实现住在 `infra::pct`，与反代 / CMS 同一口径。
 fn percent_encode(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len() * 3);
-    for byte in raw.as_bytes() {
-        let keep = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~');
-        if keep {
-            out.push(*byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
+    crate::pct::percent_encode(raw)
 }
 
 /// 海报补 Referer。已有内联头的不重复拼（幂等）。
@@ -1206,7 +1198,30 @@ pub async fn fetch(req: &DoubanMetaRequest) -> Result<Option<DoubanMeta>, AppErr
         tracing::debug!(title, "douban meta skipped during cooldown");
         return Ok(None);
     }
+    // 冷 key 去重：首页一屏几十张卡片、详情页与头图同时问同一个片名时，
+    // 缓存里还没有条目，每个调用者都会跑一遍完整搜索链（候选搜索 + 摘要 +
+    // rexxar 详情）。令牌桶只限速、不去重，所以放大仍然发生——这里让同
+    // title/year 的并发查询共享同一次执行。
+    cold_flights()
+        .dedupe(&key, || cold_fetch(kind, prefix, title, year))
+        .await
+}
 
+/// `fetch` 的实际取数链（缓存复查留在里面：等待 leader 时可能已被填上）。
+async fn cold_fetch(
+    kind: ProxyKind,
+    prefix: String,
+    title: String,
+    year: Option<String>,
+) -> Result<Option<DoubanMeta>, AppError> {
+    let key = cache_key(&title, year.as_deref());
+    if let Some(hit) = cache_get(&key) {
+        return Ok(hit);
+    }
+    if douban_cooling() {
+        tracing::debug!(title = %title, "douban meta skipped during cooldown");
+        return Ok(None);
+    }
     let items = search_candidates(kind, &prefix, &title).await;
     let Some(item) = pick_candidate(&items, &title, year.as_deref()) else {
         tracing::info!(title = %title, candidates = items.len(), "douban: no matching subject");
@@ -1237,6 +1252,15 @@ pub async fn douban_meta(
 }
 
 // ---- 缓存 -----------------------------------------------------------------
+
+/// 同 `title/year` 的并发查询去重表。条目完成后即摘除——缓存语义仍由上面
+/// 那套正/负缓存（`cache_get` / `cache_put` / `NEG_CACHE_TTL`）负责。
+static COLD_FLIGHTS: OnceLock<crate::flights::Flights<Result<Option<DoubanMeta>, AppError>>> =
+    OnceLock::new();
+
+fn cold_flights() -> &'static crate::flights::Flights<Result<Option<DoubanMeta>, AppError>> {
+    COLD_FLIGHTS.get_or_init(Default::default)
+}
 
 struct Cached {
     at: Instant,

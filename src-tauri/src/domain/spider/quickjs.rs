@@ -31,6 +31,14 @@ use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 const SOURCE_TTL: Duration = Duration::from_secs(600);
 
+/// 同 URL 的并发脚本下载去重（条目完成后即摘除，不承担缓存职责，缓存仍是
+/// 上面那张 `SOURCE_TTL` 内存表）。
+static SOURCE_FLIGHTS: OnceLock<crate::flights::Flights<Result<String, AppError>>> = OnceLock::new();
+
+fn source_flights() -> &'static crate::flights::Flights<Result<String, AppError>> {
+    SOURCE_FLIGHTS.get_or_init(Default::default)
+}
+
 type Pending = StdMutex<HashMap<u64, oneshot::Sender<Value>>>;
 
 struct Runner {
@@ -295,6 +303,19 @@ async fn source_for(site: &Value) -> Result<String, AppError> {
     if api.is_empty() {
         return Err(AppError::new(code::INVALID_ARGUMENT, "js site has no api"));
     }
+    // 与 py 通道同源的问题：脚本下载不在任何并发闸内，一次 fan-out 里多个
+    // 任务首次触达同一 URL 会重复下载（drpy2 这类包几十 KB～几 MB）。
+    source_flights().dedupe(&api, || cold_source(site)).await
+}
+
+/// `source_for` 的实际取数链（内存缓存 → 网络 → 内置引擎兜底）。等待 leader
+/// 期间缓存可能已被填上，所以这里重新查一遍。
+async fn cold_source(site: &Value) -> Result<String, AppError> {
+    let api = site
+        .get("api")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     if let Some((text, at)) = cache()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
