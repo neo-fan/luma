@@ -69,7 +69,9 @@ PlayerPage.resolve_play
   → playerContent(flag, id, [])      取 playUrl/url + header(UA/Referer/Cookie)
   → 本地反代 :9978 重写 m3u8 相对分片、透传 headers
   → <video> + hls.js (m3u8) / mpegts.js (flv, MSE)
-  → 失败顺序: HLS fatal/12s watchdog → 同片其它线路 → 其它站点
+   → 失败顺序: HLS fatal / stall 看门狗（判决在会话状态机：静默 20s 独立复核，
+              dead 一次即判死、unknown 累计三次判死、已出画后不判死）
+              → 同片其它线路 → 其它站点
             → 第4级嗅探(sniff, 隐藏 WebView2 抓 .m3u8/.mp4/...)
 ```
 
