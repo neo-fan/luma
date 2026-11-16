@@ -1,126 +1,219 @@
 /**
- * 豆瓣元数据补全：按片名（可选年份）问 Rust 要一份豆瓣信息。
+ * 豆瓣元数据补全：按片名（可选年份）问后端要一份豆瓣信息。
  *
- * 三条硬约束，决定了这里的写法：
- * 1. **静默回退默认**。豆瓣是「锦上添花」：没匹配上（同名片 / 新片 / 接口
- *    限流 / 代理不可用）就跟没有这个功能一样——不弹 toast、不占位、不报错，
- *    详情页照常用源站给的信息渲染。所以所有失败都收敛成 `null`。
- * 2. **一次详情只打一次**。同一 title+year 进进出出（播放页返回、换线路、
- *    重复点同一张卡）不该反复打豆瓣；这里做进程内 Map 缓存（含「查无此片」
- *    这种负结果），FIFO 上限 200 条。缓存键带上代理模式，切换代理后下一次
- *    请求会重新走一遍，保证设置「即时生效」。
- * 3. **同片并发只发一次**。详情页重新挂载时可能同时发出两次请求，用
- *    `inflight` 表把并发的同键请求合并成一个 Promise。
+ * 取数模型（2.0.0 重构）：后端主动推。前端只发一个 `douban_request`，后端把结果
+ * 用 `douban-meta` 事件分两段推回——搜索到货推 `cover`（封面先出），详情到货推
+ * `full`（评分/简介补全）。与全站搜索的 `search-chunk` 是同一套推送模型，并发/限流
+ * 收口到后端一处，前端不再自己排队。
+ *
+ * 三条硬约束：
+ * 1. **静默回退**。豆瓣是锦上添花：没匹配（`none`）或传输失败（`error`）就跟没有
+ *    这个功能一样——不弹 toast、不占位、不报错，详情页/头图照常用源站信息渲染。
+ * 2. **中心 store**。所有结果按 key 存进 `store`，组件经 `useSyncExternalStore`
+ *    读快照；`fetchDoubanMeta` 是同一 store 上的 Promise 视图（解析到终态）。
+ *    同 key 并发只发一次请求（`requested` 集 + 后端 active 去重）。
+ * 3. **key 含代理模式**（title+year+proxyType+custom）。换代理后 key 变，下一次
+ *    请求自然走新代理（「即时生效」）；组件从设置页返回时重新挂载即读到新值。
  */
-import { api, errorMessage } from "./invoke";
+import { api } from "./invoke";
 import type { DoubanProxyType } from "./doubanSettings";
 import { readDoubanPrefs } from "./doubanSettings";
 import { log } from "./logger";
 
-/** Rust `douban_meta` 的返回体（字段顺序与契约一致）。 */
+/** Rust `douban_meta` / `douban-meta` 事件里的资料体（字段顺序与契约一致）。 */
 export interface DoubanMeta {
   id: string;
   title: string;
-  /** 上映/首播年份，取不到时为空串。 */
   year: string;
-  /** 0~10 的评分；0 表示没有评分（不是「零分」）。 */
   rating: number;
-  /** 评价人数。 */
   ratingCount: number;
   intro: string;
   directors: string[];
   actors: string[];
   genres: string[];
   pic: string;
-  /** 豆瓣条目地址，仅作来源说明，不在客户端打开。 */
   url: string;
 }
 
-/** 进程内缓存的条数上限：一次浏览几十部片，200 条足够且不会涨。 */
-const CACHE_LIMIT = 200;
-/** 命中了的资料缓存 10 分钟（和 Rust 侧一致）；负结果 5 分钟（对齐 Rust
- * NEG_CACHE_TTL）：头图每 6.5s 轮播一帧，1 分钟会让查不到的片名每圈重跑
- * 全链。限流冷却期 Rust 不入缓存、前端这里最多多记 2 分钟，可接受。 */
-const HIT_TTL_MS = 10 * 60_000;
-const MISS_TTL_MS = 5 * 60_000;
-/** 搜索有频率限制：同时最多两个在途，其余排队，避免一屏海报把豆瓣打到限流。 */
-const MAX_PARALLEL = 2;
+/** 富化阶段：cover=仅封面，full=含评分/简介，none=确认无匹配，error=传输失败可重试。 */
+export type DoubanPhase = "cover" | "full" | "none" | "error";
 
-interface CachedMeta {
+/** 后端 `douban-meta` 事件 payload（`key` 为前端 store 槽位标识，原样回带）。 */
+export interface DoubanMetaEvent {
+  key: string;
+  phase: DoubanPhase;
+  meta: unknown;
+}
+
+export interface FetchDoubanOptions {
+  priority?: boolean;
+}
+
+interface Entry {
   meta: DoubanMeta | null;
-  at: number;
+  phase: DoubanPhase | null;
 }
 
-const cache = new Map<string, CachedMeta>();
-const inflight = new Map<string, Promise<DoubanMeta | null>>();
-// 粗结果单独一张在途表：与细结果同 key，若共用 inflight 会互相串台。
-const inflightCover = new Map<string, Promise<DoubanMeta | null>>();
-let running = 0;
-interface Waiter {
-  grant: () => void;
-  priority: boolean;
+const store = new Map<string, Entry>();
+const listeners = new Map<string, Set<() => void>>();
+const waiters = new Map<string, Set<(meta: DoubanMeta | null) => void>>();
+// 已发出、尚未收到终态的 key：避免同一部片重复发请求。
+const requested = new Set<string>();
+let unlisten: Promise<() => void> | null = null;
+
+/** 当前生效的代理参数（自定义却没填前缀 → 按直连，与后端兜底一致）。 */
+function proxyArgs(): { proxyType: DoubanProxyType; custom: string } {
+  const prefs = readDoubanPrefs();
+  const prefix = prefs.proxyPrefix.trim();
+  const proxyType: DoubanProxyType =
+    prefs.proxyType === "custom" && !prefix ? "direct" : prefs.proxyType;
+  return { proxyType, custom: proxyType === "custom" ? prefix : "" };
 }
 
-const waiters: Waiter[] = [];
+/** store 槽位键：含代理模式，换代理即落到新键、下次请求走新代理。 */
+export function doubanKey(title: string, year?: string): string {
+  const { proxyType, custom } = proxyArgs();
+  return `${title}\u0000${(year ?? "").trim()}\u0000${proxyType}\u0000${custom}`;
+}
 
-/**
- * 排队等一个在途名额。`priority` 是给播放页/详情页这种「用户正在看的
- * 那一个」用的：一屏推荐卡的预取不能把它们挤出十几秒。
- */
-async function acquireSlot(priority = false): Promise<void> {
-  if (running < MAX_PARALLEL) {
-    running += 1;
+function dispatch(key: string): void {
+  const set = listeners.get(key);
+  if (set) {
+    for (const cb of set) cb();
+  }
+}
+
+function settleWaiters(key: string, meta: DoubanMeta | null): void {
+  const set = waiters.get(key);
+  if (set) {
+    waiters.delete(key);
+    for (const resolve of set) resolve(meta);
+  }
+}
+
+function handleEvent(evt: DoubanMetaEvent): void {
+  const key = evt.key;
+  const meta = evt.phase === "none" || evt.phase === "error" ? null : normalizeDoubanMeta(evt.meta);
+  const prev = store.get(key);
+  if (evt.phase === "error") {
+    // 传输失败：保留已有封面（若有），phase 维持非终态，允许下次重新请求。
+    requested.delete(key);
+    store.set(key, { meta: prev?.meta ?? null, phase: prev?.phase ?? null });
+    dispatch(key);
+    settleWaiters(key, prev?.meta ?? null);
     return;
   }
-  await new Promise<void>((resolve) => {
-    waiters.push({ grant: resolve, priority });
+  const terminal = evt.phase === "full" || evt.phase === "none";
+  store.set(key, { meta, phase: evt.phase });
+  if (terminal) requested.delete(key);
+  dispatch(key);
+  if (terminal) settleWaiters(key, meta);
+}
+
+/** 首次用到时订阅一次后端事件；进程内常驻。 */
+function ensureListening(): void {
+  if (unlisten) return;
+  unlisten = api.onDoubanMeta((evt) => {
+    try {
+      handleEvent(evt);
+    } catch (err) {
+      log.warn("douban-meta event handling failed", { message: String(err) });
+    }
+  });
+  void unlisten.catch((err) => {
+    // 订阅失败（极端环境）：允许后续再试一次。
+    log.warn("douban-meta listen failed", { message: String(err) });
+    unlisten = null;
   });
 }
 
-function releaseSlot(): void {
-  running -= 1;
-  // 高优先级先出队：播放页简介不该排在一屏推荐卡的预取后面。
-  const index = waiters.findIndex((waiter) => waiter.priority);
-  const next = waiters.splice(index >= 0 ? index : 0, 1)[0];
-  if (next) {
-    next.grant();
-  }
+/**
+ * 触发一次富化（幂等）：已有终态或已在途则不重复发。`priority` 给「用户正在看」
+ * 的入口（头图/详情/播放页），后端把它排到卡片预取前面。
+ */
+export function requestDouban(
+  title: string,
+  year?: string,
+  priority = false,
+): void {
+  const word = (title ?? "").trim();
+  if (!word) return;
+  if (!readDoubanPrefs().enabled) return;
+  ensureListening();
+  const key = doubanKey(word, year);
+  const entry = store.get(key);
+  if (entry?.phase === "full" || entry?.phase === "none") return;
+  if (requested.has(key)) return;
+  requested.add(key);
+  const { proxyType, custom } = proxyArgs();
+  api
+    .doubanRequest(word, (year ?? "").trim() || undefined, proxyType, custom || undefined, priority, key)
+    .catch((err) => {
+      requested.delete(key);
+      log.info("douban request failed", { title: word, message: String(err) });
+    });
 }
 
-function readCache(key: string): DoubanMeta | null | undefined {
-  const hit = cache.get(key);
-  if (!hit) {
-    return undefined;
-  }
-  const ttl = hit.meta ? HIT_TTL_MS : MISS_TTL_MS;
-  if (Date.now() - hit.at > ttl) {
-    cache.delete(key);
-    return undefined;
-  }
-  return hit.meta;
+/** 读快照（供 useSyncExternalStore）：未到货返回 null。返回引用稳定。 */
+export function getDoubanSnapshot(key: string): DoubanMeta | null {
+  return store.get(key)?.meta ?? null;
 }
 
-/** 测试 / 「换配置后想重新拉」时可清空缓存。 */
-export function clearDoubanMetaCache(): void {
-  cache.clear();
-  inflight.clear();
-}
-
-function remember(key: string, meta: DoubanMeta | null): void {
-  if (cache.size >= CACHE_LIMIT) {
-    // Map 保持插入顺序：删最早那条就是 FIFO。
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) {
-      cache.delete(oldest);
+/** 订阅某个 key 的更新。 */
+export function subscribeDouban(key: string, cb: () => void): () => void {
+  let set = listeners.get(key);
+  if (!set) {
+    set = new Set();
+    listeners.set(key, set);
+  }
+  set.add(cb);
+  return () => {
+    const current = listeners.get(key);
+    if (current) {
+      current.delete(cb);
+      if (current.size === 0) listeners.delete(key);
     }
+  };
+}
+
+/**
+ * Promise 视图：解析到终态（full 的资料 / none 的 null / error 的当前值）。
+ * 详情页、播放页、卡片预取用它；头图/卡片渲染走 `useDoubanMeta`（能拿到中间 cover）。
+ */
+export function fetchDoubanMeta(
+  title: string,
+  year?: string,
+  options: FetchDoubanOptions = {},
+): Promise<DoubanMeta | null> {
+  const word = (title ?? "").trim();
+  if (!word) return Promise.resolve(null);
+  if (!readDoubanPrefs().enabled) return Promise.resolve(null);
+  ensureListening();
+  const key = doubanKey(word, year);
+  const entry = store.get(key);
+  if (entry?.phase === "full" || entry?.phase === "none") {
+    return Promise.resolve(entry.meta);
   }
-  cache.set(key, { meta, at: Date.now() });
+  return new Promise<DoubanMeta | null>((resolve) => {
+    let set = waiters.get(key);
+    if (!set) {
+      set = new Set();
+      waiters.set(key, set);
+    }
+    set.add(resolve);
+    requestDouban(word, year, options.priority === true);
+  });
+}
+
+/** 清空 store（换配置 / 测试复位用）。在途请求的响应会重新填回。 */
+export function clearDoubanMetaCache(): void {
+  store.clear();
+  requested.clear();
+  waiters.clear();
 }
 
 function strings(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+  if (!Array.isArray(value)) return [];
   return value
     .map((item) => (typeof item === "string" ? item.trim() : ""))
     .filter((item) => item.length > 0);
@@ -132,8 +225,9 @@ function num(value: unknown): number {
 }
 
 /**
- * 后端在并行开发中，字段类型不完全受本文件控制：这里统一收敛一次，
- * 组件拿到的永远是「干净」的结构，渲染层不用再判 `undefined`。
+ * 后端字段类型不完全受本文件控制：这里统一收敛一次，组件拿到的永远是「干净」
+ * 的结构，渲染层不用再判 `undefined`。一条既没有片名、也没有评分/简介/海报的记录
+ * 对界面毫无意义，当作没拿到（返回 null）。
  */
 export function normalizeDoubanMeta(raw: unknown): DoubanMeta | null {
   if (!raw || typeof raw !== "object") {
@@ -144,7 +238,6 @@ export function normalizeDoubanMeta(raw: unknown): DoubanMeta | null {
   const id = value.id === undefined || value.id === null ? "" : String(value.id);
   const intro = typeof value.intro === "string" ? value.intro.trim() : "";
   const pic = typeof value.pic === "string" ? value.pic.trim() : "";
-  // 一条既没有片名、也没有评分/简介/海报的记录对界面毫无意义，当作没拿到。
   if (!title && !intro && !pic && num(value.rating) === 0) {
     return null;
   }
@@ -177,148 +270,4 @@ export function formatVotes(count: number): string {
     return `${(count / 10000).toFixed(1).replace(/\.0$/, "")} 万人评价`;
   }
   return `${Math.round(count)} 人评价`;
-}
-
-/**
- * 按片名取豆瓣信息；拿不到就是 `null`（**永不 reject**）。
- *
- * @param title 片名（详情页优先用 `vod_name`，回退到列表带来的 title）
- * @param year  年份，可空；同名片（如翻拍）靠它区分
- * @param options `priority` 表示用户正在看这个详情，排在前面的预取之前
- */
-export interface FetchDoubanOptions {
-  priority?: boolean;
-}
-
-export async function fetchDoubanMeta(
-  title: string,
-  year?: string,
-  options: FetchDoubanOptions = {},
-): Promise<DoubanMeta | null> {
-  const word = (title ?? "").trim();
-  if (!word) {
-    return null;
-  }
-  const prefs = readDoubanPrefs();
-  if (!prefs.enabled) {
-    // 设置里关掉 = 完全不发请求，也不读缓存。
-    return null;
-  }
-  const proxyPrefix = prefs.proxyPrefix.trim();
-  // 自定义模式却没填前缀：一定失败，按直连发，至少别把用户的详情页拖住。
-  const proxyType: DoubanProxyType =
-    prefs.proxyType === "custom" && !proxyPrefix ? "direct" : prefs.proxyType;
-  const custom = proxyType === "custom" ? proxyPrefix : "";
-  const key = `${word}\u0000${(year ?? "").trim()}\u0000${proxyType}\u0000${custom}`;
-
-  const cached = readCache(key);
-  if (cached !== undefined) {
-    return cached;
-  }
-  const inFlight = inflight.get(key);
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const task = (async (): Promise<DoubanMeta | null> => {
-    await acquireSlot(options.priority === true);
-    try {
-      const raw = await api.doubanMeta(
-        word,
-        (year ?? "").trim() || undefined,
-        proxyType,
-        custom || undefined,
-      );
-      const meta = normalizeDoubanMeta(raw);
-      remember(key, meta);
-      return meta;
-    } catch (err) {
-      // 网络 / 代理 / 后端未实现都会走到这里：对界面而言等价于「没有豆瓣信息」。
-      // 只留一条 info 便于复盘，不进控制台报错（试运行下 error 会打到 devtools）。
-      log.info("douban meta unavailable", {
-        title: word,
-        proxyType,
-        message: errorMessage(err),
-      });
-      remember(key, null);
-      return null;
-    } finally {
-      releaseSlot();
-    }
-  })();
-
-  inflight.set(key, task);
-  try {
-    return await task;
-  } finally {
-    inflight.delete(key);
-  }
-}
-
-/**
- * 豆瓣「粗结果」：只拿搜索级封面（1 跳），供头图「封面先出、评分/简介后补」。
- *
- * 与 `fetchDoubanMeta` 的关键区别：
- * - **不写资料缓存**，否则粗结果（rating=0）会遮蔽随后到货的细结果；
- * - 细结果若已在缓存里，直接返回它（细含海报，省一次粗请求）；
- * - 用单独的 `inflightCover` 合并并发同 key。
- * 后端 `search_cache` 保证粗/细共用同一次搜索，不增加豆瓣请求量。
- */
-export async function fetchDoubanCover(
-  title: string,
-  year?: string,
-  options: FetchDoubanOptions = {},
-): Promise<DoubanMeta | null> {
-  const word = (title ?? "").trim();
-  if (!word) {
-    return null;
-  }
-  const prefs = readDoubanPrefs();
-  if (!prefs.enabled) {
-    return null;
-  }
-  const proxyPrefix = prefs.proxyPrefix.trim();
-  const proxyType: DoubanProxyType =
-    prefs.proxyType === "custom" && !proxyPrefix ? "direct" : prefs.proxyType;
-  const custom = proxyType === "custom" ? proxyPrefix : "";
-  const key = `${word}\u0000${(year ?? "").trim()}\u0000${proxyType}\u0000${custom}`;
-
-  // 细结果已到 → 直接用（含海报），不必再发粗请求。
-  const cachedFull = readCache(key);
-  if (cachedFull !== undefined) {
-    return cachedFull;
-  }
-  const inFlight = inflightCover.get(key);
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const task = (async (): Promise<DoubanMeta | null> => {
-    await acquireSlot(options.priority === true);
-    try {
-      const raw = await api.doubanCover(
-        word,
-        (year ?? "").trim() || undefined,
-        proxyType,
-        custom || undefined,
-      );
-      return normalizeDoubanMeta(raw);
-    } catch (err) {
-      log.info("douban cover unavailable", {
-        title: word,
-        proxyType,
-        message: errorMessage(err),
-      });
-      return null;
-    } finally {
-      releaseSlot();
-    }
-  })();
-
-  inflightCover.set(key, task);
-  try {
-    return await task;
-  } finally {
-    inflightCover.delete(key);
-  }
 }

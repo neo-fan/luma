@@ -15,7 +15,7 @@ import { loadCategoryPage } from "./categoryLoad";
 import { log } from "./logger";
 // type-only：sources.ts 运行时反向依赖本模块，这里只借类型不引运行时代码。
 import type { AggregateRow } from "./sources";
-import type { DoubanMeta } from "./douban";
+import type { DoubanMeta, DoubanMetaEvent } from "./douban";
 import type { DoubanProxyType } from "./doubanSettings";
 import type {
   AppError,
@@ -336,6 +336,14 @@ export const api = {
   },
 
   /**
+   * 豆瓣富化的后端推送（cover/full/none/error）。集中在这里，守住「唯一 IPC 入口」：
+   * 只有 `src/lib/douban.ts` 的中心 store 订阅它，组件不直接 import 事件 API。
+   */
+  onDoubanMeta(handler: (evt: DoubanMetaEvent) => void): Promise<UnlistenFn> {
+    return listen<DoubanMetaEvent>("douban-meta", (event) => handler(event.payload));
+  },
+
+  /**
    * 首页：先取 `homeContent`（分类 + 有些源自带 list）。若 list 为空，再问
    * 一次标准方法 `homeVideoContent` 补推荐流——豆瓣等严格按协议分家的源
    * 只在这里放卡片。兜底失败一律吞掉、保留 base，绝不让首页因缺该方法而报错
@@ -484,17 +492,19 @@ export const api = {
   },
 
   /**
-   * 豆瓣「粗结果」：只跑搜索链拿封面（2:3 统一版式），不跑详情。给头图
-   * 「封面先出、评分/简介后补」用。与 `doubanMeta` 共用后端 `search_cache`，
-   * 不增加豆瓣请求量。失败一律静默降级（调用方 `src/lib/douban.ts`）。
+   * 豆瓣富化的唯一入口（push 模型）：立即返回，结果走 `douban-meta` 事件分两段
+   * 推回（cover → full）。`key` 是前端 store 槽位标识，后端原样回带用于路由。
+   * 调用方 `src/lib/douban.ts`；组件不直接用这里。
    */
-  doubanCover(
+  doubanRequest(
     title: string,
     year?: string,
     proxyType?: DoubanProxyType,
     proxyPrefix?: string,
-  ): Promise<DoubanMeta | null> {
-    return call("douban_cover", { title, year, proxyType, proxyPrefix });
+    priority = false,
+    key = "",
+  ): Promise<void> {
+    return call("douban_request", { title, year, proxyType, proxyPrefix, priority, key });
   },
 
   /** 直播 m3u 动辄数千频道，返回直播页时不要重新下载解析一遍。 */

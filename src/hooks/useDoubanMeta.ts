@@ -1,62 +1,38 @@
-import { useEffect, useState } from "react";
-import { fetchDoubanCover, fetchDoubanMeta } from "../lib/douban";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { doubanKey, getDoubanSnapshot, requestDouban, subscribeDouban } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
 
 /**
  * 列表/头图按需补豆瓣元数据：enabled=false 时不发请求（懒加载由调用方判断视口）。
- * 片名变化先清空，避免上一部片的评分挂在新片下面。
  *
- * `progressive`（头图用）：先拿搜索级封面（1 跳）让海报尽快出现，再等详情结果
- * 补评分/简介。细结果到货后忽略迟到的粗结果，避免粗结果覆盖细结果。
+ * 走后端 push 的中心 store：`requestDouban` 触发一次富化，后端先推 `cover`
+ * （封面）、再推 `full`（评分/简介）；这里用 `useSyncExternalStore` 订阅该 key，
+ * 到货即重渲染，所以头图能「封面先出、详情后补」，无需前端发两个请求。
+ * 片名变化先清快照（store 按 key 分槽，天然隔离上一部片的数据）。
  */
 export default function useDoubanMeta(
   title: string | undefined,
   year: string | undefined,
   enabled = true,
   priority = false,
-  progressive = false,
 ): DoubanMeta | null {
-  const [meta, setMeta] = useState<DoubanMeta | null>(null);
   const name = (title ?? "").trim();
   const yearText = (year ?? "").trim();
+  // key 含代理模式：换代理后落到新槽位，下次请求走新代理（组件重挂载即生效）。
+  const key = name ? doubanKey(name, yearText) : "";
+
+  const subscribe = useCallback(
+    (cb: () => void) => (key ? subscribeDouban(key, cb) : () => {}),
+    [key],
+  );
+  const getSnapshot = useCallback(() => (key ? getDoubanSnapshot(key) : null), [key]);
+  const meta = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   useEffect(() => {
-    let alive = true;
-    // 没开启或没有片名：清掉旧结果，一个请求都不发。
-    if (!enabled || !name) {
-      setMeta(null);
-      return () => {
-        alive = false;
-      };
+    if (enabled && name) {
+      requestDouban(name, yearText, priority);
     }
-    // 换片先清空，否则新片会短暂顶着上一部的评分/类型。
-    setMeta(null);
-    const yearArg = yearText || undefined;
-    if (progressive) {
-      let gotFull = false;
-      fetchDoubanCover(name, yearArg, { priority }).then((coarse) => {
-        // 细结果已到 → 粗结果（rating=0）不再覆盖它。
-        if (alive && !gotFull && coarse) {
-          setMeta(coarse);
-        }
-      });
-      fetchDoubanMeta(name, yearArg, { priority }).then((full) => {
-        if (alive) {
-          gotFull = true;
-          setMeta(full);
-        }
-      });
-    } else {
-      fetchDoubanMeta(name, yearArg, { priority }).then((next) => {
-        if (alive) {
-          setMeta(next);
-        }
-      });
-    }
-    return () => {
-      alive = false;
-    };
-  }, [enabled, name, yearText, priority, progressive]);
+  }, [enabled, name, yearText, priority]);
 
-  return meta;
+  return enabled ? meta : null;
 }

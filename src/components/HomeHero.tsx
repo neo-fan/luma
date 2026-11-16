@@ -57,9 +57,7 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
     current?.vod_name,
     current?.vod_year,
     Boolean(current),
-    // 头图是首页第一屏，评分/简介要与推荐卡的预取抢同一条队列时优先。
-    true,
-    // 两段式：搜索级封面先出（1 跳），评分/简介随详情结果补上。
+    // 头图是首页第一屏：优先于推荐卡预取，封面/评分尽快到货。
     true,
   );
   const doubanImage = useProxiedImage(douban?.pic);

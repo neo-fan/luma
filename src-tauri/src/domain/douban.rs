@@ -54,8 +54,11 @@ use crate::error::{code, AppError};
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{BinaryHeap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 use url::Url;
 
 /// 豆瓣只认浏览器 UA：`okhttp/3.15`（仓库默认）会被 403。
@@ -1482,63 +1485,236 @@ pub async fn douban_meta(
     fetch(&req).await
 }
 
-/// 头图粗结果：只跑搜索链拿封面，不跑详情。与 `douban_meta` 共用 `search_cache`，
-/// 所以「先出封面、后补详情」不增加豆瓣请求量。网络层失败一律 `Ok(None)`（前端
-/// 静默回退源站封面），与 `douban_meta` 口径一致。
-async fn fetch_cover(req: &DoubanMetaRequest) -> Result<Option<DoubanMeta>, AppError> {
-    let title = req.title.trim().to_string();
+// ---- 后端主动推：豆瓣富化调度器 ------------------------------------------------
+//
+// 取代「前端发 cover+meta 两个请求、自己合并」的两段式 pull：前端只发一个
+// `douban_request`，后端把结果用 `douban-meta` 事件分两段推回（搜索到货推 cover、
+// 详情到货推 full），与全站搜索的 `search-chunk` 同一套推送模型。
+//
+// 为什么这么设计：并发/限流收口到后端一处（固定 worker + 全局令牌桶），不再靠前端
+// 队列；同 key 去重（active 集 + moka try_get_with）；用户正在看（priority）排到
+// 可见卡片预取前面。
+
+/// worker 数 = 同时在途的豆瓣富化链上限（对齐旧前端 `MAX_PARALLEL=2`，不增豆瓣压力）。
+const ENRICH_WORKERS: usize = 2;
+
+/// 推给前端的富化事件。`key` 是前端传入的 store 槽位标识，后端原样回带（同
+/// `search-chunk` 的 `streamId`），前端据此路由；`meta` 与 `douban_meta` 的
+/// `DoubanMeta` 完全同构，前端复用同一套 normalize。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DoubanMetaEvent<'a> {
+    key: &'a str,
+    /// "cover" | "full" | "none" | "error"
+    phase: &'a str,
+    meta: Option<&'a DoubanMeta>,
+}
+
+fn emit_douban(app: &tauri::AppHandle, key: &str, phase: &str, meta: Option<&DoubanMeta>) {
+    let payload = DoubanMetaEvent { key, phase, meta };
+    if let Err(err) = tauri::Emitter::emit(app, "douban-meta", &payload) {
+        tracing::debug!(%err, key, phase, "douban-meta emit failed");
+    }
+}
+
+struct Pending {
+    priority: bool,
+    seq: u64,
+    app: tauri::AppHandle,
+    kind: ProxyKind,
+    prefix: String,
+    title: String,
+    year: Option<String>,
+    /// 前端 store 槽位标识（回带用）。
+    key: String,
+    /// 后端归一缓存键（正/负/搜索表用）。
+    ckey: String,
+}
+
+// 手写比较：只按排序相关字段（priority/seq）比，避免对 AppHandle 派生 Eq。
+impl PartialEq for Pending {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority && self.seq == other.seq
+    }
+}
+impl Eq for Pending {}
+impl PartialOrd for Pending {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Pending {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // 最大堆：priority 先出；同优先级按 seq 先进先出（故 seq 反向比较）。
+        self.priority
+            .cmp(&other.priority)
+            .then_with(|| other.seq.cmp(&self.seq))
+    }
+}
+
+struct EnrichQueue {
+    heap: BinaryHeap<Pending>,
+    active: HashSet<String>,
+    seq: AtomicU64,
+}
+
+static ENRICH: OnceLock<Mutex<EnrichQueue>> = OnceLock::new();
+static ENRICH_WAKE: OnceLock<Notify> = OnceLock::new();
+static ENRICH_STARTED: OnceLock<()> = OnceLock::new();
+
+fn enrich_queue() -> &'static Mutex<EnrichQueue> {
+    ENRICH.get_or_init(|| Mutex::new(EnrichQueue {
+        heap: BinaryHeap::new(),
+        active: HashSet::new(),
+        seq: AtomicU64::new(0),
+    }))
+}
+
+fn enrich_wake() -> &'static Notify {
+    ENRICH_WAKE.get_or_init(Notify::new)
+}
+
+/// 入队一个富化请求；`active` 命中则跳过（已有同 key 在排队/执行）。首次调用惰性
+/// 拉起固定数量 worker。返回是否真正入队。
+fn enqueue_enrichment(item: Pending) -> bool {
+    let mut guard = match enrich_queue().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if !guard.active.insert(item.key.clone()) {
+        return false;
+    }
+    let seq = guard.seq.fetch_add(1, AtomicOrdering::Relaxed);
+    let mut item = item;
+    item.seq = seq;
+    guard.heap.push(item);
+    drop(guard);
+    ENRICH_STARTED.get_or_init(|| {
+        for _ in 0..ENRICH_WORKERS {
+            tauri::async_runtime::spawn(enrich_worker());
+        }
+    });
+    enrich_wake().notify_one();
+    true
+}
+
+async fn enrich_worker() {
+    loop {
+        // 先登记唤醒订阅，再判空——避免「判空后、await 前」入队的项错过通知。
+        let notified = enrich_wake().notified();
+        let next = {
+            let mut guard = match enrich_queue().lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            guard.heap.pop()
+        };
+        let Some(item) = next else {
+            notified.await;
+            continue;
+        };
+        let Pending {
+            app,
+            kind,
+            prefix,
+            title,
+            year,
+            key,
+            ckey,
+            ..
+        } = item;
+        run_enrichment(&app, kind, &prefix, &title, year.as_deref(), &key, &ckey).await;
+        let mut guard = match enrich_queue().lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.active.remove(&key);
+        drop(guard);
+        // 还有排队项就唤醒别的 worker。
+        enrich_wake().notify_one();
+    }
+}
+
+/// 单条富化链：搜索到货推 cover，详情到货推 full；无匹配推 none，传输失败推 error
+/// （error 不写负缓存，前端可据 phase 决定是否再试）。`key` 回带给前端路由，
+/// `ckey` 是后端归一缓存键。
+async fn run_enrichment(
+    app: &tauri::AppHandle,
+    kind: ProxyKind,
+    prefix: &str,
+    title: &str,
+    year: Option<&str>,
+    key: &str,
+    ckey: &str,
+) {
+    match resolve_candidate(kind, prefix, title, year, Instant::now).await {
+        Ok(item) => {
+            let coarse = coarse_meta(&item);
+            emit_douban(app, key, "cover", Some(&coarse));
+            let full = build_meta(kind, prefix, &item, year, Instant::now).await;
+            positive_cache().insert(ckey.to_string(), full.clone()).await;
+            emit_douban(app, key, "full", Some(&full));
+        }
+        Err(ColdFail::NotFound) => emit_douban(app, key, "none", None),
+        Err(ColdFail::Transient(err)) => {
+            tracing::debug!(code = %err.code, error = %err.message, title, "douban enrich transient");
+            emit_douban(app, key, "error", None);
+        }
+    }
+}
+
+/// 前端触发豆瓣富化的唯一入口：立即返回，结果走 `douban-meta` 事件。
+/// `key` 是前端 store 槽位标识，后端原样回带用于路由；缓存按归一的 title+year。
+#[tauri::command]
+pub async fn douban_request(
+    app: tauri::AppHandle,
+    title: String,
+    year: Option<String>,
+    proxy_type: Option<String>,
+    proxy_prefix: Option<String>,
+    priority: bool,
+    key: String,
+) -> Result<(), AppError> {
+    let title = title.trim().to_string();
     if title.is_empty() {
         return Err(AppError::new(code::INVALID_ARGUMENT, "豆瓣查询需要片名"));
     }
-    let kind = ProxyKind::parse(req.proxy_type.as_deref());
-    let prefix = req
-        .proxy_prefix
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let kind = ProxyKind::parse(proxy_type.as_deref());
+    let prefix = proxy_prefix.unwrap_or_default().trim().to_string();
     if kind == ProxyKind::Custom && prefix.is_empty() {
         return Err(AppError::new(
             code::INVALID_ARGUMENT,
             "自定义豆瓣代理缺少前缀",
         ));
     }
-    let year = req
-        .year
-        .as_deref()
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_string);
-    let key = cache_key(&title, year.as_deref());
-    if negative_cache().get(&key).await.is_some() {
-        return Ok(None);
-    }
-    match resolve_candidate(kind, &prefix, &title, year.as_deref(), Instant::now).await {
-        Ok(item) => Ok(Some(coarse_meta(&item))),
-        Err(ColdFail::NotFound) => Ok(None),
-        Err(ColdFail::Transient(err)) => {
-            tracing::debug!(code = %err.code, error = %err.message, "douban cover transient");
-            Ok(None)
-        }
-    }
-}
+    let year = year
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let ckey = cache_key(&title, year.as_deref());
 
-/// 详情页 / 头图「封面先出」用的轻量补全。参数与 `douban_meta` 相同（扁平
-/// camelCase），但只跑搜索链。
-#[tauri::command]
-pub async fn douban_cover(
-    title: String,
-    year: Option<String>,
-    proxy_type: Option<String>,
-    proxy_prefix: Option<String>,
-) -> Result<Option<DoubanMeta>, AppError> {
-    let req = DoubanMetaRequest {
+    // 已有完整结果 → 直接推，省一次排队。
+    if let Some(meta) = positive_cache().get(&ckey).await {
+        emit_douban(&app, &key, "full", Some(&meta));
+        return Ok(());
+    }
+    // 确认无匹配 → 推 none（负缓存已写，前端停止等待）。
+    if negative_cache().get(&ckey).await.is_some() {
+        emit_douban(&app, &key, "none", None);
+        return Ok(());
+    }
+
+    enqueue_enrichment(Pending {
+        priority,
+        seq: 0,
+        app,
+        kind,
+        prefix,
         title,
         year,
-        proxy_type,
-        proxy_prefix,
-    };
-    fetch_cover(&req).await
+        key,
+        ckey,
+    });
+    Ok(())
 }
 
 // ---- 缓存 -----------------------------------------------------------------
