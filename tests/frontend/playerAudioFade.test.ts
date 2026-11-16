@@ -24,7 +24,12 @@ describe("player audio fade", () => {
   });
 
   it("fades in to the remembered volume instead of jumping to it", () => {
-    const fade = engine.slice(engine.indexOf("const fadeInVolume = () => {"));
+    // 锚点丢失=重构改了函数名：必须先显性失败。否则 indexOf 返回 -1 时
+    // slice(-1) 只剩一个字符，下面的 toContain 会以「内容缺失」的面目
+    // 报错误导排查，而 `not.toContain` 类断言干脆静默通过（漏报）。
+    const anchor = engine.indexOf("const fadeInVolume = () => {");
+    expect(anchor, "锚点丢失：fadeInVolume 函数名变了？").toBeGreaterThanOrEqual(0);
+    const fade = engine.slice(anchor);
     expect(fade).toContain("readPlayerPrefs().volume");
     expect(fade).toContain("video.volume = wanted * progress;");
     expect(fade).toContain("window.requestAnimationFrame(tick);");

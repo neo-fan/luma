@@ -35,11 +35,13 @@ describe("player stage fallback action", () => {
 
   it("keeps the control bar visible while the line is broken or slow", () => {
     const css = styles("player.css");
+    // 锚点必须先存在：`not.toContain` 在锚丢失（indexOf=-1 → slice(-1)
+    // 只剩一个字符）时会静默通过，正是这类契约测试最危险的漏报面。
+    const busyAnchor = css.indexOf(".player-stage.is-busy .art-video-player .art-bottom {");
+    expect(busyAnchor, "锚点丢失：.is-busy 的 .art-bottom 规则改名/挪走了？").toBeGreaterThanOrEqual(0);
     expect(css).toContain(".player-stage.is-error .art-video-player .art-bottom,");
     expect(css).toContain(".player-stage.is-busy .art-video-player .art-bottom {");
-    const block = css.slice(
-      css.indexOf(".player-stage.is-busy .art-video-player .art-bottom {"),
-    );
+    const block = css.slice(busyAnchor);
     const body = block.slice(0, block.indexOf("}"));
     expect(body).toContain("opacity: 1 !important;");
     expect(body).toContain("visibility: visible !important;");
@@ -47,9 +49,9 @@ describe("player stage fallback action", () => {
     // 播放时把整个页面的点击吞光（2026-11-16 实测搜索页错误条点不到）。
     // 可点权限只给进度条 / 控制栏两行。
     expect(body).not.toContain("pointer-events");
-    const clickable = css.slice(
-      css.indexOf(".player-stage.is-busy .art-video-player .art-progress,"),
-    );
+    const progressAnchor = css.indexOf(".player-stage.is-busy .art-video-player .art-progress,");
+    expect(progressAnchor, "锚点丢失：进度条/控制栏的可点规则没了？").toBeGreaterThanOrEqual(0);
+    const clickable = css.slice(progressAnchor);
     expect(clickable.slice(0, clickable.indexOf("}"))).toContain(
       "pointer-events: auto !important;",
     );

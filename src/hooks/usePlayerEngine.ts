@@ -32,6 +32,7 @@ import { log } from "../lib/logger";
 import { mediaIsAdvancing } from "../lib/mediaAlive";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
+import { decideWatchdogVerdict } from "../lib/watchdogVerdict";
 import { DEFAULT_PREFS, readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import type { VideoMeta } from "../lib/resolution";
 import type { PlayResolved } from "../types/luma";
@@ -394,8 +395,25 @@ export function usePlayerEngine({
     let activeProxyUrl = resolved.proxyUrl;
     /** 原地换集代数：在途探活回来时代数已变，结论属于旧集，直接丢弃。 */
     let switchGeneration = 0;
-    /** 上一次切换挂起的续播监听：新一轮切换前收回，防旧 canplay 触发播放。 */
-    let resumeCleanup: (() => void) | null = null;
+    /**
+     * 切换类 timer / listener 的显式回收登记。
+     *
+     * 此前这些句柄只靠 `videoRef.current !== video` 身份校验兜底——一旦后续
+     * 改动放松校验就会「卸载后继续向已销毁的 video 写音量 / 触发换线」。
+     * 现在改成生命周期闭环：每轮切换开始前 `disposeSwitchCycle()` 收上一轮，
+     * effect cleanup 再收最后一轮。集合规模由「单轮登记的句柄数」封顶
+     * （上一轮条目在新一轮开始时统一清空并回收），连看几千集也不会增长。
+     */
+    const switchDisposers = new Set<() => void>();
+    const trackSwitchDisposer = (dispose: () => void): void => {
+      switchDisposers.add(dispose);
+    };
+    const disposeSwitchCycle = (): void => {
+      for (const dispose of switchDisposers) {
+        dispose();
+      }
+      switchDisposers.clear();
+    };
     // 只要出过画（currentTime>0），之后所有卡顿都按「网络抖动」处理：
     // 用户明确要求「已经能播放了 就不要切源」，换线交给他手动决定。
     let hasPlayed = false;
@@ -716,7 +734,7 @@ export function usePlayerEngine({
                  */
                 if (siteKey === "live") {
                   const startedAt = video.currentTime;
-                  window.setTimeout(() => {
+                  const observe = window.setTimeout(() => {
                     if (disposed || videoRef.current !== video) {
                       return;
                     }
@@ -729,6 +747,7 @@ export function usePlayerEngine({
                     setVideoError(`FLV 播放中断：${detail}`);
                     void switchOrFailoverRef.current();
                   }, 4_000);
+                  trackSwitchDisposer(() => window.clearTimeout(observe));
                   return;
                 }
                 setVideoError(`FLV 播放失败：${detail}`);
@@ -1199,14 +1218,27 @@ export function usePlayerEngine({
           if (failoverStarted.current || lineSwitchStarted.current) {
             return;
           }
-          if (verdict === "dead") {
-            // 明确失败（HTTP 错误 / 内容不是 m3u8 / 分片是占位图）：一次即判死。
-            giveUpLine("当前线路已确认无法加载，正在切换…", "stall probe dead");
-            return;
+          const decision = decideWatchdogVerdict({
+            verdict,
+            unresponsiveProbes,
+            limit: STALL_UNRESPONSIVE_LIMIT,
+            hasPlayed,
+            isLive: siteKey === "live",
+          });
+          if (verdict === "unknown") {
+            // unknown：还是没回话。累计到阈值前一律继续等，绝不跳走。
+            unresponsiveProbes = decision.unresponsiveProbes;
+            log.info("stall probe inconclusive", {
+              siteKey,
+              vodId,
+              unresponsiveProbes,
+              quietMs: Date.now() - lastAliveAt,
+            });
+          } else {
+            unresponsiveProbes = decision.unresponsiveProbes;
           }
-          if (verdict === "ok") {
+          if (decision.action === "stay") {
             // 清单和分片都拿得到 → 只是慢，继续等（这也是 life signal）。
-            unresponsiveProbes = 0;
             noteAlive();
             log.info("stall probe alive but slow", {
               siteKey,
@@ -1215,16 +1247,13 @@ export function usePlayerEngine({
             });
             return;
           }
-          // unknown：还是没回话。累计到阈值前一律继续等，绝不跳走。
-          unresponsiveProbes += 1;
-          log.info("stall probe inconclusive", {
-            siteKey,
-            vodId,
-            unresponsiveProbes,
-            quietMs: Date.now() - lastAliveAt,
-          });
-          if (unresponsiveProbes >= STALL_UNRESPONSIVE_LIMIT) {
-            giveUpLine("当前线路多次无响应，正在切换…", "stall probe unresponsive");
+          if (decision.action === "dead") {
+            giveUpLine(
+              verdict === "dead"
+                ? "当前线路已确认无法加载，正在切换…"
+                : "当前线路多次无响应，正在切换…",
+              verdict === "dead" ? "stall probe dead" : "stall probe unresponsive",
+            );
           }
         })
         .catch(() => {
@@ -1338,7 +1367,7 @@ export function usePlayerEngine({
       // 时续窗会把用户紧随换集的音量调节也吞掉（persistVolume 的纠正分支
       // 按存储值回写）。ArtPlayer 在 switchUrl 后恢复缓存音量/倍速的噪声，
       // 由下面的显式重放 + swFadeIn 的 ramp 窗口负责压住与纠正。
-      window.setTimeout(() => {
+      const swReplay = window.setTimeout(() => {
         if (videoRef.current !== video) {
           return;
         }
@@ -1349,6 +1378,7 @@ export function usePlayerEngine({
           video.volume = swVolume;
         }
       }, 1250);
+      trackSwitchDisposer(() => window.clearTimeout(swReplay));
       // 首帧前保留画面：teardown 销毁 Hls 即清 MSE 缓冲，画面立刻黑。趁缓冲
       // 还在抓当前帧当 poster。MSE blob 同源，drawImage 不会 taint；跨源 native
       // src 会抛 SecurityError——catch 住跳过，退回无海报，不阻塞换集。
@@ -1372,8 +1402,7 @@ export function usePlayerEngine({
         // 「咔」的爆音（与 hardStop 同一处理）。暂停态切换不出声，不动它。
         video.muted = true;
       }
-      resumeCleanup?.();
-      resumeCleanup = null;
+      disposeSwitchCycle();
       teardownDecoders?.();
       teardownDecoders = null;
       /**
@@ -1466,18 +1495,18 @@ export function usePlayerEngine({
         video.addEventListener("pause", cancelResume, { once: true });
         const resumePlay = () => {
           video.removeEventListener("pause", cancelResume);
-          resumeCleanup = null;
           if (!resumeCancelled && videoRef.current === video && video.paused) {
             void video.play().catch(() => {});
           }
         };
         video.addEventListener("canplay", resumePlay, { once: true });
-        resumeCleanup = () => {
+        trackSwitchDisposer(() => {
           video.removeEventListener("pause", cancelResume);
           video.removeEventListener("canplay", resumePlay);
+          video.removeEventListener("playing", swFadeIn);
           video.removeEventListener("canplay", swFadeIfPlaying);
           window.clearTimeout(swFadeTimer);
-        };
+        });
         void video.play().catch(() => {});
       }
       /**
@@ -1489,14 +1518,17 @@ export function usePlayerEngine({
        */
       const gen = switchGeneration;
       await new Promise<void>((resolve) => {
-        const finish = (aliveCheck: boolean) => {
-          if (aliveCheck && switchGeneration !== gen) {
-            return; // 「出画」快路径只认最新一轮；在途旧切换不该宣布新集就绪
-          }
+        const disposeWaiter = () => {
           video.removeEventListener("loadeddata", onAlive);
           video.removeEventListener("playing", onAlive);
           video.removeEventListener("timeupdate", onAlive);
           window.clearTimeout(cap);
+        };
+        const finish = (aliveCheck: boolean) => {
+          if (aliveCheck && switchGeneration !== gen) {
+            return; // 「出画」快路径只认最新一轮；在途旧切换不该宣布新集就绪
+          }
+          disposeWaiter();
           resolve();
         };
         const onAlive = () => {
@@ -1508,6 +1540,9 @@ export function usePlayerEngine({
         // 若连 cap 也被守卫吞了，这条 promise 永挂、finally 永远不跑，
         // 「切换中」只能等页面级兜底（2026-11-16 CDP 实测卡 10s+）。
         const cap = window.setTimeout(() => finish(false), 15000);
+        // 登记给「新一轮切换 / effect cleanup」兜底：正常收口时 disposeWaiter
+        // 已跑过一次，再跑是幂等的 removeEventListener/clearTimeout no-op。
+        trackSwitchDisposer(disposeWaiter);
         video.addEventListener("loadeddata", onAlive);
         video.addEventListener("playing", onAlive);
         video.addEventListener("timeupdate", onAlive);
@@ -1525,6 +1560,9 @@ export function usePlayerEngine({
       window.clearInterval(hintTimer);
       switchRef.current = null;
       noticeRef.current = null;
+      // 切换类 timer/listener 全部显式回收（身份校验仍在，这里是第二道闸）：
+      // 卸载/HMR 后不允许有任何活着的切换句柄继续摸 <video>。
+      disposeSwitchCycle();
       // 海报保持的监听 / 渐隐定时器随卸载收回（DOM 由 art.destroy 移除）。
       releasePosterHold();
       window.clearInterval(speedTimer);
