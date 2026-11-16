@@ -8,7 +8,6 @@
 
 use crate::error::{code, AppError};
 use std::process::Stdio;
-use std::sync::Mutex;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 
@@ -251,31 +250,6 @@ pub async fn run_with_timeout(
                 format!("child exceeded {}ms", timeout.as_millis()),
             ))
         }
-    }
-}
-
-/// Track live sidecar pids so shutdown can sweep anything the job missed.
-#[derive(Default)]
-pub struct ProcessRegistry {
-    pids: Mutex<Vec<u32>>,
-}
-
-impl ProcessRegistry {
-    pub fn register(&self, pid: u32) {
-        let mut guard = self.pids.lock().unwrap_or_else(|p| p.into_inner());
-        guard.push(pid);
-    }
-
-    pub fn forget(&self, pid: u32) {
-        let mut guard = self.pids.lock().unwrap_or_else(|p| p.into_inner());
-        guard.retain(|item| *item != pid);
-    }
-
-    pub fn snapshot(&self) -> Vec<u32> {
-        self.pids
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
     }
 }
 

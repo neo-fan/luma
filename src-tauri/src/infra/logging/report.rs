@@ -34,9 +34,9 @@ fn utc_stamp() -> String {
     )
 }
 
-/// 生成反馈文件（命令层在 `mod.rs`）。
-pub(super) fn write_report(configs: tauri::State<'_, crate::config::ConfigStore>) -> Result<String, AppError> {
-    let diag = diagnostics::collect(configs);
+/// 生成反馈文件（命令层在 `domain/diagnostics.rs`）。
+pub(crate) fn write_report(config: Option<diagnostics::ConfigDigest>) -> Result<String, AppError> {
+    let diag = diagnostics::collect(config);
     let dir = crate::store::data_dir().join("reports");
     fs::create_dir_all(&dir)
         .map_err(|err| AppError::new(code::INTERNAL, "create report dir failed").with_cause(err.to_string()))?;

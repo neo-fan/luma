@@ -9,6 +9,12 @@ pub fn redact_url(raw: &str) -> String {
 
 /// 把任意文本里的 http(s) URL 换成脱敏形式；错误信息也走这里。
 pub fn sanitize(text: &str) -> String {
+    truncate_chars(&redact_urls(text), MAX_CONTEXT)
+}
+
+/// 只做 URL 脱敏、不裁长度：给落盘通道当最后一道闸（一整行日志可能是几百行
+/// 栈，截断会把排障信息切掉；上下文级别的裁剪在写入方各自负责）。
+pub fn redact_urls(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(index) = find_url(rest) {
@@ -21,7 +27,7 @@ pub fn sanitize(text: &str) -> String {
         rest = &tail[end..];
     }
     out.push_str(rest);
-    truncate_chars(&out, MAX_CONTEXT)
+    out
 }
 
 fn find_url(text: &str) -> Option<usize> {

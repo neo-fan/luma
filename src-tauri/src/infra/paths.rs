@@ -6,6 +6,7 @@
 //! actually needs, so all three layouts work without extra configuration.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// Candidate roots that may contain a `sidecars/` directory, most specific
 /// first. Duplicates are removed and empty paths are ignored.
@@ -19,7 +20,7 @@ pub fn sidecar_roots() -> Vec<PathBuf> {
         push_unique(&mut roots, source_root());
     }
 
-    if let Some(dir) = crate::env::get("RESOURCE_DIR") {
+    if let Some(dir) = resource_dir() {
         let dir = PathBuf::from(dir);
         // Installed build: <resource>/sidecars. Portable: <exe>/sidecars where
         // resource_dir is the exe dir. Also try the parent for <exe>/resources.
@@ -42,6 +43,33 @@ pub fn sidecar_roots() -> Vec<PathBuf> {
         push_unique(&mut roots, source_root());
     }
     roots
+}
+
+/// Tauri 报告的 resource 目录（安装版 = exe/resources，便携版 = exe 目录）。
+///
+/// 宿主在 `setup()` 里发布它——那时 tokio worker 已经在跑，而
+/// `std::env::set_var` 与并发 `std::env::var` 是数据竞争（edition 2021 下
+/// `set_var` 还不是 `unsafe`，但 Windows 上真会读到撕裂/错值；2026-11-16
+/// 评审 P2）。改成 `OnceLock`：发布一次、之后只读，天然线程安全。
+///
+/// `LUMA_RESOURCE_DIR` 环境变量仍然生效（外部覆盖：手工跑 sidecar、集成
+/// 测试指定 bundle 布局），优先级低于宿主显式发布的那一次。
+static RESOURCE_DIR: OnceLock<String> = OnceLock::new();
+
+/// 宿主启动时调用一次；重复调用保留第一次发布的值（诊断里要知道真实来源）。
+pub fn set_resource_dir(path: &std::path::Path) {
+    let text = path.to_string_lossy().to_string();
+    if RESOURCE_DIR.set(text.clone()).is_ok() {
+        tracing::info!(dir = %text, "resource dir published");
+    }
+}
+
+/// 当前可见的 resource 目录：宿主发布值优先，其次环境变量覆盖。
+pub fn resource_dir() -> Option<String> {
+    RESOURCE_DIR
+        .get()
+        .cloned()
+        .or_else(|| std::env::var("LUMA_RESOURCE_DIR").ok().filter(|text| !text.is_empty()))
 }
 
 /// Checkout root at compile time; only useful for `cargo run` / tests.

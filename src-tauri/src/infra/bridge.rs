@@ -46,7 +46,12 @@ impl Conn {
     fn fail_all(&self, message: &str) {
         let pending = self.pending.clone();
         // Short critical section; no await needed while draining.
-        let mut guard = pending.lock().unwrap();
+        // 中毒容错：sender 已 drop 时 `send` 内部不会 panic，但其它路径（回调里
+        // 的 panic）可能把锁弄中毒；这里必须继续排空 pending，否则在途调用会
+        // 永远挂在超时上（与全仓 30+ 处 `into_inner` 口径一致，2026-11-16 评审）。
+        let mut guard = pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for (_, sender) in guard.drain() {
             let _ = sender.send(Err(AppError::new(code::SPIDER_CRASH, message)));
         }
@@ -131,7 +136,7 @@ pub(crate) fn spawn_stdio(
 
     if let Some(stdout) = stdout {
         let reader_conn = conn.clone();
-        tauri::async_runtime::spawn(async move {
+        let reader = tauri::async_runtime::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             loop {
                 match lines.next_line().await {
@@ -166,6 +171,23 @@ pub(crate) fn spawn_stdio(
                 "sidecar reader stopped"
             );
         });
+        // 监护 reader 任务：任务体里任何 panic（帧路由、未来的某次 unwrap）
+        // 都会静默带走回包路由，但 `alive` 仍是 true、`fail_all` 不会跑——
+        // 此后每次调用都要等满超时才报错，且因 `alive` 恒真永不 respawn，
+        // 表现为「py 源集体超时但 sidecar 看起来活着」（2026-11-16 评审 P1）。
+        // JoinHandle 报错 = panic 或被取消：这里补上正常退出路径才会做的收口。
+        let watchdog_conn = conn.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(err) = reader.await {
+                tracing::error!(
+                    sidecar = watchdog_conn.label,
+                    error = %err,
+                    "sidecar reader task failed; marking connection dead"
+                );
+                watchdog_conn.alive.store(false, Ordering::SeqCst);
+                watchdog_conn.fail_all("sidecar reader task failed");
+            }
+        });
     }
 
     tracing::info!(pid, sidecar = label, "sidecar spawned");
@@ -196,7 +218,10 @@ async fn route_frame(conn: &std::sync::Arc<Conn>, frame: Value) {
         return;
     };
     let sender = {
-        let mut guard = conn.pending.lock().unwrap();
+        let mut guard = conn
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.remove(&id)
     };
     let Some(sender) = sender else {

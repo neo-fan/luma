@@ -18,7 +18,10 @@
 //!   `max_log_files`）与 `EnvFilter`；前端通道靠 `Targets` 只放 `target: "ui"`；
 //! - 每个通道保留最近 7 份，按 UTC 日期命名（与 `tracing-appender` 的规则一致）；
 //! - 日志会被用户直接发给开发者做试运行反馈，所以 URL 一律脱敏（去 query /
-//!   fragment、截断 160 字符），前端写日志时也会在 Rust 侧再过一遍；
+//!   fragment、截断 160 字符）。脱敏点统一在 `CappedWriter::write`——宿主与
+//!   前端两个通道都经过它，任何新增日志默认就是安全的（前端再调一次
+//!   `sanitize` 只是幂等重复）。适配层由 Python 自己写句柄，不受这道闸约束，
+//!   那边约定 traceback 落盘前不带签名 query；
 //! - `tracing::*` 宏在 `init()` 之前调用会被丢弃，因此 `run()` 第一件事就是
 //!   初始化日志，早于 SQLite 迁移与 sidecar 探测。
 
@@ -213,16 +216,49 @@ impl CappedWriter {
 
 impl Write for CappedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write_all(buf)?;
-        let total = self.written.fetch_add(buf.len() as u64, Ordering::AcqRel) + buf.len() as u64;
-        if total > MAX_CHANNEL_BYTES {
-            self.prune_if_needed();
+        // 落盘前的最后一道统一闸：任何通道的字节里出现 http(s) URL 都要去掉
+        // query/fragment（签名直链、带 token 的取数地址都在其中）。
+        //
+        // 以前只有 UI 通道在写入侧调 `sanitize`，宿主通道是裸 `fmt::layer()`：
+        // 反代 / http 取数失败的报错把完整 URL 写进 `url = %target`、错误 cause
+        // 也带整串地址，而「一键诊断」打包的正是这些日志——等于把令牌外泄
+        // （2026-11-16 评审 P1）。放在这里而不是每个调用点，是为了让「新增
+        // 一条日志」默认就是安全的。
+        //
+        // ⚠️ 返回值必须是「消费了 buf.len() 个输入字节」，不是实际落盘字节数：
+        // 脱敏后的串比输入短，若按输出长度返回，`write_all` 会把原文剩下的
+        // 尾巴（正是 query）继续写进来——回归测试 `capped_writer_redacts_...`
+        // 抓到过这个自伤。实际写入量单独用于容量核算。
+        if contains_url(buf) {
+            let owned = crate::logging::redact_urls(&String::from_utf8_lossy(buf)).into_bytes();
+            self.write_raw(&owned)?;
+        } else {
+            self.write_raw(buf)?;
         }
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
+    }
+}
+
+/// 缓冲区里是否出现 http(s)——用 `windows` 扫描，但先验长度：`windows` 在
+/// `size > len` 时直接 panic，而日志写入完全可能是几个字节的碎片。
+fn contains_url(buf: &[u8]) -> bool {
+    (buf.len() >= 7 && buf.windows(7).any(|window| window == b"http://"))
+        || (buf.len() >= 8 && buf.windows(8).any(|window| window == b"https://"))
+}
+
+impl CappedWriter {
+    /// 真正的落盘 + 容量核算（按实际写入的字节计，不含被脱敏掉的部分）。
+    fn write_raw(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.inner.write_all(buf)?;
+        let total = self.written.fetch_add(buf.len() as u64, Ordering::AcqRel) + buf.len() as u64;
+        if total > MAX_CHANNEL_BYTES {
+            self.prune_if_needed();
+        }
+        Ok(())
     }
 }
 
@@ -413,26 +449,10 @@ pub fn log_write(entries: Vec<UiLogEntry>) -> Result<(), AppError> {
     ui::write_entries(entries)
 }
 
-/// 试运行反馈用的一键诊断：版本 / 目录 / 当前配置规模 / 日志文件。
-#[tauri::command]
-pub fn diagnostics(configs: tauri::State<'_, crate::config::ConfigStore>) -> Diagnostics {
-    diagnostics::collect(configs)
-}
-
 /// 打开日志目录，方便试运行用户把文件发给开发者。
 #[tauri::command]
 pub fn open_log_dir() -> Result<(), AppError> {
     diagnostics::open_dir()
-}
-
-/// 把诊断 + 日志尾部写成一个纯文本反馈文件，并在资源管理器里选中。
-///
-/// 试运行阶段让用户「发我日志目录」沟通成本太高：一个文件既包含版本/目录/
-/// 配置规模，也带最近日志，直接拖进聊天窗口就行。不做 zip，避免为一个
-/// 辅助功能引入压缩依赖。
-#[tauri::command]
-pub fn export_report(configs: tauri::State<'_, crate::config::ConfigStore>) -> Result<String, AppError> {
-    report::write_report(configs)
 }
 
 /// 在系统文件管理器里定位到某个路径（Windows 用 `/select,` 选中文件）。
@@ -466,13 +486,17 @@ fn reveal(path: &Path) -> Result<(), AppError> {
 // ---- 子模块 ---------------------------------------------------------------
 // 脱敏规则在 `redact`，诊断与反馈文件各占一个文件；`mod.rs` 只留目录解析、
 // 初始化、通道划分与命令层。
-mod diagnostics;
+//
+// `diagnostics` / `report` 对全 crate 可见，但**不**再引用 domain 类型：
+// 它们只吃 `ConfigDigest`（中性摘要）。需要读配置的 `diagnostics` /
+// `export_report` 命令住在 `domain/diagnostics.rs`（分层方向，2026-11-16 评审）。
+pub(crate) mod diagnostics;
 mod redact;
-mod report;
+pub(crate) mod report;
 mod ui;
 
-pub use diagnostics::{ConfigDiagnostics, Diagnostics, LogFileInfo};
-pub use redact::{redact_url, sanitize};
+pub use diagnostics::{ConfigDiagnostics, ConfigDigest, Diagnostics, LogFileInfo};
+pub use redact::{redact_url, redact_urls, sanitize};
 pub use ui::UiLogEntry;
 
 use redact::truncate_chars;

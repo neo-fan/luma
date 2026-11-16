@@ -50,8 +50,24 @@ pub struct Diagnostics {
     pub log_bytes: u64,
 }
 
-/// 采集一次诊断快照（命令层在 `mod.rs`）。
-pub(super) fn collect(configs: tauri::State<'_, crate::config::ConfigStore>) -> Diagnostics {
+/// 诊断需要的**中性配置规模视图**。
+///
+/// infra 不该认识 domain 的 `ConfigSnapshot`（分层方向，2026-11-16 评审 P1）：
+/// 这里只声明「诊断要统计什么」，把快照 → 摘要的转换留在 domain 侧
+/// （`domain/diagnostics.rs`）。`sites` 保留原始 JSON 是因为统计口径
+/// （enabled / 屏蔽 / 运行时分桶）本来就是按字段名读的。
+#[derive(Debug, Clone)]
+pub struct ConfigDigest {
+    pub id: String,
+    pub name: String,
+    pub sites: Vec<serde_json::Value>,
+    pub lives: usize,
+    pub parses: usize,
+    pub headers: usize,
+}
+
+/// 采集一次诊断快照（命令层在 `domain/diagnostics.rs`）。
+pub(crate) fn collect(config: Option<ConfigDigest>) -> Diagnostics {
     let data_dir = crate::store::data_dir();
     let (log_files, log_bytes) = log_files();
     Diagnostics {
@@ -64,7 +80,7 @@ pub(super) fn collect(configs: tauri::State<'_, crate::config::ConfigStore>) -> 
         db_path: data_dir.join(crate::db::DB_FILE).display().to_string(),
         data_dir: data_dir.display().to_string(),
         log_dir: log_dir().display().to_string(),
-        config: config_diagnostics(configs.active_snapshot()),
+        config: config_diagnostics(config),
         log_files,
         log_bytes,
     }
@@ -82,8 +98,8 @@ fn exe_build_time() -> String {
         .unwrap_or_else(|| env!("BUILD_TIME").to_string())
 }
 
-pub(super) fn config_diagnostics(snapshot: Option<crate::config::ConfigSnapshot>) -> Option<ConfigDiagnostics> {
-    let snapshot = snapshot?;
+pub(crate) fn config_diagnostics(config: Option<ConfigDigest>) -> Option<ConfigDiagnostics> {
+    let snapshot = config?;
     let text = |value: &serde_json::Value, key: &str| -> String {
         value
             .get(key)
@@ -119,9 +135,9 @@ pub(super) fn config_diagnostics(snapshot: Option<crate::config::ConfigSnapshot>
         blocked,
         jvm,
         quickjs,
-        lives: snapshot.lives.len(),
-        parses: snapshot.parses.len(),
-        headers: snapshot.headers.len(),
+        lives: snapshot.lives,
+        parses: snapshot.parses,
+        headers: snapshot.headers,
     })
 }
 

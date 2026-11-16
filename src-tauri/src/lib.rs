@@ -52,6 +52,8 @@ pub mod window;
 pub mod clipboard;
 #[path = "domain/config/mod.rs"]
 pub mod config;
+#[path = "domain/diagnostics.rs"]
+pub mod diagnostics;
 #[path = "domain/douban.rs"]
 pub mod douban;
 #[path = "domain/ghproxy.rs"]
@@ -165,8 +167,10 @@ pub fn run() {
             // T-32: in an installed build the sidecars live under the resource
             // dir, not next to the source tree. Publish that root once so
             // bridge / qjs runner resolve the same layout in dev and prod.
+            // 走 `paths::set_resource_dir`（OnceLock）而不是 `env::set`：
+            // setup() 里 tokio worker 已在跑，改环境变量与并发读是数据竞争。
             if let Ok(resource) = app.path().resource_dir() {
-                env::set("RESOURCE_DIR", &resource);
+                paths::set_resource_dir(&resource);
                 tracing::info!(dir = %resource.display(), "resource dir");
             }
             // Optional startup self-check (`LUMA_SELFCHECK=1`): exercises the
@@ -273,11 +277,40 @@ pub fn run() {
             store::history_remove,
             // Trial-run diagnostics: UI log sink, one-click report, log folder.
             logging::log_write,
-            logging::diagnostics,
+            diagnostics::diagnostics,
             logging::open_log_dir,
-            logging::export_report,
+            diagnostics::export_report,
             clipboard::copy_text,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // 退出收口：sidecar 优雅关停。以前只有 Job Object 兜底（进程一定
+            // 会被杀，但 Python 的 spider.log 缓冲、qjs-runner 的映像句柄都不
+            // 走体面路径——dev 实测那个映像句柄会锁住 binaries 拷贝，下一次
+            // cargo build 直接 PermissionDenied，2026-11-16 评审 P1）。
+            // Exit 在所有窗口销毁后触发，此时 block_on 不会再与界面任务抢
+            // runtime；两个 shutdown 自身幂等（slot 空则直接返回）。
+            if let tauri::RunEvent::Exit = event {
+                tauri::async_runtime::block_on(async {
+                    let bridge = tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        bridge::shutdown(),
+                    )
+                    .await;
+                    let runner = tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        spider::quickjs::shutdown(),
+                    )
+                    .await;
+                    // 关停失败不阻断退出：Job Object 仍是最后兜底。
+                    if bridge.is_err() {
+                        tracing::warn!("python adapter shutdown timed out; job object will reap it");
+                    }
+                    if runner.is_err() {
+                        tracing::warn!("qjs-runner shutdown timed out; job object will reap it");
+                    }
+                });
+            }
+        });
 }
