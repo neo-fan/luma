@@ -6,7 +6,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { CACHE_TTL, pageCache } from "./pageCache";
+import { CACHE_TTL, dropCached, loadCached, putCached } from "./queryClient";
 import { rememberCards } from "./cardIndex";
 import { mergeHomeFallback, normalizeHomeResult } from "./home";
 import { pickRecoveryCandidate } from "./detailRecovery";
@@ -217,14 +217,14 @@ async function recoverDetail(
       log.warn("detail recovery: no title match", { siteKey, vodId, title });
       return [];
     }
-    const recoveredId = String(candidate.vod_id);
-    const list = await spider<VodInfo[]>(siteKey, "detailContent", [recoveredId]);
-    if (!list || list.length === 0) {
-      log.warn("detail recovery: retry still empty", { siteKey, vodId, recoveredId, title });
-      return [];
-    }
-    // 写回原 key：详情页刷新 / 回退直接命中，不必再回查一轮。
-    pageCache.put(cacheKey, list, CACHE_TTL.detail);
+        const recoveredId = String(candidate.vod_id);
+        const list = await spider<VodInfo[]>(siteKey, "detailContent", [recoveredId]);
+        if (!list || list.length === 0) {
+          log.warn("detail recovery: retry still empty", { siteKey, vodId, recoveredId, title });
+          return [];
+        }
+        // 写回原 key：详情页刷新 / 回退直接命中，不必再回查一轮。
+        putCached(cacheKey, list);
     log.info("detail recovered by title", { siteKey, vodId, recoveredId, title });
     return list;
   } catch (err) {
@@ -352,7 +352,7 @@ export const api = {
    */
   home(siteKey: string, force = false): Promise<HomeResult> {
     const key = cacheKeys.home(siteKey);
-    return pageCache.load(
+    return loadCached(
       key,
       CACHE_TTL.home,
       async () => {
@@ -380,7 +380,7 @@ export const api = {
             siteKey,
             classes: merged.classes.length,
           });
-          pageCache.invalidate(key);
+          dropCached(key);
         }
         return merged;
       },
@@ -395,7 +395,7 @@ export const api = {
   category(siteKey: string, tid: string, page: number, force = false): Promise<ResultPage> {
     const key = cacheKeys.category(siteKey, tid, page);
     const load = (withForce: boolean) =>
-      pageCache.load<ResultPage>(
+      loadCached<ResultPage>(
         key,
         CACHE_TTL.category,
         () => spider<ResultPage>(siteKey, "categoryContent", [String(tid), page]),
@@ -404,7 +404,7 @@ export const api = {
     return loadCategoryPage(
       load,
       () => {
-        pageCache.invalidate(key);
+        dropCached(key);
       },
       force,
       (reason, attempt) => {
@@ -418,7 +418,7 @@ export const api = {
 
   search(siteKey: string, keyword: string, page: number, force = false): Promise<ResultPage> {
     // TVBox 统一签名是 (key, quick, pg)；CMS 兼容两参数，py/js 需要三参数。
-    return pageCache.load(
+    return loadCached(
       cacheKeys.search(siteKey, keyword, page),
       CACHE_TTL.search,
       () => spider<ResultPage>(siteKey, "searchContent", [keyword, false, page]),
@@ -444,7 +444,7 @@ export const api = {
     // 空 id 不值得发一次注定失败的请求：CMS 会当成 `ac=detail&ids=` 并返回
     // 默认列表或空，python 源则常被脚本拼成无效 URL。
     const list = vodId.trim()
-      ? await pageCache.load(
+      ? await loadCached(
           key,
           CACHE_TTL.detail,
           () => spider<VodInfo[]>(siteKey, "detailContent", [vodId]),
@@ -457,7 +457,7 @@ export const api = {
     // 空详情多半是源站偶发失败，或该源压根不提供详情（发现/推荐类源直接
     // `return {"list": []}`）。别缓存十分钟；同时留一条带站点与 id 的记录，
     // 否则 UI 上只剩「未获取到影片详情」，无从复盘。
-    pageCache.invalidate(key);
+    dropCached(key);
     log.warn("detail empty", {
       siteKey,
       vodId,
@@ -509,7 +509,7 @@ export const api = {
 
   /** 直播 m3u 动辄数千频道，返回直播页时不要重新下载解析一遍。 */
   liveParse(url: string, ua?: string, force = false): Promise<LiveListResult> {
-    return pageCache.load(
+    return loadCached(
       cacheKeys.live(url, ua),
       CACHE_TTL.live,
       () => call("live_parse", { url, ua }),

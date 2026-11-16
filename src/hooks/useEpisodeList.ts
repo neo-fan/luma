@@ -5,14 +5,14 @@
  * 拿到列表后按 playUrl 定位当前 line/episode 索引，供播放条的「第 N / M 集」
  * 与自动下一集使用。失败一律回退空列表，不影响当前播放。
  *
- * 首帧直出：换集会重挂载整页（播放实例必须重建），而详情已在 pageCache 里
+ * 首帧直出：换集会重挂载整页（播放实例必须重建），而详情已在 数据缓存 里
  * （10 分钟 TTL、零 IPC）。这里用同步 `peek` 做首帧种子，避免信息卡先闪成
  * 「无封面」、选集面板先消失再长出来——2026-11-14 用户反馈的「点下一集底下
  * 全刷新」。命中种子就不发请求，没命中才走原来的异步路径。
  */
 import { useEffect, useState } from "react";
 import { api, cacheKeys } from "../lib/invoke";
-import { pageCache } from "../lib/pageCache";
+import { CACHE_TTL, peekFresh } from "../lib/queryClient";
 import { parsePlayLines } from "../lib/format";
 import type { PlayLine } from "../lib/format";
 import {
@@ -46,7 +46,7 @@ function readSeed(
   if (siteKey === "live" || !vodId.trim()) {
     return null;
   }
-  const cached = pageCache.peek<VodInfo[]>(cacheKeys.detail(siteKey, vodId));
+  const cached = peekFresh<VodInfo[]>(cacheKeys.detail(siteKey, vodId), CACHE_TTL.detail);
   return seedFromCachedDetail(cached, playUrl, episodeName, playFrom);
 }
 
@@ -73,7 +73,7 @@ export function useEpisodeList(
       setVod(null);
       return;
     }
-    // 首帧已由 pageCache 直出：这份详情就是同一份缓存，无需再读一次。
+    // 首帧已由 数据缓存 直出：这份详情就是同一份缓存，无需再读一次。
     if (seed) {
       return;
     }

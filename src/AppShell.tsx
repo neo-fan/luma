@@ -20,7 +20,7 @@ import { notify } from "./lib/notify";
 import { NOTICE_TTL } from "./lib/notice";
 import { usableHomeSites } from "./lib/format";
 import { api, errorMessage } from "./lib/invoke";
-import { pageCache } from "./lib/pageCache";
+import { clearDataCache, resetCacheForScope } from "./lib/queryClient";
 import { clearSourceCache, setSourceCacheScope } from "./lib/sourceCache";
 import { noDetailSources } from "./lib/noDetailSource";
 import { forgetCards } from "./lib/cardIndex";
@@ -87,7 +87,7 @@ export const ConfigActionsContext = createContext<ConfigActions | null>(null);
 function resetSessionCaches(
   scrollPositions: MutableRefObject<Map<number, number>>,
 ): void {
-  pageCache.clear();
+  clearDataCache();
   clearSourceCache();
   clearPageStates();
   clearCoverAttempts();
@@ -256,7 +256,7 @@ export default function AppShell() {
     (snapshot: ConfigSnapshot) => {
       // 换了配置（或重新导入同一份）后，旧站点的详情/分类与页面筛选状态
       // 都不能再复用；scope 变化会清一次，同 id 重导入也强制清一次。
-      pageCache.setScope(snapshot.id);
+      resetCacheForScope(snapshot.id);
       setSourceCacheScope(snapshot.id);
       // siteKey 只在同一份配置内有意义，换配置后旧的「无详情源」记忆作废。
       noDetailSources.setScope(snapshot.id);
@@ -337,7 +337,7 @@ export default function AppShell() {
           return;
         }
         // 后端 active 配置是唯一真源；换过配置就让旧 scope 的缓存整体失效。
-        pageCache.setScope(snapshot.id);
+      resetCacheForScope(snapshot.id);
         setSourceCacheScope(snapshot.id);
         noDetailSources.setScope(snapshot.id);
         // 后端是唯一真源：即使 configId 相同，运行策略升级（例如导入时屏蔽

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CACHE_TTL } from "../lib/pageCache";
+import { CACHE_TTL } from "../lib/queryClient";
 import { findHomeSiteWithList, shouldSkipHomeRequest } from "./HomePage";
 
 const sites = ["douban", "live", "short", "apple", "maple"].map((key) => ({ key }));
@@ -78,7 +78,7 @@ describe("shouldSkipHomeRequest", () => {
 
   it("goes through the request path once the in-page cache exceeds the TTL", () => {
     // 挂了几小时再回首页：storedAt 落后超过 CACHE_TTL.home → 不再跳过，
-    // 让 pageCache 层得到一次回源机会（这正是 TTL 归位要修的点）。
+    // 让 数据缓存 层得到一次回源机会（这正是 TTL 归位要修的点）。
     const aged = { ...fresh, storedAt: 1000 };
     expect(shouldSkipHomeRequest(aged, 1000 + CACHE_TTL.home)).toBe(false);
   });

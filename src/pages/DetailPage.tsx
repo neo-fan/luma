@@ -26,7 +26,7 @@ import { findPlayableSource } from "../lib/crossSourceRecovery";
 import { fetchDoubanMeta } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
-import { pageCache } from "../lib/pageCache";
+import { ageCached, CACHE_TTL, peekFresh } from "../lib/queryClient";
 import { notify } from "../lib/notify";
 import { recallCard } from "../lib/cardIndex";
 import { classifyFailure } from "../lib/failureReason";
@@ -73,7 +73,7 @@ export default function DetailPage({
    */
   const [vod, setVod] = usePageState<VodInfo | null>(
     `${detailKey}:vod`,
-    pageCache.peek<VodInfo[]>(detailKey)?.[0] ?? null,
+    peekFresh<VodInfo[]>(detailKey, CACHE_TTL.detail)?.[0] ?? null,
   );
   /**
    * 空详情时回填的卡片：发现型源（豆瓣[py] 等）的 `detailContent` 恒为空，
@@ -390,7 +390,7 @@ export default function DetailPage({
    */
   const autoLineRef = useRef("");
   useEffect(() => {
-    // resumeReady 是关键闸门：pageCache 命中时 lines 几乎立刻就有，而历史是
+    // resumeReady 是关键闸门：数据缓存 命中时 lines 几乎立刻就有，而历史是
     // 另一次 IPC。不等它的话，第一次 effect 会在 resume 尚为 null 时就把
     // 「已定位」标记写上，历史随后到达也再也不会定位（实测复现）。
     if (
@@ -709,7 +709,7 @@ export default function DetailPage({
   }
 
   const site = sites.find((item) => item.key === siteKey);
-  const cacheAge = pageCache.age(detailKey);
+  const cacheAge = ageCached(detailKey);
   const cacheLabel =
     cacheAge === undefined
       ? ""

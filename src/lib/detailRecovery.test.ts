@@ -16,7 +16,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { MIN_RECOVERY_SCORE, pickRecoveryCandidate } from "./detailRecovery";
 import { api } from "./invoke";
-import { pageCache } from "./pageCache";
+import { clearDataCache } from "./queryClient";
 import type { VodInfo } from "../types/luma";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -40,7 +40,7 @@ describe("api.detail recovery (mocked IPC)", () => {
       .filter((req): req is { method: string; args: unknown[] } => Boolean(req?.method));
 
   beforeEach(() => {
-    pageCache.clear();
+    clearDataCache();
     invokeMock.mockReset();
     invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd !== "spider_invoke") {
@@ -159,7 +159,7 @@ describe("frontend: empty detail is visible and recoverable", () => {
     const invoke = read("src/lib/invoke.ts");
     expect(invoke).toContain('log.warn("detail empty"');
     expect(invoke).toContain("async function recoverDetail(");
-    expect(invoke).toContain("pageCache.put(cacheKey, list, CACHE_TTL.detail)");
+    expect(invoke).toContain("putCached(cacheKey, list)");
   });
 
   it("passes the known film title from the detail page", () => {

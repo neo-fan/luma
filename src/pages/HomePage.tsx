@@ -14,7 +14,7 @@ import SearchSkeleton from "../components/Skeleton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
-import { CACHE_TTL } from "../lib/pageCache";
+import { CACHE_TTL } from "../lib/queryClient";
 import { notify } from "../lib/notify";
 import { leafClasses } from "../lib/categories";
 import { usableHomeSites } from "../lib/format";
@@ -77,8 +77,8 @@ export async function findHomeSiteWithList(
  * - 不是手动刷新（`reload === 0`）、不是主动切站（`!force`）；
  * - 页内缓存未过期：`now - storedAt < ttlMs`。usePageState 本身没有 TTL，
  *   缺这道闸门就会「挂几小时返回首页仍是旧内容、且一次回源机会都不给」。
- *   超过 TTL 一律回到请求路径，由 pageCache（`CACHE_TTL.home`）处理真正的
- *   新鲜度——pageCache TTL 内返回首页仍秒开，行为不变。
+ *   超过 TTL 一律回到请求路径，由 数据缓存（`CACHE_TTL.home`）处理真正的
+ *   新鲜度——数据缓存 TTL 内返回首页仍秒开，行为不变。
  */
 export function shouldSkipHomeRequest(
   decision: {
@@ -115,8 +115,8 @@ const HERO_COUNT = 5;
  *
  * `storedAt` 是页内缓存的写入时刻（epoch ms）：usePageState 本身没有 TTL，
  * 没有它「挂几小时返回首页」会一直命中页内缓存、连一次回源机会都不给，
- * pageCache 的 5 分钟新鲜度形同虚设。加载 effect 用 `now - storedAt` 决定是否
- * 跳过请求；超过 TTL 一律走请求路径，新鲜度交由 pageCache 处理（见
+ * 数据缓存 的 5 分钟新鲜度形同虚设。加载 effect 用 `now - storedAt` 决定是否
+ * 跳过请求；超过 TTL 一律走请求路径，新鲜度交由 数据缓存 处理（见
  * {@link shouldSkipHomeRequest}）。
  */
 type ScopedHome = { siteKey: string; data: HomeResult | null; storedAt: number };
@@ -293,7 +293,7 @@ export default function HomePage({
     // 注意用 hasList 而非 home：空结果（如只给分类的豆瓣源、或一次网络
     // 抖动）绝不缓存，否则「有缓存就跳过」会让首页永久停在空态、无法自愈。
     // TTL 闸门见 shouldSkipHomeRequest：页内缓存超过 CACHE_TTL.home 不再跳过，
-    // 回到请求路径，由 pageCache 处理新鲜度（pageCache TTL 内仍秒开）。
+    // 回到请求路径，由 数据缓存 处理新鲜度（数据缓存 TTL 内仍秒开）。
     if (
       shouldSkipHomeRequest({
         owned: homeForSite !== null,
@@ -402,7 +402,7 @@ export default function HomePage({
 
   /**
    * 分类无限滚动的「进入 / 切换」：站点或分类变化时，按已加载页数
-   * （selection.page，看详情返回时保留）从 pageCache 瞬间补齐多页并累积；
+   * （selection.page，看详情返回时保留）从 数据缓存 瞬间补齐多页并累积；
    * 首次进入该分类只拉第 1 页。页面本身不动（页头、站点下拉、分类 chip 常驻）。
    */
   useEffect(() => {

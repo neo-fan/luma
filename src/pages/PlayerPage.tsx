@@ -423,7 +423,7 @@ export default function PlayerPage({
    * 无海报，绝不阻塞播放。
    */
   const [posterUrl, setPosterUrl] = useState<string | null>(() =>
-    // 首帧同步解析：详情有 pageCache 种子、代理端口有进程级缓存时，remount
+    // 首帧同步解析：详情有 数据缓存 种子、代理端口有进程级缓存时，remount
     // 第一个 commit 就有海报（缓存命中路径实例建得极快，异步海报赶不上）。
     resolveProxiedImageSync(vod?.vod_pic),
   );

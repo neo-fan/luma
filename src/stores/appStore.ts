@@ -110,7 +110,7 @@ export interface PlaySession {
  *
  * localStorage 持久化写在 action 里而不是 effect：store 是唯一写入者，
  * 键名与取值格式保持迁移前不变（探针读 `luma:home:site:v1`）。
- * 页面局部状态（各页 useState / pageCache）不进 store。
+ * 页面局部状态（各页 useState / 数据缓存）不进 store。
  */
 export const useAppStore = create<AppStore>((set, get) => ({
   cache: readSiteCache(),
