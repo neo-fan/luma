@@ -1,5 +1,18 @@
 use super::*;
 
+/// `upsert_history` 的结果：写入方最终看到的行，**以及这次被删掉的行**。
+///
+/// 为什么要回传被删的键：内存缓存（`LibraryStore.history`）要保证与库里
+/// 一致，以前靠「写完重读全表」实现——每条历史写入都 O(500)。改成由 SQL
+/// 把自己删掉的东西报告出来，缓存按同一份报告施加，既 O(1) 又不会因为
+/// `updated_at` 并列而对「谁被裁掉」产生两种理解。
+pub struct HistoryUpsert {
+    /// 合并了继承字段、已落库的最终行。
+    pub merged: HistoryRow,
+    /// 这次被删除的 `(site_key, vod_id)`：同名合并 + 超出 `MAX_HISTORY` 的裁剪。
+    pub removed: Vec<(String, String)>,
+}
+
 impl Db {
     // ---- history ----------------------------------------------------------
 
@@ -23,12 +36,13 @@ impl Db {
     /// 同一部剧会在历史页堆成多行、续播也只能认回原站点。
     /// 表主键保持 `(site_key, vod_id)` 不动（改主键需要重建表，会破坏已有库），
     /// 改为在同一事务里先删掉同名但不同 key 的旧行，再 UPSERT 当前行。
-    pub fn upsert_history(&self, row: &HistoryRow) -> Result<(), AppError> {
+    pub fn upsert_history(&self, row: &HistoryRow) -> Result<HistoryUpsert, AppError> {
         self.with("upsert history", |conn| {
             let tx = conn.transaction()?;
             let name = row.name.trim();
             let mut merged = row.clone();
             merged.name = name.to_string();
+            let mut removed: Vec<(String, String)> = Vec::new();
             if !name.is_empty() {
                 // 换源时旧行会被删掉，但它可能已经补过封面 / 备注 / 站点名 /
                 // 分辨率；这些空值不该被一次「详情还没回来」的写入抹掉。
@@ -58,6 +72,20 @@ impl Db {
                         merged.resolution = resolution;
                     }
                 }
+                // 被同名合并删掉的行先查出来（同一事务内，行数最多是这部剧的
+                // 历史源数量，通常 1~3 行），报告给调用方做增量更新。
+                let mut stmt = tx.prepare(
+                    "SELECT site_key, vod_id FROM history
+                     WHERE name = ?1 AND (site_key <> ?2 OR vod_id <> ?3)",
+                )?;
+                let rows = stmt
+                    .query_map(params![name, row.site_key, row.vod_id], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                    })?
+                    .filter_map(Result::ok)
+                    .collect::<Vec<_>>();
+                drop(stmt);
+                removed.extend(rows);
                 tx.execute(
                     "DELETE FROM history
                      WHERE name = ?1 AND (site_key <> ?2 OR vod_id <> ?3)",
@@ -102,12 +130,31 @@ impl Db {
                 ],
             )?;
             // Keep the newest MAX_HISTORY rows instead of rebuilding a Vec.
-            tx.execute(
-                "DELETE FROM history WHERE rowid NOT IN
+            // 先问「这次会裁掉谁」（正常路径 0～1 行），再删；被裁的键一并报告。
+            let mut stmt = tx.prepare(
+                "SELECT site_key, vod_id FROM history WHERE rowid NOT IN
                      (SELECT rowid FROM history ORDER BY updated_at DESC LIMIT ?1)",
-                params![MAX_HISTORY as i64],
             )?;
-            tx.commit()
+            let trimmed = stmt
+                .query_map(params![MAX_HISTORY as i64], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>();
+            drop(stmt);
+            if !trimmed.is_empty() {
+                tx.execute(
+                    "DELETE FROM history WHERE rowid NOT IN
+                         (SELECT rowid FROM history ORDER BY updated_at DESC LIMIT ?1)",
+                    params![MAX_HISTORY as i64],
+                )?;
+                removed.extend(trimmed);
+            }
+            tx.commit()?;
+            Ok(HistoryUpsert {
+                merged,
+                removed,
+            })
         })
     }
 

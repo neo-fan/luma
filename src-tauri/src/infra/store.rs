@@ -296,15 +296,29 @@ impl LibraryStore {
             // (e.g. a restored player session), and the cap relies on ordering.
             updated_at: now_ms(),
         };
-        self.db.upsert_history(&row)?;
-        // Re-read so the 500-row cap in SQLite is exactly what the UI shows.
-        let fresh: Vec<HistoryItem> = self
-            .db
-            .history()?
-            .into_iter()
-            .map(history_from_row)
-            .collect();
-        *self.history.write().unwrap_or_else(|p| p.into_inner()) = fresh;
+        let outcome = self.db.upsert_history(&row)?;
+        // 增量更新缓存：把 DB 报告「这次删掉的行」施加到内存列表，再把最终行
+        // 顶到最前。以前是写完重读全表（每条历史写入 O(MAX_HISTORY=500)）。
+        let fresh = history_from_row(outcome.merged);
+        let mut guard = self.history.write().unwrap_or_else(|p| p.into_inner());
+        if !outcome.removed.is_empty() {
+            guard.retain(|item| {
+                !outcome
+                    .removed
+                    .iter()
+                    .any(|(site, id)| *site == item.vod.site_key && *id == item.vod.vod_id)
+            });
+        }
+        guard.retain(|item| {
+            !(item.vod.site_key == fresh.vod.site_key && item.vod.vod_id == fresh.vod.vod_id)
+        });
+        guard.insert(0, fresh);
+        if guard.len() > crate::db::MAX_HISTORY {
+            // 溢出是罕见分支（要攒满 500 条），这里排一次序保证裁掉的是最旧的：
+            // 缓存的默认顺序是「新在前」，但重启装载的顺序不保证，不能靠它。
+            guard.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            guard.truncate(crate::db::MAX_HISTORY);
+        }
         Ok(())
     }
 
@@ -496,6 +510,93 @@ mod tests {
         store.clear_history().unwrap();
         assert!(store.list_history().is_empty());
         assert!(LibraryStore::at(dir.clone()).list_history().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn titled(name: &str, id: &str) -> HistoryItem {
+        HistoryItem {
+            vod: VodRef {
+                name: name.into(),
+                vod_id: id.into(),
+                ..sample(id)
+            },
+            play_url: "http://127.0.0.1/x".into(),
+            episode_name: String::new(),
+            play_from: String::new(),
+            resolution: String::new(),
+            position_ms: 0,
+            duration_ms: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn keys(items: &[HistoryItem]) -> Vec<(String, String)> {
+        let mut out = items
+            .iter()
+            .map(|item| (item.vod.site_key.clone(), item.vod.vod_id.clone()))
+            .collect::<Vec<_>>();
+        out.sort();
+        out
+    }
+
+    /// 跨上限写入后，内存缓存必须与库里一致（增量更新的正确性守卫）。
+    ///
+    /// 参照物是「重开一份 store」——它只能从 SQLite 读，等价于旧实现
+    /// 每次写完重读全表的结果；不一致就说明 `upsert_history` 的删除报告
+    /// 与 SQL 实际删的行对不上。`updated_at` 可能并列，所以比按键集合。
+    #[test]
+    fn history_cache_matches_database_across_the_cap() {
+        let dir = temp_dir("hist-cap");
+        let store = LibraryStore::at(dir.clone());
+        let total = crate::db::MAX_HISTORY + 3;
+        for index in 0..total {
+            let id = format!("v{index}");
+            store.upsert_history(titled(&id.clone(), &id)).unwrap();
+        }
+        let cached = store.list_history();
+        let reloaded = LibraryStore::at(dir.clone());
+        assert_eq!(cached.len(), crate::db::MAX_HISTORY);
+        assert_eq!(
+            keys(&cached),
+            keys(&reloaded.list_history()),
+            "cache diverged from the database after crossing the cap"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同名换源时 DB 会删掉旧站那行，缓存必须跟着丢——否则历史页会显示
+    /// 一条库里已经不存在的记录。
+    #[test]
+    fn history_cache_drops_the_row_the_database_deduped() {
+        let dir = temp_dir("hist-dedupe");
+        let store = LibraryStore::at(dir.clone());
+        let first = HistoryItem {
+            vod: VodRef {
+                site_key: "site_a".into(),
+                ..sample("1")
+            },
+            ..titled("Sample", "1")
+        };
+        let moved = HistoryItem {
+            vod: VodRef {
+                site_key: "site_b".into(),
+                vod_id: "2".into(),
+                ..first.vod.clone()
+            },
+            ..titled("Sample", "2")
+        };
+        store.upsert_history(first).unwrap();
+        assert_eq!(store.list_history().len(), 1);
+        store.upsert_history(moved).unwrap();
+
+        let cached = store.list_history();
+        assert_eq!(cached.len(), 1, "同名换源后历史只剩一条");
+        assert_eq!(cached[0].vod.site_key, "site_b");
+        assert_eq!(
+            keys(&cached),
+            keys(&LibraryStore::at(dir.clone()).list_history()),
+            "缓存里留着了一条库里已被删掉的行"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
