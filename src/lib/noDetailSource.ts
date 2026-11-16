@@ -12,7 +12,9 @@
  * siteKey 只在同一份配置内有意义，因此记忆带 scope：切配置即清空，
  * 重启（同一 scope）保留。
  */
-export const NO_DETAIL_KEY = "luma:no-detail-sources:v1";
+import { NO_DETAIL_SOURCES_KEY } from "./storageKeys";
+
+export const NO_DETAIL_KEY = NO_DETAIL_SOURCES_KEY;
 /** 最多记 60 个源，超出丢最早标记的。 */
 const MAX_SOURCES = 60;
 const DEFAULT_SCOPE = "default";

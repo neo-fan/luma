@@ -14,7 +14,9 @@
  * 纯逻辑 + localStorage，存储可注入，便于在 node 下单测。
  */
 
-const STORAGE_KEY = "luma:line:health:v1";
+import { LINE_HEALTH_KEY } from "./storageKeys";
+
+const STORAGE_KEY = LINE_HEALTH_KEY;
 
 /** 坏标记有效期：半个小时后重新给源侧机会（很多源过一会儿就恢复了）。 */
 export const BAD_TTL_MS = 30 * 60 * 1000;

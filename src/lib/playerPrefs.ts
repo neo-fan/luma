@@ -22,7 +22,9 @@ export interface PlayerPrefs {
 
 export const DEFAULT_PREFS: PlayerPrefs = { volume: 0.8, rate: 1, muted: false };
 
-const KEY = "luma:player:prefs";
+import { PLAYER_PREFS_KEY } from "./storageKeys";
+
+const KEY = PLAYER_PREFS_KEY;
 
 function clamp(value: number, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(value)) {

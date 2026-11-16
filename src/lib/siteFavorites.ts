@@ -9,8 +9,9 @@
 //! 结果排序共用同一份数据，任一处点星，其它地方立刻跟着变。
 
 import { useSyncExternalStore } from "react";
+import { FAVORITE_SITES_KEY } from "./storageKeys";
 
-const KEY = "luma:favorite-sites";
+const KEY = FAVORITE_SITES_KEY;
 
 /** 缓存数组：`useSyncExternalStore` 要求快照身份稳定，只有写操作才换新数组。 */
 let cached: string[] | null = null;

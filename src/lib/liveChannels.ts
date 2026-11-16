@@ -15,6 +15,7 @@
  * url）的展开规则只能有一份，两个页面各写一遍必然漂移。
  */
 import { api } from "./invoke";
+import { LIVE_CHANNEL_KEY, LIVE_SOURCES_KEY } from "./storageKeys";
 import type { LiveChannel, LiveGroup, LiveSource } from "../types/luma";
 
 /** 源的稳定标识：有 url 用 url，容器型源退回索引（与 LivePage 一致）。 */
@@ -64,7 +65,7 @@ export function isListableSource(source: LiveSource): boolean {
   return expandChannels(source).length > 0;
 }
 
-const SOURCES_KEY = "luma:live:sources:v1";
+const SOURCES_KEY = LIVE_SOURCES_KEY;
 
 interface SourceMemo {
   url: string;
@@ -160,7 +161,7 @@ export function clearLiveGroups(): void {
  * 只记名字与线路序号：频道的 lines 地址每次拉列表都可能变，记住地址反而
  * 会在源更新后指向死链。
  */
-const CHANNEL_KEY = "luma:live:channel:v1";
+const CHANNEL_KEY = LIVE_CHANNEL_KEY;
 
 export interface LiveMemory {
   /** 频道名。 */

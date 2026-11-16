@@ -19,10 +19,11 @@ import {
   primeLiveGroups,
   rememberLiveSource,
 } from "../lib/liveChannels";
+import { LIVE_SOURCE_KEY } from "../lib/storageKeys";
 import type { LiveChannel, LiveGroup, LiveSource } from "../types/luma";
 
 /** 上次选中的直播源（存 sourceKey，源顺序变了也认得）。 */
-const SOURCE_KEY = "luma:live:source:v1";
+const SOURCE_KEY = LIVE_SOURCE_KEY;
 
 function readSourceKey(): string {
   try {

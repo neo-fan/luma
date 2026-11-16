@@ -7,7 +7,9 @@
  * 频道互相串。配置切换留下的旧条目无害（越界会被钳制到 0）。
  */
 
-const KEY = "luma:live:lines:v1";
+import { LIVE_LINES_KEY } from "./storageKeys";
+
+const KEY = LIVE_LINES_KEY;
 
 type LineMap = Record<string, number>;
 

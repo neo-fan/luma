@@ -70,7 +70,9 @@ export const DOUBAN_PROXY_OPTIONS: {
   },
 ];
 
-const KEY = "luma:douban:prefs";
+import { DOUBAN_PREFS_KEY } from "./storageKeys";
+
+const KEY = DOUBAN_PREFS_KEY;
 
 const PROXY_TYPES: DoubanProxyType[] = [
   "direct",

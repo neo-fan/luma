@@ -1,12 +1,16 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 import { usableHomeSites } from "../lib/format";
+import {
+  HOME_SITE_KEY,
+  SIDEBAR_KEY,
+  SITE_CACHE_KEY,
+} from "../lib/storageKeys";
+import { narrowLives, narrowSites } from "../lib/invoke";
 import type { LiveSource, Site } from "../types/luma";
 
-const SITE_CACHE_KEY = "luma:sites:v1";
-const SIDEBAR_KEY = "luma:sidebar:v1";
 /** 首页选中的站点：手动切换与「空站自动顺延」都写这里，跨重启/重开保留。 */
-export const HOME_SITE_KEY = "luma:home:site:v1";
+export { HOME_SITE_KEY };
 
 /** 最近一次导入的站点列表缓存：configList 不返回站点，重启后靠它恢复。 */
 export interface SiteCache {
@@ -52,10 +56,13 @@ function readSiteCache(): SiteCache | null {
     if (typeof cache.configId !== "string" || !Array.isArray(cache.sites)) {
       return null;
     }
+    // localStorage 是唯一「写入方版本 ≠ 读取方版本」的来源：旧版本/被手改过的
+    // 缓存里 sites / lives 可能夹带形状漂移的项。收窄层只在这条读回路径上跑，
+    // 丢弃非法项；Rust 快照经 setCache 直接落库时不经此处（见 invoke.ts）。
     return {
       configId: cache.configId,
-      sites: cache.sites as Site[],
-      lives: Array.isArray(cache.lives) ? (cache.lives as LiveSource[]) : [],
+      sites: narrowSites(cache.sites),
+      lives: Array.isArray(cache.lives) ? narrowLives(cache.lives) : [],
     };
   } catch {
     return null;

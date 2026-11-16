@@ -5,7 +5,9 @@
  * 源通用，且配置快照是「派生只读」的，手动改会跟 imported/runtime 分裂。这里
  * 与 liveMemory 同思路——轻量、跨重启持久、不污染配置。
  */
-const STORAGE_KEY = "luma:epg:url";
+import { EPG_URL_KEY } from "./storageKeys";
+
+const STORAGE_KEY = EPG_URL_KEY;
 
 /**
  * 默认节目单地址：`fanmingming/live` 仓库的 `e.xml`（XMLTV，约 7.6 MB）。

@@ -36,10 +36,12 @@ import type {
   PlayResolved,
   LiveListResult,
   EpgResult,
+  LiveSource,
   ProxyStatus,
   RefreshOutcome,
   RefreshSettings,
   ResultPage,
+  Site,
   SiteHealthResult,
   SpiderMethod,
   SpiderRequest,
@@ -92,6 +94,84 @@ function spider<T>(siteKey: string, method: SpiderMethod, args: unknown[]): Prom
   return call<T>("spider_invoke", { request: req });
 }
 
+/**
+ * 运行态窄化守卫层（不引第三方依赖，手写）。
+ *
+ * 边界（必须看懂再接线）：这里**只收窄不可信来源**——localStorage 旧数据 /
+ * 跨版本缓存这类「写入方与读取方版本可能不同」的字节，正是形状漂移最可能的
+ * 来源。Rust command 的返回值（同进程、版本匹配）**不在本层收窄**：它的类型
+ * 由 `contracts/luma.schema.json` → `src/types/luma.ts` → Rust 序列化三处同步
+ * 保证，加守卫反而会改变行为语义（把后端契约回归悄悄吞掉）。
+ *
+ * 因此接线点只应是 localStorage / pageState 的读回路径；不要给 `call(...)` /
+ * `spider(...)` 的返回结果套这里。
+ */
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+/**
+ * 收窄站点数组：每项必须是对象且 `key` / `name` 为非空字符串，否则**整项丢弃**。
+ * 整体不是数组时返回 `[]`。合法项原样返回（保留对象引用，不改字段）。
+ *
+ * 丢弃会发一条 `log.warn`（带 dropped 计数）：这是用户数据，不该静默消失。
+ */
+export function narrowSites(value: unknown): Site[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const kept: Site[] = [];
+  let dropped = 0;
+  for (const item of value) {
+    if (
+      item &&
+      typeof item === "object" &&
+      isNonEmptyString((item as { key?: unknown }).key) &&
+      isNonEmptyString((item as { name?: unknown }).name)
+    ) {
+      kept.push(item as Site);
+    } else {
+      dropped += 1;
+    }
+  }
+  if (dropped > 0) {
+    log.warn("ipc narrow dropped sites", { dropped });
+  }
+  return kept;
+}
+
+/**
+ * 收窄直播源数组：每项必须是对象且 `name` / `url` 为非空字符串，否则整项丢弃。
+ * 整体不是数组时返回 `[]`。
+ *
+ * 取舍：分组容器型源（只有 `channels`、没有 `url`）会被这里丢弃。这是有意为之
+ * 的跨版本信任边界——`luma:sites:v1` 里持久化的 `lives` 字段没有版本握手，
+ * 宁可丢弃无法确证的项，也不要让漂移结构（`name`/`url` 缺失）流入
+ * `LivePage` / `useLiveCatalog` 的按索引寻址。
+ */
+export function narrowLives(value: unknown): LiveSource[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const kept: LiveSource[] = [];
+  let dropped = 0;
+  for (const item of value) {
+    if (
+      item &&
+      typeof item === "object" &&
+      isNonEmptyString((item as { name?: unknown }).name) &&
+      isNonEmptyString((item as { url?: unknown }).url)
+    ) {
+      kept.push(item as LiveSource);
+    } else {
+      dropped += 1;
+    }
+  }
+  if (dropped > 0) {
+    log.warn("ipc narrow dropped lives", { dropped });
+  }
+  return kept;
+}
 
 /**
  * 读结果的缓存键：页面用同一组函数做首屏直出 / 失效，避免手写字符串漂移。

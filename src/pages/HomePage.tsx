@@ -14,6 +14,7 @@ import SearchSkeleton from "../components/Skeleton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import { CACHE_TTL } from "../lib/pageCache";
 import { notify } from "../lib/notify";
 import { leafClasses } from "../lib/categories";
 import { usableHomeSites } from "../lib/format";
@@ -67,6 +68,36 @@ export async function findHomeSiteWithList(
 }
 
 /**
+ * 首页「直接用页内缓存跳过请求」的判定（纯函数，便于在 node 下行为测试）。
+ *
+ * 四个前提缺一不可，外加一个 TTL 闸门：
+ * - 缓存归属当前站（`homeState.siteKey === siteKey`），否则是别的站的残留；
+ * - 真的有推荐（`hasList`）：只有分类的源 / 一次网络抖动留下的空结果绝不缓存，
+ *   否则「有缓存就跳过」会让首页永久停在空态、自动顺延也再没机会跑；
+ * - 不是手动刷新（`reload === 0`）、不是主动切站（`!force`）；
+ * - 页内缓存未过期：`now - storedAt < ttlMs`。usePageState 本身没有 TTL，
+ *   缺这道闸门就会「挂几小时返回首页仍是旧内容、且一次回源机会都不给」。
+ *   超过 TTL 一律回到请求路径，由 pageCache（`CACHE_TTL.home`）处理真正的
+ *   新鲜度——pageCache TTL 内返回首页仍秒开，行为不变。
+ */
+export function shouldSkipHomeRequest(
+  decision: {
+    owned: boolean;
+    hasList: boolean;
+    storedAt: number;
+    reload: number;
+    force: boolean;
+  },
+  now: number = Date.now(),
+  ttlMs: number = CACHE_TTL.home,
+): boolean {
+  if (!decision.owned || !decision.hasList || decision.reload !== 0 || decision.force) {
+    return false;
+  }
+  return now - decision.storedAt < ttlMs;
+}
+
+/**
  * 站点切换防抖窗口：下拉连点时只在用户停下后发一次请求。
  * 300ms 足够覆盖「按住方向键快速扫过多个站点 / 连续点选」，又不会让
  * 正常切换显得迟钝。
@@ -77,12 +108,18 @@ const SWITCH_DEBOUNCE_MS = 300;
 const HERO_COUNT = 5;
 
 /**
- * 首页推荐数据 + 归属站点键。存储随站点换键（usePageState 渲染期取值），
+ * 首页推荐数据 + 归属站点键 + 写入时刻。存储随站点换键（usePageState 渲染期取值），
  * 但「这份数据由哪个站点拉回」仍要由值自己携带：跨挂载、自动顺延等路径里
  * siteKey 与数据并非原子变化，归属判断以数据为准才不会把旧站列表当成新站
  * 结果（跳过请求 / 闪现空态，2026-11-15 CDP 实测）。
+ *
+ * `storedAt` 是页内缓存的写入时刻（epoch ms）：usePageState 本身没有 TTL，
+ * 没有它「挂几小时返回首页」会一直命中页内缓存、连一次回源机会都不给，
+ * pageCache 的 5 分钟新鲜度形同虚设。加载 effect 用 `now - storedAt` 决定是否
+ * 跳过请求；超过 TTL 一律走请求路径，新鲜度交由 pageCache 处理（见
+ * {@link shouldSkipHomeRequest}）。
  */
-type ScopedHome = { siteKey: string; data: HomeResult | null };
+type ScopedHome = { siteKey: string; data: HomeResult | null; storedAt: number };
 
 /** 首页内联的分类选择：tid="" 表示回到推荐流。存站点 key 是为了切站后
  *  不把上一个站点的 type_id 带过去（TVBox 的 tid 只在产生它的站点有效）。
@@ -119,7 +156,7 @@ export default function HomePage({
   const favoriteSites = useFavoriteSites();
   const [homeState, setHomeState] = usePageState<ScopedHome>(
     `home:${siteKey}:data:v2`,
-    { siteKey: "", data: null },
+    { siteKey: "", data: null, storedAt: 0 },
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -255,7 +292,17 @@ export default function HomePage({
     // 已有「有内容」缓存、且不是手动刷新 / 主动切站点：跳过整个请求。
     // 注意用 hasList 而非 home：空结果（如只给分类的豆瓣源、或一次网络
     // 抖动）绝不缓存，否则「有缓存就跳过」会让首页永久停在空态、无法自愈。
-    if (homeForSite && hasList && reload === 0 && !force) {
+    // TTL 闸门见 shouldSkipHomeRequest：页内缓存超过 CACHE_TTL.home 不再跳过，
+    // 回到请求路径，由 pageCache 处理新鲜度（pageCache TTL 内仍秒开）。
+    if (
+      shouldSkipHomeRequest({
+        owned: homeForSite !== null,
+        hasList,
+        storedAt: homeState.storedAt,
+        reload,
+        force,
+      })
+    ) {
       // 走到这里说明本次不需要请求，但上一个 effect 可能在被取消时留下
       // loading=true（切站/StrictMode 双跑都会）：不清掉的话刷新图标会一直
       // 转、按钮一直 disabled，用户点不动刷新。命中缓存直接收敛成静止态。
@@ -265,7 +312,7 @@ export default function HomePage({
     let alive = true;
     const run = async () => {
       if (!siteKey) {
-        setHomeState({ siteKey: "", data: null });
+        setHomeState({ siteKey: "", data: null, storedAt: 0 });
         setError("");
         setLoading(false);
         return;
@@ -288,6 +335,7 @@ export default function HomePage({
             setHomeState({
               siteKey,
               data: cards > 0 || cats > 0 ? result : null,
+              storedAt: Date.now(),
             });
             setError("");
             setLoading(false);
@@ -331,7 +379,7 @@ export default function HomePage({
             return;
           }
           if (attempt === 1) {
-            setHomeState({ siteKey, data: null });
+            setHomeState({ siteKey, data: null, storedAt: Date.now() });
             setError(errorMessage(err));
             setLoading(false);
             return;

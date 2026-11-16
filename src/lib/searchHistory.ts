@@ -9,7 +9,9 @@
  * 搜索历史是用户资产，应该跨配置、跨重启保留。
  */
 
-export const SEARCH_HISTORY_KEY = "luma:search:history:v1";
+import { SEARCH_HISTORY_KEY } from "./storageKeys";
+
+export { SEARCH_HISTORY_KEY };
 export const MAX_SEARCH_HISTORY = 10;
 /** 与搜索日志的截断口径一致，避免一条超长输入占满整行。 */
 const MAX_WORD_LENGTH = 60;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { findHomeSiteWithList } from "./HomePage";
+import { CACHE_TTL } from "../lib/pageCache";
+import { findHomeSiteWithList, shouldSkipHomeRequest } from "./HomePage";
 
 const sites = ["douban", "live", "short", "apple", "maple"].map((key) => ({ key }));
 
@@ -58,5 +59,45 @@ describe("findHomeSiteWithList", () => {
   it("returns null for an unknown current site", async () => {
     const next = await findHomeSiteWithList(sites, "missing", async () => ({ list: [1] }));
     expect(next).toBeNull();
+  });
+});
+
+describe("shouldSkipHomeRequest", () => {
+  const fresh = {
+    owned: true,
+    hasList: true,
+    storedAt: 1000,
+    reload: 0,
+    force: false,
+  };
+  const now = 1000 + CACHE_TTL.home - 1; // 页内缓存在 TTL 内（差 1ms）
+
+  it("skips the request when a fresh, owned, non-empty cache is on screen", () => {
+    expect(shouldSkipHomeRequest(fresh, now)).toBe(true);
+  });
+
+  it("goes through the request path once the in-page cache exceeds the TTL", () => {
+    // 挂了几小时再回首页：storedAt 落后超过 CACHE_TTL.home → 不再跳过，
+    // 让 pageCache 层得到一次回源机会（这正是 TTL 归位要修的点）。
+    const aged = { ...fresh, storedAt: 1000 };
+    expect(shouldSkipHomeRequest(aged, 1000 + CACHE_TTL.home)).toBe(false);
+  });
+
+  it("never skips an empty result so the home can self-heal", () => {
+    expect(shouldSkipHomeRequest({ ...fresh, hasList: false }, now)).toBe(false);
+  });
+
+  it("never skips data owned by a different site", () => {
+    expect(shouldSkipHomeRequest({ ...fresh, owned: false }, now)).toBe(false);
+  });
+
+  it("skips neither manual refresh nor an active site switch", () => {
+    expect(shouldSkipHomeRequest({ ...fresh, reload: 1 }, now)).toBe(false);
+    expect(shouldSkipHomeRequest({ ...fresh, force: true }, now)).toBe(false);
+  });
+
+  it("treats the TTL boundary as half-open: exactly ttl is already stale", () => {
+    expect(shouldSkipHomeRequest(fresh, 1000 + CACHE_TTL.home - 1)).toBe(true);
+    expect(shouldSkipHomeRequest(fresh, 1000 + CACHE_TTL.home)).toBe(false);
   });
 });
