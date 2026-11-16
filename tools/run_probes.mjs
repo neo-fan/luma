@@ -23,6 +23,10 @@
  *     真回归（FAIL），根本没出画判环境（SKIP），与 episode_switch 同一口径。
  *   - `probe_search_history` 只改 localStorage 的搜索词历史并在收尾恢复；点历史词会触发一次
  *     后台聚合搜索，探针随即 reload 打断、不等待 20s 结果。
+ *   - `probe_session_machine` 是播放会话状态机（2.0.0 解释器化）的「模型 ↔ 现实」比对：
+ *     读 dev 窗口里的 `window.__lumaPlayerSession`，钉出画后必须 playing + hasPlayed、
+ *     健康播放 12 拍内不得进 probing/recovering 或累计 unknown、真实换集必须进 switching
+ *     再收口且 sessionId 自增。没出画 / 单集片源按环境 SKIP，只有机器状态不符才 FAIL。
  *
  * 跑之前先记住「原 active 配置 id」和「已有配置 id」，跑完恢复 active 并删掉
  * 本轮新建的配置——否则几轮探针下来 SQLite 里会堆一堆 stub 配置。
@@ -59,6 +63,7 @@ const PROBES = [
   { key: "artplayer", script: "tools/probes/probe_artplayer.mjs", label: "ArtPlayer HLS 出画" },
   { key: "playback_ux", script: "tools/probes/probe_playback_ux.mjs", label: "连看体验（偏好记忆/自动下一集/Esc/复制错误）" },
   { key: "episode_switch", script: "tools/probes/probe_episode_switch.mjs", label: "换集只重挂播放器（信息卡/选集不闪空）" },
+  { key: "session_machine", script: "tools/probes/probe_session_machine.mjs", label: "会话状态机 ↔ 现实（出画/换集/不误判死线）" },
   { key: "live_audio", script: "tools/probes/probe_live_audio.mjs", label: "直播播放器独占（切台/离开不残留出声）" },
   { key: "flv", script: "tools/probes/probe_flv.mjs", label: "FLV 经 mpegts.js 出画", needsStub: true },
   { key: "search_failures", script: "tools/probes/probe_search_failures.mjs", label: "搜索失败源明细与重试", needsStub: true },

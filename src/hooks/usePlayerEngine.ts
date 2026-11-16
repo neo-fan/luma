@@ -43,6 +43,13 @@ import type { PlayResolved } from "../types/luma";
 export const BUILTIN_KINDS = ["hls", "flv", "file"];
 
 /**
+ * 会话 actor 的实例序号（仅 dev 观测用）：每次创建 actor 自增。换集若退回整页
+ * 重建，会得到一个新序号；原地换集则是同一序号下 `sessionId` 自增。CDP 探针
+ * 用这个区分两条路径，不参与任何产品逻辑。
+ */
+let sessionInstanceSeq = 0;
+
+/**
  * 「下一集」控制栏按钮的禁用态。
  *
  * 控件由 ArtPlayer 在实例创建时一次性生成，之后剧集列表异步到达、切到最后一集
@@ -242,6 +249,11 @@ export function usePlayerEngine({
    */
   const sessionActorRef = useRef<ReturnType<typeof createActor<typeof vodSessionMachine>> | null>(null);
   useEffect(() => {
+    // dev 观测：actor 实例身份。`sessionId` 只在一台 ArtPlayer 实例的生命周期内
+    // 唯一（换集退回整页重建时会新建 actor，序号重新从 1 开始），CDP 探针要靠
+    // 这个序号区分「同一实例内原地换集（USER_SWITCH，sessionId 自增）」与
+    // 「整页重建（instance 变化）」。
+    const instance = ++sessionInstanceSeq;
     // 直播与点播生命周期不同，各用各的机器。引擎只喂两者共有的事件
     // （LOAD/RESOLVED/ATTACHED/MEDIA_ALIVE）；点播独有的 USER_SWITCH/AUTOPLAY_BLOCKED
     // 只在 switchRef（点播换集）里发，直播走不到。live 演员按 vod 演员类型收口，
@@ -256,6 +268,7 @@ export function usePlayerEngine({
     actor.subscribe((snap) => {
       if (import.meta.env.DEV) {
         (window as unknown as { __lumaPlayerSession?: unknown }).__lumaPlayerSession = {
+          instance,
           value: snap.value,
           context: snap.context,
         };
