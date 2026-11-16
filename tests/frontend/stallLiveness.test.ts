@@ -41,9 +41,10 @@ describe("stall watchdog", () => {
   });
 
   it("stops switching once the video has actually played", () => {
-    expect(engine).toContain("let hasPlayed = false;");
+    // 首帧标志真源已迁到 actor.hasPlayed（sessionHasPlayed 读），不再是本地 let。
+    expect(engine).toContain("const sessionHasPlayed =");
     // 出过画之后看门狗直接让路：只撤慢提示，不判死。
-    const guard = engine.indexOf("if (hasPlayed) {");
+    const guard = engine.indexOf("if (sessionHasPlayed()) {");
     const probe = engine.indexOf("probeLineVerdict(");
     expect(guard).toBeGreaterThan(-1);
     expect(probe).toBeGreaterThan(-1);

@@ -258,6 +258,8 @@ export function usePlayerEngine({
    * 已被新一轮切换取代的旧集。影子模式已验证它与真实切换时序一致（dcc7a12）。
    */
   const sessionGen = () => sessionActorRef.current?.getSnapshot().context.sessionId ?? 0;
+  /** 首帧真源：actor.hasPlayed（MEDIA_ALIVE 置位、bumpSession 复位），取代本地 hasPlayed。 */
+  const sessionHasPlayed = () => sessionActorRef.current?.getSnapshot().context.hasPlayed ?? false;
 
   /**
    * 剧集列表是异步到的：播放器实例创建时 lines 可能还是空的，到达 / 切到最后一集
@@ -447,9 +449,8 @@ export function usePlayerEngine({
       }
       switchDisposers.clear();
     };
-    // 只要出过画（currentTime>0），之后所有卡顿都按「网络抖动」处理：
-    // 用户明确要求「已经能播放了 就不要切源」，换线交给他手动决定。
-    let hasPlayed = false;
+    // 首帧标志真源 = actor.hasPlayed（见 sessionHasPlayed）：出过画后所有卡顿按
+    // 「网络抖动」处理、换线交给用户手动决定。不再本地维护 hasPlayed。
     /** 实测视频码率（kbps）：按分片字节 ÷ 分片时长做指数平滑。 */
     let measuredKbps = 0;
     /**
@@ -694,7 +695,7 @@ export function usePlayerEngine({
             // 失败路径必须撤掉首帧前的冻结帧 / 海报：接下来要么报错要么换线，
             // 绝不允许一张静帧永久盖住画面（超时复核路径除外——那还在等）。
             finishPoster(false);
-            if (hasPlayed) {
+            if (sessionHasPlayed()) {
               // 已经在播的流突然致命：网络上抖一下的概率远高于线路真的坏了，
               // 自动跳走会把用户正在看的内容切没。只提示，由用户决定。
               setVideoError(`网络波动导致播放中断：${reason}，可点刷新重试`);
@@ -1209,7 +1210,7 @@ export function usePlayerEngine({
         lastAliveAt = Date.now();
         return;
       }
-      if (hasPlayed) {
+      if (sessionHasPlayed()) {
         // 播过就再也不自动换线：卡住很可能是网络抖动，看门狗只撤掉慢提示，
         // 让用户在控制栏自己点刷新/换线。
         clearSlowNotice();
@@ -1255,7 +1256,7 @@ export function usePlayerEngine({
             verdict,
             unresponsiveProbes,
             limit: STALL_UNRESPONSIVE_LIMIT,
-            hasPlayed,
+            hasPlayed: sessionHasPlayed(),
             isLive: siteKey === "live",
           });
           if (verdict === "unknown") {
@@ -1297,7 +1298,6 @@ export function usePlayerEngine({
     // `waiting` / `stalled` 不算——它们恰恰是「卡住」的表现，不能重置计时。
     const onMediaAlive = () => {
       if (video.currentTime > 0) {
-        hasPlayed = true;
         sessionActorRef.current?.send({ type: "MEDIA_ALIVE" });
       }
       noteAlive();
@@ -1448,7 +1448,7 @@ export function usePlayerEngine({
        * （dead 一次即换 / unknown 累计三次 / 出画后只提示不换）必须从
        * 「未知」重新开始，watchStopped 也要复位。
        */
-      hasPlayed = false;
+      // hasPlayed 由 USER_SWITCH→bumpSession 复位（本函数开头已 send）。
       unresponsiveProbes = 0;
       measuredKbps = 0;
       watchStopped = false;
