@@ -143,16 +143,31 @@ export default function AppShell() {
     }
   }, [isLiveRoute]);
 
+  /**
+   * 滚动锚点：当前路由页自己的 `.page-body`。
+   *
+   * `.content` 是 `overflow:hidden`（layout.css:300-308），改版后滚动一律发生在
+   * 每个页面的 `.page-body` 里（layout.css:296 已把这条写成约定），所以这里必须
+   * 认 `.page-body`，否则保存到的永远是 0。
+   *
+   * 选择器限定 `:scope > .page .page-body`：常驻直播层 `.live-host` 里也有一棵
+   * `.page-body`，它不是当前路由，不参与滚动存取。
+   */
+  const scrollHost = useCallback(
+    () => contentRef.current?.querySelector<HTMLElement>(":scope > .page .page-body") ?? null,
+    [],
+  );
+
   /** 切页前保存、切页后恢复；key 是 react-router 分配的 history 序号。 */
   const scrollPositions = useRef(new Map<number, number>());
   const currentIdxRef = useRef(0);
 
   const saveScroll = useCallback(() => {
-    const el = contentRef.current;
+    const el = scrollHost();
     if (el) {
       scrollPositions.current.set(currentIdxRef.current, el.scrollTop);
     }
-  }, []);
+  }, [scrollHost]);
 
   // 恢复要等一帧：详情页缓存命中是同步直出，但布局撑开 scrollHeight 需要 rAF。
   useLayoutEffect(() => {
@@ -161,7 +176,7 @@ export default function AppShell() {
         ? window.history.state.idx
         : 0;
     currentIdxRef.current = idx;
-    const el = contentRef.current;
+    const el = scrollHost();
     if (!el) {
       return;
     }
@@ -171,7 +186,7 @@ export default function AppShell() {
       el.scrollTop = saved;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [location.key]);
+  }, [location.key, scrollHost]);
 
   // 导航桥：所有页面 props / 自动换线 / 命令面板的跳转都汇到这里，
   // 保证跳转前先保存当前页滚动位置。
@@ -479,7 +494,8 @@ export default function AppShell() {
           </div>
         </aside>
         {/* 路由内容：播放页常驻在下方独立层里，这里只渲染其它页面。停在播放
-          路由时也要保留 Outlet 挂载——它是首页/搜索等页面的滚动与状态容器。 */}
+          路由时也要保留 Outlet 挂载——它是首页/搜索等页面的状态容器；滚动不在
+          这里，而在每个页面的 `.page-body`（见上方 scrollHost）。 */}
         <main className="content" ref={contentRef}>
           <Suspense
             fallback={
