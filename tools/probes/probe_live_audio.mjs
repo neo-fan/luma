@@ -7,7 +7,12 @@
  *   1. 点第一个频道播放 → 至多 1 个视频在播；
  *   2. 连续切三个频道（含切回）→ DOM 里任何时刻至多 1 个 `<video>`，
  *      且真正在推进（`!paused && currentTime > 0`）的至多 1 个；
- *   3. 离开直播页回首页 → 页面里不再有 `<video>`，脱离 DOM 的旧元素也不在播。
+ *   3. 离开直播页回首页 → 常驻层「只藏不卸载」：至多 1 条流在推进（不双声、不堆叠）、
+ *      脱离 DOM 的旧元素不在播（幽灵音）、且隐藏态真的断掉命中测试。
+ *
+ * 口径来源：`.live-host` / `.player-host` 的后台播放是 1.0.3 起的设计（回直播页复用
+ * 同一条流），本探针早期版本按「离开即销毁」断言，在常驻层改造后就是假红；
+ * 2026-11-17 按现行契约改写（git blame：layout.css:380-396 的注释即设计说明）。
  *
  * 依赖 dev 窗口（CDP 9222）与一份带 `lives[]` 的 active 配置；没有直播源时记 SKIP。
  *
@@ -91,13 +96,49 @@ for (const index of [1, 2, 0]) {
   }
 }
 
-// 场景 3：离开直播页
+// 场景 3：离开直播页。契约不是「销毁」——常驻层（`.live-host`）的设计是
+// 「只藏不卸载，音频照播不变」（layout.css:380-396 写明，回直播页还是同一条流，
+// 不必重新拉流）。所以要钉的是这三件真会出事的事：
+//   a. 不堆叠：DOM 里至多 1 条常驻流，脱离 DOM 的旧元素绝不能再推进（幽灵音）；
+//   b. 不双声：任何时刻至多 1 个在推进，且不得出现 <audio> 兜底元素；
+//   c. 不抢点击：隐藏态必须真的断掉命中测试（visibility:hidden + pointer-events:none
+//      并覆盖后代——ArtPlayer 控制条自带 pointer-events:auto，曾以「看不见却吃掉
+//      全页点击」的形式出过事故，取证用 elementsFromPoint）。
 await cdp.eval("location.hash = '#/'");
 await cdp.sleep(1600);
 const left = await sample("after-leave");
 console.log(left.label, JSON.stringify(left.snap));
-if (left.snap.inDoc.length > 0) problems.push(`离开直播页后仍有 ${left.snap.inDoc.length} 个视频在 DOM`);
-if (left.snap.advancing > 0) problems.push(`离开直播页后仍有 ${left.snap.advancing} 个视频在推进`);
+if (left.snap.inDoc.length > 1) problems.push(`离开直播页后 DOM 里堆了 ${left.snap.inDoc.length} 个视频`);
+if (left.snap.advancing > 1) problems.push(`离开直播页后有 ${left.snap.advancing} 个视频同时推进（双声）`);
+if (left.snap.audioElements > 0) problems.push("离开直播页后出现了 <audio> 元素");
+const ghost = left.snap.detached.filter((item) => !item.paused && item.time > 0);
+if (ghost.length > 0) problems.push(`脱离 DOM 的旧直播元素仍在推进（幽灵音）：${JSON.stringify(ghost.slice(0, 2))}`);
+
+const hidden = await cdp.eval(`(() => {
+  const host = document.querySelector('.live-host');
+  if (!host) return { present: false };
+  const cs = getComputedStyle(host);
+  const hit = document.elementFromPoint(Math.round(innerWidth / 2), Math.round(innerHeight / 2));
+  const stack = document.elementsFromPoint(Math.round(innerWidth / 2), Math.round(innerHeight / 2));
+  return {
+    present: true,
+    idle: host.classList.contains('is-idle'),
+    ariaHidden: host.getAttribute('aria-hidden'),
+    visibility: cs.visibility,
+    pointerEvents: cs.pointerEvents,
+    // 关键取证：命中测试里不许出现常驻层的节点（后代自行放开 pointer-events 也会被这里抓到）
+    hitInsideHost: hit ? host.contains(hit) : false,
+    stackInsideHost: stack.filter((node) => host.contains(node)).map((node) => node.className || node.tagName).slice(0, 3),
+  };
+})()`);
+console.log("隐藏态:", JSON.stringify(hidden));
+if (!hidden.present) problems.push("离开直播页后常驻层被卸载了（与「只藏不卸载」的设计不符，回直播页要重新拉流）");
+if (!hidden.idle) problems.push("离开直播页后 .live-host 没有 is-idle");
+if (hidden.ariaHidden !== "true") problems.push(`隐藏中的常驻层 aria-hidden 应为 true，实际 ${hidden.ariaHidden}`);
+if (hidden.visibility !== "hidden") problems.push(`隐藏中的常驻层 visibility 应为 hidden，实际 ${hidden.visibility}`);
+if (hidden.hitInsideHost === true || (hidden.stackInsideHost || []).length > 0) {
+  problems.push(`隐藏的直播常驻层仍参与命中测试：${JSON.stringify(hidden.stackInsideHost)}`);
+}
 
 const code = finish(problems);
 cdp.close();
