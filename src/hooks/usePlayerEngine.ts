@@ -252,6 +252,12 @@ export function usePlayerEngine({
       actor.stop();
     };
   }, []);
+  /**
+   * 会话代数真源：actor 的 sessionId（每次 LOAD/USER_SWITCH 自增）。取代原先手搓
+   * 的 `switchGeneration` 计数器——在途探活/换集回调回来时比对它，判断结论是否属于
+   * 已被新一轮切换取代的旧集。影子模式已验证它与真实切换时序一致（dcc7a12）。
+   */
+  const sessionGen = () => sessionActorRef.current?.getSnapshot().context.sessionId ?? 0;
 
   /**
    * 剧集列表是异步到的：播放器实例创建时 lines 可能还是空的，到达 / 切到最后一集
@@ -421,8 +427,7 @@ export function usePlayerEngine({
      * 给新一集判生死。switchRef 换源时同步更新它。
      */
     let activeProxyUrl = resolved.proxyUrl;
-    /** 原地换集代数：在途探活回来时代数已变，结论属于旧集，直接丢弃。 */
-    let switchGeneration = 0;
+    // 原地换集代数已收敛到 actor.sessionId（见 sessionGen）；不再本地维护计数器。
     /**
      * 切换类 timer / listener 的显式回收登记。
      *
@@ -1231,12 +1236,12 @@ export function usePlayerEngine({
       lastProbeAt = Date.now();
       // 探「当前真实地址」而不是 resolved.proxyUrl：原地换集后 resolved 不变，
       // 照旧探旧地址会拿旧集的生死结论误杀新一集。
-      const generation = switchGeneration;
+      const generation = sessionGen();
       void probeLineVerdict(activeProxyUrl, resolved.kind, 12_000)
         .then((verdict) => {
           probeBusy = false;
           if (
-            generation !== switchGeneration ||
+            generation !== sessionGen() ||
             watchStopped ||
             video.readyState >= 2 ||
             mediaIsAdvancing(video)
@@ -1448,7 +1453,8 @@ export function usePlayerEngine({
       measuredKbps = 0;
       watchStopped = false;
       lastProbeAt = 0;
-      switchGeneration += 1;
+      // 会话代数由 USER_SWITCH 事件驱动 actor.sessionId 自增（本函数开头已 send），
+      // 这里不再手动 ++。
       activeProxyUrl = url;
       declaredHeight = 0;
       lastAliveAt = Date.now();
@@ -1549,7 +1555,7 @@ export function usePlayerEngine({
        * 「点了没反应」。15s 封顶：出画 / 被更新一轮切换取代 / 超时都收敛，
        * 坏源的善后由看门狗与慢提示接管，按钮不能永远转。
        */
-      const gen = switchGeneration;
+      const gen = sessionGen();
       await new Promise<void>((resolve) => {
         const disposeWaiter = () => {
           video.removeEventListener("loadeddata", onAlive);
@@ -1558,7 +1564,7 @@ export function usePlayerEngine({
           window.clearTimeout(cap);
         };
         const finish = (aliveCheck: boolean) => {
-          if (aliveCheck && switchGeneration !== gen) {
+          if (aliveCheck && sessionGen() !== gen) {
             return; // 「出画」快路径只认最新一轮；在途旧切换不该宣布新集就绪
           }
           disposeWaiter();
