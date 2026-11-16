@@ -63,14 +63,10 @@ fn snapshot_dir() -> PathBuf {
     crate::store::data_dir().join("spider-src")
 }
 
-/// FNV-1a 64：只为把 URL 映射成稳定文件名，不承担任何安全职责。
+/// URL → 稳定文件名：XXH3（`xxhash-rust`，主流、快，非加密用途足够），取代原先
+/// 手搓的 FNV-1a——「不要手搓轮子」。只用于映射磁盘快照文件名，不承担安全职责。
 fn snapshot_key(url: &str) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in url.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{hash:016x}")
+    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(url.as_bytes()))
 }
 
 /// 读磁盘快照；返回（脚本文本, 是否在 TTL 内）。

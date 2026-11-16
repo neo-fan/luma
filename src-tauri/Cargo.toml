@@ -53,6 +53,8 @@ encoding_rs = "0.8"
 # 配置快照 id = sha1(origin)[..12]，与旧 Python 适配层一致（换算法会让所有
 # 已导入配置换 id，收藏与历史全部对不上）。
 sha1 = "0.10"
+# spider-src 快照文件名等稳定指纹：XXH3（主流、快，非加密用途足够），取代手搓 FNV-1a。
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 base64 = "0.22"
 flate2 = "1"
 # importedAt 用 RFC3339；只借用来格式化，不碰时区数据库。
