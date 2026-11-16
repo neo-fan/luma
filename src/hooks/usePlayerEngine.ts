@@ -35,7 +35,8 @@ import { probeLineVerdict } from "../lib/playProbe";
 import { decideWatchdogVerdict } from "../lib/watchdogVerdict";
 import { DEFAULT_PREFS, readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import { createActor } from "xstate";
-import { playerSessionMachine } from "../lib/playerSessionMachine";
+import { vodSessionMachine } from "../lib/vodSessionMachine";
+import { liveSessionMachine } from "../lib/liveSessionMachine";
 import type { VideoMeta } from "../lib/resolution";
 import type { PlayResolved } from "../types/luma";
 
@@ -234,9 +235,18 @@ export function usePlayerEngine({
    * 探针对比「机器状态 vs 现实行为」；确认模型与现实一致后，才进第 2 步（把真源
    * 切成 actor、逐簇删掉散落的守卫）。
    */
-  const sessionActorRef = useRef<ReturnType<typeof createActor> | null>(null);
+  const sessionActorRef = useRef<ReturnType<typeof createActor<typeof vodSessionMachine>> | null>(null);
   useEffect(() => {
-    const actor = createActor(playerSessionMachine);
+    // 直播与点播生命周期不同，各用各的机器。引擎只喂两者共有的事件
+    // （LOAD/RESOLVED/ATTACHED/MEDIA_ALIVE）；点播独有的 USER_SWITCH/AUTOPLAY_BLOCKED
+    // 只在 switchRef（点播换集）里发，直播走不到。live 演员按 vod 演员类型收口，
+    // 因为引擎只发共有事件、且两台机器都有 sessionId/hasPlayed 上下文。
+    const actor =
+      siteKey === "live"
+        ? (createActor(liveSessionMachine) as unknown as ReturnType<
+            typeof createActor<typeof vodSessionMachine>
+          >)
+        : createActor(vodSessionMachine);
     sessionActorRef.current = actor;
     actor.subscribe((snap) => {
       if (import.meta.env.DEV) {
@@ -251,7 +261,7 @@ export function usePlayerEngine({
       sessionActorRef.current = null;
       actor.stop();
     };
-  }, []);
+  }, [siteKey]);
   /**
    * 会话代数真源：actor 的 sessionId（每次 LOAD/USER_SWITCH 自增）。取代原先手搓
    * 的 `switchGeneration` 计数器——在途探活/换集回调回来时比对它，判断结论是否属于

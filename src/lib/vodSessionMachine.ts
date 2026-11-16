@@ -20,7 +20,7 @@ import { setup, assign, type ActorRefFrom } from "xstate";
 
 export type ProbeVerdict = "dead" | "unknown" | "alive";
 
-export type PlayerSessionEvent =
+export type VodSessionEvent =
   | { type: "LOAD"; url: string }
   | { type: "RESOLVED"; url: string }
   | { type: "ATTACHED" }
@@ -34,7 +34,7 @@ export type PlayerSessionEvent =
   | { type: "FAILED"; reason: string }
   | { type: "RECOVERED" };
 
-export interface PlayerSessionContext {
+export interface VodSessionContext {
   /** 会话身份：每次换集/重载自增，取代散落的 `switchGeneration` 代数比较。 */
   sessionId: number;
   targetUrl: string;
@@ -53,7 +53,7 @@ export interface PlayerSessionContext {
 /** 「未知」探测累计到几次判死换线（对齐内核 STALL_UNRESPONSIVE_LIMIT）。 */
 export const UNRESPONSIVE_LIMIT = 3;
 
-const initialContext: PlayerSessionContext = {
+const initialContext: VodSessionContext = {
   sessionId: 0,
   targetUrl: "",
   hasPlayed: false,
@@ -63,8 +63,8 @@ const initialContext: PlayerSessionContext = {
   resumeAborted: false,
 };
 
-export const playerSessionMachine = setup({
-  types: { context: {} as PlayerSessionContext, events: {} as PlayerSessionEvent },
+export const vodSessionMachine = setup({
+  types: { context: {} as VodSessionContext, events: {} as VodSessionEvent },
   guards: {
     wantsResume: ({ context }) => context.resumeIntent,
     canPersistVolume: ({ context }) => context.fadeDone,
@@ -201,4 +201,4 @@ export const playerSessionMachine = setup({
   },
 });
 
-export type PlayerSessionActor = ActorRefFrom<typeof playerSessionMachine>;
+export type VodSessionActor = ActorRefFrom<typeof vodSessionMachine>;

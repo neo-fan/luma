@@ -1,9 +1,9 @@
 import { createActor } from "xstate";
 import { describe, expect, it } from "vitest";
-import { UNRESPONSIVE_LIMIT, playerSessionMachine } from "./playerSessionMachine";
+import { UNRESPONSIVE_LIMIT, vodSessionMachine } from "./vodSessionMachine";
 
 function fresh() {
-  const actor = createActor(playerSessionMachine);
+  const actor = createActor(vodSessionMachine);
   actor.start();
   return actor;
 }
@@ -16,7 +16,7 @@ function toPlaying(actor: ReturnType<typeof fresh>, url = "e1") {
   actor.send({ type: "MEDIA_ALIVE" });
 }
 
-describe("playerSessionMachine", () => {
+describe("vodSessionMachine", () => {
   it("idle → playing 走通完整首帧链路", () => {
     const a = fresh();
     expect(a.getSnapshot().matches("idle")).toBe(true);
