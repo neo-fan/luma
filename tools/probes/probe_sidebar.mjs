@@ -138,6 +138,30 @@ console.log(`target: ${page.url}`);
 try {
   await cdp.send("Runtime.enable");
   await cdp.send("Page.enable");
+
+  // 整段动画连续采样，而不是固定 90ms 单点：单点采样在套件并发下极易因动画
+  // 还没起 / 已收尾而落在端点（204 或 68），把「会动的过渡」误判成「瞬切」。
+  // 这里按时间窗轮询 .sidebar 宽度与 .app 左留白，既证明中间帧存在，也逐帧核对
+  // 二者同宽同帧（本仓库已知坑：禁止单次采样下结论）。
+  const sampleFrames = async (ms) => {
+    const frames = [];
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const raw = await cdp.eval(`(() => {
+        const bar = document.querySelector('.sidebar');
+        const app = document.querySelector('.app');
+        if (!bar || !app) return null;
+        return JSON.stringify({
+          w: Math.round(bar.getBoundingClientRect().width),
+          r: Math.round(parseFloat(getComputedStyle(app).paddingLeft) || 0),
+        });
+      })()`);
+      if (raw) frames.push(JSON.parse(raw));
+      await sleep(35);
+    }
+    return frames;
+  };
+
   // 从展开态开始：清掉上次探针写入的偏好。
   await cdp.eval(`localStorage.removeItem('luma:sidebar:v1')`);
   await cdp.send("Page.reload", { ignoreCache: true });
@@ -177,24 +201,23 @@ try {
     return 'CLICKED';
   })()`);
   assert(collapse === "CLICKED", "click 收起", collapse);
-  await cdp.eval(WAIT("return document.querySelector('.sidebar.is-collapsed') ? 'OK' : null;", 5000));
-  // 收放必须是**过渡**而不是瞬切：点击后约 90ms 采样，宽度应停在两端之间；
+  // 收放必须是**过渡**而不是瞬切：整段动画连续采样，要求至少一帧停在两端之间；
   // 同时 .app 的左侧留白要跟侧栏同宽同帧，否则内容区会先跳一格再慢慢跟上。
-  await sleep(90);
-  const mid = JSON.parse((await cdp.eval(SNAPSHOT)) || "null");
-  console.log(`[info] mid-flight: ${JSON.stringify(mid)}`);
+  const collapseFrames = await sampleFrames(380);
+  console.log(`[info] collapse frames: ${JSON.stringify(collapseFrames)}`);
+  await cdp.eval(WAIT("return document.querySelector('.sidebar.is-collapsed') ? 'OK' : null;", 5000));
   assert(
-    mid?.width > 74 && mid?.width < 198,
+    collapseFrames.length >= 3 && collapseFrames.some((f) => f.w > 74 && f.w < 198),
     "collapse animates instead of snapping",
-    String(mid?.width),
+    JSON.stringify(collapseFrames),
   );
   assert(
-    mid !== null && Math.abs((mid.railWidth ?? 0) - (mid.width ?? 0)) <= 1,
+    collapseFrames.length >= 3 && collapseFrames.every((f) => Math.abs(f.r - f.w) <= 1),
     "content gutter tracks sidebar width",
-    JSON.stringify(mid),
+    JSON.stringify(collapseFrames),
   );
-  // 宽度过渡 260ms，等动画结束再读像素尺寸。
-  await sleep(420);
+  // 等过渡收敛到 68px 轨道（而非固定 sleep）再读像素尺寸。
+  await cdp.eval(WAIT("return Math.round(document.querySelector('.sidebar').getBoundingClientRect().width) <= 80 ? 'OK' : null;", 5000));
 
   const collapsed = JSON.parse((await cdp.eval(SNAPSHOT)) || "null");
   console.log(`[info] collapsed: ${JSON.stringify(collapsed)}`);
@@ -226,14 +249,16 @@ try {
   })()`);
   assert(expand === "CLICKED", "click 展开", expand);
   await cdp.eval(WAIT("return !document.querySelector('.sidebar.is-collapsed') ? 'OK' : null;", 5000));
-  await sleep(90);
-  const midExpand = JSON.parse((await cdp.eval(SNAPSHOT)) || "null");
+  // 展开同样是「过渡而非瞬切」：整段动画连续采样，至少一帧停在两端之间。
+  const expandFrames = await sampleFrames(380);
+  console.log(`[info] expand frames: ${JSON.stringify(expandFrames)}`);
   assert(
-    midExpand?.width > 74 && midExpand?.width < 198,
+    expandFrames.length >= 3 && expandFrames.some((f) => f.w > 74 && f.w < 198),
     "expand animates instead of snapping",
-    String(midExpand?.width),
+    JSON.stringify(expandFrames),
   );
-  await sleep(420);
+  // 等过渡收敛到展开宽度再读像素尺寸。
+  await cdp.eval(WAIT("return Math.round(document.querySelector('.sidebar').getBoundingClientRect().width) >= 180 ? 'OK' : null;", 5000));
 
   const restored = JSON.parse((await cdp.eval(SNAPSHOT)) || "null");
   console.log(`[info] restored: ${JSON.stringify(restored)}`);

@@ -16,12 +16,14 @@ import { readFileSync, statSync } from "node:fs";
  */
 const PKG = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 const EXPECTED_VERSION = PKG.version;
-// Mirror src/lib/version.ts::formatVersion() for the sidebar display form.
+// Mirror src/lib/version.ts::formatVersion() for the display form. The UI renders
+// formatVersion(...) verbatim with NO leading "v" (AppShell.tsx:460 "version:
+// {formatVersion(APP_VERSION)}", DiagnosticSection.tsx:95 <code>{formatVersion(...)}</code>).
 const DISPLAY_VERSION = EXPECTED_VERSION
   .replace(/-alpha$/i, ".a")
   .replace(/-beta$/i, ".b")
   .replace(/-rc$/i, ".rc");
-console.log(`[info] expected version=${EXPECTED_VERSION} display=v${DISPLAY_VERSION}`);
+console.log(`[info] expected version=${EXPECTED_VERSION} display=${DISPLAY_VERSION}`);
 
 class Cdp {
   constructor(wsUrl) {
@@ -142,7 +144,13 @@ try {
   const footer = await cdp.eval(
     `(() => { const el = document.querySelector('.sidebar__foot'); return el ? el.innerText.trim() : null; })()`,
   );
-  assert(!!footer && footer.includes(`v${DISPLAY_VERSION}`), `sidebar shows v${DISPLAY_VERSION}`, String(footer));
+  // AppShell.tsx:458-461 侧栏 foot 渲染 `version: {formatVersion(APP_VERSION)}`，
+  // 没有 `v` 前缀；断言锁定真实渲染形态。
+  assert(
+    !!footer && footer.includes(`version: ${DISPLAY_VERSION}`),
+    `sidebar shows version: ${DISPLAY_VERSION}`,
+    String(footer),
+  );
 
   const opened = await cdp.eval(CLICK("设置", ".nav__item"));
   assert(opened === "CLICKED", "open settings page", opened);
@@ -156,20 +164,23 @@ try {
 
   const snapRaw = await cdp.eval(`(() => {
     const kv = document.querySelector('.settings-kv');
+    const kvText = kv ? kv.innerText.trim() : '';
     const buttons = [...document.querySelectorAll('.settings-actions button')].map((n) => (n.textContent || '').trim());
     const body = document.body.innerText || '';
     return JSON.stringify({
-      kv: kv ? kv.innerText.trim() : null,
+      kv: kvText,
       buttons,
       hasSection: body.includes('版本与日志'),
-      hasVersion: body.includes('v${DISPLAY_VERSION}'),
+      // DiagnosticSection.tsx:94-95：「版本」行以 <code>{formatVersion(...)}</code> 渲染
+      // 裸版本号（无 v 前缀）。锁定 kv 里的版本行，而非全站子串匹配。
+      hasVersion: /版本/.test(kvText) && kvText.includes(${JSON.stringify(DISPLAY_VERSION)}),
       hasDataDir: body.includes('数据目录'),
       hasLogDir: body.includes('日志目录'),
     });
   })()`);
   const snap = snapRaw ? JSON.parse(snapRaw) : null;
   console.log(`[info] settings snapshot: ${snapRaw}`);
-  assert(!!snap?.hasSection && !!snap?.hasVersion, `settings shows 版本与日志 + v${DISPLAY_VERSION}`, snapRaw);
+  assert(!!snap?.hasSection && !!snap?.hasVersion, `settings shows 版本与日志 + ${DISPLAY_VERSION}`, snapRaw);
   assert(!!snap?.hasDataDir && !!snap?.hasLogDir, "data/log dir rows present", snapRaw);
   assert(
     Array.isArray(snap?.buttons) && snap.buttons.some((t) => t.includes("打开日志目录")),

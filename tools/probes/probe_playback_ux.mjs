@@ -238,7 +238,11 @@ try {
   before = JSON.parse(await readState());
   console.log(`[info] before: active=${before.activeName || before.activeId}, configs=${before.ids.length}`);
 
-  // 0. 保持侧栏展开（避免上一个探针把它收起影响点击）。
+  // 0. 先把路由归位到首页、并展开侧栏，再 reload。否则 reload 会按当前 hash
+  //    重建播放会话（上一个探针可能停在 #/player/…），常驻播放层就带着旧剧的
+  //    46 集留在 DOM 里，污染后面所有未 scope 的 .episode 查询（契约：详情页/
+  //    选集数的查询必须 scope 到 .content 之外，常驻层不在 .content 内）。
+  await cdp.eval("location.hash = '#/'");
   await cdp.eval(`localStorage.setItem('luma:sidebar:v1', '0')`);
   await cdp.send("Page.reload", { ignoreCache: true });
   await cdp.eval(WAIT("return document.querySelector('.nav__item') ? 'OK' : null;", 15000));
@@ -293,16 +297,18 @@ try {
     return 'MISSING';
   })()`);
   assert(enter !== "MISSING", "entered detail/player from home", enter);
-  // 两条路径统一以「剧集格出现」为准：详情页有播放线路列表，播放页有剧集面板。
+  // 两条路径统一以「剧集格出现」为准。episode 一律 scope 到 .content：常驻播放层
+  // 不在 .content 内（见 AppShell / layout.css 约定），不 scope 会把常驻层的集数
+  // 也数进来（实测 46）。详情页走 .content 里的剧集网格。
   const detailOk = await cdp.eval(
-    WAIT(`return document.querySelectorAll('.episode').length >= 3 ? 'OK' : null;`, 30000),
+    WAIT(`return document.querySelectorAll('.content .episode').length >= 3 ? 'OK' : null;`, 30000),
   );
   assert(detailOk === "OK", "episodes rendered after enter", String(enter));
-  const episodeCount = await cdp.eval(`document.querySelectorAll('.episode').length`);
+  const episodeCount = await cdp.eval(`document.querySelectorAll('.content .episode').length`);
   assert(Number(episodeCount) >= 3, "detail has >=3 episodes", `${episodeCount} episodes`);
 
   // 3. 播放第 1 集，等 <video> 有真实媒体源。
-  await cdp.eval(`document.querySelector('.episode').click()`);
+  await cdp.eval(`document.querySelector('.content .episode').click()`);
   const mediaSrc = await cdp.eval(
     WAIT(`const v = document.querySelector('video'); return v && (v.currentSrc || v.src) ? (v.currentSrc || v.src) : null;`, 40000),
   );
@@ -403,7 +409,7 @@ try {
   const escDiag = await cdp.eval(`JSON.stringify({
     title: document.querySelector('.page-title')?.textContent?.trim() || '',
     onDetail: document.body.innerText.includes('播放线路'),
-    episodes: document.querySelectorAll('.episode').length,
+    episodes: document.querySelectorAll('.content .episode').length,
     url: location.href,
   })`);
   assert(backToHome === "OK", "Esc from detail returns to home", `${backToHome} | diag=${escDiag}`);
@@ -462,28 +468,46 @@ try {
   })()`);
   assert(box !== "MISSING", "copy-error button present", String(box));
   if (box !== "MISSING") {
-    // 点击前重新测坐标并在按下前一刻校验命中：错误条上方任何布局变化都会让
-    // 旧坐标落到别处（2026-11-16 实测点击落到旁边的「搜索」按钮上，
-    // 剪贴板里留下“点击”二字）。
-    const clickRes = await cdp.eval(`(async () => {
-      const b = [...document.querySelectorAll('.error-bar__actions button')]
-        .find((x) => (x.getAttribute('aria-label') || '').includes('复制'));
-      if (!b) return 'VANISHED';
-      const r = b.getBoundingClientRect();
-      const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
-      const el = document.elementFromPoint(x, y);
-      if (el !== b && !b.contains(el)) return 'COVERED:' + (el ? el.tagName + '.' + el.className.toString().slice(0, 30) : 'null');
-      return 'READY';
-    })()`);
-    if (clickRes !== "READY") {
-      console.log(`[info] copy click skipped: ${clickRes}`);
-    } else {
-      const { x, y } = JSON.parse(box);
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, buttons: 0 });
-      await sleep(80);
-      await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    // 短轮询只用来容忍错误条入场动画 / 临时 toast（≤数秒会落定）。每拍重新测坐标，
+    // 命中目标确实是按钮或其子孙才点；若被「常驻播放器 idle 控制条」长期盖住，
+    // 这里会如实失败——那是产品问题（见报告：.player-host.is-idle 的
+    // pointer-events:none / visibility:hidden 没穿过 ArtPlayer 自己的
+    // .art-controls{pointer-events:auto;visibility:visible}，后台播放器那条
+    // opacity:0 的控制栏会抢走其它页面的点击），不在探针里绕过。
+    let clicked = false;
+    let lastCovered = "";
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      const hit = await cdp.eval(`(() => {
+        const b = [...document.querySelectorAll('.error-bar__actions button')]
+          .find((x) => (x.getAttribute('aria-label') || '').includes('复制'));
+        if (!b) return 'VANISHED';
+        const r = b.getBoundingClientRect();
+        const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+        const el = document.elementFromPoint(x, y);
+        if (el !== b && !b.contains(el)) {
+          const who = el && el.closest && el.closest('.player-host') ? 'idle-player-controls' : 'other';
+          return 'COVERED:' + who + ':' + (el ? el.tagName + '.' + String(el.className).slice(0, 30) : 'null');
+        }
+        return JSON.stringify({ x, y });
+      })()`);
+      if (hit.startsWith("{")) {
+        const { x, y } = JSON.parse(hit);
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, buttons: 0 });
+        await sleep(80);
+        await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+        clicked = true;
+        break;
+      }
+      if (hit === "VANISHED") {
+        console.log(`[info] copy button vanished before click`);
+        break;
+      }
+      lastCovered = hit;
+      await sleep(400);
     }
+    if (!clicked) console.log(`[info] copy click blocked within 6s by: ${lastCovered}`);
   }
   // 按钮初始就是 data-copy-state="idle"，必须等它变成 ok/failed 才算捕获到反馈。
   const copyState = await cdp.eval(
@@ -502,10 +526,14 @@ try {
   try {
     clip = (await cdp.eval(`navigator.clipboard.readText().catch(() => '')`)) || "";
   } catch { /* 权限被拒 */ }
-  if (clip) {
+  if (copyState === "ok" && clip) {
     assert(clip === errText, "clipboard holds the exact error text", JSON.stringify(clip));
-  } else {
+  } else if (copyState === "ok") {
     console.log("[info] clipboard read-back blocked; skipped content assertion (button state proves write path)");
+  } else {
+    // 复制按钮没真正成功（多半是被上面的覆盖层挡住点不到）：剪贴板里是别处的旧内容，
+    // 读回对比无意义。该情形已由「copy produced a state feedback」主断言如实报红。
+    console.log(`[info] clipboard read-back skipped (copyState=${copyState}; 未真正写入剪贴板)`);
   }
 
   // ---- 无未捕获异常 ---------------------------------------------------------
@@ -530,7 +558,20 @@ try {
           `window.__TAURI_INTERNALS__.invoke('config_activate', { id: ${JSON.stringify(before.activeId)} }).then(()=>'OK').catch(()=>'ERR')`,
         );
       }
-      console.log(`[info] cleanup: removed ${created.length} config(s), active → ${before.activeName || before.activeId}`);
+      // 探针内联源播过的片子会在历史里留一条指向已删除配置的悬空记录，一并清掉，
+      // 别污染用户的观看历史（与 probe_flv 同口径）。
+      const histClean = await cdp.eval(`(async () => {
+        const history = await window.__TAURI_INTERNALS__.invoke('history_list');
+        let n = 0;
+        for (const item of history) {
+          if (item.name === 'UX Probe Series') {
+            await window.__TAURI_INTERNALS__.invoke('history_remove', { siteKey: item.siteKey, vodId: item.vodId });
+            n += 1;
+          }
+        }
+        return n;
+      })().catch(() => -1)`);
+      console.log(`[info] cleanup: removed ${created.length} config(s), ${histClean} history entit(y/ies), active → ${before.activeName || before.activeId}`);
     } catch (e) {
       console.log(`[warn] cleanup failed: ${e && e.message || e}`);
     }

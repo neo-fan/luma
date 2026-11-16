@@ -3,8 +3,19 @@
  * 首页分类 chip 必须「原地换下方网格」，不能 push 二级页面。
  *
  * 断言顺序刻意放在真实窗口里：源码契约只能保证没写 navigate，但保证不了
- * 「点完 chip 页面标题还是首页、没有返回键、分页条还在」。用真实配置跑，
- * 不需要桩服务；收尾点回「推荐」恢复现场。
+ * 「点完 chip 页面标题还是首页、没有返回键、网格真的换了」。
+ *
+ * 沉浸式首页（2026-11-15）后两条 DOM 契约变了：
+ *   - 推荐 tab 不再是 .vod-card 网格，而是 .home-hero 头图 + 超过 5 条时的
+ *     .poster-tile 横排（HomePage.tsx 749-762、HERO_COUNT=5）；分类 tab 仍是
+ *     .vod-card 网格（HomePage.tsx 736-748）。
+ *   - 分页从底部「下一页」按钮（旧 CategoryPage 的 .pager）改成
+ *     IntersectionObserver + .infinite-sentinel 滚动加载（HomePage.tsx 573-592、
+ *     766-779）。`.pager` 在 src 的 tsx/ts/js/jsx 里已 0 命中（仅 feedback.css
+ *     残留孤立样式块，没有组件再渲染这些类名）。
+ * 探针同步把「分页按钮可点」改成「滚到底会拉到下一页（或显示『到底啦』tip）」，
+ * 守住的是同一条不变量：分类列表能继续往后翻，而不是停在第一页。
+ * 用真实配置跑，不需要桩服务；收尾点回「推荐」恢复现场。
  */
 const CDP = "http://127.0.0.1:9222/json/list";
 
@@ -83,10 +94,18 @@ const SNAP = `JSON.stringify({
   title: document.querySelector('.page-title')?.textContent?.trim(),
   backBtn: !!document.querySelector('.page-head .icon-btn[aria-label="返回"]'),
   activeChip: document.querySelector('.chip.is-active')?.textContent?.trim(),
-  pager: document.querySelector('.pager__label')?.textContent?.trim() || null,
+  // 旧分页条 .pager/.pager__label 已从产品 DOM 移除（HomePage.tsx 766-779 改
+  // 成 .infinite-foot + .infinite-sentinel），所以这里读 sentinel 而不是 pager。
+  sentinel: !!document.querySelector('.infinite-sentinel'),
+  hero: !!document.querySelector('.home-hero'),
+  tiles: document.querySelectorAll('.poster-tile').length,
   cards: document.querySelectorAll('.vod-card').length,
   recommendChip: [...document.querySelectorAll('.chip-row .chip')].some(c => c.textContent.trim() === '推荐'),
 })`;
+
+// 「推荐 tab 上有内容」：头图（整块 1 单位）+ 横排 tile + 卡片网格任一在位。
+// 与 probe_home_site 同口径，对沉浸式首页（HomePage.tsx 749-762）成立。
+const hasHomeContent = (s) => Boolean(s) && ((s.hero ? 1 : 0) + (s.tiles ?? 0) + (s.cards ?? 0)) > 0;
 
 let failures = 0;
 const assert = (ok, label, detail = "") => {
@@ -106,9 +125,14 @@ try {
     (await cdp.eval(WAIT("return document.querySelector('.page-title')?.textContent?.trim() === '首页' ? 'OK' : null;", 30000))) === "OK",
     "home rendered",
   );
-  // 重载后首页数据是异步的：分类 chip 与卡片都要等它落地，否则会读到空 chip-row。
+  // 重载后首页数据是异步的：分类 chip 与网格都要等它落地，否则会读到空 chip-row。
+  // 沉浸式首页（HomePage.tsx 749-762）：推荐 tab 用 .home-hero/.poster-tile，
+  // 没有 .vod-card；分类 tab 才出 .vod-card。等待时一并算这两类节点 + .empty。
   assert(
-    (await cdp.eval(WAIT("return document.querySelectorAll('.vod-card').length > 0 || !!document.querySelector('.empty') ? 'OK' : null;", 30000))) === "OK",
+    (await cdp.eval(WAIT(`return document.querySelector('.home-hero')
+      || document.querySelectorAll('.poster-tile').length > 0
+      || document.querySelectorAll('.vod-card').length > 0
+      || !!document.querySelector('.empty') ? 'OK' : null;`, 30000))) === "OK",
     "home content settled",
   );
   // 确保从「推荐」起步，不被上一次运行留下的选中态影响。
@@ -119,7 +143,14 @@ try {
   console.log(`[info] before: ${JSON.stringify(before)}`);
   assert(before.activeChip === "推荐", "推荐 chip is active by default", JSON.stringify(before));
   assert(before.recommendChip === true, "推荐 chip present", JSON.stringify(before));
-  assert(before.pager === null, "no pager in recommend mode", JSON.stringify(before));
+  // 推荐 tab 应该是沉浸式（头图/横排在位 + 没有分类用的 .infinite-sentinel）。
+  // 旧断言是「pager 不存在」；产品里 pager DOM 已移除、由滚动哨兵替代，
+  // 等价不变量是「推荐 tab 不挂载分类用的无限滚动哨兵」。
+  assert(
+    before.sentinel === false && hasHomeContent(before),
+    "recommend tab shows immersive content, no category sentinel",
+    JSON.stringify(before),
+  );
 
   const picked = await cdp.eval(`(() => {
     const c = [...document.querySelectorAll('.chip-row button.chip')]
@@ -133,12 +164,12 @@ try {
 
   const switched = await cdp.eval(
     WAIT(`return document.querySelector('.chip.is-active')?.textContent?.trim() === ${JSON.stringify(picked)}
-      && document.querySelector('.pager') ? 'OK' : null;`, 30000),
+      && document.querySelector('.infinite-sentinel') ? 'OK' : null;`, 30000),
   );
-  assert(switched === "OK", "chip switches inline and pager appears", String(switched));
-  // pager 是分类态常驻的，出现不等于数据到了；再等网格/空态真正落地。
+  assert(switched === "OK", "chip switches inline and infinite-scroll sentinel mounts", String(switched));
+  // sentinel 出现 ≠ 数据到位（catLoading 时只有 .sk-grid 骨架），再等网格或空态。
   await cdp.eval(WAIT(`return document.querySelectorAll('.vod-card').length > 0
-    || (!document.querySelector('.spinner') && !!document.querySelector('.empty')) ? 'OK' : null;`, 30000));
+    || (!document.querySelector('.sk-grid') && !!document.querySelector('.empty')) ? 'OK' : null;`, 30000));
   await sleep(400);
 
   const after = JSON.parse(await cdp.eval(SNAP));
@@ -146,40 +177,55 @@ try {
   assert(after.title === "首页", "still on home page (no route push)", after.title);
   assert(after.backBtn === false, "no back button (not a二级 page)", String(after.backBtn));
   assert(after.activeChip === picked, "clicked chip is highlighted", JSON.stringify(after));
-  assert(after.pager !== null, "category pager rendered", JSON.stringify(after));
+  // 分类态必须挂载 .infinite-sentinel（替代旧 .pager）；沉浸式头图应让位给网格。
+  assert(after.sentinel === true, "infinite-scroll sentinel mounted in category mode", JSON.stringify(after));
   assert(after.cards > 0, "grid refreshed with category content", JSON.stringify(after));
 
-  // 分页必须真的能翻出下一页内容（曾因空结果被缓存 5 分钟 + CMS 父级分类
-  // 永远返回空，导致「所有类目的分页查询都失败」）。
-  const next = await cdp.eval(`(() => {
-    const b = document.querySelector('.pager .icon-btn[aria-label="下一页"]');
-    if (!b) return 'MISSING';
-    if (b.disabled) return 'DISABLED';
-    b.click();
-    return 'CLICKED';
+  // 分页必须真的能继续往后翻：旧 CategoryPage 用底部「下一页」按钮，
+  // 现在改成 .infinite-sentinel 进视口 → loadMore → 下一页追加。
+  // 验证方式：把 .page-body（产品里唯一的滚动容器，layout.css 396-404）滚到底，
+  // 等到 .vod-card 数量增长（page 2 落地）或「已经到底啦」tip 出现。
+  // 两个分支都接受，因为桩/真实站可能只有一页（catHasMore=false 时出 tip）；
+  // 关键不变量是「滚动确实触发了下一页流程，而不是停在 page 1 死水」。
+  const firstPageCards = after.cards;
+  const scrolled = await cdp.eval(`(() => {
+    const body = document.querySelector('.page-body');
+    if (!body) return 'NO_BODY';
+    const prev = body.scrollTop;
+    body.scrollTop = body.scrollHeight;
+    return body.scrollTop > prev ? 'SCROLLED' : 'NO_GROWTH';
   })()`);
-  assert(next === "CLICKED", "next-page button is enabled on a non-empty page", String(next));
-  const paged = await cdp.eval(
-    WAIT(`const label = document.querySelector('.pager__label')?.textContent?.trim() || '';
-      return label !== ${JSON.stringify(after.pager)}
-        && (document.querySelectorAll('.vod-card').length > 0 || !!document.querySelector('.empty'))
-        && !document.querySelector('.spinner') ? label : null;`, 30000),
+  assert(scrolled === "SCROLLED", "page-body scrolls (sentinel becomes reachable)", String(scrolled));
+  const grown = await cdp.eval(
+    WAIT(`return (document.querySelectorAll('.vod-card').length > ${firstPageCards})
+      || !!document.querySelector('.infinite-foot .tip') ? 'OK' : null;`, 30000),
   );
-  console.log(`[info] page 2: ${paged}`);
   const page2 = JSON.parse(await cdp.eval(SNAP));
+  const tipText = await cdp.eval(`document.querySelector('.infinite-foot .tip')?.textContent?.trim() || null`);
+  console.log(`[info] after scroll: cards=${page2.cards} tip=${tipText}`);
   assert(
-    !!paged && page2.title === "首页" && page2.cards > 0,
-    "page 2 loads real content inline",
-    JSON.stringify({ paged, ...page2 }),
+    grown === "OK" && page2.title === "首页",
+    "scroll-to-bottom loads page 2 inline (or marks end-of-list)",
+    JSON.stringify({ firstPageCards, page2, tipText }),
   );
 
-  // 回到推荐：分页条消失、网格恢复首页推荐内容。
+  // 回到推荐：分页哨兵卸载、网格恢复成沉浸式头图/横排（不再是 .vod-card）。
   await cdp.eval(`(() => { const c=[...document.querySelectorAll('.chip-row .chip')].find(x=>x.textContent.trim()==='推荐'); c&&c.click(); return true; })()`);
   await sleep(700);
   const restored = JSON.parse(await cdp.eval(SNAP));
-  assert(restored.activeChip === "推荐" && restored.pager === null,
-    "推荐 chip restores the recommend grid", JSON.stringify(restored));
-  assert(restored.cards === before.cards, "recommend list restored", JSON.stringify({ before: before.cards, after: restored.cards }));
+  // 旧断言比的是 restored.pager===null && restored.cards===before.cards（0==0 平凡通过）。
+  // 新断言要守住「推荐 tab 真的回到推荐视图」：activeChip 是「推荐」、分类用的
+  // .infinite-sentinel 卸载、推荐用的沉浸式节点（hero/tiles）恢复，与 before 一致。
+  assert(
+    restored.activeChip === "推荐" && restored.sentinel === false && hasHomeContent(restored),
+    "推荐 chip restores the recommend view (sentinel unmounted)",
+    JSON.stringify(restored),
+  );
+  assert(
+    restored.hero === before.hero && restored.tiles === before.tiles,
+    "recommend immersive layout restored",
+    JSON.stringify({ before: { hero: before.hero, tiles: before.tiles }, restored: { hero: restored.hero, tiles: restored.tiles } }),
+  );
 } catch (err) {
   failures += 1;
   console.error(`[FAIL] probe crashed: ${String((err && err.stack) || err)}`);

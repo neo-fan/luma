@@ -145,15 +145,18 @@ function todayLogFile() {
   const utc = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(
     now.getUTCDate(),
   ).padStart(2, "0")}`;
-  const name = `luma-${utc}.log`;
+  // 前端 log_write（SearchPage.tsx:610 的 log.warn("search retry failed")）经 tracing
+  // target "ui" 落到 ui 通道：`<data>/logs/ui/ui.<UTC 日>.log`（logging/mod.rs
+  // Channel::Ui / file_prefix "ui"）。扁平的 logs/luma-<date>.log 已被三通道布局取代。
+  const name = `ui.${utc}.log`;
   const base = path.join(os.homedir(), "AppData", "Roaming");
   // debug 构建的数据目录是 Luma-debug（见 store.rs 的 debug_assertions 分支）；
-  // 两个都试，取今天日志真实存在的那个。
-  for (const dir of [path.join(base, "Luma-debug", "logs"), path.join(base, "Luma", "logs")]) {
-    const file = path.join(dir, name);
+  // release 是 Luma。两个都试，取今天日志真实存在的那个。
+  for (const dir of [path.join(base, "Luma-debug"), path.join(base, "Luma")]) {
+    const file = path.join(dir, "logs", "ui", name);
     if (existsSync(file)) return file;
   }
-  return path.join(base, "Luma-debug", "logs", name);
+  return path.join(base, "Luma-debug", "logs", "ui", name);
 }
 
 function readLog(file) {
@@ -162,6 +165,24 @@ function readLog(file) {
   } catch {
     return "";
   }
+}
+
+/**
+ * 轮询等待日志出现目标行（前端 logger 300ms 批量 flush + tracing non_blocking
+ * 落盘都是异步的，单次采样会误判「没写进去」）。`beforeText` 用来定位本次点击
+ * 之后追加的尾部；日切导致文件变小时退化为整份。
+ */
+async function waitLog(file, beforeText, patterns, timeoutMs = 25000, intervalMs = 400) {
+  const deadline = Date.now() + timeoutMs;
+  const beforeLen = beforeText.length;
+  let tail = "";
+  while (Date.now() < deadline) {
+    const cur = readLog(file);
+    tail = cur.length >= beforeLen ? cur.slice(beforeLen) : cur;
+    if (patterns.every((re) => re.test(tail))) return tail;
+    await sleep(intervalMs);
+  }
+  return tail;
 }
 
 // 带 query 的地址：桩服务按 path 路由，而配置 id 由完整 origin 哈希——这样探针
@@ -241,6 +262,7 @@ try {
   );
 
   // 单站重试：本地失败太快，抓不住「重试中…」，改从日志确认请求真的发出去了。
+  // 日志是异步落盘（logger 批量 + tracing non_blocking），轮询等待而非单次采样。
   const logFile = todayLogFile();
   const before = readLog(logFile);
   assert(
@@ -256,14 +278,17 @@ try {
     })()`)) === "CLICKED",
     "click 重试",
   );
-  await sleep(2500);
-  const after = readLog(logFile);
+  const retryTail = await waitLog(logFile, before, [/search retry failed/, /stub_py_broken/], 25000);
   assert(
-    after.length > before.length && /search retry failed/.test(after),
+    /search retry failed/.test(retryTail),
     "retry request reached the backend (log)",
-    logFile,
+    `${logFile} | tail=${JSON.stringify(retryTail.slice(-300))}`,
   );
-  assert(/stub_py_broken/.test(after), "retry targeted the failed site", "stub_py_broken");
+  assert(
+    /stub_py_broken/.test(retryTail),
+    "retry targeted the failed site",
+    "stub_py_broken",
+  );
 
   const rowsAfter = JSON.parse((await cdp.eval(ROWS)) || "[]");
   console.log(`[info] failure rows after retry: ${JSON.stringify(rowsAfter)}`);

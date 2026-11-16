@@ -185,18 +185,24 @@ let restoredScroll = -1;
 
 const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
 
-// 当前页面 DOM 快照：用 .player-about / .detail-title 区分详情页与播放页，并给出诊断文本。
+// 当前页面 DOM 快照：路由页挂在 main.content 里；播放器是 AppShell 下的常驻层
+// (.player-host)，返回详情后它仍 mounted（.is-idle），所以 .player-about / .episode
+// 会同时存在于详情页与隐藏播放页。判页与计数一律 scope 到 main.content，否则详情会被
+// 算成「detail + player 叠加」（剧集翻倍、playerBar 恒真）。滚动只在 .page-body
+// （layout.css:396-404；.content overflow:hidden，不滚）。
 const pageState = () => cdp.eval(`(() => {
-  const c = document.querySelector('.content');
+  const body = document.querySelector('.content .page-body');
   return JSON.stringify({
-    playerBar: !!document.querySelector('.player-about'),
-    detailTitle: !!document.querySelector('.detail-title'),
-    pageHead: !!document.querySelector('.page-head'),
-    episodeCount: document.querySelectorAll('.episode').length,
-    spinner: !!document.querySelector('.spinner'),
-    scrollTop: c ? c.scrollTop : null,
-    scrollHeight: c ? c.scrollHeight : null,
-    clientHeight: c ? c.clientHeight : null,
+    hash: location.hash,
+    playerActive: !!document.querySelector('.player-host:not(.is-idle) .player-about'),
+    playerAboutAny: !!document.querySelector('.player-about'),
+    detailTitle: !!document.querySelector('.content .detail-title'),
+    pageHead: !!document.querySelector('.content .page-head'),
+    episodeCount: document.querySelectorAll('.content .episode').length,
+    spinner: !!document.querySelector('.content .spinner'),
+    scrollTop: body ? Math.round(body.scrollTop) : null,
+    scrollHeight: body ? body.scrollHeight : null,
+    clientHeight: body ? body.clientHeight : null,
     navItems: [...document.querySelectorAll('.nav__item')].map((n) => (n.textContent || '').trim()),
     bodySnippet: (document.body ? document.body.innerText : '').slice(0, 200),
   });
@@ -300,10 +306,11 @@ try {
       return 'CLICKED';
     })()`);
     if (opened !== "CLICKED") break;
-    // 明确等待「详情页」：.detail-title 存在、.player-about 不存在、且 .episode 已出现。
+    // 明确等待「详情页」：路由在 #/detail/，main.content 里有 .detail-title，且
+    // .content .episode 已出现。判页 scope 到 .content，避开常驻播放层的叠加 DOM。
     detailReady = await cdp.eval(WAIT(`
-      const eps = document.querySelectorAll('.episode');
-      const onDetail = !!document.querySelector('.detail-title') && !document.querySelector('.player-about');
+      const eps = document.querySelectorAll('.content .episode');
+      const onDetail = location.hash.startsWith('#/detail/') && !!document.querySelector('.content .detail-title');
       return onDetail && eps.length > 0 ? 'DETAIL' : null;
     `, 30000));
     if (detailReady === "DETAIL") break;
@@ -320,7 +327,7 @@ try {
   }
   assert(
     detailReady === "DETAIL",
-    `detail page rendered (.detail-title + .episode, no .player-about) after ${tried + 1} card(s)`,
+    `detail page rendered (#/detail route + .content .detail-title + .content .episode) after ${tried + 1} card(s)`,
     String(detailReady),
   );
   if (detailReady !== "DETAIL") await diag("detail-load-failed");
@@ -330,35 +337,44 @@ try {
   c1 = await readCount("c1/detail");
   assert(c1 >= 1, "detail opened with >= 1 detailContent IPC call", `c1=${c1} (expected >= 1)`);
   if (c1 < 1) await diag("c1-too-small");
-  epCount1 = Number(await cdp.eval(`document.querySelectorAll('.episode').length`));
-  assert(epCount1 > 0, ".episode count > 0 on detail", `episodes=${epCount1}`);
+  epCount1 = Number(await cdp.eval(`document.querySelectorAll('.content .episode').length`));
+  assert(epCount1 > 0, ".content .episode count > 0 on detail", `episodes=${epCount1}`);
 
+  // 滚动行程取中点而不是「滚到底」：详情页在离开/返回之间会发生内容回流（封面图
+  // 加载完、源切换提示条出现或收起），scrollHeight 一变，浏览器就会把 scrollTop 钳到
+  // 新的 maxScroll —— 边界值上做定值比较会把「恢复其实生效了」误判成回归。
   const scrollRaw = await cdp.eval(`(() => {
-    const c = document.querySelector('.content');
-    if (!c) return JSON.stringify({ ok: false, reason: 'NO_CONTENT' });
-    c.scrollTop = 700;
-    return JSON.stringify({ ok: true, scrollTop: c.scrollTop, scrollHeight: c.scrollHeight, clientHeight: c.clientHeight });
+    const c = document.querySelector('.content .page-body');
+    if (!c) return JSON.stringify({ ok: false, reason: 'NO_PAGE_BODY' });
+    const max = c.scrollHeight - c.clientHeight;
+    c.scrollTop = Math.round(max / 2);
+    return JSON.stringify({
+      ok: true,
+      scrollTop: Math.round(c.scrollTop),
+      scrollHeight: c.scrollHeight,
+      clientHeight: c.clientHeight,
+      maxScroll: max,
+    });
   })()`);
   const scrollInfo = JSON.parse(scrollRaw || "{}");
-  assert(scrollInfo.ok === true, ".content scroll container present", String(scrollRaw));
+  assert(scrollInfo.ok === true, "detail .page-body scroll container present", String(scrollRaw));
   savedScroll = scrollInfo.ok ? Number(scrollInfo.scrollTop) : -1;
-  console.log(`[info] .content scroll: set=700 savedScroll=${savedScroll} scrollHeight=${scrollInfo.scrollHeight} clientHeight=${scrollInfo.clientHeight}`);
-  if (savedScroll > 100) {
-    assert(true, "detail page tall enough, .content.scrollTop > 100", `savedScroll=${savedScroll}`);
-  } else {
-    console.log(`[diag] .content too short to reach 700 (savedScroll=${savedScroll}, scrollHeight=${scrollInfo.scrollHeight}, clientHeight=${scrollInfo.clientHeight}); relax assertion to >= 0`);
-    assert(savedScroll >= 0, ".content.scrollTop readable (relaxed >= 0)", `savedScroll=${savedScroll}`);
-  }
+  console.log(`[info] .page-body scroll: target=mid savedScroll=${savedScroll} scrollHeight=${scrollInfo.scrollHeight} clientHeight=${scrollInfo.clientHeight} maxScroll=${scrollInfo.maxScroll}`);
+  // 详情页在弱网/小图状态下滚动行程可能只有几十像素（实测 67），所以门槛保持低位；
+  // 代价是要靠「紧容差」而不是「大行程」来保证灵敏度 —— 恢复机制本身是定值写入
+  // （AppShell 同步写一次 + rAF 再写一次），容差 12px 足够吸收布局动画的抖动。
+  const scrollTestable = Number(scrollInfo.maxScroll) >= 40;
 
   // --- Step 4: 第一个 .episode → 播放页；cPlay 必须等于 c1 ---
-  const epClick = await cdp.eval(FIRST_CLICK(".episode"));
-  assert(epClick === "CLICKED", "click first .episode to open player", epClick);
+  const epClick = await cdp.eval(FIRST_CLICK(".content .episode"));
+  assert(epClick === "CLICKED", "click first .content .episode to open player", epClick);
   if (epClick !== "CLICKED") await diag("episode-click-failed");
-  // 明确等待「播放页」：.player-about 存在且 .detail-title 不存在。
+  // 明确等待「播放页」：路由在 #/player/，且常驻播放层处于激活态（非 .is-idle）。
+  // .player-about 在返回详情后仍留在 DOM（隐藏常驻层），所以不能用它是否消失判页。
   const playerReady = await cdp.eval(WAIT(`
-    return document.querySelector('.player-about') && !document.querySelector('.detail-title') ? 'PLAYER' : null;
+    return location.hash.startsWith('#/player/') && document.querySelector('.player-host:not(.is-idle) .player-about') ? 'PLAYER' : null;
   `, 40000));
-  assert(playerReady === "PLAYER", "player page rendered (.player-about present, .detail-title absent)", String(playerReady));
+  assert(playerReady === "PLAYER", "player page rendered (#/player route + active .player-host .player-about)", String(playerReady));
   if (playerReady !== "PLAYER") await diag("player-load-failed");
   await logState("player-ready");
 
@@ -371,13 +387,13 @@ try {
   const back = await cdp.eval(CLICK("返回详情", "button, a"));
   assert(back === "CLICKED", "click player header 返回详情 icon", back);
   if (back !== "CLICKED") await diag("back-button-missing");
-  // 用 .player-about / .detail-title 区分，确保回到的是详情页而非播放页。
+  // 用路由 + main.content 内的选择器判页，确保回到的是详情页（常驻播放层此时 is-idle）。
   const backReady = await cdp.eval(WAIT(`
-    const eps = document.querySelectorAll('.episode');
-    const onDetail = !!document.querySelector('.detail-title') && !document.querySelector('.player-about');
+    const eps = document.querySelectorAll('.content .episode');
+    const onDetail = location.hash.startsWith('#/detail/') && !!document.querySelector('.content .detail-title');
     return onDetail && eps.length > 0 ? 'DETAIL' : null;
   `, 40000));
-  assert(backReady === "DETAIL", "returned to detail page (.detail-title + .episode, no .player-about)", String(backReady));
+  assert(backReady === "DETAIL", "returned to detail page (#/detail route + .content .detail-title + .content .episode)", String(backReady));
   if (backReady !== "DETAIL") await diag("back-to-detail-failed");
   await logState("back-to-detail");
 
@@ -385,13 +401,41 @@ try {
   c2 = await readCount("c2/back-to-detail");
   assert(c2 === c1, "back navigation did NOT reload playlist (c2 === c1)", `c1=${c1} c2=${c2} (expected equal)`);
   if (c2 !== c1) await diag("c2-mismatch");
-  const epCount2 = Number(await cdp.eval(`document.querySelectorAll('.episode').length`));
-  assert(epCount2 === epCount1, ".episode count unchanged after back", `step3=${epCount1} step5=${epCount2}`);
-  const spinnerOnBack = await cdp.eval(`!!document.querySelector('.spinner')`);
+  const epCount2 = Number(await cdp.eval(`document.querySelectorAll('.content .episode').length`));
+  assert(epCount2 === epCount1, ".content .episode count unchanged after back", `step3=${epCount1} step5=${epCount2}`);
+  const spinnerOnBack = await cdp.eval(`!!document.querySelector('.content .spinner')`);
   assert(spinnerOnBack === false, "no .spinner on restored detail page", `spinner=${spinnerOnBack}`);
-  restoredScroll = Number(await cdp.eval(`(() => { const c = document.querySelector('.content'); return c ? c.scrollTop : -1; })()`));
-  const scrollDiff = Math.abs(restoredScroll - savedScroll);
-  assert(scrollDiff <= 30, ".content.scrollTop restored after back (diff <= 30)", `saved=${savedScroll} restored=${restoredScroll} diff=${scrollDiff}`);
+  const restoredRaw = await cdp.eval(`(() => {
+    const c = document.querySelector('.content .page-body');
+    if (!c) return JSON.stringify({ scrollTop: -1, maxScroll: null });
+    return JSON.stringify({
+      scrollTop: Math.round(c.scrollTop),
+      maxScroll: c.scrollHeight - c.clientHeight,
+    });
+  })()`);
+  const restored = JSON.parse(restoredRaw || "{}");
+  restoredScroll = Number(restored.scrollTop);
+  // 不变量：返回详情后 `.page-body` 应回到离开时的位置。比较基准取
+  // `min(saved, 当前 maxScroll)`：返回时文档若变矮，落到底就是浏览器允许的
+  // 最接近位置（产品侧的滚动锚点是 AppShell 的 scrollHost → `.page-body`，
+  // `.content` 本身 overflow:hidden 不滚）。另一条下限断言守住真正的回归形态：
+  // 位置被抹平回顶部。
+  if (scrollTestable) {
+    const expected = Math.min(savedScroll, Number(restored.maxScroll ?? savedScroll));
+    const scrollDiff = Math.abs(restoredScroll - expected);
+    assert(
+      scrollDiff <= 12,
+      ".page-body.scrollTop restored after back (clamp-aware, diff <= 12)",
+      `saved=${savedScroll} maxNow=${restored.maxScroll} expected=${expected} restored=${restoredScroll} diff=${scrollDiff}`,
+    );
+    assert(
+      restoredScroll > 0,
+      "restored scroll is not flattened to top",
+      `saved=${savedScroll} restored=${restoredScroll}`,
+    );
+  } else {
+    console.log(`[diag] detail .page-body 没有足够滚动行程（maxScroll=${scrollInfo.maxScroll}），无法验证恢复，跳过本项`);
+  }
 
   // --- Step 6: ↻ 刷新 → 强制重新请求；c3 >= c2 + 1 ---
   const refresh = await cdp.eval(CLICK("刷新", ".page-head button, .page-head a"));
@@ -401,7 +445,7 @@ try {
   // 等一个「短暂无 spinner 的稳定态」且 detailContent 计数确实已 +1（刷新完成）。
   const refreshed = await cdp.eval(WAIT(`
     const cnt = Array.isArray(window.__cacheSpy) ? window.__cacheSpy.filter(e => String(e.key).startsWith("detail:")).length : -1;
-    const stable = !document.querySelector('.spinner') && document.querySelectorAll('.episode').length > 0;
+    const stable = !document.querySelector('.content .spinner') && document.querySelectorAll('.content .episode').length > 0;
     return cnt >= ${refreshThreshold} && stable ? 'REFRESHED' : null;
   `, 15000));
   console.log(`[info] ↻ 刷新 settle: ${String(refreshed)}`);
@@ -414,7 +458,7 @@ try {
   // 外网源偶发「force 一次返回空列表」：再点一次刷新，别把源的瞬时抖动记成回归。
   let epCount3 = Number(
     (await cdp.eval(WAIT(`
-    const n = document.querySelectorAll('.episode').length;
+    const n = document.querySelectorAll('.content .episode').length;
     return n > 0 ? String(n) : null;
   `, 30000))) || 0,
   );
@@ -423,15 +467,15 @@ try {
     await cdp.eval(CLICK("刷新", ".page-head button, .page-head a"));
     epCount3 = Number(
       (await cdp.eval(WAIT(`
-      const n = document.querySelectorAll('.episode').length;
+      const n = document.querySelectorAll('.content .episode').length;
       return n > 0 ? String(n) : null;
     `, 40000))) || 0,
     );
   }
-  const errText = await cdp.eval(`document.querySelector('.error-bar__text')?.textContent?.trim() || ''`);
+  const errText = await cdp.eval(`document.querySelector('.content .error-bar__text')?.textContent?.trim() || ''`);
   assert(
     epCount3 > 0,
-    ".episode still rendered after refresh",
+    ".content .episode still rendered after refresh",
     `episodes=${epCount3}${errText ? ` error=${errText}` : ""}`,
   );
 } catch (err) {

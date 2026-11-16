@@ -3,8 +3,10 @@
  * 首页站点记忆 + 默认空站自动顺延回归。
  *
  * 覆盖三件事（只读 + 只动 localStorage，不改后端配置、不导入配置）：
- *   1. 手动切站后 reload 仍停在该站（记住用户切换的首页）且有卡片；
- *   2. 清掉偏好模拟冷启动：默认站自带内容则直接出卡（无需顺延）、真空则自动
+ *   1. 手动切站后 reload 仍停在该站（记住用户切换的首页）且首页有推荐内容
+ *      ——沉浸式（2026-11-15）下「内容」是 .home-hero / .poster-tile / .vod-card
+ *      任一在位，不再是单看 .vod-card（HomePage.tsx 736-763）；
+ *   2. 清掉偏好模拟冷启动：默认站自带内容则直接出推荐（无需顺延）、真空则自动
  *      顺延到有内容的站并记住。2026-11-11 py 框架对齐修复后豆瓣 frodo 返回
  *      20 条，默认站不再是空站，故两种现实都接受，不硬编码「豆瓣必空」；
  *   3. 用户手动选站后 reload 不被自动跳走（尊重用户选择，永久关闭顺延）。
@@ -130,13 +132,27 @@ async function selectSite(cdp, key) {
   })()`);
 }
 
+/**
+ * 首页"是否已经吐出当前站推荐内容"的统一口径。
+ *
+ * 沉浸式首页（2026-11-15 改版）把推荐流从 `.vod-card` 网格改成
+ * `.home-hero` 整幅头图 + 超出 5 条时的 `.poster-tile` 横排（HomePage.tsx 749-762、
+ * HERO_COUNT=5），分类 tab 才仍是 `.vod-card` 网格（HomePage.tsx 736-748）。
+ * 推荐 tab 上「有没有内容」要算这三类节点的合集，否则永远读到 0、自动顺延的
+ * 决策分支也就无法触发——这是探针口径与产品契约对齐，不是削弱断言。
+ */
 const snapshot = (cdp) =>
   cdp.eval(`JSON.stringify({
     selected: document.querySelector('.site-select')?.getAttribute('data-value') || null,
     cards: document.querySelectorAll('.vod-card').length,
+    hero: !!document.querySelector('.home-hero'),
+    tiles: document.querySelectorAll('.poster-tile').length,
     stored: localStorage.getItem(${JSON.stringify(HOME_SITE_KEY)}),
     empty: !!document.querySelector('.empty'),
   })`);
+
+// 「首页已渲染推荐内容」：沉浸式头图、横排 tile、网格卡任一在位都算。
+const hasHomeContent = (s) => Boolean(s) && ((s.hero ? 1 : 0) + (s.tiles ?? 0) + (s.cards ?? 0)) > 0;
 
 /**
  * 找到一个首页有 list 的站（探测前 12 个启用站，取其 key）。
@@ -202,57 +218,64 @@ try {
   // --- 1. 记住用户切换 ---
   await coldStart(cdp);
   assert((await selectSite(cdp, dataSiteKey)) === "OK", "switch to data site via select");
-  // 切站有 300ms 防抖 + 请求；默认站本身就有卡片（frodo 修复后），
-  // 「看到卡片」不再能证明切站完成——必须等 data-value 与 stored 都落到目标站。
+  // 切站有 300ms 防抖 + 请求；推荐 tab 已经改成沉浸式头图（HomePage.tsx 749-762），
+  // 「看到卡片」不再是切站完成的证据。必须等到 selected、stored 都落到目标站，
+  // 并且首页渲染出推荐内容（hero/tiles/cards 任一在位）才算完成。
   let switched = null;
   for (let i = 0; i < 50; i += 1) {
     switched = JSON.parse((await snapshot(cdp)) || "{}");
-    if (switched.selected === dataSiteKey && switched.stored === dataSiteKey && switched.cards > 0) break;
+    if (switched.selected === dataSiteKey && switched.stored === dataSiteKey && hasHomeContent(switched)) break;
     await sleep(400);
   }
   assert(switched?.selected === dataSiteKey, "switched to data site", JSON.stringify(switched));
-  let cards = switched?.cards ?? 0;
-  for (let i = 0; i < 50 && cards === 0; i += 1) {
-    cards = (await cdp.eval(`document.querySelectorAll('.vod-card').length`)) || 0;
-    if (cards > 0) break;
+  let landed = hasHomeContent(switched);
+  for (let i = 0; i < 50 && !landed; i += 1) {
+    const s = JSON.parse((await snapshot(cdp)) || "{}");
+    landed = hasHomeContent(s);
+    if (landed) {
+      switched = s;
+      break;
+    }
     await sleep(400);
   }
-  assert(cards > 0, "data site renders cards", String(cards));
+  assert(landed, "data site renders home content (hero / rail-tiles / cards)", JSON.stringify(switched));
   const afterSwitch = JSON.parse((await snapshot(cdp)) || "{}");
   assert(afterSwitch.stored === dataSiteKey, "selected site persisted to localStorage", String(afterSwitch.stored));
 
   await cdp.send("Page.reload", { ignoreCache: true });
   await sleep(1500);
   await cdp.eval(WAIT("return document.querySelector('.site-select__trigger') ? 'OK' : null;", 30000));
-  // reload 后首屏请求需要几秒，立即快照会读到 cards=0。
+  // reload 后首屏请求需要几秒，立即快照会读到空。轮询到 selected 与
+  // 内容（hero/tiles/cards 任一）同时就位才下结论。
   let afterReload = null;
   for (let i = 0; i < 50; i += 1) {
     afterReload = JSON.parse((await snapshot(cdp)) || "{}");
-    if (afterReload.selected === dataSiteKey && afterReload.cards > 0) break;
+    if (afterReload.selected === dataSiteKey && hasHomeContent(afterReload)) break;
     await sleep(400);
   }
   assert(afterReload?.selected === dataSiteKey, "reload keeps user-selected site", String(afterReload?.selected));
-  assert(afterReload?.cards > 0, "reload keeps cards", String(afterReload?.cards));
+  assert(hasHomeContent(afterReload), "reload keeps home content (hero / rail-tiles / cards)", JSON.stringify(afterReload));
 
   // --- 2. 冷启动默认站：自带内容 or 自动顺延 ---
   // py 框架对齐（修 __init__ 覆盖类属性 header）后，豆瓣默认站 homeVideoContent
   // 经 frodo 已能返回 20 条，不再是空站。「默认站自带内容」和「真空需顺延」
-  // 都是正确现实，核心不变量＝冷启动后首页必有内容，且顺延发生时记住目标站。
+  // 都是正确现实，核心不变量＝冷启动后首页一定有内容（沉浸式头图/横排 tile/卡片任一），
+  // 且顺延发生时记住目标站。
   await coldStart(cdp); // 清偏好 → 默认站 usableSites[0]（真实配置为 py_douban）
   const cold = JSON.parse((await snapshot(cdp)) || "{}");
   console.log(`[info] cold default site: ${cold.selected}`);
   let auto = null;
   for (let i = 0; i < 75; i += 1) {
     const s = JSON.parse((await snapshot(cdp)) || "{}");
-    if (s.cards > 0) {
+    if (hasHomeContent(s)) {
       auto = s;
       break;
     }
     await sleep(400);
   }
   // 核心不变量：冷启动后首页一定有内容（无论默认站自带、还是顺延而来）。
-  assert(!!auto && (auto.cards ?? 0) > 0, "cold start ends up with home cards", JSON.stringify(auto));
-  if (auto && (auto.cards ?? 0) > 0) {
+  assert(!!auto && hasHomeContent(auto), "cold start ends up with home content", JSON.stringify(auto));
+  if (auto && hasHomeContent(auto)) {
     if (auto.selected === cold.selected) {
       // 分支 A：默认站自带内容（豆瓣 frodo 修复后）→ 不该顺延、不该写偏好。
       assert(
@@ -265,7 +288,7 @@ try {
       // 分支 B：默认站真空 → 必须顺延到有内容站，并记住供下次启动。
       assert(
         auto.stored === auto.selected,
-        "truly-empty default site auto-falls-back to a site with cards AND is remembered",
+        "truly-empty default site auto-falls-back to a site with content AND is remembered",
         `default=${cold.selected} selected=${auto.selected} stored=${auto.stored}`,
       );
       console.log(`[info] default site ${cold.selected} was empty -> fell back to ${auto.selected}`);

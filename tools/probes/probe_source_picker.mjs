@@ -172,8 +172,16 @@ try {
   assert(searchBarReady === "OK", ".search-bar input.input rendered", String(searchBarReady));
   const typed = await cdp.eval(TYPE(".search-bar input.input", KEYWORD));
   assert(typed === "TYPED", `type keyword ${KEYWORD}`, typed);
-  const submitted = await cdp.eval(FIRST_CLICK(".search-bar button"));
-  assert(submitted === "CLICKED", "submit search via .search-bar button", submitted);
+  // 提交用表单 requestSubmit：search-bar 里「清除」(keyword 非空时) 与自定义
+  // SiteSelect 触发器都在「搜索」按钮之前（SearchPage.tsx:641/653/659），
+  // 点 `.search-bar button` 首个命中是清除按钮，关键词被清空、永不提交。
+  const submitted = await cdp.eval(`(() => {
+    const input = document.querySelector('.search-bar input.input');
+    if (!input) return 'MISSING';
+    input.closest('form').requestSubmit();
+    return 'CLICKED';
+  })()`);
+  assert(submitted === "CLICKED", "submit search via form.requestSubmit", submitted);
   const meta = await cdp.eval(
     WAIT(
       "const el = document.querySelector('.result-meta'); return el && !document.querySelector('.spinner') ? el.innerText : null;",

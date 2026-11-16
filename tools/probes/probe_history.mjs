@@ -236,30 +236,54 @@ try {
   );
   assert(probeCard?.hasRemove === true, "each row has a delete button", String(probeCard?.hasRemove));
 
-  // 侧栏必须钉在窗口左侧：把内容滚到底，它的顶边与左边都不许动。
-  // 放在列表渲染之后跑——列表为空时内容区没有可滚距离，断言会假绿。
+  // 侧栏必须钉在窗口左侧：把**页面滚动容器**滚到底，它的顶边与左边都不许动。
+  // 改版后窗口与 .content 都不滚（overflow:hidden），真正的滚动只发生在每个页面的
+  // .page-body（layout.css:396-404）；早先这里滚的是 .content，滚不动 → scrolled 恒
+  // 0 的假绿。现在驱动 .page-body 产生真实位移，并守住三条不变量：
+  //   1) 侧栏 position:fixed，钉在视口左上角（top/left 恒 0）；
+  //   2) 内容滚动不把侧栏顶走（滚动前后 rect 不漂移）；
+  //   3) 全文只有 .page-body 一个滚动条（窗口 / 文档 scrollTop 恒 0，无双滚动条）。
+  // 放在列表渲染之后跑——列表为空时 .page-body 没有可滚距离，断言会假绿。
   const pinned = await cdp.eval(`(async () => {
-    const content = document.querySelector('.content');
+    const body = document.querySelector('.content .page-body');
     const side = document.querySelector('.sidebar');
-    if (!content || !side) return 'MISSING';
-    const y = content.scrollTop;
-    content.scrollTop = content.scrollHeight;
+    if (!body || !side) return 'MISSING';
+    const before = side.getBoundingClientRect();
+    const y = body.scrollTop;
+    const doc = document.scrollingElement;
+    body.scrollTop = body.scrollHeight;
     await new Promise((r) => setTimeout(r, 200));
     const rect = side.getBoundingClientRect();
     const pos = getComputedStyle(side).position;
-    const scrolled = content.scrollTop;
-    content.scrollTop = y;
+    const scrolled = Math.round(body.scrollTop);
+    const docScrolled = doc ? doc.scrollTop : -1;
+    const winScrolled = Math.round(window.scrollY || 0);
+    body.scrollTop = y;
     return JSON.stringify({
       pos,
       top: Math.round(rect.top),
       left: Math.round(rect.left),
+      movedTop: Math.round(rect.top - before.top),
+      movedLeft: Math.round(rect.left - before.left),
       scrolled,
+      docScrolled,
+      winScrolled,
     });
   })()`);
   const pinInfo = JSON.parse(pinned === "MISSING" ? "{}" : pinned);
   assert(
     pinInfo.pos === "fixed" && pinInfo.top === 0 && pinInfo.left === 0 && pinInfo.scrolled > 0,
-    "sidebar pinned while content scrolls",
+    "sidebar pinned while .page-body scrolls",
+    pinned,
+  );
+  assert(
+    pinInfo.movedTop === 0 && pinInfo.movedLeft === 0,
+    "sidebar does not drift when content scrolls",
+    pinned,
+  );
+  assert(
+    pinInfo.docScrolled === 0 && pinInfo.winScrolled === 0,
+    "only .page-body scrolls (no window/content scrollbar)",
     pinned,
   );
 

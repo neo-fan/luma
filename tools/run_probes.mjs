@@ -29,6 +29,11 @@
  *   node tools/run_probes.mjs --list
  *
  * 前置：dev 窗口在跑（CDP 9222）、`python tests/stub_server.py` 在跑（8787）。
+ *   - 出画类探针用本地 stub 播放源（flv 的 sample.flv、playback 的 index.m3u8 等），
+ *     必须用 `LUMA_PROXY_ALLOW_LOCAL=1` 启动 dev/Tauri：常驻播放反代默认按 SSRF 口径
+ *     拒绝 loopback（proxy/mod.rs:144、guard.rs），否则桩流被 403「target 127.0.0.1 is
+ *     not allowed」拦掉、解码断言拿不到帧。flv 探针在这种环境下会自报 SKIP（环境前置），
+ *     不会把「代理拦本地源」误判成 mpegts 回归；allowLocal=true 时仍照常硬断言出画。
  */
 import { spawnSync } from "node:child_process";
 
@@ -40,7 +45,7 @@ const PROBES = [
   { key: "rust_commands", script: "tools/probes/probe_rust_commands.mjs", label: "Rust command 连通性（分层后不丢 command）" },
   { key: "search_ui", script: "tools/probes/probe_search_ui.mjs", label: "真实配置 导入→搜索→详情→播放", needsStub: true },
   { key: "home_site", script: "tools/probes/probe_home_site.mjs", label: "首页站点记忆 + 默认站内容/自动顺延" },
-  { key: "home_category", script: "tools/probes/probe_home_category.mjs", label: "首页分类原地切换（不进二级页）+ 分页" },
+  { key: "home_category", script: "tools/probes/probe_home_category.mjs", label: "首页分类原地切换（不进二级页）+ 无限滚动翻页" },
   { key: "home_video", script: "tools/probes/probe_home_video.mjs", label: "homeVideoContent 推荐流兜底（豆瓣出卡片）", needsStub: true },
   { key: "py_framework", script: "tools/probes/probe_py_framework.mjs", label: "py 框架对齐 TVBox（类属性 header 不被 __init__ 覆盖）", needsStub: true },
   { key: "cover", script: "tools/probes/probe_cover.mjs", label: "封面图经 /image 代理出真图（内嵌 header）" },
@@ -200,6 +205,34 @@ async function restoreConfigs(cdp, before) {
   }
 }
 
+/**
+ * 每条探针开跑前把窗口归位到干净的首页。
+ *
+ * 常驻播放层（PlayerHost / 直播层）是「切页不卸载」的设计：上一条探针停在
+ * `#/player` 时，下一条连上来的窗口带着一个活跃的后台会话。实测后果不是「难看」
+ * 而是「假结果」——点击落到还没挂载完的页面上（设置页区块 MISSING），而搜索结果、
+ * 剧集数这类读取会直接命中上一个会话的残留 DOM（`search_ui` 曾在 0.3 秒读到
+ * 「聚合搜索完成」，详情页数出 66 集 = 详情页 33 + 常驻层 33），于是后面每一条
+ * 依赖真实配置的探针全在错状态里超时。reload 结束后台会话并回到首页，代价一条命令。
+ */
+async function resetWindow(cdp) {
+  try {
+    await cdp.eval(`(() => { location.hash = '#/'; location.reload(); return 'OK'; })()`).catch(() => "RELOADING");
+  } catch {
+    /* reload 会销毁执行上下文，这里的异常是预期内的 */
+  }
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    const ready = await cdp
+      .eval(`!!document.querySelector('.nav__item') && !!document.querySelector('.page')`)
+      .catch(() => false);
+    if (ready) return true;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  console.log("[warn] 窗口归位超时，继续跑（探针可能读到残留状态）");
+  return false;
+}
+
 // ---- 主流程 ----------------------------------------------------------------
 const stubOk = await fetch(STUB, { signal: AbortSignal.timeout?.(5000) })
   .then((res) => res.ok)
@@ -230,6 +263,7 @@ const results = [];
 for (const probe of selected) {
   const startedAt = Date.now();
   console.log(`\n=== ${probe.label}（${probe.script}）===`);
+  await resetWindow(cdp);
   const env = { ...process.env };
   if (probe.key === "search_ui" || probe.key === "artplayer") {
     // 这两个探针对关键词敏感：用完整片名能稳定命中。

@@ -8,7 +8,7 @@
  * 全程不碰外网、不依赖真实站点波动。
  *
  * 断言：
- *   1. dev server 提供的是最新 SettingsPage（防 Vite stale 模块冒充产品 bug）；
+ *   1. dev server 提供的是最新 SettingsPage + HealthCheckSection 源码（防 Vite stale 模块冒充产品 bug）；
  *   2. 设置页出现「站点体检」区块与「开始体检」按钮；
  *   3. `site_health {req:{timeoutMs:2500}}` 返回完整结构，且
  *      total == ok + failed + skipped、有 ok、有 failed/timeout、问题站排前；
@@ -140,6 +140,10 @@ const HEALTH_UI = `(() => {
     .find((b) => (b.querySelector('.section-title')?.textContent || '').includes('站点体检'));
   if (!block) return JSON.stringify({ missing: true });
   const items = [...block.querySelectorAll('.health-item')].map((el) => ({
+    // siteKey 来自行上的 data-site-key（探针依赖的 DOM 契约，见
+    // HealthCheckSection.tsx）：排序会把问题站挪到前面，只有按 key 锁定
+    // 才能保证「点击」与「断言」是同一个站点。
+    siteKey: el.dataset.siteKey || '',
     name: el.querySelector('.health-item__name')?.textContent.trim() || '',
     status: el.querySelector('.health-item__status')?.textContent.trim() || '',
     statusClass: el.querySelector('.health-item__status')?.className || '',
@@ -218,13 +222,34 @@ try {
   await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
 
   // 源码新鲜度自检：Vite 转换缓存曾让探针跑在旧 SettingsPage 上、误判功能没做。
-  const fresh = await cdp.eval(`fetch('http://localhost:1420/src/pages/SettingsPage.tsx?t=' + Date.now())
-    .then((r) => r.text())
-    .then((t) => JSON.stringify({ block: t.includes('站点体检'), cls: t.includes('health-item') }))
+  // 注意 token 归属——'站点体检' 导航标签在 SettingsPage.tsx，而 .health-item 类与
+  // 区块标题在 HealthCheckSection.tsx；两个文件都验，缺位即 stale，避免旧模块冒充产品 bug。
+  const fresh = await cdp.eval(`Promise.all([
+      fetch('http://localhost:1420/src/pages/SettingsPage.tsx?t=' + Date.now()).then((r) => r.text()),
+      fetch('http://localhost:1420/src/components/settings/HealthCheckSection.tsx?t=' + Date.now()).then((r) => r.text()),
+    ])
+    .then(([page, health]) => JSON.stringify({
+      nav: page.includes('站点体检'),
+      wiring: page.includes('HealthCheckSection'),
+      heading: health.includes('站点体检'),
+      cls: health.includes('health-item'),
+      // 行上的 data-site-key 是探针依赖的 DOM 契约（HealthCheckSection.tsx 有注释）：
+      // 体检行按「问题站优先」排序，只有拿到稳定 key 才能把「点禁用」和「读回后端」
+      // 锁在同一个站点上，否则点和断言会落到两个不同站点（历史失败原因）。
+      keyAttr: health.includes('data-site-key'),
+    }))
     .catch((e) => JSON.stringify({ err: String(e) }))`);
   console.log(`[info] dev source freshness: ${fresh}`);
   const freshObj = typeof fresh === "string" ? JSON.parse(fresh) : {};
-  assert(freshObj.block === true && freshObj.cls === true, "dev server serves fresh SettingsPage", String(fresh));
+  assert(
+    freshObj.nav === true &&
+      freshObj.wiring === true &&
+      freshObj.heading === true &&
+      freshObj.cls === true &&
+      freshObj.keyAttr === true,
+    "dev server serves fresh Settings/HealthCheck code",
+    String(fresh),
+  );
 
   assert((await reloadReady(cdp)) === "OK", "app rendered");
 
@@ -318,21 +343,24 @@ try {
   const blockedRow = (ui1.items || []).find((r) => r.status === "已禁用" && r.buttons?.some((b) => b.text === "启用" && b.disabled));
   assert(!!blockedRow, "blocked source 启用 button disabled", JSON.stringify(blockedRow));
 
-  // 禁用一个健康站：点到该行的「禁用」按钮。
-  const healthyRow = (ui1.items || []).find((r) => r.status === "可达" && r.buttons?.some((b) => b.text === "禁用"));
-  assert(!!healthyRow, "found a healthy site to disable", JSON.stringify(healthyRow));
+  // 禁用目标站 HEALTHY_SITE。问题站排在可达站前面（见上面 sorted 断言），所以
+  // 「点第一个可达行」会点到 stub_js2 而 SITE_STATE 断的是 stub_py —— 点和断言必须
+  // 锁同一个站点。行上有 data-site-key（探针依赖的 DOM 契约），直接按 key 定位，
+  // 不再依赖显示名（站点重名时名称匹配会错位）。
+  const healthyRow = (ui1.items || []).find(
+    (r) => r.siteKey === HEALTHY_SITE && r.status === "可达" && r.buttons?.some((b) => b.text === "禁用"),
+  );
+  assert(!!healthyRow, `found ${HEALTHY_SITE} row as 可达 with a 禁用 button`, JSON.stringify({ HEALTHY_SITE, items: (ui1.items || []).map((r) => ({ siteKey: r.siteKey, name: r.name, status: r.status })) }));
   const disableHealthy = `(() => {
-    const items = [...document.querySelectorAll('.health-item')];
-    const row = items.find((el) => {
-      const st = el.querySelector('.health-item__status')?.textContent.trim();
-      const btn = [...el.querySelectorAll('button')].some((b) => b.textContent.trim() === '禁用');
-      return st === '可达' && btn;
-    });
+    const row = document.querySelector('.health-item[data-site-key=${JSON.stringify(HEALTHY_SITE)}]');
     if (!row) return 'MISSING';
-    [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === '禁用').click();
+    if ((row.querySelector('.health-item__status')?.textContent.trim() || '') !== '可达') return 'NOT_HEALTHY';
+    const btn = [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === '禁用');
+    if (!btn) return 'NO_BUTTON';
+    btn.click();
     return 'CLICKED';
   })()`;
-  assert((await cdp.eval(disableHealthy)) === "CLICKED", "click 禁用 on healthy site");
+  assert((await cdp.eval(disableHealthy)) === "CLICKED", `click 禁用 on ${HEALTHY_SITE}`);
   const disabledState = await until(cdp, SITE_STATE(HEALTHY_SITE), (raw) => {
     return typeof raw === "string" && raw.startsWith("{") && JSON.parse(raw).enabled === false;
   }, 10000);
@@ -357,16 +385,19 @@ try {
   if (!(await openSettings(cdp, "open settings again"))) throw new Error("cannot reopen settings page");
   // 禁用站来自 sites 合成、依赖 App 的 configActive 回填，渲染略晚；用 until
   // 轮询「可点的启用按钮」本体，同时作为存在性断言与点击目标，消除两步竞态。
+  // 同样按 data-site-key 锁定 HEALTHY_SITE 那一行，保证「点启用」与
+  // SITE_STATE(HEALTHY_SITE) 落在同一个站点上。
   const clickEnable = `(() => {
-    const items = [...document.querySelectorAll('.health-item')];
-    const row = items.find((el) => (el.querySelector('.health-item__status')?.textContent.trim() || '') === '已禁用'
-      && [...el.querySelectorAll('button')].some((b) => b.textContent.trim() === '启用' && !b.disabled));
+    const row = document.querySelector('.health-item[data-site-key=${JSON.stringify(HEALTHY_SITE)}]');
     if (!row) return 'MISSING';
-    [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === '启用' && !b.disabled).click();
+    if ((row.querySelector('.health-item__status')?.textContent.trim() || '') !== '已禁用') return 'NOT_DISABLED';
+    const btn = [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === '启用' && !b.disabled);
+    if (!btn) return 'NO_BUTTON';
+    btn.click();
     return 'CLICKED';
   })()`;
   const enableClick = await until(cdp, clickEnable, (v) => v === "CLICKED", 20000, 300);
-  assert(enableClick === "CLICKED", "disabled site has an enabled 启用 button and it was clicked", String(enableClick));
+  assert(enableClick === "CLICKED", `${HEALTHY_SITE} 行有可点的「启用」按钮且已点到`, String(enableClick));
   const reEnabled = await until(cdp, SITE_STATE(HEALTHY_SITE), (raw) => {
     return typeof raw === "string" && raw.startsWith("{") && JSON.parse(raw).enabled === true;
   }, 10000);

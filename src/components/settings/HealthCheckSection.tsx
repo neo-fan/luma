@@ -185,7 +185,11 @@ export default function HealthCheckSection({
             // healthToggling 非空即表示有在途切换；jvm 屏蔽源的启用按钮始终禁用。
             const locked = healthToggling !== "" || row.blocked;
             return (
-              <li className="health-item" key={row.siteKey}>
+              // data-site-key 是探针依赖的 DOM 契约（同 SiteSelect）：`key` 只做
+              // React 协调、不落 DOM，而体检行现在按「问题站优先」排序，探针必须
+              // 能锁定同一个站点行做「点禁用 → 读回后端 → reload 仍是禁用」，
+              // 不能靠显示名匹配（存在前缀同名风险）。勿改。
+              <li className="health-item" key={row.siteKey} data-site-key={row.siteKey}>
                 <span className="health-item__name" title={row.siteName}>
                   {row.siteName}
                 </span>

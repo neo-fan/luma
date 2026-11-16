@@ -2,8 +2,13 @@
 /**
  * 播放页收藏按钮回归：从历史进详情 → 点一集进播放页 → 按钮存在且真实写库。
  *
- * 只做「加一次 / 减一次」并回到初始状态：探针结束时收藏集合必须与开始时完全
- * 一致（用 favorites_list 的前后集合对比断言），不会污染用户收藏。
+ * 只做「加一次 / 减一次」并回到初始状态：探针结束时「收藏片名集合」必须与开始时
+ * 完全一致，不会污染用户收藏。收藏在产品里按**片名**去重（src-tauri/src/infra/
+ * store.rs toggle_favorite 会 `retain(same_title || same_vod)`，并有
+ * favorite_dedupes_by_title_across_sites 单测锁定），所以给一部已在收藏里的片子
+ * 点亮再取消，存储里的 siteKey:vodId 别名会合法地换成当前线路的别名——这是设计
+ * 意图，不是回归。因此集合按归一化片名比对（与 src/lib/format.ts sameTitle 同口径：
+ * 去掉所有空白 + 小写），而不是按 siteKey:vodId；后者不是稳定身份。
  * 播放页只要求挂载出 header，不强求出画（外网源不稳，出画由 artplayer /
  * playback_ux 负责）。
  *
@@ -101,10 +106,11 @@ const assert = (ok, label, detail = "") => {
 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** 收藏集合快照：用 siteKey:vodId 拼 key，比较前后是否完全一致。 */
+/** 收藏集合快照：用归一化片名拼 key（产品按片名去重，见文件头注释），比较前后是否一致。 */
 const FAV_KEYS = `(async () => {
   const list = await window.__TAURI_INTERNALS__.invoke('favorites_list');
-  return JSON.stringify(list.map((one) => one.siteKey + ':' + one.vodId).sort());
+  const norm = (s) => (s == null ? '' : String(s)).replace(/\\s+/g, '').toLowerCase();
+  return JSON.stringify(list.map((one) => norm(one.name)).filter(Boolean).sort());
 })()`;
 
 const page = await waitForPage();
@@ -136,7 +142,10 @@ try {
   );
 
   let entered = false;
-  for (let attempt = 0; attempt < 3 && !entered; attempt += 1) {
+  // 历史里可能堆着失效源 / 探针留下的桩记录（详情空 / site not found），前几条
+  // 不一定能播。给足轮试次数（每条都会点失败再返回下一条），直到找到一条真能进
+  // 播放页的记录；这不是放宽断言，仍要求真实进入播放器并跑通收藏加/减。
+  for (let attempt = 0; attempt < 8 && !entered; attempt += 1) {
     const opened = await cdp.eval(`(() => {
       const cards = [...document.querySelectorAll('.fav-item .vod-card')];
       const card = cards[${attempt}];
@@ -159,9 +168,10 @@ try {
       entered = true;
       break;
     }
-    // 详情不可用：回上一页继续试下一条历史。
+    // 详情不可用：回上一页继续试下一条历史。返回按钮是 IconButton（图标态，
+    // 文案在 aria-label，不在 textContent —— 见 src/components/IconButton.tsx）。
     const back = await cdp.eval(`(() => {
-      const btn = [...document.querySelectorAll('.page-head button')].find((n) => (n.textContent || '').includes('返回'));
+      const btn = [...document.querySelectorAll('.page-head button')].find((n) => (n.getAttribute('aria-label') || n.textContent || '').includes('返回'));
       if (!btn) return 'MISSING';
       btn.click();
       return 'CLICKED';

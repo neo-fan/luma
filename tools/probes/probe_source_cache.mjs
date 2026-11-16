@@ -84,8 +84,9 @@ async function waitForPage(timeoutMs = 30000) {
 const CLICK = (label, selector = "button, a") => `(() => {
   const nodes = [...document.querySelectorAll(${JSON.stringify(selector)})];
   const text = (n) => (n.textContent || '').trim();
-  const target = nodes.find((n) => text(n) === ${JSON.stringify(label)})
-              || nodes.find((n) => text(n).includes(${JSON.stringify(label)}));
+  const aria = (n) => n.getAttribute('aria-label') || '';
+  const target = nodes.find((n) => text(n) === ${JSON.stringify(label)} || aria(n) === ${JSON.stringify(label)})
+              || nodes.find((n) => text(n).includes(${JSON.stringify(label)}) || aria(n).includes(${JSON.stringify(label)}));
   if (!target) return 'MISSING';
   target.click();
   return 'CLICKED';
@@ -178,6 +179,10 @@ console.log(`target: ${page.url}  keyword: ${KEYWORD}`);
 try {
   await cdp.send("Runtime.enable");
   await cdp.send("Page.enable");
+  // 先把路由归位到首页再 reload：reload 会按当前 hash 恢复路由，若停在
+  // #/player，PlayerPage 一挂载就 sourceCache.prefetch 全站聚合（PlayerPage.tsx:574），
+  // 会把「搜索本身不经过 sourceCache」这条断言的基线 aggregateCalls 污染成 1。
+  await cdp.eval("location.hash = '#/'");
   await cdp.send("Page.reload", { ignoreCache: true });
 
   const navReady = await cdp.eval(
@@ -193,7 +198,16 @@ try {
     "search bar rendered",
   );
   assert((await cdp.eval(TYPE(".search-bar input.input", KEYWORD))) === "TYPED", "keyword typed");
-  assert((await cdp.eval(FIRST_CLICK(".search-bar button"))) === "CLICKED", "search submitted");
+  // 提交用表单 requestSubmit：search-bar 里「清除」「站点选择器」都在「搜索」
+  // 按钮前面（SearchPage.tsx:641/653/659），按 .search-bar button 取首个会误点
+  // 清除按钮，关键词被清空、永远不提交。
+  const submitted = await cdp.eval(`(() => {
+    const input = document.querySelector('.search-bar input.input');
+    if (!input) return 'MISSING';
+    input.closest('form').requestSubmit();
+    return 'CLICKED';
+  })()`);
+  assert(submitted === "CLICKED", "search submitted");
   const meta = await cdp.eval(
     WAIT(
       "const el = document.querySelector('.result-meta'); return el && !document.querySelector('.spinner') ? el.innerText : null;",
@@ -230,7 +244,9 @@ try {
   // 点 ⇄ 换源：候选必须立刻出现，且不得触发手动刷新(force)检索。
   const beforeRaw = await cdp.eval(STATS);
   const before = JSON.parse(beforeRaw || "{}");
-  const swap = await cdp.eval(CLICK("⇄ 换源", ".page-head button, .page-head a"));
+  // 详情/换源按钮都是 IconButton（图标态，语义在 aria-label="换源"，没有「⇄」字符
+  // 也没有 textContent —— 见 src/components/IconButton.tsx / DetailPage.tsx:739）。
+  const swap = await cdp.eval(CLICK("换源", ".page-head button, .page-head a"));
   assert(swap === "CLICKED", "open source-picker", swap);
   const fast = await cdp.eval(
     WAIT("return document.querySelectorAll('.source-item').length >= 1 ? 'READY' : null;", 3000),

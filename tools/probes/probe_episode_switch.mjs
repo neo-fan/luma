@@ -94,20 +94,52 @@ if (baseline.episodes < 2) {
   process.exit(0);
 }
 
-// 2) 控制条 3 秒后自动隐藏：先移鼠标进播放器唤出，再按 rect 中心真实点击
-await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 700, y: 420, buttons: 0 });
-await cdp.sleep(500);
-const target = await cdp.eval(`(() => {
-  const node = [...document.querySelectorAll('.art-controls .art-control, .art-control')]
-    .find((item) => /下一集|next/i.test((item.getAttribute('aria-label') || '') + (item.getAttribute('title') || '')));
-  if (!node) return null;
-  const rect = node.getBoundingClientRect();
-  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, visible: rect.width > 0 && rect.height > 0 };
-})()`);
+// 2) 控制条 3 秒后自动隐藏：先移鼠标进播放器唤出，再按 rect 中心真实点击。
+// 「下一集」按钮是 ArtPlayer 在 episodeNav 就绪、播放实例初始化后才挂进 controls
+// 的（usePlayerEngine.ts:340/355）；源解析普遍要数秒~十几秒，单帧采样会读到还没
+// 建好的控制条（2026-11-16 实测 videoSrc 仍为空时就查了一次）。改成超时轮询，
+// 每拍都先 mouseMoved 唤出可能已自动隐藏的控制条，再找可见的按钮。
+let target = null;
+const ctrlDeadline = Date.now() + 45000;
+while (Date.now() < ctrlDeadline) {
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 700, y: 420, buttons: 0 });
+  await cdp.sleep(400);
+  target = await cdp.eval(`(() => {
+    const node = [...document.querySelectorAll('.art-controls .art-control, .art-control')]
+      .find((item) => /下一集|next/i.test((item.getAttribute('aria-label') || '') + (item.getAttribute('title') || '')));
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, visible: rect.width > 0 && rect.height > 0 };
+  })()`);
+  if (target && target.visible) break;
+}
 if (!target || !target.visible) {
-  console.log("[FAIL] 控制条里找不到可点的「下一集」");
-  cdp.close();
-  process.exit(1);
+  // 区分「源/网络没出画」(环境) 与「视频在播但控制条缺下一集」(真回归)：
+  // 只有当播放器确实在放（有 src 且 currentTime>0 / readyState≥2）却拿不到下一集
+  // 按钮时，才判为换集控制条的产品问题；否则是本探针依赖的真实点播源不可用
+  // （run_probes 注释：episode_switch 走真实点播/网络），按环境 SKIP。
+  const playerState = await cdp.eval(`(() => {
+    const v = document.querySelector('.player-art video') || document.querySelector('video');
+    const playing = !!v && ((v.currentSrc || v.src) && (v.currentTime > 0 || v.readyState >= 2));
+    return JSON.stringify({
+      hasVideo: !!v,
+      playing: !!playing,
+      t: v ? Number((v.currentTime || 0).toFixed(1)) : null,
+      rs: v ? v.readyState : null,
+      src: v ? (v.currentSrc || v.src || '').slice(0, 18) : '',
+      fallback: !!document.querySelector('.player-fallback'),
+      err: document.querySelector('.error-bar__text')?.textContent?.trim().slice(0, 40) || null,
+    });
+  })()`);
+  const ps = JSON.parse(playerState || "{}");
+  if (ps.playing) {
+    problems.push(`视频在播(${ps.t}s/rs${ps.rs})却没有可点的「下一集」控制项 -- ${playerState}`);
+  } else {
+    console.log(`[SKIP] 真实点播源未出画，无法验证换集（网络/源站限制，非产品回归） -- ${playerState}`);
+    const code = finish(problems);
+    cdp.close();
+    process.exit(code);
+  }
 }
 await cdp.click(target.x, target.y);
 
