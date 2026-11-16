@@ -53,6 +53,8 @@ interface CachedMeta {
 
 const cache = new Map<string, CachedMeta>();
 const inflight = new Map<string, Promise<DoubanMeta | null>>();
+// 粗结果单独一张在途表：与细结果同 key，若共用 inflight 会互相串台。
+const inflightCover = new Map<string, Promise<DoubanMeta | null>>();
 let running = 0;
 interface Waiter {
   grant: () => void;
@@ -250,5 +252,73 @@ export async function fetchDoubanMeta(
     return await task;
   } finally {
     inflight.delete(key);
+  }
+}
+
+/**
+ * 豆瓣「粗结果」：只拿搜索级封面（1 跳），供头图「封面先出、评分/简介后补」。
+ *
+ * 与 `fetchDoubanMeta` 的关键区别：
+ * - **不写资料缓存**，否则粗结果（rating=0）会遮蔽随后到货的细结果；
+ * - 细结果若已在缓存里，直接返回它（细含海报，省一次粗请求）；
+ * - 用单独的 `inflightCover` 合并并发同 key。
+ * 后端 `search_cache` 保证粗/细共用同一次搜索，不增加豆瓣请求量。
+ */
+export async function fetchDoubanCover(
+  title: string,
+  year?: string,
+  options: FetchDoubanOptions = {},
+): Promise<DoubanMeta | null> {
+  const word = (title ?? "").trim();
+  if (!word) {
+    return null;
+  }
+  const prefs = readDoubanPrefs();
+  if (!prefs.enabled) {
+    return null;
+  }
+  const proxyPrefix = prefs.proxyPrefix.trim();
+  const proxyType: DoubanProxyType =
+    prefs.proxyType === "custom" && !proxyPrefix ? "direct" : prefs.proxyType;
+  const custom = proxyType === "custom" ? proxyPrefix : "";
+  const key = `${word}\u0000${(year ?? "").trim()}\u0000${proxyType}\u0000${custom}`;
+
+  // 细结果已到 → 直接用（含海报），不必再发粗请求。
+  const cachedFull = readCache(key);
+  if (cachedFull !== undefined) {
+    return cachedFull;
+  }
+  const inFlight = inflightCover.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const task = (async (): Promise<DoubanMeta | null> => {
+    await acquireSlot(options.priority === true);
+    try {
+      const raw = await api.doubanCover(
+        word,
+        (year ?? "").trim() || undefined,
+        proxyType,
+        custom || undefined,
+      );
+      return normalizeDoubanMeta(raw);
+    } catch (err) {
+      log.info("douban cover unavailable", {
+        title: word,
+        proxyType,
+        message: errorMessage(err),
+      });
+      return null;
+    } finally {
+      releaseSlot();
+    }
+  })();
+
+  inflightCover.set(key, task);
+  try {
+    return await task;
+  } finally {
+    inflightCover.delete(key);
   }
 }

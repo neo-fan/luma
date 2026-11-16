@@ -536,6 +536,36 @@ fn douban_error(message: impl Into<String>, cause: impl Into<String>) -> AppErro
     AppError::new(code::CONFIG_FETCH_FAIL, message).with_cause(cause)
 }
 
+/// 实际请求 URL 的 `scheme://host`，用于日志标明「豆瓣走的是哪个域名」。
+/// 解析失败退回去掉 query 的原文——取不到 host 也不该 panic。query 里有片名 /
+/// `subject_id`，这里只截 host，与落盘闸 `redact_url` 的口径一致。
+fn request_host(raw: &str) -> String {
+    Url::parse(raw)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .host_str()
+                .map(|host| format!("{}://{}", parsed.scheme(), host))
+        })
+        .unwrap_or_else(|| crate::logging::redact_url(raw))
+}
+
+/// 同一代理模式进程内只 INFO 一次「豆瓣走哪个通道」。默认 INFO 级别下让「配了
+/// 代理到底生效没、被改写成哪个域名」可查，又不随首页轮播 / 详情逐请求刷屏；
+/// 用户中途切换代理模式后，新模式首次成功会再播报一次。锁中毒时照常写入
+/// （best-effort 日志，不值得为它让整个豆瓣取数 panic）。
+fn announce_douban_channel(kind: ProxyKind, host: &str) {
+    static ANNOUNCED: OnceLock<Mutex<std::collections::HashSet<&'static str>>> = OnceLock::new();
+    let seen = ANNOUNCED.get_or_init(Mutex::default);
+    let mut guard = match seen.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if guard.insert(kind.as_str()) {
+        tracing::info!(proxy = kind.as_str(), host, "豆瓣元数据请求通道已启用");
+    }
+}
+
 async fn get_text(
     kind: ProxyKind,
     prefix: &str,
@@ -544,6 +574,7 @@ async fn get_text(
     accept: &str,
 ) -> Result<String, AppError> {
     let url = proxy_url(kind, prefix, target)?;
+    let host = request_host(&url);
     let client = crate::http::shared_client()?;
     let mut request = client
         .get(&url)
@@ -559,7 +590,13 @@ async fn get_text(
     let response = request
         .send()
         .await
-        .map_err(|err| douban_error("豆瓣请求失败", err.to_string()))?;
+        .map_err(|err| {
+            // 连接层失败（DNS 挂 / 超时 / 拒连）才是「代理没生效或镜像挂了」的
+            // 关键信号，这里唯一地带 actual host 告警；HTTP 非 2xx（含 rexxar
+            // path 探测的预期 404）交给外层各 step 的 warn，不在此翻倍。
+            tracing::warn!(proxy = kind.as_str(), host = %host, error = %err, "豆瓣请求发送失败");
+            douban_error("豆瓣请求失败", err.to_string())
+        })?;
     let status = response.status();
     let bytes = response
         .bytes()
@@ -572,8 +609,13 @@ async fn get_text(
         return Err(douban_error(
             format!("豆瓣返回 HTTP {}", status.as_u16()),
             preview.trim().to_string(),
-        ));
+        )
+        // 把实际走的代理模式与 host 挂进 details：外层各 step 的 warn 不带 host，
+        // 而 404 多是 rexxar path 探测的预期降级、不宜再叠一条 warn；诊断导出
+        // 读 error.details，能看出「是哪个镜像域名答的 404」。
+        .with_details(serde_json::json!({ "proxy": kind.as_str(), "host": host })));
     }
+    announce_douban_channel(kind, &host);
     Ok(body)
 }
 
@@ -1323,7 +1365,7 @@ async fn fetch_with(
 /// `Some(None)`（查过、确认没有）；`Transient` ↔ 外层 `None`（没查过/
 /// 没查出结论）。失败连负缓存都不进是旧实现没有、约束要求的修正：旧表
 /// 会把一次断网也「确认无结果」5 分钟。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ColdFail {
     /// 搜索链跑通了但没有任何匹配条目：负缓存（`NEG_CACHE_TTL`）压制重复查询。
     NotFound,
@@ -1342,7 +1384,9 @@ impl std::fmt::Display for ColdFail {
 
 impl std::error::Error for ColdFail {}
 
-/// `fetch_with` 的实际取数链（只在 moka 正缓存没有有效条目时被跑到）。
+/// `fetch_with` 的实际取数链（只在 moka 正缓存没有有效条目时被跑到）：
+/// 搜索选优 → 详情补全。搜索这一步与 `douban_cover` 共用 `search_cache`，
+/// 所以头图「先出封面、后补详情」不会增加豆瓣请求量。
 async fn cold_fetch(
     kind: ProxyKind,
     prefix: String,
@@ -1350,35 +1394,74 @@ async fn cold_fetch(
     year: Option<String>,
     now: fn() -> Instant,
 ) -> Result<DoubanMeta, ColdFail> {
-    if douban_cooling() {
-        // 冷却跳过不是「查无此片」：不进任何缓存，Transient 语义。
-        tracing::debug!(title = %title, "douban meta skipped during cooldown");
-        return Err(ColdFail::Transient(AppError::new(
-            code::CONFIG_FETCH_FAIL,
-            "豆瓣冷却中",
-        )));
+    let item = resolve_candidate(kind, &prefix, &title, year.as_deref(), now).await?;
+    Ok(build_meta(kind, &prefix, &item, year.as_deref(), now).await)
+}
+
+/// 搜索 + 选优，按 title+year 合并并发并缓存结果（粗/细两路共用）。
+/// `Ok(item)` 选中；`NotFound` 确认无匹配（已写负缓存）；`Transient` 传输失败 /
+/// 冷却——不进任何缓存、下次照常重试。取代原先粗/细各跑一遍搜索。
+async fn resolve_candidate(
+    kind: ProxyKind,
+    prefix: &str,
+    title: &str,
+    year: Option<&str>,
+    now: fn() -> Instant,
+) -> Result<SuggestItem, ColdFail> {
+    let key = cache_key(title, year);
+    let prefix = prefix.to_string();
+    let title_owned = title.to_string();
+    let year_owned = year.map(str::to_string);
+    let found = search_cache()
+        .try_get_with(key.clone(), async move {
+            if douban_cooling() {
+                tracing::debug!(title = %title_owned, "douban meta skipped during cooldown");
+                return Err(ColdFail::Transient(AppError::new(
+                    code::CONFIG_FETCH_FAIL,
+                    "豆瓣冷却中",
+                )));
+            }
+            match search_candidates(kind, &prefix, &title_owned, now).await {
+                SearchOutcome::Conclusive(items) => {
+                    let picked = pick_candidate(&items, &title_owned, year_owned.as_deref());
+                    if picked.is_none() {
+                        tracing::info!(
+                            title = %title_owned,
+                            candidates = items.len(),
+                            "douban: no matching subject"
+                        );
+                        // 确认无匹配：写负缓存压制重复查询（粗/细都靠它短路）。
+                        negative_cache().insert(key.clone(), ()).await;
+                    }
+                    Ok(picked.cloned())
+                }
+                SearchOutcome::Inconclusive => Err(ColdFail::Transient(AppError::new(
+                    code::CONFIG_FETCH_FAIL,
+                    "豆瓣搜索链未能正常应答",
+                ))),
+            }
+        })
+        .await
+        .map_err(|arc| (*arc).clone())?;
+    found.ok_or(ColdFail::NotFound)
+}
+
+/// 粗结果：只用搜索候选的 `cover_url` 当海报，不跑详情。字段形状与 `DoubanMeta`
+/// 一致，rating/intro 留空，由随后的细结果补全。
+fn coarse_meta(item: &SuggestItem) -> DoubanMeta {
+    DoubanMeta {
+        id: item.id.trim().to_string(),
+        title: item.display_title().to_string(),
+        year: item.year.trim().to_string(),
+        rating: 0.0,
+        rating_count: 0,
+        intro: String::new(),
+        directors: Vec::new(),
+        actors: Vec::new(),
+        genres: Vec::new(),
+        pic: with_pic_referer(item.img.as_str()),
+        url: format!("https://movie.douban.com/subject/{}/", item.id.trim()),
     }
-    let items = match search_candidates(kind, &prefix, &title, now).await {
-        SearchOutcome::Conclusive(items) => items,
-        SearchOutcome::Inconclusive => {
-            // 查失败（429/5xx/超时/冷却）：不下「查无此片」的结论，也不进
-            // 任何缓存，下次照常重试 —— try_get_with 的 Err 不落正表。
-            return Err(ColdFail::Transient(AppError::new(
-                code::CONFIG_FETCH_FAIL,
-                "豆瓣搜索链未能正常应答",
-            )));
-        }
-    };
-    let Some(item) = pick_candidate(&items, &title, year.as_deref()) else {
-        tracing::info!(title = %title, candidates = items.len(), "douban: no matching subject");
-        // 负缓存在 init 内部写：leader 走到这里就已落表，并发 follower 拿到
-        // 共享的 Err 时压制已经生效，不会有窗口期漏网重跑。
-        negative_cache()
-            .insert(cache_key(&title, year.as_deref()), ())
-            .await;
-        return Err(ColdFail::NotFound);
-    };
-    Ok(build_meta(kind, &prefix, item, year.as_deref(), now).await)
 }
 
 /// 详情页自动补全。参数扁平（camelCase：`proxyType` / `proxyPrefix`），
@@ -1397,6 +1480,65 @@ pub async fn douban_meta(
         proxy_prefix,
     };
     fetch(&req).await
+}
+
+/// 头图粗结果：只跑搜索链拿封面，不跑详情。与 `douban_meta` 共用 `search_cache`，
+/// 所以「先出封面、后补详情」不增加豆瓣请求量。网络层失败一律 `Ok(None)`（前端
+/// 静默回退源站封面），与 `douban_meta` 口径一致。
+async fn fetch_cover(req: &DoubanMetaRequest) -> Result<Option<DoubanMeta>, AppError> {
+    let title = req.title.trim().to_string();
+    if title.is_empty() {
+        return Err(AppError::new(code::INVALID_ARGUMENT, "豆瓣查询需要片名"));
+    }
+    let kind = ProxyKind::parse(req.proxy_type.as_deref());
+    let prefix = req
+        .proxy_prefix
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if kind == ProxyKind::Custom && prefix.is_empty() {
+        return Err(AppError::new(
+            code::INVALID_ARGUMENT,
+            "自定义豆瓣代理缺少前缀",
+        ));
+    }
+    let year = req
+        .year
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string);
+    let key = cache_key(&title, year.as_deref());
+    if negative_cache().get(&key).await.is_some() {
+        return Ok(None);
+    }
+    match resolve_candidate(kind, &prefix, &title, year.as_deref(), Instant::now).await {
+        Ok(item) => Ok(Some(coarse_meta(&item))),
+        Err(ColdFail::NotFound) => Ok(None),
+        Err(ColdFail::Transient(err)) => {
+            tracing::debug!(code = %err.code, error = %err.message, "douban cover transient");
+            Ok(None)
+        }
+    }
+}
+
+/// 详情页 / 头图「封面先出」用的轻量补全。参数与 `douban_meta` 相同（扁平
+/// camelCase），但只跑搜索链。
+#[tauri::command]
+pub async fn douban_cover(
+    title: String,
+    year: Option<String>,
+    proxy_type: Option<String>,
+    proxy_prefix: Option<String>,
+) -> Result<Option<DoubanMeta>, AppError> {
+    let req = DoubanMetaRequest {
+        title,
+        year,
+        proxy_type,
+        proxy_prefix,
+    };
+    fetch_cover(&req).await
 }
 
 // ---- 缓存 -----------------------------------------------------------------
@@ -1428,6 +1570,20 @@ fn negative_cache() -> &'static Cache<String, ()> {
         Cache::builder()
             .max_capacity(CACHE_CAP as u64)
             .time_to_live(NEG_CACHE_TTL)
+            .build()
+    })
+}
+
+/// 搜索选优结果缓存：`Some(item)` 选中、`None` 确认无匹配。粗（`douban_cover`）
+/// 与细（`douban_meta`）两路共用，`try_get_with` 顺带合并同 key 并发——一条 title
+/// 的搜索链只跑一次，这是「两段式不增加豆瓣请求量」的关键。寿命随正缓存。
+static META_SEARCH: OnceLock<Cache<String, Option<SuggestItem>>> = OnceLock::new();
+
+fn search_cache() -> &'static Cache<String, Option<SuggestItem>> {
+    META_SEARCH.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(CACHE_CAP as u64)
+            .time_to_live(CACHE_TTL)
             .build()
     })
 }
@@ -1980,6 +2136,25 @@ mod tests {
     }
 
     #[test]
+    fn request_host_keeps_scheme_host_and_drops_query() {
+        // 直连：记豆瓣真实主机，query 里的片名 / token 不落进这个字段。
+        assert_eq!(
+            request_host("https://movie.douban.com/j/subject_abstract?subject_id=1&token=x"),
+            "https://movie.douban.com"
+        );
+        // 走 CDN 改写后：记的是实际命中的镜像域名——这正是排障要确认的「代理生效没」。
+        let via_tencent = proxy_url(
+            ProxyKind::CdnTencent,
+            "",
+            "https://m.douban.com/rexxar/api/v2/tv/1?ck=&for_mobile=1",
+        )
+        .expect("rewrite");
+        assert_eq!(request_host(&via_tencent), "https://m.douban.cmliussss.net");
+        // 非 URL 的极端串不该 panic，退回去 query 的原文。
+        assert!(!request_host("not a url ?x=1").contains("?x=1"));
+    }
+
+    #[test]
     fn proxy_url_cors_zwei_percent_encodes_target() {
         let target = "https://movie.douban.com/j/subject_suggest?q=庆余年";
         let built = proxy_url(ProxyKind::CorsZwei, "", target).expect("cors");
@@ -2021,6 +2196,31 @@ mod tests {
         let already = "https://img3.doubanio.com/p.jpg@Referer=https://api.douban.com/";
         assert_eq!(with_pic_referer(already), already);
         assert_eq!(with_pic_referer("   "), "");
+    }
+
+    #[test]
+    fn coarse_meta_uses_search_cover_without_detail() {
+        let item = SuggestItem {
+            id: "25853071".into(),
+            title: "庆余年 第一季".into(),
+            year: "2019".into(),
+            img: "https://img3.doubanio.com/search.jpg".into(),
+            ..Default::default()
+        };
+        let meta = coarse_meta(&item);
+        assert_eq!(meta.id, "25853071");
+        assert_eq!(meta.title, "庆余年 第一季");
+        assert_eq!(meta.year, "2019");
+        // 粗结果不跑详情：评分 / 简介 / 类型留空，由细结果补。
+        assert_eq!(meta.rating, 0.0);
+        assert!(meta.intro.is_empty());
+        assert!(meta.genres.is_empty());
+        // 海报来自搜索候选 cover_url，并补 Referer（豆瓣图床 418 约束）。
+        assert_eq!(
+            meta.pic,
+            "https://img3.doubanio.com/search.jpg@Referer=https://movie.douban.com/"
+        );
+        assert_eq!(meta.url, "https://movie.douban.com/subject/25853071/");
     }
 
     #[test]

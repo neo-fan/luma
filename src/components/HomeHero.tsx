@@ -59,6 +59,8 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
     Boolean(current),
     // 头图是首页第一屏，评分/简介要与推荐卡的预取抢同一条队列时优先。
     true,
+    // 两段式：搜索级封面先出（1 跳），评分/简介随详情结果补上。
+    true,
   );
   const doubanImage = useProxiedImage(douban?.pic);
   // 豆瓣命中就用豆瓣海报：版式统一、裁切标准（2:3）；豆瓣没给 / 图裂 / 还没到货时用源站封面兜底。

@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import { fetchDoubanMeta } from "../lib/douban";
+import { fetchDoubanCover, fetchDoubanMeta } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
 
 /**
  * 列表/头图按需补豆瓣元数据：enabled=false 时不发请求（懒加载由调用方判断视口）。
  * 片名变化先清空，避免上一部片的评分挂在新片下面。
+ *
+ * `progressive`（头图用）：先拿搜索级封面（1 跳）让海报尽快出现，再等详情结果
+ * 补评分/简介。细结果到货后忽略迟到的粗结果，避免粗结果覆盖细结果。
  */
 export default function useDoubanMeta(
   title: string | undefined,
   year: string | undefined,
   enabled = true,
   priority = false,
+  progressive = false,
 ): DoubanMeta | null {
   const [meta, setMeta] = useState<DoubanMeta | null>(null);
   const name = (title ?? "").trim();
@@ -27,15 +31,32 @@ export default function useDoubanMeta(
     }
     // 换片先清空，否则新片会短暂顶着上一部的评分/类型。
     setMeta(null);
-    fetchDoubanMeta(name, yearText || undefined, { priority }).then((next) => {
-      if (alive) {
-        setMeta(next);
-      }
-    });
+    const yearArg = yearText || undefined;
+    if (progressive) {
+      let gotFull = false;
+      fetchDoubanCover(name, yearArg, { priority }).then((coarse) => {
+        // 细结果已到 → 粗结果（rating=0）不再覆盖它。
+        if (alive && !gotFull && coarse) {
+          setMeta(coarse);
+        }
+      });
+      fetchDoubanMeta(name, yearArg, { priority }).then((full) => {
+        if (alive) {
+          gotFull = true;
+          setMeta(full);
+        }
+      });
+    } else {
+      fetchDoubanMeta(name, yearArg, { priority }).then((next) => {
+        if (alive) {
+          setMeta(next);
+        }
+      });
+    }
     return () => {
       alive = false;
     };
-  }, [enabled, name, yearText, priority]);
+  }, [enabled, name, yearText, priority, progressive]);
 
   return meta;
 }

@@ -483,6 +483,20 @@ export const api = {
     return call("douban_meta", { title, year, proxyType, proxyPrefix });
   },
 
+  /**
+   * 豆瓣「粗结果」：只跑搜索链拿封面（2:3 统一版式），不跑详情。给头图
+   * 「封面先出、评分/简介后补」用。与 `doubanMeta` 共用后端 `search_cache`，
+   * 不增加豆瓣请求量。失败一律静默降级（调用方 `src/lib/douban.ts`）。
+   */
+  doubanCover(
+    title: string,
+    year?: string,
+    proxyType?: DoubanProxyType,
+    proxyPrefix?: string,
+  ): Promise<DoubanMeta | null> {
+    return call("douban_cover", { title, year, proxyType, proxyPrefix });
+  },
+
   /** 直播 m3u 动辄数千频道，返回直播页时不要重新下载解析一遍。 */
   liveParse(url: string, ua?: string, force = false): Promise<LiveListResult> {
     return pageCache.load(

@@ -265,6 +265,7 @@ pub fn run() {
             parse::parse_resolve,
             play::open_external,
             douban::douban_meta,
+            douban::douban_cover,
             store::favorites_list,
             store::favorites_toggle,
             store::favorites_patch_meta,
