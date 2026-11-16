@@ -228,18 +228,23 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* 只有竖版海报可以当背景：放大 + 模糊，压成一块色雾而不是一张大图。 */
-  transform: scale(1.18);
-  filter: blur(36px) saturate(1.35) brightness(0.6);
+  /* 只有竖版海报可以当背景。 */
+  transform: scale(1.25);
+  /* 电影感暗底：重模糊 + 近乎去色 + 压暗。海报糊出来必然带自身色相，红橙调
+     海报哪怕低饱和也会在角落漏出一块脏色（2026-11-16 多轮反馈）；这里几乎去色，
+     只留极淡色温，色相交不交出来由遮罩统一压住。 */
+  filter: blur(72px) saturate(0.18) brightness(0.24);
 }
 
 .home-hero__scrim {
   position: absolute;
   inset: 0;
   z-index: -1;
+  /* 均匀深底：横向三段都压到较深（不再中间放亮），否则海报糊块会在放亮处透出来
+     成一坨脏色；底部融进页面底色。 */
   background:
-    linear-gradient(180deg, rgba(10, 10, 11, 0.3) 0%, rgba(10, 10, 11, 0.1) 40%, var(--bg) 100%),
-    linear-gradient(90deg, rgba(10, 10, 11, 0.88) 0%, rgba(10, 10, 11, 0.4) 56%, rgba(10, 10, 11, 0.08) 100%);
+    linear-gradient(180deg, rgba(8, 9, 12, 0.6) 0%, rgba(8, 9, 12, 0.42) 46%, var(--bg) 100%),
+    linear-gradient(90deg, rgba(8, 9, 12, 0.9) 0%, rgba(8, 9, 12, 0.66) 55%, rgba(8, 9, 12, 0.62) 100%);
 }
 
 .home-hero__body {
@@ -341,11 +346,14 @@
   margin-top: 6px;
 }
 
-/* 圆点进度条：直接浮在头图上，不加底衬，别抢画面。 */
+/* 圆点进度条：直接浮在头图上，不加底衬，别抢画面。
+   z-index 压在右缘「下一张」热区（.home-hero__next，z-index:1）之上，
+   保证点圆点仍是「跳到那张」而不是被热区吃成「下一张」。 */
 .home-hero__controls {
   position: absolute;
   right: 30px;
   bottom: 26px;
+  z-index: 2;
   display: flex;
   align-items: center;
 }
@@ -408,41 +416,66 @@
 }
 
 /*
- * 下一张：平时隐形，头图 hover / 键盘聚焦时从右缘滑进来。不做按钮外形
- * （没有圆角、没有底、没有边框）：只留一枚带投影的箭头，靠投影在模糊
- * 背景上站住，而不是贴一块渐变矩形。
+ * 下一张：整条右缘都是热区（不只是箭头那一小块），箭头**常驻可见** + 右缘一层
+ * 极淡渐变，让「这里能点着切下一张」不必先把鼠标挪到别处才发现（2026-11-16
+ * 反馈「范围太小、不明显」）。hover / 键盘聚焦时渐变与箭头一起提亮给可点反馈。
+ * 底部圆点用更高 z-index 压在它之上，保证点圆点仍是「跳到那张」。
  */
 .home-hero__next {
   position: absolute;
-  top: 50%;
+  top: 0;
   right: 4px;
+  bottom: 0;
+  z-index: 1;
   display: grid;
-  width: 48px;
-  height: 96px;
+  width: 68px;
   place-items: center;
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: transparent;
-  color: rgb(255 255 255 / 82%);
-  filter: drop-shadow(0 2px 10px rgb(0 0 0 / 65%));
+  background: linear-gradient(to left, rgb(0 0 0 / 14%), rgb(0 0 0 / 0) 72%);
+  color: rgb(255 255 255 / 95%);
   cursor: pointer;
-  opacity: 0;
-  transform: translate(8px, -50%);
   transition:
-    opacity var(--dur) var(--ease),
-    transform var(--dur) var(--ease),
-    color var(--dur) var(--ease);
+    color var(--dur) var(--ease),
+    background var(--dur) var(--ease);
 }
 
-.home-hero:hover .home-hero__next,
+/* 箭头后的圆衬：暗底上用浅色玻璃盘 + 外投影才「浮」得起来、读得出可点控件。 */
+.home-hero__next::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 16%);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 26%),
+    0 2px 12px rgb(0 0 0 / 45%);
+  transition:
+    background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+/* ::before 是定位伪元素，默认压在静态 svg 之上，会把箭头盖住——把箭头提上来。 */
+.home-hero__next svg {
+  position: relative;
+  z-index: 1;
+}
+
+.home-hero__next:hover,
 .home-hero__next:focus-visible {
-  opacity: 0.92;
-  transform: translate(0, -50%);
+  color: var(--accent);
+  background: linear-gradient(to left, rgb(0 0 0 / 30%), rgb(0 0 0 / 0) 80%);
 }
 
-.home-hero__next:hover {
-  color: var(--accent);
+.home-hero__next:hover::before,
+.home-hero__next:focus-visible::before {
+  background: rgb(255 255 255 / 16%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 28%);
 }
 
 .poster-rail {

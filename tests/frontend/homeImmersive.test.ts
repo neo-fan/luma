@@ -112,7 +112,8 @@ describe("immersive home (hero + horizontal rails)", () => {
     expect(css).toContain("--home-hero-h: clamp(320px, 46vh, 460px);");
     expect(css).toContain(".home-hero {");
     expect(css).toContain(".home-hero__backdrop img");
-    expect(css).toContain("filter: blur(36px) saturate(1.35) brightness(0.6);");
+    // 电影感暗底：近乎去色 + 压暗，避免浅色海报糊成脏棕（旧 saturate(1.35) 是「泥」根因）。
+    expect(css).toContain("filter: blur(72px) saturate(0.18) brightness(0.24);");
     const start = css.indexOf(".poster-rail__track {");
     expect(start).toBeGreaterThan(-1);
     const block = css.slice(start, css.indexOf("}", start));
@@ -128,11 +129,14 @@ describe("immersive home (hero + horizontal rails)", () => {
     expect(css).toContain(".poster-rail__track:focus-visible");
     // 换片时只让文字入场
     expect(css).toContain("@keyframes hero-text-in");
-    // 轮播控件：圆点进度 + 右侧贴边、平时隐形的「下一张」
+    // 轮播控件：圆点进度 + 右缘「下一张」热区（常驻可见 + 圆底衬，不再靠 hover 显形）
     expect(css).toContain(".home-hero__controls {");
-    expect(css).toContain(".home-hero__next {");
-    expect(css).toContain(".home-hero:hover .home-hero__next");
-    expect(css).toContain("opacity: 0;");
+    const nextStart = css.indexOf(".home-hero__next {");
+    expect(nextStart).toBeGreaterThan(-1);
+    const nextBlock = css.slice(nextStart, css.indexOf("}", nextStart));
+    // 常驻可见：旧版 `opacity: 0` + hover 才显形「不明显」，现在按钮块里不该再有 opacity:0
+    expect(nextBlock).not.toContain("opacity: 0");
+    expect(css).toContain(".home-hero__next::before {");
     expect(css).toContain("@keyframes hero-dot-fill");
     expect(css).toContain(".home-hero__dot-fill {");
     expect(css).toContain("animation-play-state: paused;");
