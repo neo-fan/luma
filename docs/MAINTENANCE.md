@@ -104,3 +104,21 @@
 - `domain/proxy.rs`（1,105 行）→ 已拆为 `proxy/{mod,handlers,guard,playlist}.rs` + `proxy/tests.rs`；`mod.rs` 留状态/路由/命令层，handler、目标校验、播放列表改写各自成文件。
 - `infra/db.rs`（1,026 行）→ 已拆为 `db/{mod,schema,meta,configs,favorites,history}.rs` + `db/tests.rs`；行结构体留 `mod.rs`，每个子模块一个 `impl Db`，schema 迁移与四类仓储互不牵连。
 - `infra/logging.rs`（587 行）→ 已拆为 `logging/{mod,writer,redact,ui,diagnostics,report}.rs` + `logging/tests.rs`；`mod.rs` 留目录解析/初始化/级别解析与 4 个命令，按日滚动、脱敏规则、诊断采集、反馈文件各成文件。
+
+## 11. 「优先主流库、不手搓」清单的逐项裁决（2026-11-17）
+
+原则不变：能用热门库就别手搓。但**逐项核过形状**，下面这些是明确裁决为「不换 / 换不了」的，别再当欠账挂在清单上。
+
+| 目标 | 裁决 | 依据（可复核） |
+| --- | --- | --- |
+| 缓存 + 同 key 并发（moka） | 已换（1.x → 2.0.0） | `Cargo.toml`，替掉手搓 TTL 表与自建 single-flight |
+| 页面读缓存（`@tanstack/react-query`） | 已换 | `pageCache.ts` 删除，`queryClient.ts` 适配层保留 `api.*` 命令式门面 |
+| 稳定指纹（`xxhash-rust` XXH3） | 已换 | 取代 sha1[..12] 与手搓 FNV-1a |
+| 百分号编码（`percent-encoding`） | 已换（encode 侧） | `infra/pct.rs`；库的 `NON_ALPHANUMERIC` 连 `- _ . ~` 一起编掉，用 `remove` 改回原口径，测试逐字钉住 |
+| 百分号解码 | **不换** | 要的是「坏转义 / 非法 UTF-8 → 整串原样退回」；库的 `decode_utf8_lossy` 是插 U+FFFD 的另一种语义，原文回不来，套库反而要写更多适配 |
+| 豆瓣令牌桶 → `governor` | **换不了（环境阻塞）** | 本机 crates.io 无网络，`D:\software\rust\cargo\registry\cache` 里没有 `governor`（`ipnet` / `thiserror` / `percent-encoding` / `tokio-util` 都有）。加依赖前先查缓存，否则 build 直接崩 |
+| `AppError` → `thiserror` | **不换** | `thiserror` 的收益在**枚举**（`#[error]` / `#[from]` 模板化）；`infra/error.rs` 是一个字段名被 `contracts/luma.schema.json` 锁定的 **struct**，Display 3 行、`impl Error` 空实现，换它收益为零还多了 serde 字段漂移风险 |
+| IP 判定 → `ipnet` | **不换** | `proxy/guard.rs::is_blocked` 已经在用 std 的 `is_loopback/is_private/is_link_local/...` 谓词；`ipnet` 解决的是 CIDR（`10.0.0.0/8`）解析匹配，这里没有这个问题 |
+| 取消传播 → `tokio-util CancellationToken` | **无对象** | 全仓 grep 无手搓取消标志；切换路径的回收是 timer/listener 的显式登记（`switchDisposers`），与取消令牌不是一回事 |
+| `sourceCache` → react-query | **不换** | 它不是 per-key 缓存，是**跨页结果账本 + 同步派生**：`publish()` 由搜索页注入、`view()` 对最多 8 个相关 bundle 做「同站取最匹配、同分取最新」的同步打分合并、`completeKeys` 与 bundle TTL 必须同步过期（否则出现「bundle 已过期但标记还在 → `ensure` 返回空视图 → 跨源自愈 `probed:0`」的实测 bug）、`aggregateCalls` 计数被探针钉住。三条具体失效模式：① Query 无跨 key 同步派生，逻辑照样得自己写，只是多背一层；② 现有 `queue` 把全站聚合搜索**串行化**（一次约 300 站点 fan-out），Query 只对同 key 去重、不同关键词会并发打爆源站；③ `partial`/`complete` 语义要挤进 Query 的 meta 里，比现在的显式字段更难读。要收的债是「形状不匹配」，不是「手搓」 |
+

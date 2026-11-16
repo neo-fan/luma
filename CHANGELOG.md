@@ -33,6 +33,9 @@
 - **新增常驻探针 `probe_session_machine`（会话状态机 ↔ 现实）**：机器测试只能证明模型自洽，证明不了「引擎真的把事件喂对了」。这条探针在真实点播里读 dev 观测点 `window.__lumaPlayerSession`，钉：出画后必须 `playing` + `hasPlayed` + `sessionId ≥ 1` + unknown 计数为 0；健康播放 12 拍内不得出现 `probing`/`recovering` 或计数非 0；换集分两条合法路径分别断言——同一 actor 的原地切换必须出现 `switching` 且收口后 `sessionId` 自增 1，退回整页重建（`线路不可解析` 等）则 `instance` 变化、不得按回归算。为此给观测点补了 actor 实例身份 `instance`（只读、dev-only，不参与产品逻辑）。首轮实跑即抓到自己探针的口径错误（误把「退回重建」当回归），已按现实改写。
 - **`probe_live_audio` 场景 3 对齐常驻层契约**：它原先断言「离开直播页后 DOM 里不该有 `<video>`」，而 `.live-host` / `.player-host` 自 1.0.3 起的设计是「只藏不卸载、音频照播、回直播页复用同一条流」（`layout.css` 的注释即设计说明）——这条红是探针没跟上改造，不是产品回归（用「临时回退本轮三个产品文件 + 同一配置重跑」做过对照，且频道可用性本身在抖，冷缓存时轨道读到 0 会假 SKIP）。改成钉当前真会出事的三件事：不堆叠（至多 1 条流）、不双声 / 无幽灵音（至多 1 个在推进、脱离 DOM 的旧元素不得还在播、无 `<audio>`）、隐藏态必须真的断掉命中测试（`is-idle` + `aria-hidden` + `visibility:hidden` + `pointer-events:none` + `elementsFromPoint` 命中栈不含常驻层节点）。改写后实跑通过并正向抓到隐藏层不再吃点击。
 
+- **`docs/MAINTENANCE.md` 新增 §11「优先主流库、不手搓」逐项裁决**：把清单正面收口，避免每轮重开讨论。已换：moka（缓存 + 同 key 并发）、TanStack Query（页面读缓存）、XXH3（稳定指纹，替掉 sha1/FNV）、`percent-encoding`（编码侧）。明确不换并给出依据：百分号解码（要「非法 UTF-8 整串退回」，库的 `decode_utf8_lossy` 是插 U+FFFD 的另一种语义）、`AppError` 不上 thiserror（thiserror 收益在枚举，这里是字段名被契约锁定的 struct）、IP 判定不上 ipnet（`proxy/guard.rs` 已在用 std 的 `is_private/is_loopback/...` 谓词，ipnet 解决的是 CIDR 匹配，此问题不存在）、取消令牌无对象（全仓无手搓取消标志，`switchDisposers` 是 timer/listener 回收）。`governor` 属**环境阻塞**而非取舍：本机 crates.io 无网络，crate 缓存里没有它。`sourceCache` 不迁 Query 并列出三条具体失效模式（跨 key 同步派生无处安放；Query 会打破现有「全站聚合搜索串行化」的限流，改成并发打爆约 300 个站点；`partial`/`complete` 语义挤进 meta 比显式字段更难读）。
+- **`infra/pct.rs` 的百分号编码改用 `percent-encoding`**：注意库的 `NON_ALPHANUMERIC` 连 `- _ . ~` 一起编掉（实测 `a-b` → `a%2Db`），与替换前的手搓口径不同；用 `AsciiSet::remove` 显式放回这四个字节，由既有单测逐字钉住（第一次替换即被 `encode_keeps_unreserved_only` 打回，同时带崩 3 处 URL 编码相关用例）。回归：`cargo test --lib` 233 passed / 2 ignored。
+
 ### 修复
 
 - **豆瓣缓存跨季串数据**：无年份时「庆余年 第一季 / 第二季」曾归一到同一缓存键，第二季会命中第一季的条目（缓存早于 `pick_candidate` 打分）。缓存键保留季标记后消除。
