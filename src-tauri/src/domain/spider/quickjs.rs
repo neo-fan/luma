@@ -19,24 +19,35 @@ use crate::http;
 use crate::process::Guarded;
 use crate::spider::{ProxyPayload, RuntimeKind, SpiderMethod, SpiderRuntime};
 use async_trait::async_trait;
+use moka::future::Cache;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 const SOURCE_TTL: Duration = Duration::from_secs(600);
+const MAX_SOURCES: u64 = 64;
 
-/// 同 URL 的并发脚本下载去重（条目完成后即摘除，不承担缓存职责，缓存仍是
-/// 上面那张 `SOURCE_TTL` 内存表）。
-static SOURCE_FLIGHTS: OnceLock<crate::flights::Flights<Result<String, AppError>>> = OnceLock::new();
+/// js 脚本的内存缓存：TTL 600s、上限 64 条，同 key 并发首次访问合并成一次下载
+/// （moka `try_get_with`；求值失败不进缓存）。drpy2 这类包几十 KB～几 MB，
+/// 一次 fan-out 里重复抓取是实打实的带宽与时间成本。
+///
+/// 取代原先「`StdMutex<HashMap<String,(String, Instant)>>` 自研 TTL 表 +
+/// `infra::flights` 自研 single-flight」两套手搓实现。
+static SOURCE_CACHE: OnceLock<Cache<String, String>> = OnceLock::new();
 
-fn source_flights() -> &'static crate::flights::Flights<Result<String, AppError>> {
-    SOURCE_FLIGHTS.get_or_init(Default::default)
+fn source_cache() -> &'static Cache<String, String> {
+    SOURCE_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(MAX_SOURCES)
+            .time_to_live(SOURCE_TTL)
+            .build()
+    })
 }
 
 type Pending = StdMutex<HashMap<u64, oneshot::Sender<Value>>>;
@@ -254,11 +265,6 @@ fn resolve_assets_dir() -> PathBuf {
     root.join("sidecars").join("qjs-assets")
 }
 
-fn cache() -> &'static StdMutex<HashMap<String, (String, Instant)>> {
-    static CACHE: OnceLock<StdMutex<HashMap<String, (String, Instant)>>> = OnceLock::new();
-    CACHE.get_or_init(|| StdMutex::new(HashMap::new()))
-}
-
 /// Engine files we ship a copy of. Keyed by URL basename, so every mirror
 /// spelling (`lib/drpy2.min.js`, `js/drpy2.js`) maps onto the same local file.
 const BUNDLED_ENGINES: &[&str] = &["drpy2.min.js", "drpy2.js"];
@@ -305,27 +311,24 @@ async fn source_for(site: &Value) -> Result<String, AppError> {
     }
     // 与 py 通道同源的问题：脚本下载不在任何并发闸内，一次 fan-out 里多个
     // 任务首次触达同一 URL 会重复下载（drpy2 这类包几十 KB～几 MB）。
-    source_flights().dedupe(&api, || cold_source(site)).await
+    // `try_get_with` 合并同 key 的并发首次求值，失败不进缓存。
+    match source_cache()
+        .try_get_with(api, cold_source(site.clone()))
+        .await
+    {
+        Ok(text) => Ok(text),
+        Err(err) => Err((*err).clone()),
+    }
 }
 
-/// `source_for` 的实际取数链（内存缓存 → 网络 → 内置引擎兜底）。等待 leader
-/// 期间缓存可能已被填上，所以这里重新查一遍。
-async fn cold_source(site: &Value) -> Result<String, AppError> {
+/// `source_for` 的实际取数链（网络 → 内置引擎兜底）。只在缓存里没有有效
+/// 条目时才会被跑到。
+async fn cold_source(site: Value) -> Result<String, AppError> {
     let api = site
         .get("api")
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    if let Some((text, at)) = cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&api)
-        .cloned()
-    {
-        if at.elapsed() < SOURCE_TTL {
-            return Ok(text);
-        }
-    }
     let fetched = http::fetch(http::FetchRequest {
         url: api.clone(),
         method: None,
@@ -367,11 +370,8 @@ async fn cold_source(site: &Value) -> Result<String, AppError> {
         },
     };
 
-    let mut guard = cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if guard.len() >= 64 {
-        guard.clear();
-    }
-    guard.insert(api, (text.clone(), Instant::now()));
+    // 成功（含内置引擎兜底）由 `try_get_with` 写入缓存；上面返回 Err 的两条
+    // 分支不进缓存，下次仍会重试。
     Ok(text)
 }
 

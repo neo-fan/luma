@@ -19,11 +19,12 @@ use crate::config::ConfigStore;
 use crate::error::{code, AppError};
 use crate::ghproxy;
 use crate::http;
+use moka::future::Cache;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 #[tauri::command]
 pub async fn live_parse(url: String, ua: Option<String>) -> Result<Value, AppError> {
@@ -54,13 +55,31 @@ pub async fn live_parse(url: String, ua: Option<String>) -> Result<Value, AppErr
 /// In-memory cache of the raw XMLTV payload, keyed by EPG url. Programme lists
 /// can be tens of MB, so we download once per `EPG_TTL` and let Python stream-
 /// match a channel on every request instead of re-fetching the whole file.
-static EPG_RAW_CACHE: OnceLock<Mutex<HashMap<String, (Instant, String)>>> = OnceLock::new();
+///
+/// 同 key 的并发首次访问由 moka `try_get_with` 合并成一次下载：`e.xml` 实测约
+/// 7.6 MB，重复拉取是最贵的一种浪费。求值失败不进缓存（`Err` 不写回），下一次
+/// 仍然回源——保留原「未命中即重取」的行为。
+static EPG_RAW_CACHE: OnceLock<Cache<String, String>> = OnceLock::new();
 
-fn epg_cache() -> &'static Mutex<HashMap<String, (Instant, String)>> {
-    EPG_RAW_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn epg_raw_cache() -> &'static Cache<String, String> {
+    EPG_RAW_CACHE.get_or_init(|| {
+        Cache::builder()
+            // 按字节加权而不是条数：一条 e.xml 就有 ~7.6 MB，用条数封顶等于
+            // 无界吃内存。给一个明确的总字节预算（约 6 条满量的节目单），超出
+            // 由 moka 按策略淘汰最久未用的条目。
+            .max_capacity(MAX_EPG_RAW_BYTES)
+            .weigher(|_key: &String, value: &String| -> u32 {
+                value.len().try_into().unwrap_or(u32::MAX)
+            })
+            .time_to_live(EPG_TTL)
+            .build()
+    })
 }
 
 const EPG_TTL: Duration = Duration::from_secs(3 * 3600);
+/// 原始节目单内存缓存的字节预算。一条 `e.xml` ≈ 7.6 MB（见模块头注释与
+/// `live_epg_warm` 里的实测），取 6 条满量 = 48 MB 作为上限，避免无界增长。
+const MAX_EPG_RAW_BYTES: u64 = 48 * 1024 * 1024;
 
 /// 磁盘缓存的有效期：6 小时。EPG 覆盖的是滚动九天，半天不更新也不会
 /// 影响「正在播什么」；超过 6h 或文件损坏就重新拉。
@@ -116,27 +135,33 @@ fn write_epg_disk(url: &str, raw: &str) {
 
 /// 取 XMLTV 原始表：内存 → 磁盘 → 网络（GitHub 地址走加速前缀）。
 async fn load_epg_raw(state: &ConfigStore, epg_url: &str) -> Result<String, AppError> {
-    let cached = {
-        let guard = epg_cache()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard
-            .get(epg_url)
-            .filter(|(ts, _)| ts.elapsed() < EPG_TTL)
-            .map(|(_, raw)| raw.clone())
-    };
-    if let Some(raw) = cached {
+    // 先查内存：命中就直接返回，不去读加速前缀（`github_proxy` 是一次
+    // sqlite meta 读，旧实现也只在网络分支才读它）。未命中才用 `try_get_with`
+    // 合并并发首次访问成一次回源，求值失败不进缓存（下一次仍回源）。求值体
+    // `cold_epg_raw` 内部保留「磁盘 → 网络」两级兜底：内存里过期的条目读不到
+    // （moka 直接淘汰），兜底来源仍是磁盘快照（磁盘 6h TTL 独立于内存 3h TTL），
+    // 语义与旧的「内存未命中再看磁盘」完全一致。
+    let cache = epg_raw_cache();
+    let key = epg_url.to_string();
+    if let Some(raw) = cache.get(&key).await {
         return Ok(raw);
     }
-    if let Some(raw) = read_epg_disk(epg_url) {
-        let mut guard = epg_cache()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.insert(epg_url.to_string(), (Instant::now(), raw.clone()));
+    match cache
+        .try_get_with(key, cold_epg_raw(epg_url.to_string(), state.github_proxy()))
+        .await
+    {
+        Ok(raw) => Ok(raw),
+        Err(err) => Err((*err).clone()),
+    }
+}
+
+/// `load_epg_raw` 的实际取数链（磁盘快照 → 网络）。只在 moka 里没有有效条目
+/// 时才会被跑到。
+async fn cold_epg_raw(epg_url: String, prefix: String) -> Result<String, AppError> {
+    if let Some(raw) = read_epg_disk(&epg_url) {
         return Ok(raw);
     }
-    let prefix = state.github_proxy();
-    let url = ghproxy::apply(epg_url, &prefix).into_owned();
+    let url = ghproxy::apply(&epg_url, &prefix).into_owned();
     let response = http::fetch(http::FetchRequest {
         url,
         method: None,
@@ -146,11 +171,7 @@ async fn load_epg_raw(state: &ConfigStore, epg_url: &str) -> Result<String, AppE
     })
     .await?;
     let body = response.body;
-    write_epg_disk(epg_url, &body);
-    let mut guard = epg_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    guard.insert(epg_url.to_string(), (Instant::now(), body.clone()));
+    write_epg_disk(&epg_url, &body);
     Ok(body)
 }
 
@@ -159,13 +180,23 @@ async fn load_epg_raw(state: &ConfigStore, epg_url: &str) -> Result<String, AppE
 /// The raw XMLTV is ~7.6 MB and Python needs two streaming passes over it
 /// (~0.5 s); zapping between channels would pay that on every click. Keyed by
 /// `url | channel | date` because the adapter already filtered by date.
-static EPG_RESULT_CACHE: OnceLock<Mutex<HashMap<String, (Instant, Value)>>> = OnceLock::new();
+///
+/// 上限 64 条（与旧实现同量级）：一次会话里连切几百个频道不该堆出几百份节目单。
+/// 旧实现是「满 64 直接 clear」，换成 moka 按访问频率逐条淘汰——同样是给内存封顶，
+/// 但不会把整张表冲掉后让老频道重新解析（评审：用库的淘汰策略，不要手搓全清）。
+static EPG_RESULT_CACHE: OnceLock<Cache<String, Value>> = OnceLock::new();
 
-fn epg_result_cache() -> &'static Mutex<HashMap<String, (Instant, Value)>> {
-    EPG_RESULT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn epg_result_cache() -> &'static Cache<String, Value> {
+    EPG_RESULT_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(EPG_RESULT_MAX_ENTRIES)
+            .time_to_live(EPG_RESULT_TTL)
+            .build()
+    })
 }
 
 const EPG_RESULT_TTL: Duration = Duration::from_secs(30 * 60);
+const EPG_RESULT_MAX_ENTRIES: u64 = 64;
 
 /// Warm the raw XMLTV cache without parsing anything.
 ///
@@ -210,28 +241,12 @@ pub async fn live_epg(
     let raw = load_epg_raw(state.inner(), &epg_url).await?;
 
     let key = format!("{epg_url}\u{1}{channel}\u{1}{}", date.clone().unwrap_or_default());
-    {
-        let guard = epg_result_cache()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some((ts, cached)) = guard.get(&key) {
-            if ts.elapsed() < EPG_RESULT_TTL {
-                return Ok(cached.clone());
-            }
-        }
+    let cache = epg_result_cache();
+    if let Some(cached) = cache.get(key.as_str()).await {
+        return Ok(cached);
     }
-
     let parsed = epg::parse(&raw, &channel, date.as_deref());
-
-    let mut guard = epg_result_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    // Bound the map: a user zapping through a few hundred channels in one
-    // session must not accumulate hundreds of programme lists.
-    if guard.len() >= 64 {
-        guard.clear();
-    }
-    guard.insert(key, (Instant::now(), parsed.clone()));
+    cache.insert(key, parsed.clone()).await;
     Ok(parsed)
 }
 
@@ -257,5 +272,146 @@ mod tests {
         let text = path.to_string_lossy().replace('\\', "/");
         assert!(text.contains("/cache/epg/"), "{text}");
         assert!(text.ends_with(".xml"), "{text}");
+    }
+
+    use axum::body::Body;
+    use axum::http::{Response, StatusCode};
+    use axum::routing::get;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// 起一个能返回合法 XMLTV 的本地桩，命中次数记在**调用方传入的计数器**上。
+    /// 用全局静态计数器会被并行测试互相污染（python.rs 第一版就因此得假阴性）。
+    async fn ok_stub(hits: Arc<AtomicUsize>) -> (String, tokio::task::JoinHandle<()>) {
+        let counter = hits.clone();
+        let router = axum::Router::new().route("/", get(move || {
+            let hits = counter.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/xml")
+                    .body(Body::from("<tv>\n  <programme/>\n</tv>\n"))
+                    .unwrap()
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        (format!("http://{addr}/"), task)
+    }
+
+    /// 接了 TCP 但一个字节都不回、立刻断开 —— 让 `http::fetch` 得到传输层错误。
+    /// `http::fetch` 对 HTTP 5xx 仍返回 `Ok`，只有连接失败才返回 `Err`，所以「失败
+    /// 不进缓存」这条必须用真·失败来测。
+    async fn reject_stub(hits: Arc<AtomicUsize>) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let task = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _)) => {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        drop(stream);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        (format!("http://{addr}/"), task)
+    }
+
+    fn forget_epg_disk(url: &str) {
+        let _ = std::fs::remove_file(epg_disk_path(url));
+    }
+
+    /// 与生产同构的本地缓存（同 weigher/TTL），测试用它避免污染全局 static。
+    fn raw_cache(ttl: Duration) -> Cache<String, String> {
+        Cache::builder()
+            .max_capacity(MAX_EPG_RAW_BYTES)
+            .weigher(|_key: &String, value: &String| -> u32 {
+                value.len().try_into().unwrap_or(u32::MAX)
+            })
+            .time_to_live(ttl)
+            .build()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn epg_raw_hit_within_ttl_does_not_refetch() {
+        // (a) TTL 内命中不再回源：第一次冷取（磁盘无 → 网络），第二次应直接命中
+        // moka，不再打桩。短 TTL 只为隔离，本例不需要等它过期。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (url, task) = ok_stub(hits.clone()).await;
+        let cache = raw_cache(Duration::from_secs(30));
+        let first = cache
+            .try_get_with(url.clone(), cold_epg_raw(url.clone(), String::new()))
+            .await
+            .expect("cold");
+        assert!(first.contains("<tv"));
+        let second = cache
+            .try_get_with(url.clone(), cold_epg_raw(url.clone(), String::new()))
+            .await
+            .expect("warm");
+        assert!(second.contains("<tv"));
+        cache.run_pending_tasks().await;
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "TTL 内命中不应再次回源");
+        task.abort();
+        forget_epg_disk(&url);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn epg_raw_concurrent_same_url_downloads_once() {
+        // (b) 同 key 并发只回源一次：7.6 MB 的节目单重复下载最贵，`try_get_with`
+        // 的合并语义正是取代原自研 single-flight 的地方。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (url, task) = ok_stub(hits.clone()).await;
+        let cache = raw_cache(Duration::from_secs(30));
+        let results = tokio::join!(
+            cache.try_get_with(url.clone(), cold_epg_raw(url.clone(), String::new())),
+            cache.try_get_with(url.clone(), cold_epg_raw(url.clone(), String::new())),
+            cache.try_get_with(url.clone(), cold_epg_raw(url.clone(), String::new())),
+            cache.try_get_with(url.clone(), cold_epg_raw(url.clone(), String::new())),
+        );
+        for result in [results.0, results.1, results.2, results.3] {
+            assert!(result.expect("source").contains("<tv"));
+        }
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "同 URL 并发只应回源一次"
+        );
+        task.abort();
+        forget_epg_disk(&url);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn epg_raw_failure_is_not_cached() {
+        // (c) 失败不进缓存：连接失败必须返回 Err 且不写回，第二次继续回源。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (url, task) = reject_stub(hits.clone()).await;
+        let cache = raw_cache(Duration::from_secs(30));
+        cache
+            .try_get_with(url.clone(), cold_epg_raw(url.clone(), String::new()))
+            .await
+            .expect_err("connection failure must error");
+        let second = cache
+            .try_get_with(url.clone(), cold_epg_raw(url.clone(), String::new()))
+            .await
+            .err();
+        assert!(second.is_some(), "第二次仍应回源并再次失败");
+        cache.run_pending_tasks().await;
+        assert_eq!(cache.entry_count(), 0, "失败不应留下任何条目");
+        assert!(
+            hits.load(Ordering::SeqCst) >= 2,
+            "失败不进缓存：第二次必须重新回源"
+        );
+        task.abort();
+        forget_epg_disk(&url);
     }
 }

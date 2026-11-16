@@ -24,8 +24,6 @@ pub mod db;
 pub mod env;
 #[path = "infra/error.rs"]
 pub mod error;
-#[path = "infra/flights.rs"]
-pub(crate) mod flights;
 #[path = "infra/http.rs"]
 pub mod http;
 #[path = "infra/logging/mod.rs"]

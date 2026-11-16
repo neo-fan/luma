@@ -51,9 +51,9 @@
 //! 播放器侧不需要额外处理。
 
 use crate::error::{code, AppError};
+use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use url::Url;
@@ -915,24 +915,33 @@ fn take_token(bucket: &mut DoubanBucket, now: Instant) -> Option<Duration> {
     }
 }
 
-fn take_douban_token() -> Option<Duration> {
-    let mut bucket = douban_bucket()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    take_token(&mut bucket, Instant::now())
-}
-
 /// 拿到一个令牌再发请求：桶里还有就直接过，没有才等补满这一个。
-async fn pace_douban() {
+///
+/// `now` 目前只用于测试：注入网络桩时传一个「每次调用前进 ≥350ms」的时钟，
+/// 桶恒满，桩请求不消耗（也不受罚于）真实豆瓣的令牌预算。`take_token`
+/// 的桶逻辑不变。
+async fn pace_douban(now: fn() -> Instant) {
     loop {
-        match take_douban_token() {
+        let wait = {
+            let mut bucket = douban_bucket()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            take_token(&mut bucket, now())
+        };
+        match wait {
             None => return,
             Some(wait) => tokio::time::sleep(wait).await,
         }
     }
 }
 
-/// 豆瓣已经在限流窗口里：这期间不再发搜索，直接回退到源站数据。
+/// 限流冷却槽：全局单值 `Mutex<Option<Instant>>`，**刻意不进 moka**。
+///
+/// 这不是缓存，是限流状态机的一个槽：语义是「until 之前对所有请求禁用搜索」，
+/// 读写都是对同一格的覆盖检查，没有 key、没有并发合并需求（`try_get_with`
+/// 之类都用不上）、也不靠容量淘汰。换成 moka 只会把一次 `lock + 比较` 包成
+/// 一个单条目缓存 + 后台淘汰任务，还引入「淘汰跑没跑」这种这里不需要的
+/// 不确定性。仓库允许这种有理由的手搓：单槽状态不是缓存。
 fn douban_cooling() -> bool {
     let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new(None));
     match cooldown.lock() {
@@ -948,18 +957,51 @@ fn cool_down_douban() {
     }
 }
 
+/// 测试复位冷却槽（限流逻辑本身不动，见上方「刻意不进 moka」的注释）。
+/// 429 用例会打开一个 180s 的全局窗口，不清掉会淹死其他走网络路径的用例。
+#[cfg(test)]
+fn reset_cooldown() {
+    let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = cooldown.lock() {
+        *guard = None;
+    }
+}
+
+/// 候选搜索的结论性质。旧版直接返回 `Vec`，把「全部端点传输失败」和
+/// 「豆瓣答复了但确实没有这部剧」压成同一个空数组，调用方只能把两者都
+/// 负缓存 —— 这里拆开：只有 `Conclusive` 才允许写正/负缓存。
+enum SearchOutcome {
+    /// 至少一个端点正常应答（哪怕候选是空的）：「找到/没找到」是可信结论。
+    Conclusive(Vec<SuggestItem>),
+    /// 冷却跳过 / 被限流（error_info）/ 所有端点都没能正常应答：不下结论，
+    /// 不进任何缓存，下次照常重试（429/5xx/超时可重试的约束就在这里兑现）。
+    Inconclusive,
+}
+
 /// 候选搜索：搜索页 `__DATA__` → 老接口 `subject_suggest` → 移动端搜索接口。
 ///
 /// 2026-11-15 实测：`subject_suggest` 对无 cookie 请求恒返回 `[]`，放在首跳
 /// 等于每条补全链白跑一次往返，因此降为兜底；`subject_search` 稳定返回明文
 /// 结果，作主源。`m.douban.com/rexxar/api/v2/search/subjects` 很快会变成
 /// `need_login` 403，只作最后兜底。
-async fn search_candidates(kind: ProxyKind, prefix: &str, title: &str) -> Vec<SuggestItem> {
+///
+/// `now` 目前不参与判定，只是测试注入网络桩后让 `pace_douban` 的令牌等待
+/// 保持瞬时：注入的 HTTP 请求不该消耗真实豆瓣的令牌预算，测试里它必须恒为
+/// 「有令牌」。
+async fn search_candidates(
+    kind: ProxyKind,
+    prefix: &str,
+    title: &str,
+    now: fn() -> Instant,
+) -> SearchOutcome {
     if douban_cooling() {
         tracing::debug!(title, "douban search skipped during cooldown");
-        return Vec::new();
+        return SearchOutcome::Inconclusive;
     }
-    pace_douban().await;
+    pace_douban(now).await;
+
+    // 本轮链路里是否有端点正常应答过（拿到符合契约的响应）。
+    let mut responded = false;
 
     let target = format!(
         "https://movie.douban.com/subject_search?search_text={}",
@@ -978,11 +1020,12 @@ async fn search_candidates(kind: ProxyKind, prefix: &str, title: &str) -> Vec<Su
                     if !error.is_empty() {
                         tracing::warn!(title, error, "douban search throttled, cooling down");
                         cool_down_douban();
-                        return Vec::new();
+                        return SearchOutcome::Inconclusive;
                     }
+                    responded = true;
                     let items = parse_search_data(&data);
                     if !items.is_empty() {
-                        return items;
+                        return SearchOutcome::Conclusive(items);
                     }
                     tracing::warn!(title, "douban search page returned no subjects");
                 }
@@ -999,12 +1042,16 @@ async fn search_candidates(kind: ProxyKind, prefix: &str, title: &str) -> Vec<Su
         percent_encode(title)
     );
     match get_json(kind, prefix, &target).await {
-        Ok(body) => {
+        Ok(body) if body.is_array() => {
+            responded = true;
             let items = parse_suggest(&body);
             if !items.is_empty() {
-                return items;
+                return SearchOutcome::Conclusive(items);
             }
             tracing::warn!(title, "douban suggest returned no subjects");
+        }
+        Ok(body) => {
+            tracing::warn!(title, shape = %body, "douban suggest returned a non-array body");
         }
         Err(err) => {
             tracing::warn!(code = %err.code, error = %err.message, "douban suggest failed");
@@ -1016,10 +1063,14 @@ async fn search_candidates(kind: ProxyKind, prefix: &str, title: &str) -> Vec<Su
         percent_encode(title)
     );
     match get_json(kind, prefix, &target).await {
-        Ok(body) => parse_search_subjects(&body),
+        Ok(body) => SearchOutcome::Conclusive(parse_search_subjects(&body)),
         Err(err) => {
             tracing::warn!(code = %err.code, error = %err.message, "douban mobile search failed");
-            Vec::new()
+            if responded {
+                SearchOutcome::Conclusive(Vec::new())
+            } else {
+                SearchOutcome::Inconclusive
+            }
         }
     }
 }
@@ -1028,53 +1079,79 @@ async fn search_candidates(kind: ProxyKind, prefix: &str, title: &str) -> Vec<Su
 /// 后记住正确路径，同一 id 的后续补全直奔命中路径；双路径都明确 404 的记
 /// 「无详情」，直接走 abstract。只记明确结论，网络失败/限流不入记忆。
 const DETAIL_PATH_TTL: Duration = Duration::from_secs(60 * 60);
-const DETAIL_PATH_CAP: usize = 256;
+const DETAIL_PATH_CAP: u64 = 256;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DetailPath {
     Tv,
     Movie,
     Unavailable,
 }
 
-fn detail_paths() -> &'static Mutex<HashMap<String, (Instant, DetailPath)>> {
-    static PATHS: OnceLock<Mutex<HashMap<String, (Instant, DetailPath)>>> = OnceLock::new();
-    PATHS.get_or_init(|| Mutex::new(HashMap::new()))
+/// 路径记忆分两个表：`Unavailable` 是否定结论（等价负缓存），单独一张更短
+/// 生命周期的表反而不合理——它和正结论共享同一条 TTL 约定（1 小时后重新
+/// 探测），差别只在读侧语义：正路径要取出变体，否定路径只要「存在即生效」。
+/// 所以正/负各一个 moka 实例：`Cache<String, DetailPath>` 只存 Tv/Movie，
+/// `Cache<String, ()>` 存 Unavailable，取代原先同一 HashMap 里混着
+/// `DetailPath::Unavailable` 加手工 `retain` 清扫的写法。
+static DETAIL_PATH_CACHE: OnceLock<Cache<String, DetailPath>> = OnceLock::new();
+static DETAIL_UNAVAILABLE_CACHE: OnceLock<Cache<String, ()>> = OnceLock::new();
+
+fn detail_path_cache() -> &'static Cache<String, DetailPath> {
+    DETAIL_PATH_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(DETAIL_PATH_CAP)
+            .time_to_live(DETAIL_PATH_TTL)
+            .build()
+    })
 }
 
-fn detail_path_hint(id: &str) -> Option<DetailPath> {
-    let guard = detail_paths().lock().ok()?;
-    let (at, path) = guard.get(id)?;
-    if at.elapsed() > DETAIL_PATH_TTL {
-        return None;
-    }
-    Some(*path)
+fn detail_unavailable_cache() -> &'static Cache<String, ()> {
+    DETAIL_UNAVAILABLE_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(DETAIL_PATH_CAP)
+            .time_to_live(DETAIL_PATH_TTL)
+            .build()
+    })
 }
 
-fn remember_detail_path(id: &str, path: DetailPath) {
-    let Ok(mut guard) = detail_paths().lock() else {
-        return;
-    };
-    if guard.len() >= DETAIL_PATH_CAP {
-        guard.retain(|_, (at, _)| at.elapsed() <= DETAIL_PATH_TTL);
+async fn remember_detail_path(id: &str, path: DetailPath) {
+    // 容量/过期由 moka 后台任务管，写入不再需要手工 `retain` 清扫。
+    // `future::Cache` 的 insert 是 async：必须 await 才完成写入。
+    let key = id.to_string();
+    match path {
+        DetailPath::Unavailable => {
+            detail_unavailable_cache().insert(key, ()).await;
+        }
+        _ => {
+            detail_path_cache().insert(key, path).await;
+        }
     }
-    guard.insert(id.to_string(), (Instant::now(), path));
 }
 
-fn forget_detail_path(id: &str) {
-    if let Ok(mut guard) = detail_paths().lock() {
-        guard.remove(id);
-    }
+async fn forget_detail_path(id: &str) {
+    detail_path_cache().invalidate(id).await;
+    detail_unavailable_cache().invalidate(id).await;
 }
 
 /// 详情：按路径记忆直奔 `tv` / `movie`（未探测过则先 tv 后 movie），
 /// 都不行退到 `subject_abstract`。
-async fn fetch_detail(kind: ProxyKind, prefix: &str, id: &str) -> Option<Value> {
+async fn fetch_detail(
+    kind: ProxyKind,
+    prefix: &str,
+    id: &str,
+    now: fn() -> Instant,
+) -> Option<Value> {
     if douban_cooling() {
         tracing::debug!(id, "douban detail skipped during cooldown");
         return None;
     }
-    let hint = detail_path_hint(id);
+    // 用 `get` 读否定表：过期条目按 TTL 立即不可见，不依赖后台淘汰时序。
+    let hint = if detail_unavailable_cache().get(id).await.is_some() {
+        Some(DetailPath::Unavailable)
+    } else {
+        detail_path_cache().get(id).await
+    };
     let paths: &[&str] = match hint {
         Some(DetailPath::Tv) => &["tv"],
         Some(DetailPath::Movie) => &["movie"],
@@ -1083,7 +1160,7 @@ async fn fetch_detail(kind: ProxyKind, prefix: &str, id: &str) -> Option<Value> 
     };
     let mut not_found = 0usize;
     for path in paths {
-        pace_douban().await;
+        pace_douban(now).await;
         let target = format!(
             "https://m.douban.com/rexxar/api/v2/{path}/{}?ck=&for_mobile=1",
             percent_encode(id)
@@ -1098,7 +1175,8 @@ async fn fetch_detail(kind: ProxyKind, prefix: &str, id: &str) -> Option<Value> 
                         } else {
                             DetailPath::Movie
                         },
-                    );
+                    )
+                    .await;
                     return Some(value);
                 }
                 tracing::warn!(id, path, "douban rexxar returned an empty subject");
@@ -1113,10 +1191,10 @@ async fn fetch_detail(kind: ProxyKind, prefix: &str, id: &str) -> Option<Value> 
     }
     if hint.is_none() && not_found == 2 {
         // 双路径都明确 404：这个 id 没有 rexxar 详情，下次直接 abstract。
-        remember_detail_path(id, DetailPath::Unavailable);
+        remember_detail_path(id, DetailPath::Unavailable).await;
     } else if hint.is_some() && not_found == paths.len() && !paths.is_empty() {
         // 记住的路径失效（条目变更等）：清掉记忆，下次重新双路径探测。
-        forget_detail_path(id);
+        forget_detail_path(id).await;
     }
     let target = format!(
         "https://movie.douban.com/j/subject_abstract?subject_id={}",
@@ -1136,6 +1214,7 @@ async fn build_meta(
     prefix: &str,
     item: &SuggestItem,
     year: Option<&str>,
+    now: fn() -> Instant,
 ) -> DoubanMeta {
     let mut meta = DoubanMeta {
         id: item.id.trim().to_string(),
@@ -1150,7 +1229,7 @@ async fn build_meta(
         pic: String::new(),
         url: format!("https://movie.douban.com/subject/{}/", item.id.trim()),
     };
-    if let Some(detail) = fetch_detail(kind, prefix, &item.id).await {
+    if let Some(detail) = fetch_detail(kind, prefix, &item.id, now).await {
         apply_detail(&mut meta, &detail);
     }
     if meta.year.is_empty() {
@@ -1172,12 +1251,26 @@ async fn build_meta(
 ///
 /// 网络层失败一律 `Ok(None)`（前端静默回退），参数错误才 `Err`。
 pub async fn fetch(req: &DoubanMetaRequest) -> Result<Option<DoubanMeta>, AppError> {
+    fetch_with(req, Instant::now).await
+}
+
+/// 真实入口的薄壳：生产路径固定用 `Instant::now` 和真网络；`now` 只是
+/// 测试注入桩请求不消耗真实令牌桶的缝（见 `pace_douban` / `search_candidates`）。
+async fn fetch_with(
+    req: &DoubanMetaRequest,
+    now: fn() -> Instant,
+) -> Result<Option<DoubanMeta>, AppError> {
     let title = req.title.trim().to_string();
     if title.is_empty() {
         return Err(AppError::new(code::INVALID_ARGUMENT, "豆瓣查询需要片名"));
     }
     let kind = ProxyKind::parse(req.proxy_type.as_deref());
-    let prefix = req.proxy_prefix.as_deref().unwrap_or("").trim().to_string();
+    let prefix = req
+        .proxy_prefix
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if kind == ProxyKind::Custom && prefix.is_empty() {
         return Err(AppError::new(
             code::INVALID_ARGUMENT,
@@ -1191,8 +1284,10 @@ pub async fn fetch(req: &DoubanMetaRequest) -> Result<Option<DoubanMeta>, AppErr
         .filter(|text| !text.is_empty())
         .map(str::to_string);
     let key = cache_key(&title, year.as_deref());
-    if let Some(hit) = cache_get(&key) {
-        return Ok(hit);
+    // 负缓存命中：查过、确认没有，TTL 内不再跑搜索链（轮播每圈都会重问）。
+    // 用 `get` 而不是 `contains_key`：前者确定会按 TTL 过滤过期条目。
+    if negative_cache().get(&key).await.is_some() {
+        return Ok(None);
     }
     if douban_cooling() {
         tracing::debug!(title, "douban meta skipped during cooldown");
@@ -1200,37 +1295,90 @@ pub async fn fetch(req: &DoubanMetaRequest) -> Result<Option<DoubanMeta>, AppErr
     }
     // 冷 key 去重：首页一屏几十张卡片、详情页与头图同时问同一个片名时，
     // 缓存里还没有条目，每个调用者都会跑一遍完整搜索链（候选搜索 + 摘要 +
-    // rexxar 详情）。令牌桶只限速、不去重，所以放大仍然发生——这里让同
-    // title/year 的并发查询共享同一次执行。
-    cold_flights()
-        .dedupe(&key, || cold_fetch(kind, prefix, title, year))
-        .await
+    // rexxar 详情）。令牌桶只限速、不去重，所以放大仍然发生——moka
+    // `try_get_with` 让同 key 并发共享同一次执行：求值 Ok 进正缓存，
+    // Err 不进缓存（取代原先 `HashMap + Instant` 表和自研 flights 两套手搓）。
+    let outcome = positive_cache()
+        .try_get_with(key, cold_fetch(kind, prefix, title, year, now))
+        .await;
+    match outcome {
+        Ok(meta) => Ok(Some(meta)),
+        Err(fail) => match &*fail {
+            ColdFail::NotFound => Ok(None),
+            // 对外口径不变：网络层失败一律 Ok(None)（前端静默回退）。
+            // Transient 只在冷路径内部区分「要不要写负缓存」，错误本身
+            // 留给日志，不抛给前端。
+            ColdFail::Transient(err) => {
+                tracing::debug!(code = %err.code, error = %err.message, "douban cold fetch transient");
+                Ok(None)
+            }
+        },
+    }
 }
 
-/// `fetch` 的实际取数链（缓存复查留在里面：等待 leader 时可能已被填上）。
+/// 冷路径的两种失败。`try_get_with` 的 Ok/Err 只二分「进不进正缓存」，
+/// 「确认无结果」和「查询失败」都是 Err，但只有前者要写负缓存 —— 用
+/// 错误类型把它们区分开。与旧 `Cached { meta: Option<DoubanMeta> }` 的
+/// 三态一一对应：正缓存 Ok ↔ `Some(Some(meta))`；`NotFound` ↔
+/// `Some(None)`（查过、确认没有）；`Transient` ↔ 外层 `None`（没查过/
+/// 没查出结论）。失败连负缓存都不进是旧实现没有、约束要求的修正：旧表
+/// 会把一次断网也「确认无结果」5 分钟。
+#[derive(Debug)]
+enum ColdFail {
+    /// 搜索链跑通了但没有任何匹配条目：负缓存（`NEG_CACHE_TTL`）压制重复查询。
+    NotFound,
+    /// 传输层失败 / 冷却跳过（429、5xx、超时）：什么缓存都不进，下次照常重试。
+    Transient(AppError),
+}
+
+impl std::fmt::Display for ColdFail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "豆瓣无匹配条目"),
+            Self::Transient(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for ColdFail {}
+
+/// `fetch_with` 的实际取数链（只在 moka 正缓存没有有效条目时被跑到）。
 async fn cold_fetch(
     kind: ProxyKind,
     prefix: String,
     title: String,
     year: Option<String>,
-) -> Result<Option<DoubanMeta>, AppError> {
-    let key = cache_key(&title, year.as_deref());
-    if let Some(hit) = cache_get(&key) {
-        return Ok(hit);
-    }
+    now: fn() -> Instant,
+) -> Result<DoubanMeta, ColdFail> {
     if douban_cooling() {
+        // 冷却跳过不是「查无此片」：不进任何缓存，Transient 语义。
         tracing::debug!(title = %title, "douban meta skipped during cooldown");
-        return Ok(None);
+        return Err(ColdFail::Transient(AppError::new(
+            code::CONFIG_FETCH_FAIL,
+            "豆瓣冷却中",
+        )));
     }
-    let items = search_candidates(kind, &prefix, &title).await;
+    let items = match search_candidates(kind, &prefix, &title, now).await {
+        SearchOutcome::Conclusive(items) => items,
+        SearchOutcome::Inconclusive => {
+            // 查失败（429/5xx/超时/冷却）：不下「查无此片」的结论，也不进
+            // 任何缓存，下次照常重试 —— try_get_with 的 Err 不落正表。
+            return Err(ColdFail::Transient(AppError::new(
+                code::CONFIG_FETCH_FAIL,
+                "豆瓣搜索链未能正常应答",
+            )));
+        }
+    };
     let Some(item) = pick_candidate(&items, &title, year.as_deref()) else {
         tracing::info!(title = %title, candidates = items.len(), "douban: no matching subject");
-        cache_put(key, None);
-        return Ok(None);
+        // 负缓存在 init 内部写：leader 走到这里就已落表，并发 follower 拿到
+        // 共享的 Err 时压制已经生效，不会有窗口期漏网重跑。
+        negative_cache()
+            .insert(cache_key(&title, year.as_deref()), ())
+            .await;
+        return Err(ColdFail::NotFound);
     };
-    let meta = build_meta(kind, &prefix, item, year.as_deref()).await;
-    cache_put(key, Some(meta.clone()));
-    Ok(Some(meta))
+    Ok(build_meta(kind, &prefix, item, year.as_deref(), now).await)
 }
 
 /// 详情页自动补全。参数扁平（camelCase：`proxyType` / `proxyPrefix`），
@@ -1253,64 +1401,39 @@ pub async fn douban_meta(
 
 // ---- 缓存 -----------------------------------------------------------------
 
-/// 同 `title/year` 的并发查询去重表。条目完成后即摘除——缓存语义仍由上面
-/// 那套正/负缓存（`cache_get` / `cache_put` / `NEG_CACHE_TTL`）负责。
-static COLD_FLIGHTS: OnceLock<crate::flights::Flights<Result<Option<DoubanMeta>, AppError>>> =
-    OnceLock::new();
+/// 正/负缓存分两个 moka 实例：TTL 不同（10min vs 5min），moka 的
+/// `time_to_live` 是表级属性，一张表装不下两种寿命 —— 这也正好让
+/// 「命中 / 确认无结果 / 没查过」三态各归其表：正表有值 = 命中，负表有值 =
+/// 确认无结果（`cache_get` 的 `Some(None)`），两表皆空 = 未查过（外层
+/// `None`）。取代原先一张 HashMap 用 `Option<DoubanMeta>` 的嵌套表达。
+///
+/// 淘汰行为差异（相对旧的「`CACHE_CAP` 超限整表 `retain`」）：旧实现超限才
+/// 清扫一次过期项、清扫后仍可能超限（没有真正的容量上限），也没有限制
+/// 活跃条目数；现在是 `max_capacity`（近似 LRU/W-TinyLFU 逐出）+ 后台按
+/// TTL 逐出，活跃条目也有硬上限，不再有「写线程持锁扫全表」的毛刺。
+static META_POSITIVE: OnceLock<Cache<String, DoubanMeta>> = OnceLock::new();
+static META_NEGATIVE: OnceLock<Cache<String, ()>> = OnceLock::new();
 
-fn cold_flights() -> &'static crate::flights::Flights<Result<Option<DoubanMeta>, AppError>> {
-    COLD_FLIGHTS.get_or_init(Default::default)
+fn positive_cache() -> &'static Cache<String, DoubanMeta> {
+    META_POSITIVE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(CACHE_CAP as u64)
+            .time_to_live(CACHE_TTL)
+            .build()
+    })
 }
 
-struct Cached {
-    at: Instant,
-    /// `None` = 负结果（查无此片），用更短的 NEG_CACHE_TTL。
-    meta: Option<DoubanMeta>,
-}
-
-fn cache() -> &'static Mutex<HashMap<String, Cached>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, Cached>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn negative_cache() -> &'static Cache<String, ()> {
+    META_NEGATIVE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(CACHE_CAP as u64)
+            .time_to_live(NEG_CACHE_TTL)
+            .build()
+    })
 }
 
 fn cache_key(title: &str, year: Option<&str>) -> String {
     format!("{}|{}", normalize_title(title), year.unwrap_or(""))
-}
-
-fn entry_fresh(entry: &Cached) -> bool {
-    let ttl = if entry.meta.is_some() {
-        CACHE_TTL
-    } else {
-        NEG_CACHE_TTL
-    };
-    entry.at.elapsed() <= ttl
-}
-
-/// 外层 `None` = 未命中；内层 `None` = 命中一条负结果。
-fn cache_get(key: &str) -> Option<Option<DoubanMeta>> {
-    let guard = cache().lock().ok()?;
-    let hit = guard.get(key)?;
-    if !entry_fresh(hit) {
-        return None;
-    }
-    Some(hit.meta.clone())
-}
-
-fn cache_put(key: String, meta: Option<DoubanMeta>) {
-    let Ok(mut guard) = cache().lock() else {
-        return;
-    };
-    if guard.len() >= CACHE_CAP {
-        guard.retain(|_, entry| entry_fresh(entry));
-    }
-    guard.insert(key, Cached { at: Instant::now(), meta });
-}
-
-#[cfg(test)]
-fn clear_cache() {
-    if let Ok(mut guard) = cache().lock() {
-        guard.clear();
-    }
 }
 
 #[cfg(test)]
@@ -1334,7 +1457,399 @@ mod tests {
     }
 
     use super::*;
+    use axum::body::Body;
+    use axum::http::{Response, StatusCode};
+    use axum::routing::get;
+    use futures_util::FutureExt;
     use serde_json::json;
+    use std::future::Future;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    // ---- 网络桩与缓存行为测试 ----------------------------------------------
+    //
+    // 计数一律用调用方持有的 `Arc<AtomicUsize>` 闭包捕获；全局静态计数器
+    // 会被并行用例互相污染（spider/python.rs 的第一版就栽过）。每个用例用
+    // 自己独占的片名当缓存 key，谁也不碰谁的条目。
+
+    /// 桩时钟：每次调用前进一个完整补充周期，`take_token` 的 `elapsed` 恒
+    /// ≥ 350ms → 桶永远是满的。桩流量因此既不消耗也不受罚于真实豆瓣的
+    /// 限流预算（测试里没有任何 sleep）。这是时钟不是计数器：没有断言
+    /// 读它，跨用例单调递增无害。
+    fn stub_clock() -> Instant {
+        static BASE: OnceLock<Instant> = OnceLock::new();
+        static TICK: AtomicU64 = AtomicU64::new(0);
+        let tick = TICK.fetch_add(1, Ordering::SeqCst);
+        *BASE.get_or_init(Instant::now) + DOUBAN_REFILL * (tick as u32 + 1)
+    }
+
+    /// 冷却槽与共享路径记忆是全局状态：走网络的用例串行跑，进入时复位
+    /// 冷却。锁的是状态，不是被禁止的计数静态量。
+    fn network_guard() -> &'static tokio::sync::Mutex<()> {
+        static GUARD: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        GUARD.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    /// 起一个豆瓣形状的本地桩：按请求路径（含 query）选响应体，请求数记在
+    /// 调用方传入的闭包里。
+    async fn douban_site<F, Fut>(handler: F) -> String
+    where
+        F: Fn(String) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = (StatusCode, String)> + Send + 'static,
+    {
+        let router = axum::Router::new().route(
+            "/{*path}",
+            get(move |parts: axum::http::request::Parts, query: String| {
+                let handler = handler.clone();
+                async move {
+                    let full = if query.is_empty() {
+                        parts.uri.path().to_string()
+                    } else {
+                        format!("{}?{}", parts.uri.path(), query)
+                    };
+                    let (status, body) = handler(full).await;
+                    Response::builder()
+                        .status(status)
+                        .header("content-type", "text/plain; charset=utf-8")
+                        .body(Body::from(body))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stub");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        format!("http://{addr}/")
+    }
+
+    fn search_endpoint(url: &str) -> bool {
+        url.contains("subject_search") || url.contains("subject_suggest") || url.contains("search/subjects")
+    }
+
+    fn search_page_with(title: &str) -> String {
+        format!(
+            r#"<html><script>window.__DATA__ = {{"count": 1, "items": [{{"id": 25853071, "title": "{title}", "cover_url": "https://img3.doubanio.com/p.jpg"}}]}};</script></html>"#
+        )
+    }
+
+    fn empty_search_page() -> String {
+        r#"<html><script>window.__DATA__ = {"count": 0, "items": []};</script></html>"#.to_string()
+    }
+
+    /// 搜索链三腿都给「正常应答但没有结果」的形状。
+    fn empty_search_chain(url: &str) -> (StatusCode, String) {
+        if url.contains("subject_search") {
+            (StatusCode::OK, empty_search_page())
+        } else if url.contains("subject_suggest") {
+            (StatusCode::OK, "[]".to_string())
+        } else {
+            (StatusCode::OK, r#"{"subjects": {"items": []}}"#.to_string())
+        }
+    }
+
+    fn rexxar_detail() -> String {
+        json!({
+            "title": "庆余年 第一季",
+            "year": "2019",
+            "rating": { "value": 7.9, "count": 1176890 },
+            "intro": "测试简介",
+            "directors": [{ "name": "孙皓" }],
+            "actors": [{ "name": "张若昀" }],
+            "genres": ["剧情"],
+            "pic": { "large": "https://img3.doubanio.com/l.jpg" },
+            "url": "https://movie.douban.com/subject/25853071/"
+        })
+        .to_string()
+    }
+
+    fn stubbed_request(base: String, title: &str, year: Option<&str>) -> DoubanMetaRequest {
+        DoubanMetaRequest {
+            title: title.into(),
+            year: year.map(str::to_string),
+            proxy_type: Some("custom".into()),
+            proxy_prefix: Some(base),
+        }
+    }
+
+    /// (a) 正缓存 TTL 内二次命中：不再跑搜索链，返回同一份元数据。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn positive_cache_hit_skips_search_chain() {
+        let _serial = network_guard().lock().await;
+        reset_cooldown();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let chain = hits.clone();
+        let base = douban_site(move |url: String| {
+            let chain = chain.clone();
+            async move {
+                if search_endpoint(&url) {
+                    chain.fetch_add(1, Ordering::SeqCst);
+                    if url.contains("subject_search") {
+                        (StatusCode::OK, search_page_with("正缓存甲"))
+                    } else {
+                        empty_search_chain(&url)
+                    }
+                } else if url.contains("rexxar") {
+                    (StatusCode::OK, rexxar_detail())
+                } else {
+                    (StatusCode::NOT_FOUND, String::new())
+                }
+            }
+        })
+        .await;
+        let req = stubbed_request(base, "正缓存甲", Some("2019"));
+        let first = fetch_with(&req, stub_clock)
+            .await
+            .expect("fetch")
+            .expect("meta");
+        assert_eq!(first.id, "25853071");
+        let after_first = hits.load(Ordering::SeqCst);
+        assert!(after_first >= 1, "first call must run the search chain");
+        let second = fetch_with(&req, stub_clock).await.expect("fetch").expect("meta");
+        assert_eq!(second, first);
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            after_first,
+            "TTL 内的第二次命中不能再走搜索链"
+        );
+    }
+
+    /// (b) 负缓存压制「确认无结果」；(b+) 搜索链返回限流页（error_info，
+    /// 即 429 的页面形态）→ 触发全局冷却，冷却窗口内不再发任何搜索。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn negative_cache_suppresses_not_found_then_429_cools_down() {
+        let _serial = network_guard().lock().await;
+        reset_cooldown();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let chain = hits.clone();
+        let base = douban_site(move |url: String| {
+            let chain = chain.clone();
+            async move {
+                if !search_endpoint(&url) {
+                    return (StatusCode::NOT_FOUND, String::new());
+                }
+                chain.fetch_add(1, Ordering::SeqCst);
+                empty_search_chain(&url)
+            }
+        })
+        .await;
+        let req = stubbed_request(base, "查无此片负缓存乙", None);
+        assert!(fetch_with(&req, stub_clock).await.expect("fetch").is_none());
+        let after_first = hits.load(Ordering::SeqCst);
+        assert!(after_first >= 1, "first call must run the search chain");
+        assert!(fetch_with(&req, stub_clock).await.expect("fetch").is_none());
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            after_first,
+            "负缓存 TTL 内「确认无结果」不得重跑搜索链"
+        );
+        // 「确认无结果」是命中态 Some(None)，不是「没查过」的 None。
+        // multi_thread runtime 会驱动 moka 后台维护，async 读直接可见。
+        let key = cache_key("查无此片负缓存乙", None);
+        assert_eq!(negative_cache().get(&key).await, Some(()));
+        assert_eq!(cache_get(&key).await, Some(None));
+
+        // 限流页（429 的页面形态，error_info）→ 触发 THROTTLE_COOLDOWN，
+        // 此后搜索被冷却闸整体掐掉。
+        let throttle_hits = Arc::new(AtomicUsize::new(0));
+        let counter = throttle_hits.clone();
+        let base = douban_site(move |_url: String| {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                (
+                    StatusCode::OK,
+                    r#"<html><script>window.__DATA__ = {"error_info": "搜索访问太频繁.", "items": []};</script></html>"#
+                        .to_string(),
+                )
+            }
+        })
+        .await;
+        let req = stubbed_request(base, "限流冷却丙", None);
+        assert!(fetch_with(&req, stub_clock).await.expect("fetch").is_none());
+        assert_eq!(throttle_hits.load(Ordering::SeqCst), 1);
+        assert!(douban_cooling(), "429 之后应处于冷却窗口");
+        assert!(fetch_with(&req, stub_clock).await.expect("fetch").is_none());
+        assert_eq!(
+            throttle_hits.load(Ordering::SeqCst),
+            1,
+            "冷却期间不得再发搜索请求（限流状态机语义不变）"
+        );
+        reset_cooldown();
+    }
+
+    /// (c) 查失败（5xx）不进任何缓存：第二次调用照常重跑搜索链。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn transport_failure_is_not_cached_and_retries() {
+        let _serial = network_guard().lock().await;
+        reset_cooldown();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let base = douban_site(move |_url: String| {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                (StatusCode::SERVICE_UNAVAILABLE, "douban down".to_string())
+            }
+        })
+        .await;
+        let req = stubbed_request(base, "失败不缓存丁", Some("2019"));
+        assert!(
+            fetch_with(&req, stub_clock)
+                .await
+                .expect("网络失败对外仍是 Ok(None)")
+                .is_none(),
+            "查失败不能伪装成确认无结果"
+        );
+        let after_first = hits.load(Ordering::SeqCst);
+        assert!(after_first >= 1);
+        assert!(fetch_with(&req, stub_clock).await.expect("fetch").is_none());
+        assert!(
+            hits.load(Ordering::SeqCst) > after_first,
+            "失败后第二次必须重新回源（失败不进任何缓存）"
+        );
+    }
+
+    /// (d) 同 title/year 并发首次查询只跑一次完整搜索链（moka `try_get_with`）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn concurrent_same_key_runs_chain_once() {
+        let _serial = network_guard().lock().await;
+        reset_cooldown();
+        let main_hits = Arc::new(AtomicUsize::new(0));
+        let counter = main_hits.clone();
+        let base = douban_site(move |url: String| {
+            let counter = counter.clone();
+            async move {
+                if url.contains("subject_search") {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    // 主源挂起一小会，确保并发调用者都赶在同一次 init 完成之前。
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    (StatusCode::OK, search_page_with("并发去重戊"))
+                } else if search_endpoint(&url) {
+                    empty_search_chain(&url)
+                } else if url.contains("rexxar") {
+                    (StatusCode::OK, rexxar_detail())
+                } else {
+                    (StatusCode::NOT_FOUND, String::new())
+                }
+            }
+        })
+        .await;
+        let req = Arc::new(stubbed_request(base, "并发去重戊", Some("2019")));
+        let mut joins = Vec::new();
+        for _ in 0..4 {
+            let req = req.clone();
+            joins.push(tokio::spawn(async move { fetch_with(&req, stub_clock).await }));
+        }
+        let mut results = Vec::new();
+        for join in joins {
+            results.push(
+                join.await
+                    .expect("join")
+                    .expect("fetch")
+                    .expect("四个并发调用都要拿到元数据"),
+            );
+        }
+        assert!(results.windows(2).all(|w| w[0] == w[1]), "并发返回必须是同一份元数据");
+        assert_eq!(
+            main_hits.load(Ordering::SeqCst),
+            1,
+            "同 key 并发首次只跑一次搜索链"
+        );
+    }
+
+    /// detail_paths moka 化：Tv/Movie 路径记忆、直奔命中路径、失效后重探测。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn detail_path_memory_guides_rexxar_probing() {
+        let _serial = network_guard().lock().await;
+        reset_cooldown();
+        let probed = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = probed.clone();
+        let base = douban_site(move |url: String| {
+            let seen = seen.clone();
+            async move {
+                if search_endpoint(&url) {
+                    if url.contains("subject_search") {
+                        (StatusCode::OK, search_page_with("路径记忆己"))
+                    } else {
+                        empty_search_chain(&url)
+                    }
+                } else if url.contains("/rexxar/") {
+                    let path = if url.contains("/tv/") { "tv" } else { "movie" };
+                    if let Ok(mut guard) = seen.lock() {
+                        guard.push(path.to_string());
+                    }
+                    if path == "tv" {
+                        // 电影条目：tv 必 404（与模块注释一致）。
+                        return (StatusCode::NOT_FOUND, String::new());
+                    }
+                    (StatusCode::OK, rexxar_detail())
+                } else {
+                    (StatusCode::NOT_FOUND, String::new())
+                }
+            }
+        })
+        .await;
+        let id = "25853071";
+        forget_detail_path(id).await;
+        // 每个阶段用不同 year → 不同的元数据缓存键，强制各跑一条冷链，
+        // 但候选 id 同为 25853071，观察的是共享的「路径记忆」表。
+        let req = stubbed_request(base.clone(), "路径记忆己", Some("2019"));
+        let first = fetch_with(&req, stub_clock)
+            .await
+            .expect("fetch")
+            .expect("meta");
+        assert_eq!(first.title, "庆余年 第一季", "detail 走 movie 路径命中");
+        assert_eq!(probed_paths(&probed), vec!["tv", "movie"]);
+        assert_eq!(detail_path_cache().get(id).await, Some(DetailPath::Movie));
+        // 记忆生效后，同 id 的新查询直奔 movie，不再试 tv。
+        let second_req = stubbed_request(base.clone(), "路径记忆己", None);
+        let second = fetch_with(&second_req, stub_clock)
+            .await
+            .expect("fetch")
+            .expect("meta");
+        assert_eq!(second.title, "庆余年 第一季");
+        assert_eq!(probed_paths(&probed), vec!["tv", "movie", "movie"]);
+        // 记住的路径失效（条目变更）：清掉记忆后重新双路径探测。
+        forget_detail_path(id).await;
+        let third_req = stubbed_request(base, "路径记忆己", Some("2020"));
+        assert!(fetch_with(&third_req, stub_clock).await.expect("fetch").is_some());
+        assert_eq!(probed_paths(&probed), vec!["tv", "movie", "movie", "tv", "movie"]);
+    }
+
+    fn probed_paths(probed: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+        probed.lock().expect("probed paths").clone()
+    }
+
+    /// 测试组装用的同步写入：真实查询路径走 `try_get_with` / async `insert`，
+    /// 不经这里。moka future Cache 的 `insert` future 首次 poll 即完成记账
+    /// （`now_or_never` 只跳过后台维护），读取一律 async、由 runtime 驱动。
+    fn cache_put(key: String, meta: Option<DoubanMeta>) {
+        match meta {
+            Some(meta) => {
+                let _ = positive_cache().insert(key, meta).now_or_never();
+            }
+            None => {
+                let _ = negative_cache().insert(key, ()).now_or_never();
+            }
+        }
+    }
+
+    /// 同 `cache_put`：旧版是同步函数，测试直接调；moka 读取是 async，这里
+    /// 改成 async，外层/内层 `Option` 的三态语义与旧版逐一对应
+    /// （`Some(Some)` 正命中 / `Some(None)` 确认无结果 / `None` 没查过）。
+    async fn cache_get(key: &str) -> Option<Option<DoubanMeta>> {
+        if let Some(meta) = positive_cache().get(key).await {
+            return Some(Some(meta));
+        }
+        if negative_cache().get(key).await.is_some() {
+            return Some(None);
+        }
+        None
+    }
 
     fn suggest(id: &str, title: &str, year: &str) -> SuggestItem {
         SuggestItem {
@@ -1652,9 +2167,10 @@ mod tests {
         assert_eq!(trailing_year("沙丘(2021)"), "2021");
     }
 
-    #[test]
-    fn cache_roundtrip_uses_normalized_key() {
-        clear_cache();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cache_roundtrip_uses_normalized_key() {
+        // moka 读取是 async：本测试只碰自己的三个 key（全局缓存、并行用例，
+        // 不能再用整表清空/随机 key 断言 miss）。
         let key = cache_key("庆余年 第一季", Some("2019"));
         assert_eq!(
             key,
@@ -1662,13 +2178,14 @@ mod tests {
             "同剧不同季共用一个键"
         );
         cache_put(key.clone(), Some(meta()));
-        assert_eq!(cache_get(&key).expect("hit").expect("positive"), meta());
-        assert!(cache_get(&cache_key("三体", Some("2023"))).is_none());
+        assert_eq!(cache_get(&key).await.expect("hit").expect("positive"), meta());
+        assert!(cache_get("roundtrip-missing-key|").await.is_none());
         // 负结果同样入缓存：轮播/详情页重复问同一个查不到的片名不再走网络。
-        let neg_key = cache_key("查无此片", None);
+        let neg_key = cache_key("查无此片roundtrip", None);
         cache_put(neg_key.clone(), None);
-        assert_eq!(cache_get(&neg_key).expect("negative hit"), None);
-        clear_cache();
+        assert_eq!(cache_get(&neg_key).await.expect("negative hit"), None);
+        // 三态各归其表：「确认无结果」是 Some(None)，不是「没查过」的 None。
+        assert_eq!(cache_get(&key).await, Some(Some(meta())));
     }
 
     #[tokio::test]

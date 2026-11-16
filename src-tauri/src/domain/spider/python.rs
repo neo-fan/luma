@@ -11,11 +11,12 @@ use crate::error::{code, AppError};
 use crate::http;
 use crate::spider::{RuntimeKind, SpiderMethod, SpiderRuntime};
 use async_trait::async_trait;
+use moka::future::Cache;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime};
+use std::sync::OnceLock;
+use std::time::{Duration, SystemTime};
 use tokio::sync::Semaphore;
 
 const SOURCE_TTL: Duration = Duration::from_secs(600);
@@ -23,25 +24,36 @@ const MAX_SOURCES: usize = 64;
 /// Caps how many py child processes one fan-out may start at once.
 static PY_CONCURRENCY: OnceLock<Semaphore> = OnceLock::new();
 
-/// 同 URL 的并发下载去重（表按 `api` 建键，完成后即摘除，不承担缓存职责）。
-static SOURCE_FLIGHTS: OnceLock<crate::flights::Flights<Result<String, AppError>>> = OnceLock::new();
+/// 一条脚本的来源结论。
+///
+/// `Stale` 是「网络失败后拿过期磁盘快照救场」的结果：它能让这一次播放继续，
+/// **但不该占住内存缓存**——否则网络恢复后还要白等一个 TTL 才重试（旧实现就是
+/// 这个语义：过期条目只在兜底分支读，不刷新 `fetched_at`）。所以调用方拿到
+/// `Stale` 会立刻 `invalidate`，下一次仍然尝试回源。
+#[derive(Clone)]
+enum Source {
+    Fresh(String),
+    Stale(String),
+}
 
-fn source_flights() -> &'static crate::flights::Flights<Result<String, AppError>> {
-    SOURCE_FLIGHTS.get_or_init(Default::default)
+/// py 脚本的内存缓存：TTL 600s、上限 64 条，同 key 并发首次访问合并成一次下载
+/// （`try_get_with` 保证；错误不进缓存）。
+///
+/// 取代原先「`HashMap + Instant` 自研 TTL 表 + `infra::flights` 自研 single-flight」
+/// 两套东西——它们是同一个库的两个特性（评审：优先用主流库，不要手搓）。
+static SOURCE_CACHE: OnceLock<Cache<String, Source>> = OnceLock::new();
+
+fn source_cache() -> &'static Cache<String, Source> {
+    SOURCE_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(MAX_SOURCES as u64)
+            .time_to_live(SOURCE_TTL)
+            .build()
+    })
 }
 
 fn concurrency() -> &'static Semaphore {
     PY_CONCURRENCY.get_or_init(|| Semaphore::new(4))
-}
-
-struct CachedSource {
-    text: String,
-    fetched_at: Instant,
-}
-
-fn cache() -> &'static Mutex<HashMap<String, CachedSource>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, CachedSource>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// 脚本快照落盘目录。源脚本托管在 GitHub raw，冷启动每次都要重新下载，网络
@@ -103,36 +115,37 @@ async fn source_for(site: &Value) -> Result<String, AppError> {
     if api.is_empty() {
         return Err(AppError::new(code::INVALID_ARGUMENT, "py site has no api"));
     }
-    // 冷 key 去重：一次 fan-out 里多个任务首次触达同一个脚本地址时，只跑
-    // 一次下载，其余等待同一个结果（含失败）。脚本下载不在 `PY_CONCURRENCY`
-    // 信号量的覆盖范围内，所以这里不去重就会并发重复抓同一个 URL。
-    source_flights().dedupe(&api, || cold_source(site)).await
+    // `try_get_with`：同 key 的并发首次访问合并成一次下载（脚本下载不在
+    // `PY_CONCURRENCY` 信号量覆盖范围内，不去重就会并发重复抓同一个 URL），
+    // 并且求值失败不进缓存 —— 下一次调用仍然回源。
+    let cache = source_cache();
+    match cache
+        .try_get_with(api.clone(), cold_source(site.clone()))
+        .await
+    {
+        Ok(Source::Fresh(text)) => Ok(text),
+        Ok(Source::Stale(text)) => {
+            // 过期快照救场：这一次能用，但不占住内存缓存，下次继续尝试回源。
+            cache.invalidate(&api).await;
+            Ok(text)
+        }
+        Err(err) => Err((*err).clone()),
+    }
 }
 
-/// `source_for` 的实际取数链（内存 → 磁盘快照 → 网络 → 过期快照兜底）。
-/// 进去之前 `source_for` 已经验过 `api` 非空；重新查一遍缓存是必要的——
-/// 等待 leader 期间缓存可能已被填上。
-async fn cold_source(site: &Value) -> Result<String, AppError> {
+/// `source_for` 的实际取数链（磁盘快照 → 网络 → 过期快照兜底）。
+/// 只在 moka 里没有有效条目时才会被跑到。
+async fn cold_source(site: Value) -> Result<Source, AppError> {
     let api = site
         .get("api")
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    if let Some(hit) = cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&api)
-        .filter(|entry| entry.fetched_at.elapsed() < SOURCE_TTL)
-    {
-        return Ok(hit.text.clone());
-    }
 
-    // 没命中内存缓存时先看磁盘：TTL 内的快照直接当命中（省掉一次网络往返）。
-    if let Some((text, fresh)) = read_snapshot(&api) {
-        remember(&api, &text);
-        if fresh {
-            return Ok(text);
-        }
+    // 先看磁盘：TTL 内的快照直接当命中（省掉一次网络往返）。
+    let snapshot = read_snapshot(&api);
+    if let Some((text, true)) = snapshot.clone() {
+        return Ok(Source::Fresh(text));
     }
 
     let response = match http::fetch(http::FetchRequest {
@@ -150,17 +163,14 @@ async fn cold_source(site: &Value) -> Result<String, AppError> {
     {
         Ok(response) => response,
         Err(err) => {
-            // 脚本托管在 GitHub raw，网络抖动/代理不可用是常态。此时若手里有
-            // 过期快照（内存或磁盘），用旧的也比整个源不可用强（2026-11-14
-            // 实测：一次 `fetch bubuzhuiju.py failed` 会让详情和播放同时失败）。
-            if let Some(stale) = cache()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .get(&api)
-                .map(|entry| entry.text.clone())
-            {
+            // 脚本托管在 GitHub raw，网络抖动/代理不可用是常态。此时手里有
+            // 磁盘快照（哪怕已过期）也比整个源不可用强（2026-11-14 实测：
+            // 一次 `fetch bubuzhuiju.py failed` 会让详情和播放同时失败）。
+            // 兜底来源从「内存表」改成「磁盘」：moka 里过期的条目读不到了，
+            // 而磁盘快照的覆盖面至少等价（写内存的路径都同时写盘）。
+            if let Some((text, _)) = snapshot {
                 tracing::warn!(url = %api, error = %err, "py source fetch failed, using stale snapshot");
-                return Ok(stale);
+                return Ok(Source::Stale(text));
             }
             return Err(err);
         }
@@ -174,22 +184,7 @@ async fn cold_source(site: &Value) -> Result<String, AppError> {
     }
 
     write_snapshot(&api, &response.body);
-    remember(&api, &response.body);
-    Ok(response.body)
-}
-
-fn remember(api: &str, text: &str) {
-    let mut guard = cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if guard.len() >= MAX_SOURCES {
-        guard.clear();
-    }
-    guard.insert(
-        api.to_string(),
-        CachedSource {
-            text: text.to_string(),
-            fetched_at: Instant::now(),
-        },
-    );
+    Ok(Source::Fresh(response.body))
 }
 
 pub struct PythonRuntime;
@@ -288,4 +283,93 @@ fn normalize(site: &Value, method: SpiderMethod, args: &[Value], result: Value) 
         tracing::info!(source_api = %api, vod_id = %vod_id, "spider detailContent returned no video");
     }
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Response, StatusCode};
+    use axum::routing::get;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
+    /// 起一个本地桩：返回什么由 `mode` 决定（`ok` 给合法 Spider 脚本，
+    /// `junk` 给不是脚本的内容）。命中次数记在**调用方传入的计数器**上——
+    /// 用全局静态会被并行测试互相污染（第一版就因此得到 3 次命中的假阴性）。
+    async fn stub(mode: &'static str, hits: Arc<AtomicUsize>) -> (String, tokio::task::JoinHandle<()>) {
+        let counter = hits.clone();
+        let router = axum::Router::new().route("/", get(move || {
+            let hits = counter.clone();
+            async move {
+                hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = if mode == "ok" {
+                    "class Spider:\n    pass\n"
+                } else {
+                    "<!doctype html><html>gate page</html>"
+                };
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "text/plain; charset=utf-8")
+                    .body(Body::from(body))
+                    .unwrap()
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        (format!("http://{addr}/"), task)
+    }
+
+    fn forget_snapshot(url: &str) {
+        let path = snapshot_dir().join(format!("{}.py", snapshot_key(url)));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn concurrent_same_url_downloads_once() {
+        // moka `try_get_with` 的核心承诺：同 key 并发首次访问只跑一次求值。
+        // 这一条以前靠自研 flights 保证，现在由库兑现 —— 测试守住的是
+        // 「我们确实接到了这个保证」，而不是重测库本身。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (url, task) = stub("ok", hits.clone()).await;
+        let site = json!({ "api": url });
+        let results = tokio::join!(
+            source_for(&site),
+            source_for(&site),
+            source_for(&site),
+            source_for(&site),
+        );
+        for result in [results.0, results.1, results.2, results.3] {
+            assert!(result.expect("source").contains("class Spider"));
+        }
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "同 URL 并发只应回源一次"
+        );
+        task.abort();
+        forget_snapshot(&url);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failed_source_is_not_cached() {
+        // 不是脚本的内容必须返回 Err 且**不进缓存**：否则一次坏响应会在
+        // TTL 内一直供给坏数据（`try_get_with` 的 Err 不缓存语义）。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (url, task) = stub("junk", hits.clone()).await;
+        let site = json!({ "api": url.clone() });
+        let err = source_for(&site).await.expect_err("junk body must fail");
+        assert_eq!(err.code, code::RUNTIME_UNAVAILABLE);
+        // 第二次仍然回源（没有把失败结果缓存下来）。
+        let _ = source_for(&site).await.err();
+        assert!(
+            hits.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "失败后必须重新回源"
+        );
+        task.abort();
+        forget_snapshot(&url);
+    }
 }

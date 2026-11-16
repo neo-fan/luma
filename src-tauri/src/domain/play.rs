@@ -6,10 +6,12 @@
 use crate::config::ConfigStore;
 use crate::error::{code, AppError};
 use crate::proxy::{self, ProxyState};
+use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::future::Future;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use url::Url;
 
 /// Spec 8.6 level 4. The spec gives no separate budget for the hidden WebView,
@@ -26,40 +28,45 @@ const PLAYLIST_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 /// 只读开头这么多字节判 `#EXTM3U`；不读大流量，避免探测本身把直播流吃掉。
 const PLAYLIST_PROBE_BYTES: usize = 8 * 1024;
 
-struct SniffHit {
-    media: String,
-    found_at: Instant,
+/// 同页面嗅探结果的内存缓存，key = 页面 URL，value = 嗅到的直链。
+///
+/// 取代原「`HashMap<String, SniffHit> + Instant + Mutex` 自研 TTL 表」：过期条目
+/// 由 moka 直接淘汰、读不到（与旧实现「`found_at.elapsed() >= SNIFF_TTL` 就当没
+/// 命中」一致——sniff 没有磁盘兜底，过期就重新开隐藏窗口）。上限 128 条沿用旧值，
+/// 改为按策略逐条淘汰（旧实现满 128 直接 `clear`，会把整张表冲掉）。
+static SNIFF_CACHE: OnceLock<Cache<String, String>> = OnceLock::new();
+
+fn sniff_cache() -> &'static Cache<String, String> {
+    SNIFF_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(SNIFF_MAX_ENTRIES)
+            .time_to_live(SNIFF_TTL)
+            .build()
+    })
 }
 
-fn sniff_cache() -> &'static Mutex<HashMap<String, SniffHit>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, SniffHit>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
+const SNIFF_MAX_ENTRIES: u64 = 128;
 
-fn cached_sniff(page: &str) -> Option<String> {
-    let guard = sniff_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    guard
-        .get(page)
-        .filter(|hit| hit.found_at.elapsed() < SNIFF_TTL)
-        .map(|hit| hit.media.clone())
-}
-
-fn remember_sniff(page: &str, media: &str) {
-    let mut guard = sniff_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if guard.len() >= 128 {
-        guard.clear();
+/// 缓存读、未命中才嗅探、成功后写缓存的公共控制流。
+///
+/// 失败时直接返回 `Err` 且**不写缓存**（与旧实现一致：`remember_sniff` 只在
+/// 嗅探成功分支调用）。把这段逻辑抽出来，是为了让 TTL 语义、命中/回源、失败
+/// 不入缓存这些行为可以对着一个本地 `Cache` 单独测，而不必依赖隐藏 WebView2。
+async fn sniff_cached<F, Fut>(
+    cache: &Cache<String, String>,
+    page: &str,
+    sniff: F,
+) -> Result<String, AppError>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<String, AppError>>,
+{
+    if let Some(media) = cache.get(page).await {
+        return Ok(media);
     }
-    guard.insert(
-        page.to_string(),
-        SniffHit {
-            media: media.to_string(),
-            found_at: Instant::now(),
-        },
-    );
+    let media = sniff().await?;
+    cache.insert(page.to_string(), media.clone()).await;
+    Ok(media)
 }
 
 /// 带 headers 请求一次，看返回体是不是 M3U 播放列表。
@@ -308,30 +315,25 @@ pub async fn resolve_play(
             kind = "hls".to_string();
         }
         if kind == "page" {
-            let cached = cached_sniff(&effective_url);
-            let media = match cached {
-                Some(media) => Some(media),
-                None => match crate::sniff::sniff_with_headers(
+            let media = match sniff_cached(sniff_cache(), &effective_url, || {
+                crate::sniff::sniff_with_headers(
                     &app,
                     &effective_url,
                     &sniff_headers,
                     SNIFF_TIMEOUT,
                 )
-                .await
-                {
-                    Ok(media) => {
-                        remember_sniff(&effective_url, &media);
-                        Some(media)
-                    }
-                    Err(err) => {
-                        tracing::info!(
-                            site = %request.site_key,
-                            error = %err.message,
-                            "level-4 sniff found nothing"
-                        );
-                        None
-                    }
-                },
+            })
+            .await
+            {
+                Ok(media) => Some(media),
+                Err(err) => {
+                    tracing::info!(
+                        site = %request.site_key,
+                        error = %err.message,
+                        "level-4 sniff found nothing"
+                    );
+                    None
+                }
             };
             if let Some(media) = media {
                 kind = kind_of(&media);
@@ -491,5 +493,82 @@ mod tests {
         assert_eq!(non_web_media_scheme("  thunder://abc"), Some("thunder:"));
         assert_eq!(non_web_media_scheme("https://example.com/a.m3u8"), None);
         assert_eq!(non_web_media_scheme("huangdou2://https://example.com/p"), None);
+    }
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    fn sniff_test_cache(ttl: Duration) -> Cache<String, String> {
+        Cache::builder()
+            .max_capacity(SNIFF_MAX_ENTRIES)
+            .time_to_live(ttl)
+            .build()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sniff_hit_within_ttl_does_not_resniff() {
+        // (a) TTL 内命中不再回源：第二次必须直接读 moka，不再开隐藏窗口。
+        // 计数器用调用方传入的 Arc，避免全局 static 被并行测试互相污染。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let cache = sniff_test_cache(Duration::from_secs(30));
+        let run = |hits: Arc<AtomicUsize>| {
+            let cache = &cache;
+            async move {
+                sniff_cached(cache, "http://page/1", move || {
+                    let hits = hits.clone();
+                    async move {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        Ok("http://cdn/1.m3u8".to_string())
+                    }
+                })
+                .await
+            }
+        };
+        assert_eq!(run(hits.clone()).await.unwrap(), "http://cdn/1.m3u8");
+        assert_eq!(run(hits.clone()).await.unwrap(), "http://cdn/1.m3u8");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "TTL 内命中不应再次嗅探");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sniff_failure_is_not_cached() {
+        // (c) 失败不进缓存：嗅探报错必须返回 Err 且不写回，第二次继续嗅探。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let cache = sniff_test_cache(Duration::from_secs(30));
+        let run = |hits: Arc<AtomicUsize>| {
+            let cache = &cache;
+            async move {
+                sniff_cached(cache, "http://page/2", move || {
+                    let hits = hits.clone();
+                    async move {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        Err(AppError::new(code::PLAY_RESOLVE_FAIL, "no media"))
+                    }
+                })
+                .await
+            }
+        };
+        let err = run(hits.clone()).await.expect_err("sniff failure must error");
+        assert_eq!(err.code, code::PLAY_RESOLVE_FAIL);
+        let second = run(hits.clone()).await.err();
+        assert!(second.is_some(), "第二次仍应尝试嗅探");
+        cache.run_pending_tasks().await;
+        assert_eq!(cache.entry_count(), 0, "失败不应留下任何条目");
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "失败不进缓存：必须重新嗅探");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sniff_expired_entry_is_a_miss() {
+        // 语义保持的硬证据：条目过期后「读不到」（与旧 `found_at.elapsed() >=
+        // SNIFF_TTL` 视为未命中一致）。moka 淘汰靠后台任务驱动，多线程运行时
+        // 显式 `run_pending_tasks()` 推进。
+        let cache = sniff_test_cache(Duration::from_millis(20));
+        cache.insert("http://page/3".to_string(), "http://cdn/3.m3u8".to_string()).await;
+        assert!(cache.get("http://page/3").await.is_some(), "刚写入应在 TTL 内");
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        cache.run_pending_tasks().await;
+        assert!(
+            cache.get("http://page/3").await.is_none(),
+            "过期条目必须读不到"
+        );
     }
 }
