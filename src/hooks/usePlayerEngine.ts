@@ -1243,6 +1243,9 @@ export function usePlayerEngine({
       if (probeBusy || Date.now() - lastProbeAt < STALL_RECHECK_MS) {
         return;
       }
+      // 影子：真正开始探活才报 STALL（前面 hasPlayed/alive/failover 早退都不报），
+      // 机器 playing/buffering → probing。
+      sessionActorRef.current?.send({ type: "STALL" });
       probeBusy = true;
       lastProbeAt = Date.now();
       // 探「当前真实地址」而不是 resolved.proxyUrl：原地换集后 resolved 不变，
@@ -1262,6 +1265,11 @@ export function usePlayerEngine({
           if (failoverStarted.current || lineSwitchStarted.current) {
             return;
           }
+          // 影子：把探活判决喂进机器。LineVerdict 的 "ok" 对应机器的 "alive"。
+          sessionActorRef.current?.send({
+            type: "PROBE",
+            verdict: verdict === "ok" ? "alive" : verdict,
+          });
           const decision = decideWatchdogVerdict({
             verdict,
             unresponsiveProbes,
