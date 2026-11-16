@@ -258,7 +258,7 @@ pub fn normalize_config(raw: &Value, origin: &str) -> Result<Value, AppError> {
     }
 
     Ok(json!({
-        "id": short_sha1(origin),
+        "id": short_hash(origin),
         "name": config_name(&config, origin),
         "importedAt": now_rfc3339(),
         "sites": sites,
@@ -305,7 +305,7 @@ pub fn merge_repos(snapshots: &[Value]) -> Value {
         .map(|snapshot| text_of(snapshot.get("id")))
         .collect();
     json!({
-        "id": short_sha1(&ids.join("|")),
+        "id": short_hash(&ids.join("|")),
         "name": "merged",
         "importedAt": now_rfc3339(),
         "sites": sites,
@@ -559,11 +559,11 @@ fn config_name(config: &Map<String, Value>, origin: &str) -> String {
     "本地配置".to_string()
 }
 
-fn short_sha1(text: &str) -> String {
-    use sha1::{Digest, Sha1};
-    let digest = Sha1::digest(text.as_bytes());
-    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    hex.chars().take(12).collect()
+fn short_hash(text: &str) -> String {
+    // XXH3（xxhash-rust）稳定指纹，非加密用途足够。2.0.0 起取代 sha1[..12]：
+    // 换算法会让已导入配置换 id（收藏/历史对不上），用户重新初始化，已授权。
+    let hash = xxhash_rust::xxh3::xxh3_64(text.as_bytes());
+    format!("{hash:016x}")[..12].to_string()
 }
 
 fn now_rfc3339() -> String {
@@ -650,7 +650,7 @@ mod tests {
         assert_eq!(out["headers"][0]["host"], "cdn.h");
         assert_eq!(out["headers"][0]["header"]["Referer"], "https://h/");
         assert!(out["headers"][0]["header"].get("Empty").is_none());
-        assert_eq!(out["id"], short_sha1("https://h/dir/box.json"));
+        assert_eq!(out["id"], short_hash("https://h/dir/box.json"));
     }
 
     #[test]
@@ -680,6 +680,6 @@ mod tests {
         assert_eq!(merged["sites"][0]["name"], "1");
         assert_eq!(merged["lives"].as_array().unwrap().len(), 1);
         assert_eq!(merged["parses"].as_array().unwrap().len(), 1);
-        assert_eq!(merged["id"], short_sha1("a|b"));
+        assert_eq!(merged["id"], short_hash("a|b"));
     }
 }

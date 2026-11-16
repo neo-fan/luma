@@ -50,10 +50,8 @@ moka = { version = "0.12", features = ["future"] }
 # 这里自己收字节再按 BOM → UTF-8 → 声明 → GB18030 的顺序洗，规则集中在
 # `infra/textio.rs`，测试也一起放在那里。
 encoding_rs = "0.8"
-# 配置快照 id = sha1(origin)[..12]，与旧 Python 适配层一致（换算法会让所有
-# 已导入配置换 id，收藏与历史全部对不上）。
-sha1 = "0.10"
-# spider-src 快照文件名等稳定指纹：XXH3（主流、快，非加密用途足够），取代手搓 FNV-1a。
+# 稳定指纹（配置 id、EPG/快照文件名）统一用 XXH3（xxhash-rust，非加密、快）。
+# 2.0.0 起取代旧的 sha1[..12]：换算法会让已导入配置换 id，用户重新初始化，已授权。
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 base64 = "0.22"
 flate2 = "1"

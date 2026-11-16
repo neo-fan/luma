@@ -85,11 +85,10 @@ const MAX_EPG_RAW_BYTES: u64 = 48 * 1024 * 1024;
 /// 影响「正在播什么」；超过 6h 或文件损坏就重新拉。
 const EPG_DISK_TTL: Duration = Duration::from_secs(6 * 3600);
 
-/// 磁盘缓存文件名 = URL 的 sha1。EPG 地址是用户自己填的，不能拿来当
+/// 磁盘缓存文件名 = URL 的 XXH3（xxhash-rust）。EPG 地址是用户自己填的，不能拿来当
 /// 文件名（有 `/`、`?` 与平台限制），哈希之后既稳定又不会撞名。
 fn epg_disk_path(url: &str) -> PathBuf {
-    use sha1::{Digest, Sha1};
-    let digest = format!("{:x}", Sha1::digest(url.as_bytes()));
+    let digest = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(url.as_bytes()));
     crate::store::data_dir()
         .join("cache")
         .join("epg")
