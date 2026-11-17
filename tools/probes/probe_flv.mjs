@@ -218,7 +218,7 @@ try {
     // 详情页按钮文案会随历史变化（「▶ 播放第 1 集」/「▶ 继续播放 第 1 集（0:03）」），
     // 按包含「播放」且不是外部播放来点，避免探针被历史记录带偏。
     const playClick = await cdp.eval(`(() => {
-      const buttons = [...document.querySelectorAll('button')];
+      const buttons = [...document.querySelectorAll('.content button, .page-body button')];
       const text = (el) => (el.textContent || '').trim();
       const target = buttons.find((el) => text(el).includes('播放') && !text(el).includes('外部'));
       if (!target) return 'MISSING';
@@ -228,11 +228,13 @@ try {
     assert(playClick === "CLICKED", "click 播放", playClick);
   }
 
+  // 计时用来看慢启动是不是真的慢（修掉上面的选择器后首帧约 2s）。
+  const startedAt = Date.now();
   const state = JSON.parse(
-    (await cdp.eval(WAIT(`const s = JSON.parse(${VIDEO_STATE}); return (s.ok && s.t > 0.2) || s.error || s.fallback ? JSON.stringify(s) : null;`, 40000))) ||
+    (await cdp.eval(WAIT(`const s = JSON.parse(${VIDEO_STATE}); return (s.ok && s.t > 0.2) || s.error || s.fallback ? JSON.stringify(s) : null;`, 90000))) ||
       "{}",
   );
-  console.log(`[info] video: ${JSON.stringify(state)}`);
+  console.log(`[info] video after ${Date.now() - startedAt}ms: ${JSON.stringify(state)}`);
   // 没出画 + 反代不放开 loopback → 环境前置缺失，明确 SKIP（仍以退出码 0 收尾），
   // 不把「桩源被自家代理 403」误报成 mpegts 解码回归。allowLocal=true 却没出画则
   // 照常跑下面的断言（真回归会 FAIL）。
@@ -244,7 +246,9 @@ try {
     assert((state.w ?? 0) > 0 && (state.h ?? 0) > 0, "video dimensions reported", `${state.w}x${state.h}`);
     // MSE 的 src 一定是 blob:；如果是 http:// 说明 flv 被直塞给 <video>（老 bug 回归）。
     assert(state.srcScheme === "blob", "plays through MSE (mpegts.js), not <video> src", String(state.srcScheme));
-    assert(state.error == null, "no media element error", String(state.error));
+    // 先确认这次读到了播放器状态：空读时负向断言会因 undefined 而假绿。
+  assert(state.ok !== undefined, "player state captured (not an empty read)", JSON.stringify(state));
+  assert(state.error == null, "no media element error", String(state.error));
     assert(state.fallback !== true, "no fallback panel", String(state.fallback));
     assert(
       !(state.errors || []).some((text) => /FLV|播放器加载失败/.test(text)),
