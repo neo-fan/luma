@@ -99,7 +99,9 @@ pub fn active_port() -> u16 {
 }
 
 impl ProxyState {
-    /// 测试/降级入口：独立构建一个带守卫与钉住 resolver 的封面客户端。
+    /// 测试入口：独立构建一个带守卫与钉住 resolver 的封面客户端，
+    /// 让用例能指向临时缓存目录而不共享进程级单例。
+    #[cfg(test)]
     fn image_client_in(dir: &std::path::Path) -> ClientWithMiddleware {
         let base = reqwest::Client::builder()
             .pool_idle_timeout(Duration::from_secs(60))
