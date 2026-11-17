@@ -4,7 +4,23 @@
 
 ---
 
-## [2.0.0] — 2026-11-16
+## [Unreleased]
+
+### 修复
+
+- **直播「爬虫自带代理」(localProxy) 回调对齐 TVBox/FongMi**：央视频 yangshipin（`py_yangshipin`，首页选择器里的「直播[py]」）这类 `live_mode=proxy` 的 python 爬虫，`play()` 不给直链，而是返回 `proxy?url=&type=m3u8&slug=cctv2` 让播放器回打宿主反代、再由爬虫自己的 `localProxy()` 现拉滚动直播列表。Luma 此前有两处不兼容：① `handle_proxy` 只在 URL 带 `do=` 时才回调爬虫，而这种爬虫的基址来自 `getProxyUrl()`（Luma 返回 `?url=` 而非 FongMi 的 `?do=py`），拼出的 URL 没有 `do=`、`url=` 又空 → 被当普通直连 `Url::parse("")` → 400；② 基类 `spider.py::proxy()` 是返回 404 的桩、不委派 `localProxy()`，而社区爬虫只实现 `localProxy`。修复：`handle_proxy` 对「`url=` 为空且带其它参数」的请求路由到爬虫 proxy 回调（正常分片/清单恒带非空 `url=`，不受影响）；基类 `proxy(params)` 委派 `self.localProxy(params)`（直接覆写 `proxy` 的爬虫不受影响，两者都不实现的仍回 404 桩）。实测该频道经反代首拉从 400 变为 `200 #EXTM3U` 滚动直播列表。`tests/offline/py_base_spider_check.py` 加「proxy 委派 localProxy」回归。
+
+- **直播 m3u 解析对齐 TVBox：识别 `#EXTINF http-header="…"` 通用请求头属性**：TVBox 的 `ParseM3u8` 除 `http-user-agent` / `http-referer` 外，还读 `http-header="Referer=…;User-Agent=…"` 这种通用头；`domain/live/m3u.rs::parse_extinf` 此前只认前两支专用属性，遇到只把必需 Referer 写在 `http-header` 里的频道（如 Kimentanm/suxuang 源的「江苏卫视」非 4K 版：`http-header="Referer=https://litchi-play-encrypted-site.jstv.com/"`、五星体育 `Referer=https://live.kankanews.com/`）会把 Referer 整段丢弃，反代取清单被源站 403、表现为「直播播不出」。修复让 `m3u.rs` 成为唯一的头写法归一化点：拆 `http-header`（`;`/`,` 分隔，只取 Referer/User-Agent，未知键忽略），在专用属性未声明时补进频道的 `referer`/`ua`（专用属性优先，避免覆盖）。这两个字段本就全链路（`LivePage`→`usePlayResolution`→`resolve_play`→`build_proxy_url`→反代 `Fwd`）送达源站，故**未动 PlayRequest/前端/反代**。补 3 条单测（Referer 补齐、UA 补齐、多对拆分与优先级、未知键忽略），`live::m3u` 11 测全过。
+
+### 变更
+
+- **debug 与正式版反代端口分离（9978 → debug 9979）**：`proxy::DEFAULT_PORT` 按 `cfg!(debug_assertions)` 分叉——正式版仍 9978、debug 固定 9979。此前 debug 与在跑的正式版抢 9978、靠 `bind_listener` 回退到随机临时端口，端口不固定，且 JS/py 侧若按默认 9978 兜底会指向错实例。绑定后宿主把实际端口 `set_var("LUMA_PROXY_PORT")` 注入子进程环境（补齐此前只有 qjs 经 `active_port()` 拿真实端口、py `base/spider.py` 的 `getProxyUrl()` 因环境变量缺失误落 0 的缺口），让 py 运行时也跟随 release/debug 分离。CDP（9222）与 vite（1420）本就仅 debug 使用、与正式版不冲突，未改动。同步更新 `docs/DEVELOPMENT.md` §2.1 并存表与 env 表、`docs/ARCHITECTURE.md` §6、`docs/spec.md`。
+
+### 新增
+
+- **直播源头写法取证脚本**：`tools/diag/diag_live_headers_all.mjs`（遍历活跃配置所有直播源，按源统计 `#EXTVLCOPT` 独立行 vs `#EXTINF` 行内属性 vs `http-header`，并定位 jstv/litchi/migu 等高危频道落在哪个源、怎么声明头——正是据此发现上面的 `http-header` 缺口）与 `tools/diag/diag_live_resolved_stream.mjs`（对 `resolve_play` 返回的资源直链经反代 Range 实拉并用真实 `<video>` 观察解码出画）。实测修正了「加密 HLS 播放器解不开」的旧假设：`江苏卫视` 403 来自缺 Referer（头解析层，已修），master 清单里的相对变体 URI 经 `playlist.rs::absolutize`（`Url::join`）已能正确解析、非缺口；当前 `cluntop` 那路 `jsws4k.php` 实际映射到一个可正常解码的 1080p MP4。
+
+---
 
 2.0.0 是一次**允许破坏性改造**的大版本：用户会重新初始化配置。主线是「优先主流开源库、去手搓」与「给最脆弱的播放内核建立可测的行为模型」。
 

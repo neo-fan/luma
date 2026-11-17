@@ -81,8 +81,9 @@ PlayerPage.resolve_play
 
 ## 6. 本地反代与嗅探
 
-- 反代（`proxy/{mod,handlers,guard,playlist}.rs` + `netrules.rs`）：对源站请求做 UA/Referer/Cookie 透传、m3u8 分片重写、`/image` 封面代理；`LUMA_PROXY_PORT` 默认 9978。
+- 反代（`proxy/{mod,handlers,guard,playlist}.rs` + `netrules.rs`）：对源站请求做 UA/Referer/Cookie 透传、m3u8 分片重写、`/image` 封面代理；`LUMA_PROXY_PORT` release 9978 / debug 9979（绑定后由宿主写回环境变量）。
 - 嗅探（`sniff.rs`）：隐藏 `sniffer-*` WebView2 加载播放页，用 `WebResourceRequested` 抓取媒体请求；独立 `data_directory` + 覆盖 `--remote-debugging-port=0`（避开 dev 的 9222 冲突）；成功缓存 10 分钟、失败不缓存、串行化避免抢 user data dir。
+- 爬虫自带代理（`handle_spider_proxy`，`spider::proxy_call`）：实现 `Spider.proxy`/`localProxy` 的源（如央视频 yangshipin 的 `live_mode=proxy`）把播放地址回指到 `/proxy`，宿主用 `last_play_site()` 找到上一个点播源、把整张 query 表交给其 `proxy()`，返回 `[contentType, headers, bytes]` 作 HTTP 响应。路由判据：带 `do=py|js|jar` 直接回调；无 `do=` 但 `url=` 为空且带其它参数（FongMi 系 `getProxyUrl()` 基址不含 `do=` 的写法）也回调——空 `url=` 本就不是合法直连。Python 基类 `proxy()` 委派 `localProxy()`（社区源多只实现后者）。
 
 ## 7. 数据层（SQLite）
 
