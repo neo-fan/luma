@@ -36,6 +36,8 @@ import { createPrefsWriter } from "./playerPrefsWriter";
 import { createVolumeFader } from "./playerVolumeFade";
 import { log } from "../lib/logger";
 import { mediaIsAdvancing } from "../lib/mediaAlive";
+import { hlsLoadBudget } from "../lib/hlsBudget";
+import { hasMediaStopped, smoothBitrate } from "../lib/mediaMeasure";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
 import { failoverCopy } from "../lib/sessionFailover";
@@ -644,21 +646,7 @@ export function usePlayerEngine({
             }
             return;
           }
-          // 时间预算按「首个分片可能要下 20 秒」设定（AES-128 大分片实测
-          // 11.8s，慢时更久），fatal 型超时改由看门狗复核——默认 10s 的
-          // manifestLoadingTimeOut 会把能播的慢源直接判成 fatal。
-          const hls = new Hls({
-            enableWorker: true,
-            lowLatencyMode: true,
-            manifestLoadingTimeOut: 20_000,
-            manifestLoadingMaxRetry: 3,
-            manifestLoadingRetryDelay: 1_000,
-            levelLoadingTimeOut: 20_000,
-            levelLoadingMaxRetry: 3,
-            fragLoadingTimeOut: siteKey === "live" ? 20_000 : 45_000,
-            fragLoadingMaxRetry: 4,
-            fragLoadingRetryDelay: 1_000,
-          });
+          const hls = new Hls(hlsLoadBudget(siteKey === "live"));
           hls.loadSource(url);
           hls.attachMedia(video);
           // hls-control 插件约定从 art.hls 读 levels / currentLevel。
@@ -692,11 +680,9 @@ export function usePlayerEngine({
             if (!bytes || !seconds || seconds <= 0) {
               return;
             }
-            const kbps = (bytes * 8) / seconds / 1000;
-            measuredKbps = measuredKbps > 0 ? measuredKbps * 0.7 + kbps * 0.3 : kbps;
-            // 抖动小于 10% 不必重渲染；换档时那一跳能立刻反映出来。
-            const previous = Math.round(measuredKbps);
-            if (Math.abs(kbps - previous) / Math.max(previous, 1) > 0.1) {
+            const estimate = smoothBitrate(measuredKbps, (bytes * 8) / seconds / 1000);
+            measuredKbps = estimate.kbps;
+            if (estimate.changed) {
               reportMeta();
             }
           });
@@ -873,9 +859,12 @@ export function usePlayerEngine({
                     if (disposed || videoRef.current !== video) {
                       return;
                     }
-                    const stopped = video.paused
-                      ? video.readyState < 2
-                      : video.currentTime <= startedAt + 0.2;
+                    const stopped = hasMediaStopped({
+                      paused: video.paused,
+                      readyState: video.readyState,
+                      currentTime: video.currentTime,
+                      startedAt,
+                    });
                     if (!stopped) {
                       return;
                     }
