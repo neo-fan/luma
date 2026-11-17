@@ -283,7 +283,7 @@ try {
   // 仍是旧配置。reload 让它从 config_active（此时是刚导入的内联配置）重新加载。
   await cdp.send("Page.reload", { ignoreCache: true });
   // reload 生效前旧文档仍在：只等 .nav__item 会在旧页面上「通过」，随后的
-  // 导航点击被 reload 冲掉（2026-11-16 实测停在上一轮的 detail 路由）。
+  // 导航点击被 reload 冲掉。
   // 等页面真正属于新文档（performance.now() 重置）再往下走。
   await cdp.eval(WAIT(
     `return (performance.now() > 1200 && document.querySelector('.nav__item')) ? 'OK' : null;`,
@@ -293,7 +293,7 @@ try {
   assert(activeAfter === CONFIG_NAME, "inline config is active after reload", String(activeAfter));
 
   // 2. 首页 → 详情（首页应渲染出临时 CMS 的片子）。
-  //    沉浸式首页（2026-11-15）推荐流渲染为头图 + poster-rail，分类网格才是
+  //    沉浸式首页推荐流渲染为头图 + poster-rail，分类网格才是
   //    .vod-card；三种形态任一出现即算「首页出了内容」。
   await cdp.eval(`location.hash = '#/'; 'home'`);
   await cdp.eval(WAIT(`return document.querySelector('.page--home') ? 'OK' : null;`, 8000));
@@ -467,7 +467,7 @@ try {
   // clipboard API 需要 user activation：b.click() 是脚本触发、没有手势，writeText
   // 会被拒。用 CDP 真实鼠标事件点在按钮中心，模拟用户点击后再验证。
   // 入场动画（bar-in 260ms）期间节点有 ≤6px 位移，测标必须等动画落定，
-  // 否则坐标打偏、点不到按钮（2026-11-16 动效改造后实测）。
+  // 否则坐标打偏、点不到按钮。
   await sleep(500);
   // 先授予剪贴板权限再点：writeText 被权限拒时按钮不会进入 ok/failed 态，
   // 「反馈出现」与「内容正确」两条断言都建立在权限就位之上。

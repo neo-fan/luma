@@ -1,16 +1,12 @@
 /**
- * 首帧前的海报 / 冻结帧保持（2.0.0 从 `usePlayerEngine` 抽出）。
+ * 首帧前的海报 / 冻结帧保持。
  *
- * ArtPlayer 默认在 `video:play` 就把 poster 设成 `display:none`——而 play 事件在
- * HLS 清单解析完调 `play()` 的那一刻就触发，首帧根本还没解码出来，画面随即掉进
- * 「黑屏 + 转圈」。这里接管 poster 的退场时机：一直盖到新源真正出画（`playing`，
- * 或 `readyState>=3` 的 `timeupdate`），再 250ms 渐隐。
+ * ArtPlayer 在 `video:play` 就把 poster 设成 display:none，而 play 早于首帧解码，
+ * 画面会掉进黑屏加转圈；这里接管退场时机：盖到 `playing` 或 `readyState>=3` 的
+ * timeupdate，再渐隐。失败路径用 `finish(false)` 硬撤，静帧不允许盖住后续画面。
  *
- * 失败路径（`<video>` error / hls fatal / 看门狗判死）必须能**立刻**撤掉它：
- * 冻结帧只是过渡，绝不允许永久盖住画面 —— 那是 `finish(false)`。
- *
- * 只做样式与监听，不认 ArtPlayer：`onPlay` 由调用方把 `art.on/off("video:play")`
- * 包成一个「注册即返回撤销」的函数，因此这台可以在 node 下用假元素测。
+ * `onPlay` 由调用方把 ArtPlayer 的 on/off("video:play") 包成「注册即返回撤销」，
+ * 因此本模块不依赖 ArtPlayer，可在 node 下测。
  */
 
 /** 只用得到 style 的四个属性 + 媒体状态；真实 `<video>` / `<div>` 结构上满足。 */
@@ -120,7 +116,8 @@ export function createPosterHold(options: PosterHoldOptions): PosterHold {
       poster.style.transition = "";
       poster.style.opacity = "";
       poster.style.display = "";
-      // ArtPlayer 内部的 video:play 监听先于我们注册，会把 display 设成 none；
+
+
       // 同一事件里我们的回调后执行，把它抬回来，poster 才能盖到首帧。
       undoArtPlay = options.onPlay(() => {
         if (active) {
@@ -133,9 +130,10 @@ export function createPosterHold(options: PosterHoldOptions): PosterHold {
         }
       };
       onTimeUpdate = () => {
-        // `playing` 在个别源上会丢（缓冲态翻来覆去），timeupdate + 足够缓冲兜底。
+
+
         // 但必须排除暂停态：缓冲期间 timeupdate 也会来，那时首帧还没出画，
-        // 渐隐会露出黑屏（2026-11-15 实测）。
+        // 渐隐会露出黑屏。
         if (active && !video.paused && video.readyState >= 3) {
           finish(true);
         }

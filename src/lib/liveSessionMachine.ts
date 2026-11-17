@@ -2,19 +2,14 @@ import { setup, assign, type ActorRefFrom } from "xstate";
 import type { LineVerdict } from "./playProbe";
 
 /**
- * 直播会话状态机（与点播 `vodSessionMachine` 分开建模）。
+ * 直播会话状态机。
  *
- * 直播与点播生命周期不同，不能共用一台机器（2026-11-16 用户纠正）：
- * - 无剧集、无「下一集」、无续播意图（直播就是放当前直播流）；
- * - 换台 = 一次全新 LOAD（`playUrl` 变 → 内核重建）；换线路 = 用新地址重连；
- * - 卡顿看门狗判死后是「换线路」（同频道下一条流），不是点播的「换源」；
- * - 超时/缓冲参数也不同（在解释器侧，不在这台机器里）。
- *
- * 与点播机器共享 `sessionId` / `hasPlayed` 两个上下文字段，好让 `usePlayerEngine`
- * 用同一组读接口（`sessionGen` / `sessionHasPlayed`）按模式取真源。
+ * 与点播分开建模：没有剧集与「下一集」，换台是一次全新 LOAD，换线路是用新地址
+ * 重连，判死之后是换线路而不是换源。共享 `sessionId` / `hasPlayed` /
+ * `failover*` 字段，`usePlayerEngine` 用同一组读接口按模式取真源。
  */
 
-/** 与点播同一套探活词汇，直接用 `playProbe.LineVerdict`（不再自造 `alive`）。 */
+/** 探活结论词汇直接用 `playProbe.LineVerdict`。 */
 export type LiveVerdict = LineVerdict;
 
 /** 判死原因（与点播机器同一分层：机器说为什么，文案归 `lib/sessionFailover.ts`）。 */
@@ -45,7 +40,7 @@ export interface LiveSessionContext {
   failoverDetail: string;
 }
 
-/** 与点播同一条判决：**这里唯一真源**，解释器不再自带阈值。 */
+/** unknown 累计到几次算确认失效。 */
 export const LIVE_UNRESPONSIVE_LIMIT = 3;
 
 const initialContext: LiveSessionContext = {
@@ -61,7 +56,7 @@ const initialContext: LiveSessionContext = {
 export const liveSessionMachine = setup({
   types: { context: {} as LiveSessionContext, events: {} as LiveSessionEvent },
   guards: {
-    /** 出过画就再也不自动换线（与点播机器同一条红线，写进转换表而非解释器的 if）。 */
+    /** 出过画之后不再自动换线路。 */
     notPlayed: ({ context }) => !context.hasPlayed,
     isDead: ({ event }) => event.type === "PROBE" && event.verdict === "dead",
     isUnknownExhausted: ({ context, event }) =>
@@ -101,9 +96,7 @@ export const liveSessionMachine = setup({
       failoverCause: ({ event }) => (event.type === "FAILED" ? event.cause : null),
       failoverDetail: ({ event }) => (event.type === "FAILED" ? (event.detail ?? "") : ""),
     }),
-    // ---- 副作用发起点：解释器用 `machine.provide({ actions })` 给出实现 ----
-    // 与点播机器同一取舍：解码器生命周期归 ArtPlayer 实例（`customType` 里挂），
-    // 转环等 UI 由状态本身驱动，机器不假装 owns 它们。
+    // 副作用发起点：实现由解释器用 `machine.provide({ actions })` 注入。
     requestLineSwitch: () => undefined,
   },
 }).createMachine({
@@ -177,7 +170,7 @@ export const liveSessionMachine = setup({
         FRAG_GROWTH: { target: "playing", actions: "resetProbe" },
         FAILED: { target: "recovering", actions: ["incrementProbe", "failoverFromEvent"] },
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
-        // 复核在途时用户手动换线：本轮结论作废。
+        // 复核在途时手动换线：本轮结论作废。
         LINE_SWITCH: { target: "tuning", actions: ["setTarget", "bumpSession"] },
       },
     },

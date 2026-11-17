@@ -95,16 +95,13 @@
 1. **CI 首次远端运行待验证**：`.github/workflows/check.yml` 已落地（`checks` / `rust` / `py-adapter` 三个 job），但本机没有远端仓库，尚未在 GitHub runner 上实跑过；首次推送后要按实际报错调（重点看 `rust` job 的 `pnpm build` + 资源桩是否够用）。
 2. Rust `#[path]` 是物理分层，逻辑模块名仍是 `crate::config`，依赖方向不受编译器约束（刻意取舍，第二阶段再做前缀化）。
 3. 超长文件：`PlayerPage.tsx`（1750）、`usePlayerEngine.ts`（1481）、`domain/spider/mod.rs`（928）、`domain/spider/quickjs.rs`（738）。
-   `usePlayerEngine` 2.0.0 已经吐出**四块**独立模块，各带行为测试：看门狗判决进会话状态机、
-   `playerVolumeFade.ts`（淡入，10 条）、`playerPosterHold.ts`（首帧前海报，6 条）、
-   `playerPrefsWriter.ts`（偏好写入，9 条）、`playerStallWatchdog.ts`（取证据，12 条）、
-   `playerThroughputMeter.ts`（反代吞吐，6 条）。
-   剩下的体量是「ArtPlayer 实例装配 + `customType` 里挂 hls.js / mpegts.js + 原地换集
-   promise」：**刻意不再往外拆**——那三块互相够着 `art` / `video` / `teardownDecoders`
-   与同一条切换时序，硬拆只能靠穿参数字面拼出假模块（形似解耦，实为把耦合换一种写法）。
-   真要再降行数，前提是先给 ArtPlayer 的解码器挂载找一层真正的边界（换 hls 实例的所有权），
-   那是另一件事，不要顺手做。
+   2.0.0 从 `usePlayerEngine` 拆出五个模块：`playerVolumeFade` / `playerPosterHold` / `playerPrefsWriter` /
+   `playerStallWatchdog` / `playerThroughputMeter`，判决部分进 `lib/{vod,live}SessionMachine`，各带 node 行为测试。
+   剩余部分是 ArtPlayer 实例装配、`customType` 里的解码器挂载与原地换集 promise：三者共享 `art` / `video` /
+   `teardownDecoders` 和同一条切换时序，再往外拆需要传入多个内部句柄，不构成真边界。要动它，先给解码器
+   挂载找一层所有权边界。
    （`domain/config`、`domain/proxy`、`infra/db`、`infra/logging` 已按职责拆分，见 §10。）
+
 4. 四端协议靠约定 + 5 类结构校验，未做代码生成。
 
 ## 10. 已还的债（留档，避免重复讨论）
@@ -115,20 +112,20 @@
 - `infra/db.rs`（1,026 行）→ 已拆为 `db/{mod,schema,meta,configs,favorites,history}.rs` + `db/tests.rs`；行结构体留 `mod.rs`，每个子模块一个 `impl Db`，schema 迁移与四类仓储互不牵连。
 - `infra/logging.rs`（587 行）→ 已拆为 `logging/{mod,writer,redact,ui,diagnostics,report}.rs` + `logging/tests.rs`；`mod.rs` 留目录解析/初始化/级别解析与 4 个命令，按日滚动、脱敏规则、诊断采集、反馈文件各成文件。
 
-## 11. 「优先主流库、不手搓」清单的逐项裁决（2026-11-17）
+## 11. 第三方库替换清单的逐项结论
 
-原则不变：能用热门库就别手搓。但**逐项核过形状**，下面这些是明确裁决为「不换 / 换不了」的，别再当欠账挂在清单上。
+原则：能用主流库就不手搓。以下每项都核对过实际形状，结论与依据如下，避免反复讨论。
 
-| 目标 | 裁决 | 依据（可复核） |
+| 目标 | 结论 | 依据 |
 | --- | --- | --- |
 | 缓存 + 同 key 并发（moka） | 已换（1.x → 2.0.0） | `Cargo.toml`，替掉手搓 TTL 表与自建 single-flight |
 | 页面读缓存（`@tanstack/react-query`） | 已换 | `pageCache.ts` 删除，`queryClient.ts` 适配层保留 `api.*` 命令式门面 |
 | 稳定指纹（`xxhash-rust` XXH3） | 已换 | 取代 sha1[..12] 与手搓 FNV-1a |
 | 百分号编码（`percent-encoding`） | 已换（encode 侧） | `infra/pct.rs`；库的 `NON_ALPHANUMERIC` 连 `- _ . ~` 一起编掉，用 `remove` 改回原口径，测试逐字钉住 |
-| 百分号解码 | **不换** | 要的是「坏转义 / 非法 UTF-8 → 整串原样退回」；库的 `decode_utf8_lossy` 是插 U+FFFD 的另一种语义，原文回不来，套库反而要写更多适配 |
-| 豆瓣令牌桶 → `governor` | **换不了（环境阻塞）** | 本机 crates.io 无网络，`D:\software\rust\cargo\registry\cache` 里没有 `governor`（`ipnet` / `thiserror` / `percent-encoding` / `tokio-util` 都有）。加依赖前先查缓存，否则 build 直接崩 |
-| `AppError` → `thiserror` | **不换** | `thiserror` 的收益在**枚举**（`#[error]` / `#[from]` 模板化）；`infra/error.rs` 是一个字段名被 `contracts/luma.schema.json` 锁定的 **struct**，Display 3 行、`impl Error` 空实现，换它收益为零还多了 serde 字段漂移风险 |
-| IP 判定 → `ipnet` | **不换** | `proxy/guard.rs::is_blocked` 已经在用 std 的 `is_loopback/is_private/is_link_local/...` 谓词；`ipnet` 解决的是 CIDR（`10.0.0.0/8`）解析匹配，这里没有这个问题 |
-| 取消传播 → `tokio-util CancellationToken` | **无对象** | 全仓 grep 无手搓取消标志；切换路径的回收是 timer/listener 的显式登记（`switchDisposers`），与取消令牌不是一回事 |
-| `sourceCache` → react-query | **不换** | 它不是 per-key 缓存，是**跨页结果账本 + 同步派生**：`publish()` 由搜索页注入、`view()` 对最多 8 个相关 bundle 做「同站取最匹配、同分取最新」的同步打分合并、`completeKeys` 与 bundle TTL 必须同步过期（否则出现「bundle 已过期但标记还在 → `ensure` 返回空视图 → 跨源自愈 `probed:0`」的实测 bug）、`aggregateCalls` 计数被探针钉住。三条具体失效模式：① Query 无跨 key 同步派生，逻辑照样得自己写，只是多背一层；② 现有 `queue` 把全站聚合搜索**串行化**（一次约 300 站点 fan-out），Query 只对同 key 去重、不同关键词会并发打爆源站；③ `partial`/`complete` 语义要挤进 Query 的 meta 里，比现在的显式字段更难读。要收的债是「形状不匹配」，不是「手搓」 |
+| 百分号解码 | 不换 | 要的是「坏转义 / 非法 UTF-8 → 整串原样退回」；库的 `decode_utf8_lossy` 是插 U+FFFD 的另一种语义，原文回不来，套库反而要写更多适配 |
+| 豆瓣令牌桶 → `governor` | 换不了（环境阻塞） | 本机 crates.io 无网络，`D:\software\rust\cargo\registry\cache` 里没有 `governor`（`ipnet` / `thiserror` / `percent-encoding` / `tokio-util` 都有）。新增 Rust 依赖前先确认在本地缓存中 |
+| `AppError` → `thiserror` | 不换 | `thiserror` 的收益在枚举（`#[error]` / `#[from]` 模板化）；`infra/error.rs` 是一个字段名被 `contracts/luma.schema.json` 锁定的 **struct**，Display 3 行、`impl Error` 空实现，换它收益为零还多了 serde 字段漂移风险 |
+| IP 判定 → `ipnet` | 不换 | `proxy/guard.rs::is_blocked` 已经在用 std 的 `is_loopback/is_private/is_link_local/...` 谓词；`ipnet` 解决的是 CIDR（`10.0.0.0/8`）解析匹配，这里没有这个问题 |
+| 取消传播 → `tokio-util CancellationToken` | 无适用点 | 全仓 grep 无手搓取消标志；切换路径的回收是 timer/listener 的显式登记（`switchDisposers`），与取消令牌不是一回事 |
+| `sourceCache` → react-query | **不换** | 它不是 per-key 缓存，是**跨页结果账本 + 同步派生**：`publish()` 由搜索页注入、`view()` 对最多 8 个相关 bundle 做「同站取最匹配、同分取最新」的同步打分合并、`completeKeys` 与 bundle TTL 必须同步过期（否则出现「bundle 已过期但标记还在 → `ensure` 返回空视图 → 跨源自愈 `probed:0`」的实测 bug）、`aggregateCalls` 计数被探针钉住。三条具体失效模式：① Query 无跨 key 同步派生，逻辑照样得自己写，只是多背一层；② 现有 `queue` 把全站聚合搜索**串行化**（一次约 300 站点 fan-out），Query 只对同 key 去重、不同关键词会并发打爆源站；③ `partial`/`complete` 语义要挤进 Query 的 meta，比显式字段更难读 |
 

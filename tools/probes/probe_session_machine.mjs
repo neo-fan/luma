@@ -1,27 +1,19 @@
 #!/usr/bin/env node
 /**
- * 播放会话状态机 ↔ 现实行为的一致性（2.0.0 内核解释器化的回归网）。
+ * 播放会话状态机与现实行为的一致性。
  *
- * 为什么需要它：判决的真源已经从解释器迁进 `vodSessionMachine`（会话身份 / 首帧 /
- * unknown 累计 / 判死交棒都由 actor 说话）。node 下的机器测试只能证明**模型自洽**，
- * 证明不了「引擎真的把事件喂对了」。影子阶段靠一次性脚本人工比对，从这一步起
- * 改成常驻探针：真实点播 + 真实换集，逐条钉不变量。
+ * 机器测试只证明模型自洽，这里用真实点播比对「引擎是否把事件喂对了」：
+ * 出画、健康播放、换集、判死交棒四段各钉不变量。
  *
- * 换集有两条合法路径，探针都接受、分别断言（2026-11-16 实测：同一部片不同轮次会
- * 各走一条，取决于 `resolve_play` 这轮给不给得出地址）：
- *   A. 原地换集 —— 同一个 actor：必须出现 `switching`，收口后 `sessionId` 自增 1；
- *   B. 退回整页重建（`线路不可解析` / 播放类型变化）—— actor 新建：`instance` 变、
- *      `sessionId` 从 1 重来，这条**不是**回归。
+ * 换集有两条合法路径，分别断言：
+ *   A. 原地换集：同一个 actor，须出现 switching 且收口后 sessionId 自增 1；
+ *   B. 整页重建（线路不可解析 / 播放类型变化）：actor 新建，instance 变化、sessionId 从 1 重来，不算回归。
  *
- * 判定口径（重要）：
- *   - 真实点播源不可用 / 没出画 → **SKIP**（exit 0，环境依赖，不是回归）；
- *   - 出画后机器状态与现实不符（没进 playing、hasPlayed 没置位、健康播放中被误判
- *     probing/recovering、unknown 计数非 0、原地换集不进 switching 或不收口）→ **FAIL**；
- *   - 交棒链断了（注入坏源后既不进 recovering 也没有判死红条，或 30s 没人接手）→ **FAIL**。
- *
- * 依赖 dev 窗口（CDP 9222）、真实配置与外网。关键词可用 LUMA_KEYWORD 覆盖。
- *
- *   node tools/probes/probe_session_machine.mjs
+ * 判定口径：
+ *   - 源不可用 / 没出画 → SKIP（exit 0，环境依赖）；
+ *   - 出画后状态与现实不符（没进 playing、hasPlayed 未置位、健康播放中出现
+ *     probing/recovering 或计数非 0、原地换集不进 switching 或不收口）→ FAIL；
+ *   - 注入坏源后既不进 recovering 也没有判死红条，或 30s 无人接手 → FAIL。
  */
 import { connect, finish } from "./lib/cdp.mjs";
 
@@ -77,8 +69,7 @@ async function clickNextEpisode(timeoutMs) {
   return false;
 }
 
-// 1) 搜索 → 详情 → 播放。真实源的成功率是抽签级的（2026-11-16 实测：同一个关键词
-// 两次分别命中能播的 py_pianku4k 和根本不出画的 py_奇优动漫），所以依次试前几张
+// 1) 搜索 → 详情 → 播放。真实源的成功率是抽签级的，所以依次试前几张
 // 卡片，直到有一张真出画为止；全都失败才是环境 SKIP。
 await cdp.eval("location.hash = '#/search'");
 await cdp.sleep(1200);
@@ -283,7 +274,7 @@ if (chainReady) {
     // 交棒之后必须有人接管：换线 / 换源会开新一轮（重建实例 → instance 变，
     // 或同实例重新 LOAD → ctx.sessionId 变）。卡死在 recovering 说明机器发起了
     // 但上层没接住。注意 `SESSION` 的 sessionId 在 ctx 里，别拿顶层字段比 ——
-    // 那样恒为 undefined，断言会假绿（2026-11-17 第一次写就踩了这个）。
+    // 取顶层字段恒为 undefined，断言会形同虚设。
     const preInstance = before.instance;
     const preSession = before.ctx?.sessionId;
     let stuckSince = Date.now();

@@ -2,23 +2,13 @@ import { setup, assign, type ActorRefFrom } from "xstate";
 import type { LineVerdict } from "./playProbe";
 
 /**
- * 播放会话状态机（2.0.0 内核重构的地基）。
+ * 点播会话状态机。
  *
- * 把原先散落在 `usePlayerEngine` 一个 1300 行 effect 里的 ~28 个可变闭包变量，
- * 收敛成一个**显式、可脱离 DOM 单测**的模型。动机：换集 / 续播 / 音量倍速偏好
- * 这一簇本周出过 4 个 bug，根因都是「状态没被枚举、只被散落」——`switchGeneration`
- * / `fadeDone` / `volumeFadeUntil` / `rateReadyAt` / `resumeCancelled` 各自表达
- * 同一批状态，关系靠注释维持。这里给它们一个真源。
+ * 播放内核的离散生命周期状态（会话身份、首帧、续播意图、探活累计、判死原因）与
+ * 「何时交棒」的判决都只在这里表达一次，转换表可在 node 下逐条断言。副作用由
+ * `usePlayerEngine` 作为解释器执行。
  *
- * 纯度高：只做 `(state, event) -> (nextState, context)` + 命名动作描述符，**不碰
- * DOM、不 import ArtPlayer**。副作用（建解码器、淡音量、落盘偏好、换线）由
- * `usePlayerEngine` 作为解释器执行动作名。于是转换表能在 node 下逐条断言——这正是
- * 内核此前缺的行为测试网。
- *
- * 时间窗（音量 ramp / 初始化静默 / 倍速静默）本质是墙钟问题，**留在解释器**；
- * 机器只跟踪离散量（`sessionId`、`hasPlayed`、`resumeIntent`、`resumeAborted`、
- * `unresponsiveProbes`、`failoverCause`）。曾经这里还带一个 `fadeDone` 布尔与
- * `FADE_DONE` 事件，但引擎从不发它（音量淡入归时间窗），是纯装饰 —— 已删。
+ * 不含墙钟状态（音量 ramp、初始化与倍速静默窗），那些留在解释器。
  */
 
 /**
@@ -98,9 +88,7 @@ export const vodSessionMachine = setup({
   guards: {
     wantsResume: ({ context }) => context.resumeIntent,
    /**
-     * 「出过画就再也不自动换线」是产品红线（用户明确要求）。此前它只写在解释器
-     * `stallCheck` 的一个 `if` 里——机器收到 dead 照样进 recovering。现在把它写进
-     * 转换表：机器层面就不可能判死，删掉那个 `if` 也不会破。
+         * 出过画之后不再自动换线：卡顿多半是网络抖动，换线交给手动操作。
      */
     notPlayed: ({ context }) => !context.hasPlayed,
     isDead: ({ event }) => event.type === "PROBE" && event.verdict === "dead",
@@ -117,8 +105,6 @@ export const vodSessionMachine = setup({
       hasPlayed: () => false,
       unresponsiveProbes: () => 0,
      resumeAborted: () => false,
-      // 开新一轮会话就把上一轮的判死原因清空：`recovering` 只在进入时带因由，
-      // 离开后不能让解释器读到陈旧的 cause。
       failoverCause: () => null,
       failoverDetail: () => "",
     }),
@@ -145,13 +131,9 @@ export const vodSessionMachine = setup({
       failoverCause: ({ event }) => (event.type === "FAILED" ? event.cause : null),
       failoverDetail: ({ event }) => (event.type === "FAILED" ? (event.detail ?? "") : ""),
     }),
-    // ---- 副作用发起点：解释器用 `machine.provide({ actions })` 给出实现 ----
-    // 只留**真正需要机器决定时机**的动作。原先这里还挂着 acquireDecoder /
-    // releaseDecoders / showSpinner / hideSpinner / pinControls / unpinControls
-    // 六个空描述符：解码器的创建与销毁属于 ArtPlayer 实例生命周期（在 `customType`
-    // 里挂 hls.js / mpegts.js，机器既碰不到也不该碰），转环与钉控制栏由
-    // `matches("switching")` 这个**状态本身**驱动。留着它们等于让模型假装owns
-    // 一些其实不归它的事——2026-11-17 删除。
+    // 副作用发起点：实现由解释器用 `machine.provide({ actions })` 注入。
+    // 解码器生命周期归 ArtPlayer 的 `customType`，转环与钉控制栏由
+    // `matches("switching")` 状态驱动，都不在这里。
     resumePlayback: () => undefined,
     cancelResume: () => undefined,
     navigateFailover: () => undefined,
@@ -187,7 +169,6 @@ export const vodSessionMachine = setup({
     },
     playing: {
       on: {
-        // 出过画之后看门狗不再介入（红线见 notPlayed guard）：卡顿按网络抖动处理。
         STALL: { target: "probing", guard: "notPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
        USER_SWITCH: {
@@ -227,7 +208,7 @@ export const vodSessionMachine = setup({
         FRAG_GROWTH: { target: "playing", actions: "resetProbe" },
         // 探活期间解码器直接报错 = 比任何复核都硬的证据。
         FAILED: { target: "recovering", actions: ["incrementProbe", "failoverFromEvent"] },
-        // 复核在途时用户换集 / 换源：本轮结论作废，跟着新会话走。
+        // 复核在途时换集 / 换源：本轮结论作废，跟着新会话走。
         USER_SWITCH: {
           target: "switching",
           actions: ["setTarget", "setResumeIntent", "bumpSession"],
@@ -247,11 +228,8 @@ export const vodSessionMachine = setup({
           target: "playing",
           actions: ["markResumeAborted", "cancelResume"],
         },
-        // **续播的发起点在这里，不在 MEDIA_ALIVE**：现实是「新地址挂上后立刻试播 +
-        // canplay 兜底」，而 `MEDIA_ALIVE` 意味着首帧已经出来了——那时再 play() 就
-        // 成了「等到有画面才播」，正是 2026-11-15 那个「换集后黑屏不动」的反面。
-        // 所以解释器在 `art.switchUrl` 之后、音量淡入与倍速复位之后发这个事件，
-        // 顺序与原先的内联写法逐字等价。
+        // 续播在这里发起，不在 MEDIA_ALIVE：那时首帧已经出来，play() 就晚了。
+        // 解释器在 `art.switchUrl`、倍速复位与淡入武装之后发这个事件。
         SWITCH_ATTACHED: [{ guard: "wantsResume", actions: "resumePlayback" }],
         STALL: { target: "probing", guard: "notPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
@@ -259,8 +237,8 @@ export const vodSessionMachine = setup({
       },
     },
     recovering: {
-      // 进入即「这条线已判死、交棒换线」。真实的恢复路径不是某个 RECOVERED 信号，
-      // 而是上层换源后重建实例（LOAD）或用户手动换集（USER_SWITCH）——出边按现实写。
+      // 进入即「这条线已判死、交棒换线」。恢复路径是上层换源后重建实例（LOAD）
+      // 或手动换集（USER_SWITCH）。
       entry: "navigateFailover",
       on: {
         LOAD: { target: "resolving", actions: ["setTarget", "bumpSession"] },

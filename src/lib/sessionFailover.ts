@@ -8,10 +8,7 @@
  */
 import { PLAY_FAILURE_HINT } from "./features";
 
-/**
- * 判死原因。新增必须同时在两台机器的 `FAILED` / `PROBE` 转移里发生，
- * 并在下面的映射里给出文案——不允许出现「有原因没文案」的组合。
- */
+/** 新增原因必须同时在 `failoverCopy` 里给出文案，否则不满足返回类型。 */
 export type FailoverCause =
   /** 复核给出明确失败（HTTP 错误 / 内容不是 m3u8 / 分片是占位图）。 */
   | "probeDead"
@@ -35,10 +32,7 @@ export interface FailoverCopy {
   stage: string;
 }
 
-/**
- * 文案与 stage 的唯一来源。`detail` 是解码器给的原始错误名（hls `data.details`
- * / mpegts 的 `err`），进用户文案时保持原先的写法不变。
- */
+/** `detail` 是解码器的原始错误名，原样带进文案。 */
 export function failoverCopy(cause: FailoverCause, detail = ""): FailoverCopy {
   switch (cause) {
     case "probeDead":
@@ -54,8 +48,6 @@ export function failoverCopy(cause: FailoverCause, detail = ""): FailoverCopy {
     case "flvInterrupted":
       return { message: `FLV 播放中断：${detail}`, stage: "flv interrupted" };
     case "linesExhausted":
-      // 文案口径：这条是「同源所有线路都不行」，接下来才轮到换源；换线阶段的
-      // 文案不得宣称已经在换源（`failoverOrder.test.ts` 钉着这条区分）。
       return { message: "所有线路都不可用，正在找其它源…", stage: "lines exhausted" };
   }
 }

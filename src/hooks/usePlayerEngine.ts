@@ -604,7 +604,7 @@ export function usePlayerEngine({
       // remount 路径的首帧前画面：没有海报时 ArtPlayer 默认黑底 + 转圈直到
       // canplay（慢源 1~10s+）。铺上影片封面，出画后由 poster hold 渐隐接管。
       // 只在有海报时才传这个选项：ArtPlayer 对每个选项做类型校验，显式传
-      // undefined 会抛 TypeError 直接崩掉实例（2026-11-15 实测）。
+      // undefined 会抛 TypeError 直接崩掉实例。
       ...(posterRef.current ? { poster: posterRef.current } : {}),
       lang: "zh-cn",
       theme: "#e50914",
@@ -938,7 +938,7 @@ export function usePlayerEngine({
     }
 
     /**
-     * 起播音频淡入（2026-11-15 用户反馈「直播频道切换时候 有个声音」）。
+     * 起播音频淡入。
      *
      * 两处噪声源：
      * 1. ArtPlayer 初始化时会把音量恢复成它自己缓存的 100%，比我们的偏好早
@@ -1264,7 +1264,7 @@ export function usePlayerEngine({
       // 记录切换前的播放意图：teardown 销毁解码器会把 video 打回 paused，
       // ArtPlayer 的 switchUrl 不会替我们续播——新源挂上后必须手动 play()，
       // 否则缓冲完成了却停在暂停态，用户看到的就是「换集后黑屏不动」
-      // （2026-11-15 实测）。
+      // 。
       const wasPlaying = !video.paused && !video.ended;
       // 换集 = USER_SWITCH，续播意图如实带入；要不要播由机器的 wantsResume 守卫决定。
       sessionActorRef.current?.send({ type: "USER_SWITCH", url, resumeIntent: wasPlaying });
@@ -1272,7 +1272,7 @@ export function usePlayerEngine({
        * 偏好沿用（与新建实例同一套纪律）：原地换集同样会被 ArtPlayer 把
        * playbackRate 重置回 1、把 volume 恢复成它缓存的 100%——那不是用户
        * 动作，静默期必须按切换前的有效值重新立起来，否则倍速被冲成 1 还
-       * 落进偏好（2026-11-16 探针实测「第 2 集回到 1 倍速」）。音量取「当前
+       * 落进偏好。音量取「当前
        * 有效值」而不是存储值：本集内刚拖过音量可能还压在节流窗口里没落盘，
        * 丢了它就是把用户的手动调节抹掉。
        */
@@ -1353,8 +1353,7 @@ export function usePlayerEngine({
       }
       if (wasPlaying) {
         // 新集声音重走一次淡入，**目标 = 切换前的有效音量**（不是存储偏好）——
-        // 复用冷启动那条会把音量冲成 ArtPlayer 刚恢复的存储值（2026-11-16 实测
-        // 「拖音量后换集丢音量」）。淡入本身、静默窗、完成后的正式落盘都在
+        // 复用冷启动那条会把音量冲成 ArtPlayer 刚恢复的存储值。淡入本身、静默窗、完成后的正式落盘都在
         // `fader.armSwitch` 里；撤销函数交给切换句柄回收器，与原来的 disposer 等价。
         trackSwitchDisposer(fader.armSwitch({ volume: swVolume, muted: swMuted }));
         // 续播改由机器发起（实现见下面的 `sessionEffects.resumePlayback`）：倍速复位
@@ -1393,7 +1392,7 @@ export function usePlayerEngine({
         };
         // 封顶必须无条件收口（finish(false)）：上一轮切换被新代次顶掉后，
         // 若连 cap 也被守卫吞了，这条 promise 永挂、finally 永远不跑，
-        // 「切换中」只能等页面级兜底（2026-11-16 CDP 实测卡 10s+）。
+        // 「切换中」只能等页面级兜底。
         const cap = window.setTimeout(() => finish(false), 15000);
         // 登记给「新一轮切换 / effect cleanup」兜底：正常收口时 disposeWaiter
         // 已跑过一次，再跑是幂等的 removeEventListener/clearTimeout no-op。

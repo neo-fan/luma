@@ -1,6 +1,6 @@
 /**
  * 海报保持的行为契约：钉的是「首帧前不许露黑屏」与「失败路径必须立刻撤干净」
- * 两条产品事实，以及 2026-11-15 实测过的两个坑（暂停态 timeupdate 不能渐隐、
+ * 两条产品事实与两个坑（暂停态 timeupdate 不能渐隐、
  * 重复 hold 不能叠加监听）。假元素 + 假时钟，不需要 jsdom。
  */
 import { describe, expect, it } from "vitest";
@@ -100,7 +100,7 @@ describe("poster hold", () => {
     expect(h.hold.active).toBe(false);
   });
 
-  it("暂停态的 timeupdate 不能触发渐隐（2026-11-15 黑屏回归）", () => {
+  it("暂停态的 timeupdate 不能触发渐隐", () => {
     const h = harness();
     h.hold.hold();
     h.state.paused = true;

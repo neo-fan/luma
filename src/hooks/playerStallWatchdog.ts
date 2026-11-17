@@ -1,24 +1,12 @@
 /**
- * 卡顿看门狗（2.0.0 从 `usePlayerEngine` 抽出）。
+ * 卡顿看门狗：只取证据，判决在会话状态机。
  *
- * 它只干一件事：**取证据**，然后把结论交给会话状态机判决。判决规则（unknown 累计
- * 到几次算死、dead 一次即死、出过画不判死）在 `lib/vodSessionMachine.ts` /
- * `lib/liveSessionMachine.ts` 的转换表里，这里一份都不复制。
+ * 时间不是证据：单分片 9MB+ 的 AES-128 源冷启拉首个分片可超过 11s，固定超时
+ * 会误杀能播的线路。所以静默只用来触发一次独立复核（探清单 + 首个分片），
+ * 结论原样 `send({type:"PROBE"})` 交给机器：继续等 / 累计 / 判死都在转换表里。
  *
- * 为什么不能拿「等了多久」当判决依据（历史，别改回去）：
- * - 死 CDN 会让 hls.js 无限重试却不触发 fatal，画面永远停在 00:00；
- * - 但「慢」不等于「死」：单分片 9MB+ 的 AES-128 源冷启拉首个分片实测 11.8s
- *   （多多影院 ZJ4K），一刀切的固定超时会把能播的线判死跳走 —— 用户看到
- *   「后台在下载、有声音没画面」却被换线；
- * - 2026-11-14 起改成：静默只用来触发一次**独立复核**（直接探清单 + 首个分片），
- *   只有复核给出明确失败（HTTP 错误 / 内容不是 m3u8 / 分片是占位图）才算证据；
- *   超时或说不出所以然（unknown）一律继续等，把决定权留给用户。
- *
- * 三条不参与判决的早退（每条都是真实回归的产物）：
- * 1. 用户主动暂停（不是播完）：没有任何「线路坏了」的证据，且要把静默计时推回当下，
- *    恢复播放后不会因为「暂停了十分钟」立刻判死；
- * 2. 已出过画：卡顿多半是网络抖动，只撤慢提示，绝不自动换线；
- * 3. 媒体自己在走（`readyState>=2` 或时钟前进）：看门狗就此退役，不再打扰。
+ * 三条早退：暂停中（并推回静默计时）、已出过画、媒体自己在走。
+ * 上层换线 / 换源已接管时完全不插手。
  */
 import type { LineVerdict } from "../lib/playProbe";
 
@@ -144,8 +132,7 @@ export function createStallWatchdog(options: StallWatchdogOptions): StallWatchdo
       .then((verdict) => {
         probeBusy = false;
         if (
-          // 迟到的结论属于已被新一轮切换取代的旧集：丢弃。
-          gen !== generation() ||
+              gen !== generation() ||
           stopped ||
           video.readyState >= 2 ||
           isAdvancing() ||
@@ -156,7 +143,8 @@ export function createStallWatchdog(options: StallWatchdogOptions): StallWatchdo
         // 判决交给机器：这里只交证据，不决定「继续等 / 累计 / 交棒」。
         send({ type: "PROBE", verdict });
         if (verdict === "ok") {
-          // 清单与分片都拿得到：只是慢。静默计时推回当下，下一轮复核重新起算
+  
+
           // （这是取证方的记账，不是判决，所以归这里而不是状态机）。
           markAlive();
           log("info", "stall probe alive but slow", { quietMs: quietMs() });

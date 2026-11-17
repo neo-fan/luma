@@ -1,5 +1,5 @@
 /**
- * 音量淡入的行为契约（2026-11 这一簇出过 4 个 bug，逐条钉住）。
+ * 音量淡入的行为契约：顺序、幂等与换集目标。
  *
  * 不依赖 jsdom：`FadeTarget` 是结构最小接口，这里用带调用记录的假对象 +
  * 手动时钟 / 手动帧队列，能把「谁先发生」这类顺序问题精确断言出来。
@@ -135,7 +135,7 @@ describe("volume fader", () => {
   });
 
   it("静默窗必须先于 muted=false 立起来（否则 0 会被写成用户偏好）", () => {
-    // 2026-11-15 实测：顺序反了会让 persistVolume 把此刻的 0 当用户意图落盘，
+    // 顺序反了会让落盘把此刻的 0 当用户意图写入，
     // 整机从此默认静音。这条断言就是那个顺序本身。
     const h = harness({ volume: 1, muted: false }, { volume: 0.6, muted: false });
     h.fader.armColdStart();
@@ -194,7 +194,7 @@ describe("volume fader", () => {
 
   it("换集：淡入到切换前的有效音量，完成后正式落盘并追加静默窗", () => {
     // 与冷启动的差别是这条的存在：拖音量到 0.9 后换集，目标必须是 0.9，
-    // 而不是存储里那份（2026-11-16 实测「拖音量后换集丢音量」）。
+    // 而不是存储里那份。
     const h = harness({ volume: 0.9, muted: false }, { volume: 0.2, muted: false });
     h.fader.armColdStart();
     h.fire("playing");
