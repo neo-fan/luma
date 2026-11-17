@@ -18,7 +18,10 @@ use quick_xml::Reader;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
-const VOD_FIELDS: [&str; 12] = [
+// `vod_douban_id` 不在 TVBox 规范字段里，但主流采集库普遍带它（实测 20 站 260 条
+// 样本 62% 有值）：豆瓣富化按 id 直取比标题匹配可靠得多，所以显式保留，
+// 不在归一化阶段丢掉。
+const VOD_FIELDS: [&str; 13] = [
     "vod_id",
     "vod_name",
     "vod_pic",
@@ -31,6 +34,7 @@ const VOD_FIELDS: [&str; 12] = [
     "type_name",
     "vod_play_from",
     "vod_play_url",
+    "vod_douban_id",
 ];
 
 /// CMS 字段别名：不同采集站同一语义用不同的键名。
@@ -69,6 +73,21 @@ pub(crate) fn vod(raw: &Map<String, Value>) -> Value {
         .or_else(|| raw.get("id").map(text_of))
         .unwrap_or_default();
     item.insert("vod_id".to_string(), json!(id));
+    // 豆瓣 id 统一成字符串；`0` 是采集库「没填」的写法，归一成空串，
+    // 免得下游拿 0 去反查 subject 再判一次无意义失败。
+    let douban_id = item
+        .get("vod_douban_id")
+        .map(text_of)
+        .map(|raw| {
+            let text = raw.trim();
+            if text.is_empty() || text == "0" || text == "0.0" || text == "0.00" {
+                String::new()
+            } else {
+                text.to_string()
+            }
+        })
+        .unwrap_or_default();
+    item.insert("vod_douban_id".to_string(), json!(douban_id));
     for (field, alias) in [
         ("vod_name", "name"),
         ("vod_pic", "pic"),
@@ -416,6 +435,21 @@ mod tests {
         assert_eq!(item["vod_name"], "后天");
         assert_eq!(item["vod_content"], "梗概");
         assert_eq!(item["vod_play_url"], "");
+    }
+
+    #[test]
+    fn douban_id_survives_normalisation() {
+        // 采集库给数字 id 与给 "0" 的两种写法都要归一成可用形态：
+        // 真 id 转字符串（下游按字符串比对），0 归空串（表示「没填」）。
+        let raw = r#"{"list":[
+            {"vod_id":"1","vod_name":"童年阴影","vod_douban_id":36344548},
+            {"vod_id":"2","vod_name":"某片","vod_douban_id":"0"},
+            {"vod_id":"3","vod_name":"另一片"}
+        ]}"#;
+        let page = parse_page(raw).unwrap();
+        assert_eq!(page["list"][0]["vod_douban_id"], "36344548");
+        assert_eq!(page["list"][1]["vod_douban_id"], "");
+        assert_eq!(page["list"][2]["vod_douban_id"], "");
     }
 
     #[test]

@@ -102,6 +102,7 @@
         "vod_actor": { "type": "string" },
         "vod_director": { "type": "string" },
         "type_name": { "type": "string" },
+        "vod_douban_id": { "type": "string" },
         "vod_play_from": { "type": "string" },
         "vod_play_url": { "type": "string" }
       },

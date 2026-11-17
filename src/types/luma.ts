@@ -68,6 +68,14 @@ export interface VodInfo {
   vod_actor?: string;
   vod_director?: string;
   type_name?: string;
+  /**
+   * 采集站自带的豆瓣 subject id（字符串形态，`0`/缺失都归一成空串）。
+   *
+   * 实测 20 个 CMS 站 260 条样本里 62% 有值、且形态全部是 6~9 位数字，
+   * 反查 `subject_abstract` 抽检 6/6 指向同一部作品 —— 豆瓣富化因此可以
+   * 按 id 直取，标题匹配退成兜底。py/js 源没有这个字段，走原路径。
+   */
+  vod_douban_id?: string;
   /** 线路名，$$$ 分隔 */
   vod_play_from: string;
   /** 剧集，"名称$地址#..."，$$$ 分隔线路 */
