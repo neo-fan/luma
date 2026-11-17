@@ -34,7 +34,11 @@ function keyOf(siteKey: string, vodId: string): string {
   return `${siteKey}:${String(vodId ?? "").trim()}`;
 }
 
-/** 详情页回填只用到这几个字段；其余（播放串、演员表）不复制。 */
+/**
+ * 详情页回填只用到这几个字段；其余（播放串、演员表）不复制。
+ * `vod_douban_id` 必须带上：从卡片进详情/播放页是主路径，丢了它豆瓣富化就只能
+ * 走标题匹配（按 id 直取少一跳，且更准）。
+ */
 function slim(vod: VodInfo, vodId: string): VodInfo {
   return {
     vod_id: vodId,
@@ -43,6 +47,7 @@ function slim(vod: VodInfo, vodId: string): VodInfo {
     vod_remarks: vod.vod_remarks,
     vod_year: vod.vod_year,
     vod_area: vod.vod_area,
+    vod_douban_id: vod.vod_douban_id,
     type_name: vod.type_name,
     vod_play_from: "",
     vod_play_url: "",

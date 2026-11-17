@@ -331,6 +331,8 @@ export default function DetailPage({
    */
   const doubanTitle = (vod?.vod_name || emptyCard?.vod_name || title || "").trim();
   const doubanYear = (vod?.vod_year || emptyCard?.vod_year || "").trim();
+  // 源自带豆瓣 subject id 时按 id 直取（实测 62% 的 CMS 条目有），省掉搜索那一跳。
+  const doubanSubjectId = (vod?.vod_douban_id || emptyCard?.vod_douban_id || "").trim();
   useEffect(() => {
     // 片名/年份变了先清空：详情页在同一条路由上换片时组件不卸载，
     // 不清会出现「上一部片的评分挂在新片下面」。
@@ -345,6 +347,7 @@ export default function DetailPage({
     void (async () => {
       const meta = await fetchDoubanMeta(doubanTitle, doubanYear || undefined, {
         priority: true,
+        subjectId: doubanSubjectId || undefined,
       });
       if (alive && meta) {
         setDoubanMeta(meta);
@@ -353,7 +356,7 @@ export default function DetailPage({
     return () => {
       alive = false;
     };
-  }, [doubanTitle, doubanYear]);
+  }, [doubanTitle, doubanYear, doubanSubjectId]);
 
   // 简介的溢出测量、展开/收起都在 `VodMetaHero` 里做：详情页与播放页共用
   // 同一份实现，避免两处口径漂移。

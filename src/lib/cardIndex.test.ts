@@ -36,13 +36,16 @@ afterEach(() => {
 
 describe("cardIndex", () => {
   it("records a card and recalls the fields a detail page needs", () => {
-    rememberCards("py_douban", [vod("37100984", "后会友期")]);
-    const hit = recallCard("py_douban", "37100984");
+    rememberCards("cms_a", [vod("37100984", "后会友期", { vod_douban_id: "36344548" })]);
+    const hit = recallCard("cms_a", "37100984");
     expect(hit).not.toBeNull();
     expect(hit?.vod_name).toBe("后会友期");
     expect(hit?.vod_pic).toBe("https://img/37100984.jpg");
     expect(hit?.vod_remarks).toBe("电影评分 8.2");
     expect(hit?.vod_year).toBe("2026中国大陆");
+    // 豆瓣 subject id 必须跟着卡片走：从卡片进详情/播放页是主路径，
+    // 在这里被 slim() 丢掉就等于放弃按 id 直取。
+    expect(hit?.vod_douban_id).toBe("36344548");
   });
 
   it("keeps only light fields so a browse session cannot pin playback strings", () => {

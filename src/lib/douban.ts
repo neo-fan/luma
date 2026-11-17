@@ -47,6 +47,11 @@ export interface DoubanMetaEvent {
 
 export interface FetchDoubanOptions {
   priority?: boolean;
+  /**
+   * 采集库自带的豆瓣 subject id（`vod_douban_id`）。有值时后端按 id 直取详情，
+   * 跳过搜索那一跳；槽位键同时含 id，与标题路径的正/负缓存互不污染。
+   */
+  subjectId?: string;
 }
 
 interface Entry {
@@ -215,21 +220,21 @@ export function fetchDoubanMeta(
   const word = (title ?? "").trim();
   if (!word) return Promise.resolve(null);
   if (!readDoubanPrefs().enabled) return Promise.resolve(null);
-  ensureListening();
-  const key = doubanKey(word, year);
-  const entry = store.get(key);
-  if (entry?.phase === "full" || entry?.phase === "none") {
-    return Promise.resolve(entry.meta);
-  }
-  return new Promise<DoubanMeta | null>((resolve) => {
-    let set = waiters.get(key);
-    if (!set) {
-      set = new Set();
-      waiters.set(key, set);
+    ensureListening();
+    const key = doubanKey(word, year, options.subjectId);
+    const entry = store.get(key);
+    if (entry?.phase === "full" || entry?.phase === "none") {
+      return Promise.resolve(entry.meta);
     }
-    set.add(resolve);
-    requestDouban(word, year, options.priority === true);
-  });
+    return new Promise<DoubanMeta | null>((resolve) => {
+      let set = waiters.get(key);
+      if (!set) {
+        set = new Set();
+        waiters.set(key, set);
+      }
+      set.add(resolve);
+      requestDouban(word, year, options.priority === true, options.subjectId);
+    });
 }
 
 /** 清空 store（换配置 / 测试复位用）。在途请求的响应会重新填回。 */

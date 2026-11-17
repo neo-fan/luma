@@ -513,6 +513,8 @@ export default function PlayerPage({
     void fetchDoubanMeta(name, vod?.vod_year?.trim() || undefined, {
       // 用户已经在看这一部了：别让首页推荐卡的预取排在前面。
       priority: true,
+      // 源自带豆瓣 subject id 时按 id 直取，跳过搜索那一跳。
+      subjectId: vod?.vod_douban_id?.trim() || undefined,
     }).then(
       (meta) => {
         if (alive && meta) {
@@ -523,7 +525,7 @@ export default function PlayerPage({
     return () => {
       alive = false;
     };
-  }, [vod?.vod_name, vod?.vod_year, vodName]);
+  }, [vod?.vod_name, vod?.vod_year, vod?.vod_douban_id, vodName]);
 
   /** 收藏需要完整 vod（封面 / 备注）；详情还没到时用路由参数兜底，先收藏不误事。 */
   const favVod = useMemo<VodInfo | null>(() => {

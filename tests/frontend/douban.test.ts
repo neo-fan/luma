@@ -284,6 +284,26 @@ describe("douban push/store behavior", () => {
     expect(key).not.toBe(doubanKey("童年阴影", "2025"));
   });
 
+  it("fetchDoubanMeta passes subjectId through the promise view", async () => {
+    writeDoubanPrefs({ enabled: true, proxyType: "direct" });
+    const subjectId = "36344548";
+    const pending = fetchDoubanMeta("童年阴影", "2025", { priority: true, subjectId });
+
+    expect(doubanRequest).toHaveBeenCalledWith(
+      "童年阴影",
+      "2025",
+      "direct",
+      undefined,
+      true,
+      doubanKey("童年阴影", "2025", subjectId),
+      subjectId,
+    );
+
+    // 终态按同一个槽位键结算：标题路径的缓存不能顶掉它。
+    push(doubanKey("童年阴影", "2025", subjectId), "full", fullPayload);
+    expect((await pending)?.rating).toBe(fullPayload.rating);
+  });
+
   it("merges concurrent requests for the same key into one", async () => {
     writeDoubanPrefs({ enabled: true, proxyType: "direct" });
     const key = doubanKey("霸王别姬", "1993");
