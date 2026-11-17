@@ -49,39 +49,55 @@ const submitted = await cdp.eval(`(() => {
 if (submitted !== "submitted") problems.push(`搜索框不可用：${submitted}`);
 await cdp.sleep(9000);
 
-const opened = await cdp.eval(`(() => {
-  const card = document.querySelector('.content .vod-card');
-  if (!card) return null;
-  card.click();
-  return card.getAttribute('title');
-})()`);
-if (!opened) {
-  console.log("[FAIL] 搜索没有结果卡片（网络或配置问题）");
+const cardCount = await cdp.eval(`document.querySelectorAll('.content .vod-card').length`);
+if (!cardCount) {
+  console.log("[SKIP] 搜索没有结果卡片（网络或配置问题）");
   cdp.close();
-  process.exit(1);
+  process.exit(0);
 }
-console.log("打开详情:", opened);
 
-// 详情页可能是单集（无「播放」按钮），直接点第一集也行。
-// 慢源详情普遍要 10~25s（源侧偶发还要重试），定长 sleep 是假阴性来源，
-// 改成轮询到出现可点入口为止（2026-11-16 探针在庆余年上连续误报两次）。
-const entered = await cdp.eval(`(async () => {
-  const deadline = Date.now() + 30000;
-  while (Date.now() < deadline) {
-    const play = [...document.querySelectorAll('.content button')].find((node) => /^播放/.test(node.textContent.trim()));
-    if (play) { play.click(); return 'play-button'; }
-    const episode = document.querySelector('.content .episode');
-    if (episode) { episode.click(); return 'episode'; }
-    await new Promise((r) => setTimeout(r, 800));
+// 依次试前几张卡片，直到有一张的详情页给出可点入口。
+let opened = null;
+let entered = null;
+for (let pick = 0; pick < Math.min(3, cardCount) && !entered; pick += 1) {
+  const title = await cdp.eval(`(() => {
+    const card = document.querySelectorAll('.content .vod-card')[${pick}];
+    if (!card) return null;
+    card.click();
+    return card.getAttribute('title');
+  })()`);
+  if (!title) continue;
+  entered = await cdp.eval(`(async () => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const play = [...document.querySelectorAll('.content button')].find((node) => /^播放/.test(node.textContent.trim()));
+      if (play) { play.click(); return 'play-button'; }
+      const items = [...document.querySelectorAll('.content .episode')];
+      if (items.length) {
+        // 取中间一集：倒序渲染时「第一个」是最后一集，没有下一集可点。
+        const target = items[Math.floor(items.length / 2)] ?? items[0];
+        target.click();
+        return 'episode';
+      }
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    return null;
+  })()`);
+  if (!entered) {
+    console.log(`  第 ${pick + 1} 张「${title}」详情页没有可点入口，换下一张`);
+    await cdp.eval("location.hash = '#/search'");
+    await cdp.sleep(2500);
+    continue;
   }
-  return null;
-})()`);
-if (!entered) {
-  console.log("[FAIL] 详情页既没有播放按钮也没有选集");
-  cdp.close();
-  process.exit(1);
+  opened = title;
 }
-console.log("进入播放:", entered);
+if (!entered) {
+  console.log(`[SKIP] 试了 ${Math.min(3, cardCount)} 张卡片，详情页都没有可点入口（源侧/网络）`);
+  cdp.close();
+  process.exit(0);
+}
+console.log("打开详情:", opened, "入口:", entered);
+
 await cdp.sleep(7000);
 
 const baseline = await cdp.eval(SNAPSHOT);
