@@ -30,6 +30,8 @@ import { api, errorMessage } from "../lib/invoke";
 import { formatBytesPerSec } from "../lib/bytes";
 import { createPosterHold } from "./playerPosterHold";
 import { createStallWatchdog } from "./playerStallWatchdog";
+import { createThroughputMeter } from "./playerThroughputMeter";
+import type { MeterReading } from "./playerThroughputMeter";
 import { createPrefsWriter } from "./playerPrefsWriter";
 import { createVolumeFader } from "./playerVolumeFade";
 import { log } from "../lib/logger";
@@ -1215,39 +1217,32 @@ export function usePlayerEngine({
       }
     }, 2_000);
     // 每秒问一次反代吞吐；控件收起时也继续更新，展开控制栏立刻是最新读数。
-    let meterBase = "http://127.0.0.1:9978";
-    void api
-      .proxyStatus()
-      .then((status) => {
-        meterBase = status.baseUrl;
-      })
-      .catch(() => {
-        /* 反代还没起来：沿用默认端口 */
-      });
-    // 上一次读到的累计字节：增长哪怕很慢，也是「这条线路在动」的硬证据。
-    // 极慢的源（1~2 KB/s）出画前会被看门狗当成「无响应」，光靠探活分不清
-    // 「慢」和「死」；字节在涨就直接记活，并把 unknown 计数清零。
-    let lastMeterTotal = 0;
-    const speedTimer = window.setInterval(() => {
-      void fetch(`${meterBase}/meter`, { cache: "no-store" })
-        .then((res) => res.json())
-        .then((body: { bytesPerSec?: number; bytesTotal?: number }) => {
-          const total = Number(body.bytesTotal ?? 0);
-          if (Number.isFinite(total) && total > lastMeterTotal) {
-            lastMeterTotal = total;
-            noteAlive();
-            // 字节在涨 = 极慢但活着：交给机器复位 unknown 累计（阈值真源在转换表，
-            // 解释器不再自己清零计数器）。
-            sessionActorRef.current?.send({ type: "FRAG_GROWTH" });
-          }
-          if (!speedEl) return;
-          const rate = formatBytesPerSec(Number(body.bytesPerSec ?? 0));
-          if (rate) speedEl.textContent = `↓ ${rate}`;
-        })
-        .catch(() => {
-          /* 反代重启中：保持上一次读数，不闪 0 */
-        });
-    }, 1_000);
+    /**
+     * 反代吞吐轮询：速率读数 + 「字节在涨 = 极慢但活着」的记活。
+     * 为什么速率不认 hls.js、为什么取不到数据不能闪 0，见 `playerThroughputMeter.ts`。
+     */
+    const meter = createThroughputMeter({
+      fallbackBase: "http://127.0.0.1:9978",
+      status: () => api.proxyStatus(),
+      fetchJson: async (url) => {
+        const res = await fetch(url, { cache: "no-store" });
+        return (await res.json()) as MeterReading;
+      },
+      onGrowth: () => {
+        noteAlive();
+        // 字节在涨 = 极慢但活着：交给机器复位 unknown 累计（阈值真源在转换表，
+        // 解释器不自己清零计数器）。
+        sessionActorRef.current?.send({ type: "FRAG_GROWTH" });
+      },
+      // 控件收起时也要继续更新，展开控制栏立刻是最新读数；元素还没建好就跳过这一拍。
+      render: (label) => {
+        if (speedEl) {
+          speedEl.textContent = label;
+        }
+      },
+      format: formatBytesPerSec,
+    });
+    const stopMeter = meter.start();
 
     /**
      * 原地换集：同一条线路的下一集只是换一个 m3u8 地址，销毁重建会把
@@ -1433,7 +1428,7 @@ export function usePlayerEngine({
       disposeSwitchCycle();
       // 海报保持的监听 / 渐隐定时器随卸载收回（DOM 由 art.destroy 移除）。
       posterHold.dispose();
-      window.clearInterval(speedTimer);
+      stopMeter();
       clearSlowNotice();
       prefsWriter.dispose();
       video.removeEventListener("error", onError);

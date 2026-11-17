@@ -73,15 +73,18 @@ describe("stall watchdog", () => {
   });
 
   it("counts proxy byte growth as a liveness signal", () => {
-    expect(engine).toContain("bytesTotal");
-    expect(engine).toContain("lastMeterTotal");
-    // 关键顺序：先看字节有没有涨，再看控件是否还在（控件收起时也要记活）。
-    const totalCheck = engine.indexOf("total > lastMeterTotal");
-    const elementGuard = engine.indexOf("if (!speedEl) return;");
-    expect(totalCheck).toBeGreaterThan(-1);
-    expect(elementGuard).toBeGreaterThan(-1);
-    expect(totalCheck).toBeLessThan(elementGuard);
-    // 涨了就把「极慢但活着」这条证据交给机器复位，解释器不自己清零。
+    // 2.0.0 起轮询本体在 `playerThroughputMeter.ts`（6 条行为测试钉增长/倒退/NaN）。
+    const meter = readFileSync(resolve(here, "../../src/hooks/playerThroughputMeter.ts"), "utf8");
+    expect(meter).toContain("bytesTotal");
+    expect(meter).toContain("total > lastTotal");
+    // 关键顺序：先判增长（记活），再渲染速率——控件收起时也要记活。
+    const growthCheck = meter.indexOf("total > lastTotal");
+    const renderCall = meter.indexOf("render(`↓ ${rate}`)");
+    expect(growthCheck).toBeGreaterThan(-1);
+    expect(renderCall).toBeGreaterThan(growthCheck);
+    // 取不到数据不能闪 0：catch 分支必须保持空实现（不写 label、不清零）。
+    expect(meter).toContain("反代重启中：保持上一次读数，不闪 0");
+    // 引擎侧：增长这条证据交给机器复位，解释器不自己清零计数器。
     expect(engine).toContain('send({ type: "FRAG_GROWTH" })');
     expect(engine).not.toContain("unresponsiveProbes = 0;");
   });
