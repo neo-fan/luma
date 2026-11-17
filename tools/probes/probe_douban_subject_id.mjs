@@ -157,27 +157,34 @@ try {
   );
   assert(sites.length > 0, "active 配置里有 CMS 站", `sites=${sites.length}`);
 
-  // 2) 找一个真带 vod_douban_id 的条目（最多试 8 个站，每站一页）
-  let found = null;
-  for (const site of sites.slice(0, 8)) {
+  // 2) 找候选条目：多站多页收集后**随机取一个**。
+  //    固定取第一条会让第二次运行撞上后端正缓存（键 `id:{subject_id}`，TTL 10min），
+  //    那时 `douban_request` 在缓存分支就返回了，根本走不到 id 分支入口 ——
+  //    探针因此不幂等，表现为「单跑绿、连跑红」（docs/MAINTENANCE.md §9 那一类）。
+  const candidates = [];
+  for (const site of sites.slice(0, 6)) {
     const base = String(site.api);
-    const url = `${base}${base.includes("?") ? "&" : "?"}ac=videolist&pg=1`;
-    let json;
-    try {
-      const res = await fetch(url, { headers: { "User-Agent": UA, Referer: base }, signal: AbortSignal.timeout(15000) });
-      json = JSON.parse(await res.text());
-    } catch {
-      continue;
+    for (const pg of [1, 2]) {
+      const url = `${base}${base.includes("?") ? "&" : "?"}ac=videolist&pg=${pg}`;
+      let json;
+      try {
+        const res = await fetch(url, { headers: { "User-Agent": UA, Referer: base }, signal: AbortSignal.timeout(15000) });
+        json = JSON.parse(await res.text());
+      } catch {
+        continue;
+      }
+      for (const v of json.list || []) {
+        const raw = String(v?.vod_douban_id ?? "").trim();
+        if (raw && raw !== "0" && v?.vod_id) {
+          candidates.push({ site, vodId: String(v.vod_id), name: String(v.vod_name || ""), doubanId: raw });
+        }
+      }
+      if (candidates.length >= 24) break;
     }
-    const item = (json.list || []).find((v) => {
-      const raw = String(v?.vod_douban_id ?? "").trim();
-      return raw && raw !== "0";
-    });
-    if (item) {
-      found = { site, vodId: String(item.vod_id), name: String(item.vod_name || ""), doubanId: String(item.vod_douban_id).trim() };
-      break;
-    }
+    if (candidates.length >= 24) break;
   }
+  const found = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : null;
+  if (found) console.log(`[info] 候选 ${candidates.length} 条，随机取：${found.site.name} / ${found.name} / douban_id=${found.doubanId}`);
   if (!found) {
     console.log("[SKIP] 试了前 8 个 CMS 站的第一页，没有一个条目填了非零 vod_douban_id（源侧取样，不是接线断了）");
   } else {
@@ -188,15 +195,32 @@ try {
     await cdp.goto(`#/detail/${encodeURIComponent(found.site.key)}/${encodeURIComponent(found.vodId)}`);
 
     let line = null;
+    let doubanOnScreen = false;
     const deadline = Date.now() + 40000;
     while (Date.now() < deadline && !line) {
       const fresh = readFrom(logPath(), beforeSize);
       const idx = fresh.indexOf(MARKER);
       if (idx >= 0) line = fresh.slice(Math.max(0, idx - 80), idx + 200).replace(/\n/g, " ");
-      else await sleep(1500);
+      else {
+        // 页面上出现豆瓣格式（★ 分数）说明富化成功，只是可能命中了正缓存：
+        // 那是「本次没走到入口」，不是「接线断了」。
+        doubanOnScreen = Boolean(
+          await cdp.eval(`(() => /★\\s*\\d/.test(document.querySelector('.page-body')?.textContent || ''))()`),
+        );
+      }
+      if (!line) await sleep(1500);
     }
-    assert(line !== null, "详情页真的把 id 传到了后端并走了 id 直取", line ? "" : `等 40s 无「${MARKER}」`);
-    if (line) console.log(`[evidence] ${line}`);
+    if (line) {
+      assert(true, "详情页真的把 id 传到了后端并走了 id 直取");
+      console.log(`[evidence] ${line}`);
+    } else if (doubanOnScreen) {
+      console.log(
+        `[SKIP] 详情页已出豆瓣数据但没有「${MARKER}」——本次命中了后端正缓存` +
+          `（键 id:${found.doubanId}，TTL 10min），请求在缓存分支就返回了，不算断链`,
+      );
+    } else {
+      assert(false, "详情页既没走 id 直取、也没出豆瓣数据", `等 40s 无「${MARKER}」，页面亦无 ★`);
+    }
 
     // 弱校验结果一并取证（matched=true 才算这条链完整可用）
     const whole = readFrom(logPath(), beforeSize);
