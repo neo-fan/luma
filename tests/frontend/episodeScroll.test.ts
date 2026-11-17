@@ -23,7 +23,19 @@ describe("episode button", () => {
     expect(source).toContain("onFocus={scrollToEnd}");
     expect(source).toContain("onBlur={reset}");
     // 完整集名仍要能给到原生 tooltip。
-    expect(source).toContain("title={seen ? `${name}（上次看到）` : name}");
+    expect(source).toContain("title={pending ? `${name}（排队中）` : seen ? `${name}（上次看到）` : name}");
+  });
+
+  it("distinguishes queued from playing", () => {
+    const source = read("src/components/EpisodeButton.tsx");
+    // 排队中：独立类名 + aria-busy，不与 is-active 混用（active 只表示真在播）。
+    expect(source).toContain('pending ? "is-pending" : ""');
+    expect(source).toContain("aria-busy={pending || undefined}");
+    expect(source).toContain('className="episode__pending"');
+    const panel = read("src/components/player/EpisodePanel.tsx");
+    // 排队与在播互斥：同一格同时命中时以在播为准。
+    expect(panel).toContain("const pending = ");
+    expect(panel).toContain("!active &&");
   });
 
   it("is the only renderer for episode tiles", () => {

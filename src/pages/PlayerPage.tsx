@@ -6,6 +6,8 @@ import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
 import PlayerAbout from "../components/player/PlayerAbout";
 import EpisodePanel from "../components/player/EpisodePanel";
+import { createSwitchQueue } from "../lib/switchQueue";
+import type { SwitchQueue } from "../lib/switchQueue";
 import PlayerResolution from "../components/player/PlayerResolution";
 import { parsePlayLines, sameEpisodeName, sameTitle, toVodRef } from "../lib/format";
 import type { PlayLine } from "../lib/format";
@@ -81,6 +83,9 @@ interface PlayerPageProps {
 }
 
 /** 播放页：解析地址 → 内置播放 → 记录历史；必要时换源 / 换线路。 */
+/** 选集面板里一次点击的目标。 */
+type EpisodePick = { lineIndex: number; episodeIndex: number };
+
 export default function PlayerPage({
   siteKey,
   vodId,
@@ -168,6 +173,21 @@ export default function PlayerPage({
     episodeIndex: number;
   } | null>(null);
   /**
+   * 已请求但还没落地的集：面板用它给那一格「排队中」态，`manualPick` 只在切换
+   * 成功后移动。两者分开是必须的——原先点击瞬间就改「正在播放」，同地址 no-op
+   * 或解析失败时高亮会停在没在播的那一集上。
+   */
+  const [pendingPick, setPendingPick] = useState<EpisodePick | null>(null);
+  /** 串行合并队列：见 `lib/switchQueue`。执行器在下方赋值，避免闭包顺序问题。 */
+  const switchRunRef = useRef<(pick: EpisodePick) => Promise<void>>(async () => undefined);
+  const switchQueueRef = useRef<SwitchQueue<EpisodePick> | null>(null);
+  if (switchQueueRef.current === null) {
+    switchQueueRef.current = createSwitchQueue<EpisodePick>({
+      equals: (a, b) => a.lineIndex === b.lineIndex && a.episodeIndex === b.episodeIndex,
+      run: (pick) => switchRunRef.current(pick),
+    });
+  }
+  /**
    * 原地换集进行中（resolve → switchSource 全程 true）：控制栏钉住不自动收起、
    * 「下一集」按钮转圈、吞掉重复点击。没有它，点击后的 1~50s 里唯一反馈是一条
    * 会闪 2 秒的 notice，用户读作「点了没反应」（2026-11-16 反馈）。
@@ -210,6 +230,8 @@ export default function PlayerPage({
       return;
     }
     const timer = window.setTimeout(() => {
+      switchQueueRef.current?.cancelPending();
+      setPendingPick(null);
       markSwitching(false);
       setSwitchTip("");
     }, 30000);
@@ -225,6 +247,9 @@ export default function PlayerPage({
     if (switchingRef.current) {
       markSwitching(false);
     }
+    // 新页面接管加载态：排队中的意图作废，否则旧集会在重建后又被打回去。
+    switchQueueRef.current?.cancelPending();
+    setPendingPick(null);
     // 仅跟随路由集身份变化触发；markSwitching 恒定，不需要进依赖。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playUrl]);
@@ -1252,32 +1277,38 @@ export default function PlayerPage({
   /**
    * 选集面板里点任意线路 / 任意一集。
    *
-   * 优先原地换：解析出新地址后交给同一个 ArtPlayer 实例（`engine.switchSource`），
-   * 控制栏、全屏、音量都不重建——重建后没有用户手势，全屏再也进不去。
-   * 只有解析失败、类型变化或播放器还没就绪时才退回整页 navigate。
+   * 走串行合并队列：一次只跑一个切换（两路 `switchUrl` 会互相覆盖，后完成者赢，
+   * 画面跳回旧集），但切换没回来时点的集**不丢**——它覆盖成新的 pending，上一次
+   * 收口后立刻执行。连点 5 集只解析第 1 与第 5 集，中间集不闪画面。
    */
   const goToEpisode = (targetLine: number, index: number) => {
-    // 一次只跑一个切换协程：双路 switchUrl 竞态会互相覆盖（后完成者赢），
-    // 用户看到「画面切回旧集」。读 ref 而不是 state——同一 tick 内的第二次点击
-    // 还看不到上一次 setEpisodeSwitching 的结果，state 守卫会漏。控制栏按钮侧
-    // 另有 click 守卫（读 episodeNavRef.current.switching，已被 markSwitching
-    // 当场改写），这里兜住选集面板与自动换集入口。
-    if (switchingRef.current) {
-      return;
-    }
     const target = activeLines[targetLine];
     if (!target || index < 0 || index >= target.episodes.length) {
       return;
     }
+    setPendingPick({ lineIndex: targetLine, episodeIndex: index });
+    setSwitchTip(`正在切换到「${target.episodes[index].name}」…`);
+    switchQueueRef.current?.request({ lineIndex: targetLine, episodeIndex: index });
+  };
+
+  /** 队列的执行器：原地换集，失败退回整页 navigate。 */
+  const runEpisodeSwitch = ({ lineIndex: targetLine, episodeIndex: index }: EpisodePick) => {
+    const target = activeLines[targetLine];
+    if (!target || index < 0 || index >= target.episodes.length) {
+      return Promise.resolve();
+    }
     const episode = target.episodes[index];
-    // 立刻上锁并点亮 loading，且必须在下面 `!resolved` 分支之前——冷路径直接
-    // navigate 重建，若等到快路径才置真，这一路既不转圈也不挡连点。
+    // 立刻上锁并点亮 loading，且在 `!resolved` 分支之前：冷路径直接 navigate
+    // 重建，若等到快路径才置真，这一路既不转圈也不挡并发入口。
     markSwitching(true);
     flushHistoryRef.current?.();
-    setManualPick({ lineIndex: targetLine, episodeIndex: index });
-    setSwitchTip(`正在切换到「${episode.name}」…`);
+
+    const settlePick = () => {
+      setPendingPick(null);
+    };
 
     const fallback = () => {
+      settlePick();
       setManualPick(null);
       setSwitchTip("");
       videoRef.current = null;
@@ -1297,12 +1328,12 @@ export default function PlayerPage({
 
     if (!resolved) {
       fallback();
-      return;
+      return Promise.resolve();
     }
     const previousKind = resolved.kind;
     const gen = episodeSwitchGenRef.current + 1;
     episodeSwitchGenRef.current = gen;
-    void (async () => {
+    return (async () => {
       try {
         // 按集缓存：预解析 / 探活 / 上次访问可能已解析过这一集。命中且类型
         // 兼容就跳过整条 playerContent → resolve_play 链，直接原地换源。
@@ -1335,6 +1366,8 @@ export default function PlayerPage({
           playFrom: target.name,
           url: episode.url,
         };
+        // 「正在播放」的高亮只在这里移动：切换真落地了才算数。
+        setManualPick({ lineIndex: targetLine, episodeIndex: index });
         setSwitchTip("");
       } catch (err) {
         // 原地切换失败要退回整页重建：这份解析结论（可能来自缓存）已不可信，
@@ -1345,6 +1378,7 @@ export default function PlayerPage({
         });
         fallback();
       } finally {
+        settlePick();
         // 出画 / 退回整页重建 / 15s 封顶：三条路都要收回「切换中」态；
         // 被更新的切换（或换线/换源接管）顶掉代次时不清——那是别人的状态。
         if (episodeSwitchGenRef.current === gen) {
@@ -1353,6 +1387,8 @@ export default function PlayerPage({
       }
     })();
   };
+  // 渲染期把最新执行器交给队列：与 episodeNavRef 同一套路数。
+  switchRunRef.current = runEpisodeSwitch;
 
   const goEpisode = (delta: number) => {
     if (!activeLine) {
@@ -1724,6 +1760,7 @@ export default function PlayerPage({
             panelLine={panelLine}
             lineIndex={activeLineIndex}
             episodeIndex={activeEpisodeIndex}
+            pendingPick={pendingPick}
             setPanelLine={setPanelLine}
             goToEpisode={goToEpisode}
           />

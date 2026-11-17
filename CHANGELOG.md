@@ -48,6 +48,8 @@
 - **`docs/MAINTENANCE.md` §11**：第三方库替换清单的逐项结论与依据。
 - 回归：`cargo test --lib` 233 passed / 2 ignored；`pnpm test` 577（70 个文件）；`tools/check.py` 9/9；窗口探针 `artplayer` / `playback_ux` / `episode_switch` / `player_nav` / `live_audio` / `session_machine` 通过。
 
+- **选集快速切换改为串行合并**：原先切换进行中再点别的集会被重入守卫直接丢弃，用户点了没反应、只能再点一次；同时「正在播放」高亮在点击瞬间就跳到目标集，遇到同地址 no-op 或解析失败时高亮停在根本没在播的那一集。现在点击进 `lib/switchQueue`：忙时覆盖成新的 pending，上一次收口后立即执行，burst 内只跑首个与最后一个（中间集不解析、不闪画面）；高亮只在切换成功后移动，未落地的目标用独立的排队态表达。实测三连锁点（间隔 160ms）：`sessionId` 1→3 两次切换、中间集零解析、`active` 全程停在真实在播集、最终落在最后点击的一集。
+
 ### 修复
 
 - **豆瓣缓存跨季串数据**：无年份时「庆余年 第一季 / 第二季」曾归一到同一缓存键，第二季会命中第一季的条目（缓存早于 `pick_candidate` 打分）。缓存键保留季标记后消除。

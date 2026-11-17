@@ -266,6 +266,9 @@ a:focus-visible {
   color: var(--accent-ink);
 }
 
+.episode.is-pending {
+  color: var(--accent-ink);
+}
 /* 详情页主视觉：唯一的「重点容器」，只保留发丝线与浅底，不再叠投影。 */
 .detail-hero {
   background: var(--panel);

@@ -6,6 +6,8 @@ interface EpisodeButtonProps {
   seen?: boolean;
   /** 播放页里「正在播放」的那一集：右上角状态点。 */
   active?: boolean;
+  /** 已请求但还没切换成功：排队态，与 active 互斥优先由调用方保证。 */
+  pending?: boolean;
   onClick: () => void;
 }
 
@@ -20,6 +22,7 @@ export default function EpisodeButton({
   name,
   seen = false,
   active = false,
+  pending = false,
   onClick,
 }: EpisodeButtonProps) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -51,7 +54,12 @@ export default function EpisodeButton({
     }
   }, []);
 
-  const className = ["episode", seen ? "is-seen" : "", active ? "is-active" : ""]
+  const className = [
+    "episode",
+    seen ? "is-seen" : "",
+    active ? "is-active" : "",
+    pending ? "is-pending" : "",
+  ]
     .filter(Boolean)
     .join(" ");
 
@@ -61,14 +69,19 @@ export default function EpisodeButton({
       type="button"
       className={className}
       onClick={onClick}
+      aria-busy={pending || undefined}
       onPointerEnter={scrollToEnd}
       onPointerLeave={reset}
       onFocus={scrollToEnd}
       onBlur={reset}
-      title={seen ? `${name}（上次看到）` : name}
+      title={pending ? `${name}（排队中）` : seen ? `${name}（上次看到）` : name}
     >
       {name}
-      {active ? (
+      {pending ? (
+        <span className="episode__pending">
+          <span className="sr-only">排队中</span>
+        </span>
+      ) : active ? (
         <span className="episode__now">
           <span className="sr-only">正在播放</span>
         </span>

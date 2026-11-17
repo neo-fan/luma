@@ -8,6 +8,8 @@ interface EpisodePanelProps {
   panelLine: number;
   lineIndex: number;
   episodeIndex: number;
+  /** 已请求、还没落地的集：那一格显示排队态，不代表正在播放。 */
+  pendingPick?: { lineIndex: number; episodeIndex: number } | null;
   setPanelLine: (value: number) => void;
   goToEpisode: (targetLine: number, index: number) => void;
 }
@@ -24,6 +26,7 @@ export default function EpisodePanel({
   panelLine,
   lineIndex,
   episodeIndex,
+  pendingPick = null,
   setPanelLine,
   goToEpisode,
 }: EpisodePanelProps) {
@@ -102,11 +105,17 @@ export default function EpisodePanel({
       <div className="episode-grid">
         {visible.map(({ episode, index }) => {
           const active = panelLine === lineIndex && index === episodeIndex;
+          const pending = 
+            !active &&
+            pendingPick !== null &&
+            pendingPick.lineIndex === panelLine &&
+            pendingPick.episodeIndex === index;
           return (
             <EpisodeButton
               key={`${episode.url}-${index}`}
               name={episode.name}
               active={active}
+              pending={pending}
               onClick={() => goToEpisode(panelLine, index)}
             />
           );

@@ -94,6 +94,35 @@
   box-shadow: 0 0 0 3px rgba(74, 222, 155, 0.14);
 }
 
+/* 排队中：已请求、还没切换成功的那一格。与 .is-active（真在播）分开，连点时
+   用户能看到自己最后点的是哪一集，也不会误读成已经在播。右上角标记与 .is-seen 的
+   绿点同位，排队时显式覆盖它——一个格子同一时刻只表达一件事。 */
+.episode.is-pending {
+  position: relative;
+  border-color: rgba(110, 139, 255, 0.55);
+}
+
+.episode.is-pending::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: none;
+  box-shadow: none;
+  border: 1.5px solid rgba(110, 139, 255, 0.28);
+  border-top-color: var(--accent);
+  animation: episode-pending-spin 0.7s linear infinite;
+}
+
+@keyframes episode-pending-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .detail-episode-tools {
   display: flex;
   align-items: center;
