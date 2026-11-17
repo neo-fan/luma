@@ -55,6 +55,20 @@ tools/
 - 按规格书 12.2 逐阶段验收（会跑 stub、可能要求窗口）→ `tests/acceptance/pN.py`。
 - 需要 CDP 9222 才能取证（DOM 尺寸、截图、真实点击）→ `tools/` 下的探针。
 
+## 3.1 跑窗口探针的前置条件
+
+`node tools/run_probes.mjs` 需要一个用 **`LUMA_PROXY_ALLOW_LOCAL=1`** 起起来的 dev 窗口。
+探针的桩媒体在 `127.0.0.1:8787`，而反代默认按 SSRF 闸拒绝 loopback 目标（`domain/proxy/guard.rs`），
+不设这个开关时清单会 502，`playback_ux` 的自动续播等步骤会报成产品 FAIL。
+探针现在会先读 `proxy_status.allowLocal`，为 false 时按 SKIP 分流并打印该设什么 —— 但正确起法仍是：
+
+```powershell
+$env:LUMA_PROXY_ALLOW_LOCAL = "1"
+corepack pnpm dev:app
+```
+
+它只影响本地联调，别在正式环境设置。
+
 ## 4. 硬约束
 
 1. **离线检查必须真的离线**：不访问公网，fixture 只指向 `127.0.0.1`。

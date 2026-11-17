@@ -255,6 +255,18 @@ try {
     codeIsFresh ? "" : `stale Vite module cache; restart the dev server (missing=[${missingDeps.join(",")}] iso=${isoLine ? "ok" : "missing"})`);
   if (!codeIsFresh) throw new Error("stale dev module; abort to avoid false product bug report");
 
+  // 桩媒体在 127.0.0.1:8787，而反代默认按 SSRF 闸拒绝 loopback 目标。
+  // 不在 `LUMA_PROXY_ALLOW_LOCAL=1` 下跑，清单就会 502，后面三步会报成产品 FAIL。
+  // 环境问题要说清原因和修法，按 SKIP 分流，别让它冒充回归。
+  const proxyStatus = await cdp.eval("window.__TAURI_INTERNALS__.invoke('proxy_status')").catch(() => null);
+  if (proxyStatus && !proxyStatus.allowLocal) {
+    console.log("[SKIP] 反代 allowLocal=false：桩媒体 127.0.0.1:8787 会被 SSRF 闸拦成 502。");
+    console.log("       请用 LUMA_PROXY_ALLOW_LOCAL=1 起 dev 窗口后重跑（docs/DEVELOPMENT.md 环境变量表）。");
+    server.close();
+    cdp.ws.close();
+    process.exit(0);
+  }
+
   before = JSON.parse(await readState());
   console.log(`[info] before: active=${before.activeName || before.activeId}, configs=${before.ids.length}`);
 
