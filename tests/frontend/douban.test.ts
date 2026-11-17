@@ -45,6 +45,8 @@ import {
   clearDoubanMetaCache,
   doubanKey,
   fetchDoubanMeta,
+  getDoubanFullSnapshot,
+  getDoubanSnapshot,
   normalizeDoubanMeta,
   requestDouban,
 } from "../../src/lib/douban";
@@ -233,6 +235,31 @@ describe("douban push/store behavior", () => {
     // 已有终态 → 第二次不再打后端。
     await fetchDoubanMeta("霸王别姬", "1993");
     expect(doubanRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the coarse cover away from consumers that wait for the full payload", async () => {
+    writeDoubanPrefs({ enabled: true, proxyType: "direct" });
+    const key = doubanKey("霸王别姬", "1993");
+    const pending = fetchDoubanMeta("霸王别姬", "1993");
+
+    push(key, "cover", coverPayload);
+    // 卡片读中间态：封面这时就该出。
+    expect(getDoubanSnapshot(key)?.pic).toBe(coverPayload.pic);
+    // 头图读终态：cover 相一律给 null，同屏的评分/简介才不会先跳一次文字再换图。
+    expect(getDoubanFullSnapshot(key)).toBeNull();
+
+    push(key, "full", fullPayload);
+    expect(getDoubanFullSnapshot(key)?.intro).toContain("程蝶衣");
+    expect(getDoubanSnapshot(key)?.intro).toContain("程蝶衣");
+    await pending;
+
+    // none 是「确认无匹配」：两个读口都该给 null，源站字段继续显示。
+    const missKey = doubanKey("冷门片", "1970");
+    const missPending = fetchDoubanMeta("冷门片", "1970");
+    push(missKey, "none", null);
+    expect(getDoubanSnapshot(missKey)).toBeNull();
+    expect(getDoubanFullSnapshot(missKey)).toBeNull();
+    await missPending;
   });
 
   it("merges concurrent requests for the same key into one", async () => {

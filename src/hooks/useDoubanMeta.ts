@@ -1,20 +1,26 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { doubanKey, getDoubanSnapshot, requestDouban, subscribeDouban } from "../lib/douban";
+import {
+  doubanKey,
+  getDoubanFullSnapshot,
+  getDoubanSnapshot,
+  requestDouban,
+  subscribeDouban,
+} from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
 
 /**
- * 列表/头图按需补豆瓣元数据：enabled=false 时不发请求（懒加载由调用方判断视口）。
+ * 订阅某个片名的豆瓣槽位，到货即重渲染（后端先推 `cover`、再推 `full`）。
  *
- * 走后端 push 的中心 store：`requestDouban` 触发一次富化，后端先推 `cover`
- * （封面）、再推 `full`（评分/简介）；这里用 `useSyncExternalStore` 订阅该 key，
- * 到货即重渲染，所以头图能「封面先出、详情后补」，无需前端发两个请求。
- * 片名变化先清快照（store 按 key 分槽，天然隔离上一部片的数据）。
+ * `read` 决定这个消费者看不看中间态：只关心封面的走 `getDoubanSnapshot`（封面早出），
+ * 封面与简介同屏的走 `getDoubanFullSnapshot`（等齐一次到位）。传进来的必须是模块级
+ * 稳定函数——它进 `getSnapshot` 的依赖，每次渲染换新引用会让订阅反复重算。
  */
-export default function useDoubanMeta(
+function useDoubanSlot(
   title: string | undefined,
   year: string | undefined,
-  enabled = true,
-  priority = false,
+  enabled: boolean,
+  priority: boolean,
+  read: (key: string) => DoubanMeta | null,
 ): DoubanMeta | null {
   const name = (title ?? "").trim();
   const yearText = (year ?? "").trim();
@@ -25,7 +31,7 @@ export default function useDoubanMeta(
     (cb: () => void) => (key ? subscribeDouban(key, cb) : () => {}),
     [key],
   );
-  const getSnapshot = useCallback(() => (key ? getDoubanSnapshot(key) : null), [key]);
+  const getSnapshot = useCallback(() => (key ? read(key) : null), [key, read]);
   const meta = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   useEffect(() => {
@@ -35,4 +41,24 @@ export default function useDoubanMeta(
   }, [enabled, name, yearText, priority]);
 
   return enabled ? meta : null;
+}
+
+/** 中间态版：`cover` 相即返回 coarse 资料，卡片靠它早出封面。 */
+export default function useDoubanMeta(
+  title: string | undefined,
+  year: string | undefined,
+  enabled = true,
+  priority = false,
+): DoubanMeta | null {
+  return useDoubanSlot(title, year, enabled, priority, getDoubanSnapshot);
+}
+
+/** 终态版：只在 `full` 到货后返回，中途始终 null，让同屏字段一次换齐。 */
+export function useDoubanFullMeta(
+  title: string | undefined,
+  year: string | undefined,
+  enabled = true,
+  priority = false,
+): DoubanMeta | null {
+  return useDoubanSlot(title, year, enabled, priority, getDoubanFullSnapshot);
 }

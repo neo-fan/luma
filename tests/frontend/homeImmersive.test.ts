@@ -61,10 +61,22 @@ describe("immersive home (hero + horizontal rails)", () => {
     // 站点小字整行去掉，不再渲染 eyebrow。
     expect(hero).not.toContain("home-hero__eyebrow");
     // 头图补豆瓣数据：评分 / 评价人数 / 年份 / 类型，主海报缺失时用豆瓣海报兜底。
-    expect(hero).toContain("useDoubanMeta(");
+    // 只认终态（useDoubanFullMeta）：头图是封面与简介同屏的位置，读中间态会让
+    // meta 行和简介在 cover→full 之间各跳一次。
+    expect(hero).toContain("useDoubanFullMeta(");
+    expect(hero).not.toContain("useDoubanMeta(");
     expect(hero).toContain("formatVotes(");
     expect(hero).toContain("rating.toFixed(1)");
     expect(hero).toContain("useProxiedImage(douban?.pic)");
+    // 海报地址还没拼出来（proxy_status 冷启动）时，评分/简介也不动：否则文字先跳
+    // 一帧、海报后跳一帧，同屏还是两段。
+    expect(hero).toContain("doubanReady && doubanPicWanted");
+    expect(hero).toContain("plainText(doubanShown?.intro)");
+    // 封面换来源要淡入，不能就地硬切（源站海报 → 豆瓣海报是同屏唯一的一次变化）。
+    expect(hero).toContain('origin: useDoubanPoster ? "douban" : "source"');
+    expect(hero).toContain("frames[activeFrame].origin !== frame.origin");
+    // 来源同时暴露给窗口探针：URL 判不出「这是不是豆瓣给的图」（源站也常挂豆瓣域名）。
+    expect(hero).toContain("data-origin={frame.origin}");
   });
 
   it("scrolls rails horizontally with arrows only when content overflows", () => {

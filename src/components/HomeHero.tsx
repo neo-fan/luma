@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Play } from "lucide-react";
-import useDoubanMeta from "../hooks/useDoubanMeta";
+import { useDoubanFullMeta } from "../hooks/useDoubanMeta";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import { formatVotes } from "../lib/douban";
 import { plainText } from "../lib/format";
@@ -21,13 +21,17 @@ const SWIPE_MIN_PX = 48;
 /** 滚轮翻页节流，避免一次触控板滑动连翻好几张。 */
 const WHEEL_LOCK_MS = 460;
 
-/** 双缓冲里的一帧：key 标识作品（换帧判据），src 是已过代理的封面地址。 */
+/**
+ * 双缓冲里的一帧：key 标识作品（换帧判据），src 是已过代理的封面地址，
+ * origin 记这张封面来自源站还是豆瓣。
+ */
 interface HeroFrame {
   key: string;
   src: string;
+  origin: "source" | "douban";
 }
 
-const EMPTY_FRAME: HeroFrame = { key: "", src: "" };
+const EMPTY_FRAME: HeroFrame = { key: "", src: "", origin: "source" };
 
 /**
  * 首页沉浸头图。
@@ -53,17 +57,22 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
   const current = count > 0 ? items[safeIndex] : undefined;
 
   const source = useProxiedImage(current?.vod_pic);
-  const douban = useDoubanMeta(
+  const douban = useDoubanFullMeta(
     current?.vod_name,
     current?.vod_year,
     Boolean(current),
-    // 头图是首页第一屏：优先于推荐卡预取，封面/评分尽快到货。
+    // 头图是首页第一屏：请求优先级高于推荐卡预取，让完整资料尽早到货。
     true,
   );
   const doubanImage = useProxiedImage(douban?.pic);
+  // 豆瓣字段整体生效：`full` 到货的那一帧，代理地址可能还没拼出来（`proxy_status`
+  // 冷启动要等一次 IPC）。这时先把评分/简介换上去，就变成「文字先跳、海报后跳」
+  // 两段；宁可整组再等一帧。没给海报、或海报已裂，则没有要陪着一起动的图。
+  const doubanPicWanted = Boolean(douban?.pic?.trim());
+  const doubanReady = douban !== null && (!doubanPicWanted || Boolean(doubanImage.src));
+  const doubanShown = doubanReady ? douban : null;
   // 豆瓣命中就用豆瓣海报：版式统一、裁切标准（2:3）；豆瓣没给 / 图裂 / 还没到货时用源站封面兜底。
-  const useDoubanPoster =
-    Boolean(douban?.pic?.trim()) && Boolean(doubanImage.src) && !doubanImage.broken;
+  const useDoubanPoster = doubanReady && doubanPicWanted && !doubanImage.broken;
   const {
     src: cover,
     broken,
@@ -73,9 +82,10 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
   } = useDoubanPoster ? doubanImage : source;
 
   // ---------- 双缓冲交叉淡入 ----------
-  // 两个 img 层常驻：激活层 opacity 1、闲置层 0。换帧（key 变化）时把新帧
-  // 写进闲置层并翻转激活层，CSS opacity 过渡完成交叉淡入；同帧封面更新
-  // （豆瓣海报到货 / 代理补齐 / 裂图兜底）只原位改写激活层，不触发淡入淡出。
+  // 两个 img 层常驻：激活层 opacity 1、闲置层 0。换帧（key 变化）或换封面来源
+  // （源站海报 ↔ 豆瓣海报）时把新帧写进闲置层并翻转激活层，CSS opacity 过渡完成
+  // 交叉淡入；同一来源里只改写 src（代理补齐、裂图兜底）原位更新——那是同一张图
+  // 换地址，淡入只会让人觉得闪了一下。
   const [frames, setFrames] = useState<[HeroFrame, HeroFrame]>([
     EMPTY_FRAME,
     EMPTY_FRAME,
@@ -86,9 +96,10 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
   const frame: HeroFrame = {
     key: current ? String(current.vod_id) : "",
     src: cover && !broken ? cover : "",
+    origin: useDoubanPoster ? "douban" : "source",
   };
   let activeSlot = activeFrame;
-  if (frames[activeFrame].key !== frame.key) {
+  if (frames[activeFrame].key !== frame.key || frames[activeFrame].origin !== frame.origin) {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       // 减弱动效：原位改写激活层，直切，不做交叉淡入。
       const slot = activeFrame;
@@ -127,7 +138,7 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
       setFrames((prev) => {
         if (!prev[slot].src) return prev;
         const next: [HeroFrame, HeroFrame] = [prev[0], prev[1]];
-        next[slot] = { key: prev[slot].key, src: "" };
+        next[slot] = { ...prev[slot], src: "" };
         return next;
       });
     },
@@ -142,7 +153,7 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
       setFrames((prev) => {
         if (!prev[idle].src) return prev;
         const next: [HeroFrame, HeroFrame] = [prev[0], prev[1]];
-        next[idle] = { key: prev[idle].key, src: "" };
+        next[idle] = { ...prev[idle], src: "" };
         return next;
       });
     }, 460);
@@ -227,13 +238,13 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
    */
   const meta = useMemo(() => {
     if (!current) return "";
-    if (douban) {
-      const votes = douban.ratingCount > 0 ? formatVotes(douban.ratingCount) : "";
+    if (doubanShown) {
+      const votes = doubanShown.ratingCount > 0 ? formatVotes(doubanShown.ratingCount) : "";
       return [
-        douban.rating > 0 ? `★ ${douban.rating.toFixed(1)}` : "",
+        doubanShown.rating > 0 ? `★ ${doubanShown.rating.toFixed(1)}` : "",
         votes,
-        douban.year || current.vod_year,
-        douban.genres.join(" · "),
+        doubanShown.year || current.vod_year,
+        doubanShown.genres.join(" · "),
       ]
         .filter(Boolean)
         .join(" · ");
@@ -243,14 +254,14 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
       site ||
       ""
     );
-  }, [current, douban, site]);
+  }, [current, doubanShown, site]);
 
   const handleOpen = useCallback(() => {
     if (current) onOpenRef.current(current);
   }, [current]);
 
   // 头图给两行剧情简介：没有简介时整段不渲染，不留空行。
-  const intro = plainText(douban?.intro) || plainText(current?.vod_content);
+  const intro = plainText(doubanShown?.intro) || plainText(current?.vod_content);
 
   if (!current) return null;
   const title = current.vod_name || "未命名";
@@ -285,7 +296,7 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
       <div className="home-hero__scrim" aria-hidden="true" />
 
       <div className="home-hero__body">
-        <span className="home-hero__poster">
+        <span className="home-hero__poster" data-origin={frame.origin}>
           {frames.map((layer, slot) => (
             <img
               key={slot}

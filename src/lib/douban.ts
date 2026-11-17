@@ -159,6 +159,18 @@ export function getDoubanSnapshot(key: string): DoubanMeta | null {
   return store.get(key)?.meta ?? null;
 }
 
+/**
+ * 只认终态 `full` 的快照，给「封面与简介同屏」的位置用（头图）。
+ *
+ * `cover` 相的 coarse 够出图，但没有评分/类型/简介；逐字段就地应用会让 meta 行和
+ * 简介在 cover→full 之间各跳一次，同屏文字先跳再补图很难看。这类位置宁可让海报
+ * 多等一跳，换一次到位。卡片只用图，走 `getDoubanSnapshot` 早出封面。
+ */
+export function getDoubanFullSnapshot(key: string): DoubanMeta | null {
+  const entry = store.get(key);
+  return entry?.phase === "full" ? entry.meta : null;
+}
+
 /** 订阅某个 key 的更新。 */
 export function subscribeDouban(key: string, cb: () => void): () => void {
   let set = listeners.get(key);
