@@ -77,6 +77,8 @@ const PROBES = [
   { key: "sidebar", script: "tools/probes/probe_sidebar.mjs", label: "侧边栏收缩 / 展开" },
   // 清空封面缓存（会回源重取），放靠后，避免给前面的探针加冷缓存时间。
   { key: "storage_clean", script: "tools/probes/probe_storage_clean.mjs", label: "设置 存储与清理（用量 / 二次确认 / 清理生效）" },
+  // 冷 reload 才可比（豆瓣 store 是进程内的），需要真实配置与豆瓣出数，放最后。
+  { key: "hero_douban_once", script: "tools/probes/probe_hero_douban_once.mjs", label: "首页头图 豆瓣到货一次性（同批 + 淡入）" },
   // 会把 active 切成桩配置，必须最后；默认不跑。
   { key: "ui", script: "tools/probes/probe_ui.mjs", label: "UI 冒烟（会切桩配置）", needsStub: true, optIn: true },
 ];
