@@ -1725,6 +1725,9 @@ async fn run_enrichment(
     ckey: &str,
 ) {
     if let Some(id) = subject_id {
+        // 这两条 INFO 用来区分「id 分支没被执行」与「执行了但回退」：只靠回退时
+        // 的 WARN 无法证明入口到过这里（限流、队列、前端没传都会表现为静默）。
+        tracing::info!(id, title, "douban: 走 subject_id 直取");
         let item = SuggestItem {
             id: id.to_string(),
             title: title.to_string(),
@@ -1734,7 +1737,16 @@ async fn run_enrichment(
             url: format!("https://movie.douban.com/subject/{}/", id),
         };
         let meta = build_meta(kind, prefix, &item, year, Instant::now).await;
-        if id_matches_source(&meta, title, year) {
+        let matched = id_matches_source(&meta, title, year);
+        tracing::info!(
+            id,
+            title,
+            matched,
+            douban_title = %meta.title,
+            douban_year = %meta.year,
+            "douban: subject_id 直取校验结果"
+        );
+        if matched {
             positive_cache()
                 .insert(ckey.to_string(), meta.clone())
                 .await;
