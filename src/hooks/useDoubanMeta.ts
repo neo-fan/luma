@@ -21,11 +21,12 @@ function useDoubanSlot(
   enabled: boolean,
   priority: boolean,
   read: (key: string) => DoubanMeta | null,
+  subjectId: string | undefined,
 ): DoubanMeta | null {
   const name = (title ?? "").trim();
   const yearText = (year ?? "").trim();
   // key 含代理模式：换代理后落到新槽位，下次请求走新代理（组件重挂载即生效）。
-  const key = name ? doubanKey(name, yearText) : "";
+  const key = name ? doubanKey(name, yearText, subjectId) : "";
 
   const subscribe = useCallback(
     (cb: () => void) => (key ? subscribeDouban(key, cb) : () => {}),
@@ -36,9 +37,9 @@ function useDoubanSlot(
 
   useEffect(() => {
     if (enabled && name) {
-      requestDouban(name, yearText, priority);
+      requestDouban(name, yearText, priority, subjectId);
     }
-  }, [enabled, name, yearText, priority]);
+  }, [enabled, name, yearText, priority, subjectId]);
 
   return enabled ? meta : null;
 }
@@ -49,8 +50,9 @@ export default function useDoubanMeta(
   year: string | undefined,
   enabled = true,
   priority = false,
+  subjectId?: string,
 ): DoubanMeta | null {
-  return useDoubanSlot(title, year, enabled, priority, getDoubanSnapshot);
+  return useDoubanSlot(title, year, enabled, priority, getDoubanSnapshot, subjectId);
 }
 
 /** 终态版：只在 `full` 到货后返回，中途始终 null，让同屏字段一次换齐。 */
@@ -59,6 +61,7 @@ export function useDoubanFullMeta(
   year: string | undefined,
   enabled = true,
   priority = false,
+  subjectId?: string,
 ): DoubanMeta | null {
-  return useDoubanSlot(title, year, enabled, priority, getDoubanFullSnapshot);
+  return useDoubanSlot(title, year, enabled, priority, getDoubanFullSnapshot, subjectId);
 }

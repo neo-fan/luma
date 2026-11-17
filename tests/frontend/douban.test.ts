@@ -223,6 +223,7 @@ describe("douban push/store behavior", () => {
       undefined,
       false,
       key,
+      undefined,
     );
 
     // 后端分两段推：cover 不结束 Promise，full 才终态。
@@ -260,6 +261,27 @@ describe("douban push/store behavior", () => {
     expect(getDoubanSnapshot(missKey)).toBeNull();
     expect(getDoubanFullSnapshot(missKey)).toBeNull();
     await missPending;
+  });
+
+  it("carries the source-provided subject id through to the backend", async () => {
+    writeDoubanPrefs({ enabled: true, proxyType: "direct" });
+    const subjectId = "36344548";
+    const key = doubanKey("童年阴影", "2025", subjectId);
+    requestDouban("童年阴影", "2025", false, subjectId);
+
+    expect(doubanRequest).toHaveBeenCalledWith(
+      "童年阴影",
+      "2025",
+      "direct",
+      undefined,
+      false,
+      key,
+      subjectId,
+    );
+    // 槽位键必须含 id：按 id 直取与按标题匹配是两条证据链，共享键会让
+    // 标题路径的「无匹配」负缓存压掉 id 直取。
+    expect(key).toContain(subjectId);
+    expect(key).not.toBe(doubanKey("童年阴影", "2025"));
   });
 
   it("merges concurrent requests for the same key into one", async () => {
@@ -314,6 +336,7 @@ describe("douban push/store behavior", () => {
       undefined,
       false,
       keyCdn,
+      undefined,
     );
     push(keyCdn, "full", fullPayload);
     await p2;
@@ -330,6 +353,7 @@ describe("douban push/store behavior", () => {
       undefined,
       false,
       key,
+      undefined,
     );
 
     clearDoubanMetaCache();
@@ -343,6 +367,7 @@ describe("douban push/store behavior", () => {
       "https://proxy.example/?url=",
       false,
       keyCustom,
+      undefined,
     );
   });
 
@@ -356,6 +381,7 @@ describe("douban push/store behavior", () => {
       undefined,
       true,
       doubanKey("霸王别姬", "1993"),
+      undefined,
     );
   });
 
@@ -420,7 +446,9 @@ describe("douban push contract (source invariants)", () => {
 describe("douban ui contract", () => {
   it("wraps the push command and the event subscription in invoke.ts", () => {
     const invoke = read("src/lib/invoke.ts");
-    expect(invoke).toContain('call("douban_request", { title, year, proxyType, proxyPrefix, priority, key })');
+    expect(invoke).toContain(
+      'call("douban_request", { title, year, proxyType, proxyPrefix, priority, key, subjectId })',
+    );
     expect(invoke).toContain('listen<DoubanMetaEvent>("douban-meta"');
     expect(invoke).toContain("doubanRequest(");
     expect(invoke).toContain("onDoubanMeta(");

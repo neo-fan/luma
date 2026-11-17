@@ -113,7 +113,7 @@ describe("immersive home (hero + horizontal rails)", () => {
     // 指向（悬停 / 聚焦 / 按下）才拉豆瓣，避免一屏十几张同时打豆瓣搜索；命中评分时显示 ★ 分。
     expect(tile).toContain("onPointerEnter={armDouban}");
     expect(tile).toContain("onFocus={armDouban}");
-    expect(tile).toContain("useDoubanMeta(vod.vod_name, vod.vod_year, doubanArmed)");
+    expect(tile).toContain("useDoubanMeta(vod.vod_name, vod.vod_year, doubanArmed, false, vod.vod_douban_id)");
     expect(tile).not.toContain("new IntersectionObserver(");
     expect(tile).toContain("poster-tile__rating");
   });

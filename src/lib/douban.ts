@@ -71,9 +71,15 @@ function proxyArgs(): { proxyType: DoubanProxyType; custom: string } {
 }
 
 /** store 槽位键：含代理模式，换代理即落到新键、下次请求走新代理。 */
-export function doubanKey(title: string, year?: string): string {
+/**
+ * store 槽位键：含代理模式，换代理即落到新键、下次请求走新代理。
+ *
+ * 含 subject id：按 id 直取与按标题匹配是两条不同证据链，同键会共享正/负缓存 ——
+ * 标题路径的「无匹配」不该压掉 id 直取，乱填的 id 也不该废掉该剧的标题路径。
+ */
+export function doubanKey(title: string, year?: string, subjectId?: string): string {
   const { proxyType, custom } = proxyArgs();
-  return `${title}\u0000${(year ?? "").trim()}\u0000${proxyType}\u0000${custom}`;
+  return `${title}\u0000${(year ?? "").trim()}\u0000${proxyType}\u0000${custom}\u0000${(subjectId ?? "").trim()}`;
 }
 
 function dispatch(key: string): void {
@@ -135,19 +141,28 @@ export function requestDouban(
   title: string,
   year?: string,
   priority = false,
+  subjectId?: string,
 ): void {
   const word = (title ?? "").trim();
   if (!word) return;
   if (!readDoubanPrefs().enabled) return;
   ensureListening();
-  const key = doubanKey(word, year);
+  const key = doubanKey(word, year, subjectId);
   const entry = store.get(key);
   if (entry?.phase === "full" || entry?.phase === "none") return;
   if (requested.has(key)) return;
   requested.add(key);
   const { proxyType, custom } = proxyArgs();
   api
-    .doubanRequest(word, (year ?? "").trim() || undefined, proxyType, custom || undefined, priority, key)
+    .doubanRequest(
+      word,
+      (year ?? "").trim() || undefined,
+      proxyType,
+      custom || undefined,
+      priority,
+      key,
+      subjectId || undefined,
+    )
     .catch((err) => {
       requested.delete(key);
       log.info("douban request failed", { title: word, message: String(err) });

@@ -517,8 +517,10 @@ export const api = {
     proxyPrefix?: string,
     priority = false,
     key = "",
+    /** 采集库自带的豆瓣 subject id；有值时后端按 id 直取，省掉搜索那一跳。 */
+    subjectId?: string,
   ): Promise<void> {
-    return call("douban_request", { title, year, proxyType, proxyPrefix, priority, key });
+    return call("douban_request", { title, year, proxyType, proxyPrefix, priority, key, subjectId });
   },
 
   /** 直播 m3u 动辄数千频道，返回直播页时不要重新下载解析一遍。 */

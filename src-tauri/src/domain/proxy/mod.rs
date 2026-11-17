@@ -1,7 +1,10 @@
 //! Local HTTP reverse proxy (spec 7.5 / T-08).
 //!
-//! Binds `127.0.0.1:9978`; when the port is taken it falls back to an
-//! ephemeral port and publishes the real one through `proxy_status`.
+//! Binds `127.0.0.1:<DEFAULT_PORT>` (release 9978, debug 9979 so a running
+//! release instance never makes debug fall back to an ephemeral port and a
+//! spider defaulting to 9978 never points at the wrong instance); when even
+//! that port is taken it falls back to an ephemeral port and publishes the
+//! real one through `proxy_status`.
 //! Only loopback is bound. Targets are validated against a whitelist that
 //! rejects loopback / private / link-local / multicast addresses, unless
 //! `LUMA_PROXY_ALLOW_LOCAL=1` is set (development and stub tests only).
@@ -22,6 +25,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
+// Debug and release may run side by side; give them distinct fixed ports so
+// coexistence is deterministic instead of relying on the ephemeral fallback.
+#[cfg(debug_assertions)]
+pub const DEFAULT_PORT: u16 = 9979;
+#[cfg(not(debug_assertions))]
 pub const DEFAULT_PORT: u16 = 9978;
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(20);
 // The fallback UA and the "fill in defaults" helper live in `netrules` so the

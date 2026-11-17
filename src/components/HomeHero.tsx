@@ -63,6 +63,8 @@ export default function HomeHero({ items, onOpen, site }: HomeHeroProps) {
     Boolean(current),
     // 头图是首页第一屏：请求优先级高于推荐卡预取，让完整资料尽早到货。
     true,
+    // 源自带豆瓣 subject id 时按 id 直取（实测 62% 的 CMS 条目有），省掉搜索那一跳。
+    current?.vod_douban_id,
   );
   const doubanImage = useProxiedImage(douban?.pic);
   // 豆瓣字段整体生效：`full` 到货的那一帧，代理地址可能还没拼出来（`proxy_status`

@@ -52,7 +52,7 @@ const PosterTile = memo(function PosterTile({ vod, onOpen, site }: PosterTilePro
   const [doubanArmed, setDoubanArmed] = useState(false);
   const armDouban = useCallback(() => setDoubanArmed(true), []);
 
-  const douban = useDoubanMeta(vod.vod_name, vod.vod_year, doubanArmed);
+  const douban = useDoubanMeta(vod.vod_name, vod.vod_year, doubanArmed, false, vod.vod_douban_id);
   const title = vod.vod_name || "未命名";
   // 豆瓣命中优先用它的年份 / 类型；否则保持源站的集数 / 年份 / 地区，最后用站点名兜底。
   const meta = douban
