@@ -51,9 +51,11 @@ describe("player lifecycle contract", () => {
     expect(hardStop.slice(0, 700)).toContain('video.removeAttribute("src")');
     expect(hardStop.slice(0, 700)).toContain("teardownDecoders?.()");
     expect(hardStop.slice(0, 700)).toContain("art.destroy()");
-    // Direct teardown (not only ArtPlayer's destroy event) is what prevents a
-    // detached hls.js/mpegts.js stream from doubling the audio.
-    expect(engine).toContain("instance.on(\"destroy\", () => teardownDecoders?.())");
+    // 解码器自己同时做两件事：把 teardown 交给内核（硬停路径直接调），
+    // 并订阅 ArtPlayer 的 destroy 事件。少任一条都会留一个还在灌数据的 MSE 源。
+    const decoders = read("src/hooks/playerDecoders.ts");
+    expect(decoders).toContain("host.lifecycle.setTeardown(destroy);");
+    expect(decoders).toContain('instance.on("destroy", destroy);');
   });
 
   it("status overlay never blocks the controls", () => {

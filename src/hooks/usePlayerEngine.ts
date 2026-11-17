@@ -22,13 +22,13 @@ import type {
 import Artplayer from "artplayer";
 import type { Option } from "artplayer";
 import artplayerPluginHlsControl from "artplayer-plugin-hls-control";
-import Hls from "hls.js";
 import { PLAYER_NEXT_ICON, PLAYER_RELOAD_ICON } from "../components/icons";
-import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { registerPlayer, stopActivePlayer } from "../lib/playerRegistry";
-import { api, errorMessage } from "../lib/invoke";
+import { api } from "../lib/invoke";
 import { formatBytesPerSec } from "../lib/bytes";
 import { createPosterHold } from "./playerPosterHold";
+import { attachFlvDecoder, attachHlsDecoder } from "./playerDecoders";
+import type { DecoderHost, DecoderInstance } from "./playerDecoders";
 import { createStallWatchdog } from "./playerStallWatchdog";
 import { createThroughputMeter } from "./playerThroughputMeter";
 import type { MeterReading } from "./playerThroughputMeter";
@@ -36,9 +36,7 @@ import { createPrefsWriter } from "./playerPrefsWriter";
 import { createVolumeFader } from "./playerVolumeFade";
 import { log } from "../lib/logger";
 import { mediaIsAdvancing } from "../lib/mediaAlive";
-import { hlsLoadBudget } from "../lib/hlsBudget";
-import { hasMediaStopped, smoothBitrate } from "../lib/mediaMeasure";
-import { describeHlsError, isTimingFailure } from "../lib/playErrors";
+import { smoothBitrate } from "../lib/mediaMeasure";
 import { probeLineVerdict } from "../lib/playProbe";
 import { failoverCopy } from "../lib/sessionFailover";
 import type { FailoverCause } from "../lib/sessionFailover";
@@ -102,21 +100,7 @@ function syncNextButton(el: HTMLElement | null, enabled: boolean, switching = fa
  * 的类型查询取不到 default（TS2694），而运行时的 CJS 互操作又确实挂在
  * `default` 上。与其和第三方声明文件较劲，这里只声明真正用到的四个成员。
  */
-interface FlvPlayerLike {
-  attachMediaElement(element: HTMLMediaElement): void;
-  load(): void;
-  destroy(): void;
-  on(event: string, handler: (type: string, detail: string) => void): void;
-}
 
-interface MpegtsLike {
-  isSupported(): boolean;
-  createPlayer(
-    config: { type: string; url: string; isLive?: boolean },
-    options?: Record<string, unknown>,
-  ): FlvPlayerLike;
-  Events: { ERROR: string };
-}
 
 /**
  * 直播多线路切换：交给 ArtPlayer 控制栏渲染成「线路 1/3」按钮 + 下拉列表，
@@ -599,6 +583,61 @@ export function usePlayerEngine({
       },
     };
 
+    /**
+     * 解码器宿主：把内核闭包（生命信号、角标重算、海报、偏好、判死交棒）交给
+     * `playerDecoders`。回调都在异步事件里触发，所以可以引用后面才定义的
+     * `posterHold` / `reportMeta`。
+     */
+    const decoderHost = (
+      video: HTMLVideoElement,
+      instance: DecoderInstance,
+    ): DecoderHost => ({
+      media: {
+        video,
+        instance,
+        isLive: siteKey === "live",
+        isCurrent: () => videoRef.current === video,
+      },
+      identity: { siteKey, vodId },
+      signals: {
+        alive: noteAlive,
+        meta: () => reportMeta(),
+        bitrate: (sampleKbps: number) => {
+          const estimate = smoothBitrate(measuredKbps, sampleKbps);
+          measuredKbps = estimate.kbps;
+          if (estimate.changed) {
+            reportMeta();
+          }
+        },
+        declaredHeight: (height: number) => {
+          declaredHeight = height;
+        },
+      },
+      ui: {
+        error: setVideoError,
+        disableQuality: () => {
+          qualityOption.control = false;
+          qualityOption.setting = false;
+          instance.controls?.remove("hls-quality");
+          instance.setting?.remove("hls-quality");
+        },
+        dropPoster: () => posterHold.finish(false),
+      },
+      session: {
+        hasPlayed: sessionHasPlayed,
+        failover: (cause: FailoverCause, detail: string) => {
+          sessionActorRef.current?.send({ type: "FAILED", cause, detail });
+        },
+      },
+      lifecycle: {
+        setTeardown: (fn: () => void) => {
+          teardownDecoders = fn;
+        },
+        trackDisposer: trackSwitchDisposer,
+      },
+      log: (stage: string, context: Record<string, unknown>) => log.warn(stage, context),
+    });
+
     const art = new Artplayer({
       container,
       url: resolved.proxyUrl,
@@ -636,262 +675,10 @@ export function usePlayerEngine({
           : [],
       customType: {
         m3u8: (video, url, instance) => {
-          // WebView2 的 canPlayType 会对 mpegurl 返回 "maybe"，但真正把
-          // m3u8 塞给 <video> 会以 MEDIA_ERR_SRC_NOT_SUPPORTED 失败。
-          if (!Hls.isSupported()) {
-            if (video.canPlayType("application/vnd.apple.mpegurl")) {
-              video.src = url;
-            } else {
-              setVideoError(`当前环境不支持 HLS 内置播放，${PLAY_FAILURE_HINT}。`);
-            }
-            return;
-          }
-          const hls = new Hls(hlsLoadBudget(siteKey === "live"));
-          hls.loadSource(url);
-          hls.attachMedia(video);
-          // hls-control 插件约定从 art.hls 读 levels / currentLevel。
-          instance.hls = hls;
-          let disposed = false;
-          teardownDecoders = () => {
-            if (disposed) {
-              return;
-            }
-            disposed = true;
-            hls.destroy();
-          };
-          instance.on("destroy", () => teardownDecoders?.());
-          // 生命信号：清单、子清单、分片任何一步真实拿到数据都算「源在动」，
-          // 即便此刻还没凑够一帧解码（冷启大分片就是这个状态）。
-          const noteHlsAlive = () => {
-            if (!disposed) {
-              noteAlive();
-            }
-          };
-          hls.on(Hls.Events.MANIFEST_LOADING, noteHlsAlive);
-          hls.on(Hls.Events.MANIFEST_LOADED, noteHlsAlive);
-          hls.on(Hls.Events.LEVEL_LOADED, noteHlsAlive);
-          hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
-            noteHlsAlive();
-            // 实测码率：分片真实字节 / 该分片覆盖的媒体时长。声明值常缺失或
-            // 偏小，这个数才反映「当前这一集到底多大码率」。按 0.7/0.3 平滑，
-            // 避免单个小分片（片头）把读数带飞。
-            const bytes = data.frag?.stats?.total;
-            const seconds = data.frag?.duration;
-            if (!bytes || !seconds || seconds <= 0) {
-              return;
-            }
-            const estimate = smoothBitrate(measuredKbps, (bytes * 8) / seconds / 1000);
-            measuredKbps = estimate.kbps;
-            if (estimate.changed) {
-              reportMeta();
-            }
-          });
-          hls.on(Hls.Events.FRAG_BUFFERED, noteHlsAlive);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (disposed) {
-              return;
-            }
-            // 插件默认只在 ready / restart 读 levels；manifest 解析完再刷一次，
-            // 避免首次播放时清晰度列表还是空的。
-            const control = instance.plugins.artplayerPluginHlsControl as
-              | { update?: () => void }
-              | undefined;
-            control?.update?.();
-            // 单码率的源不该出现「清晰度：自动」这种假选项：插件只要看到
-            // levels 非空就会挂控件，而 TVBox 源绝大多数只有一档。按 高度/码率/
-            // 名称 去重后只剩一档时，把控件与设置项一起摘掉。
-            const levels = new Set(
-              hls.levels.map(
-                (level) => `${level.height ?? 0}|${level.bitrate ?? 0}|${level.name ?? ""}`,
-              ),
-            );
-            if (levels.size <= 1) {
-              qualityOption.control = false;
-              qualityOption.setting = false;
-              instance.controls.remove("hls-quality");
-              instance.setting.remove("hls-quality");
-            }
-            // 清单里的 RESOLUTION 只有这一时刻拿得到，留作真实帧尺寸到达前的
-            // 兜底；没有声明值（多数源）就保持 0，角标等解码后再出现。
-            const heights = hls.levels
-              .map((level) => Math.round(level.height ?? 0))
-              .filter((height) => height > 0);
-            if (heights.length > 0) {
-              declaredHeight = Math.max(...heights);
-            }
-            reportMeta();
-            // 上次选过清晰度且这一集仍有同档位时才套用，否则保持自动。
-            const wanted = readPlayerPrefs().height;
-            if (wanted) {
-              const index = hls.levels.findIndex(
-                (level) => Math.round(level.height ?? 0) === wanted,
-              );
-              if (index >= 0) {
-                hls.currentLevel = index;
-              }
-            }
-            void video.play().catch(() => {
-              // 自动播放被拦截时保留控件，用户点一下即可。
-            });
-          });
-          hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-            if (disposed) {
-              return;
-            }
-            // 换档后画面尺寸会变；`resize` 事件本身也会到，这里补一枪避免某些
-            // 编码尺寸相同（只变码率）时角标读到旧值。
-            reportMeta();
-            // 只在用户手动选档时记住；自动档每次切换都是不同码率，
-            // 记下来会让下次错误地固定到某一档。
-            if (hls.autoLevelEnabled) {
-              return;
-            }
-            const level = hls.levels[data.level];
-            if (level?.height) {
-              writePlayerPrefs({ height: level.height });
-            }
-          });
-          hls.on(Hls.Events.ERROR, (_event, data) => {
-            if (disposed || !data.fatal) {
-              return;
-            }
-            // `manifestParsingError` 这类枚举名对用户没有意义：它八成意味着
-            // 「源返回的不是 m3u8」（网盘解析接口 200 + JSON），文案要指向换源。
-            const reason = describeHlsError(data.details);
-            log.warn("hls fatal", {
-              siteKey,
-              vodId,
-              details: String(data.details ?? ""),
-              type: String(data.type ?? ""),
-            });
-            if (isTimingFailure(data.details)) {
-              // 只是「等太久」：不换源、不报红条，交给看门狗复核。
-              // 复核拿到明确失败（HTTP 错误 / 内容不是 m3u8）才跳。
-              // 刻意**不** noteAlive：这只是「没等到」，不是「有数据在流动」，
-              // 记成生命信号会让反复超时的死线永远逃过看门狗。
-              return;
-            }
-            // 实际链路是「先换同源线路，再跨源」，文案不能写成直接换源，
-            // 否则用户看到跳到别的源会以为是逻辑错了。
-            // 失败路径必须撤掉首帧前的冻结帧 / 海报：接下来要么报错要么换线，
-            // 绝不允许一张静帧永久盖住画面（超时复核路径除外——那还在等）。
-            posterHold.finish(false);
-            if (sessionHasPlayed()) {
-              // 已经在播的流突然致命：网络上抖一下的概率远高于线路真的坏了，
-              // 自动跳走会把用户正在看的内容切没。只提示，由用户决定。
-              setVideoError(`网络波动导致播放中断：${reason}，可点刷新重试`);
-              return;
-            }
-            // hls 自己报致命 = 有明确证据，报 FAILED 交给机器；文案、撤海报与交棒
-            // 由 handOverLine 统一做一次。出画后那条分支不报：红线是「已能播放就不
-            // 自动跳」，机器侧同样由 notPlayed guard 兜住，两边口径一致。
-            sessionActorRef.current?.send({
-              type: "FAILED",
-              cause: "hlsFatal",
-              detail: reason,
-            });
-          });
+          attachHlsDecoder(decoderHost(video, instance as unknown as DecoderInstance), url);
         },
         flv: (video, url, instance) => {
-          // WebView2 没有内置 FLV 解码（<video> 直接吃 flv 会 SRC_NOT_SUPPORTED），
-          // 必须用 mpegts.js 走 MSE 分包。按需 import：只有真播 FLV 时才加载，
-          // 不拖累 HLS / 直链的播放页体积。
-          let player: FlvPlayerLike | null = null;
-          let disposed = false;
-          teardownDecoders = () => {
-            if (disposed) {
-              return;
-            }
-            disposed = true;
-            player?.destroy();
-            player = null;
-          };
-          instance.on("destroy", () => teardownDecoders?.());
-          void (async () => {
-            try {
-              const mod = (await import("mpegts.js")) as unknown as {
-                default?: MpegtsLike;
-              } & MpegtsLike;
-              // mpegts.js 的 d.ts 用 `export default Mpegts` 导出一个命名空间，
-              // `import("mpegts.js").default` 取不到类型；运行时 CJS 互操作后
-              // default 才是本体，这里两个都兜一下。
-              const mpegts = mod.default ?? mod;
-              if (disposed) {
-                return;
-              }
-              if (!mpegts.isSupported()) {
-                setVideoError(
-                  EXTERNAL_PLAY_ENABLED
-                    ? "当前环境不支持 FLV 内置播放，已改用外部播放。"
-                    : "当前环境不支持 FLV 内置播放，请换一条线路或换个源后重试。",
-                );
-                return;
-              }
-              player = mpegts.createPlayer(
-                { type: "flv", url, isLive: siteKey === "live" },
-                {
-                  enableWorker: true,
-                  // 直播要低延迟；点播留一点缓冲避免卡顿。
-                  enableStashBuffer: siteKey !== "live",
-                  lazyLoad: siteKey !== "live",
-                  stashInitialSize: 128,
-                },
-              );
-              player.attachMediaElement(video);
-              player.load();
-              // 生命信号：FLV 的加载完成事件，避免「分片在灌但缓冲还没长」被误判。
-              player.on("LOADING_COMPLETE", noteAlive);
-              player.on(mpegts.Events.ERROR, (_type: string, detail: string) => {
-                if (disposed) {
-                  return;
-                }
-                log.warn("flv error", { siteKey, vodId, detail });
-                /**
-                 * 直播 FLV 断流几乎总是「先 EOF 再重连」：mpegts 抛
-                 * `UnrecoverableEarlyEof` 的那一刻，缓冲里往往还有几秒画面在正常
-                 * 解码（实测 1920×1080 / readyState 4 还在播）。此时直接挂
-                 * 「播放失败」与用户看到的事实相反，所以给一个观察窗：画面还在
-                 * 走就交给看门狗（它按证据判死），真停住了才报错换线。
-                 */
-                if (siteKey === "live") {
-                  const startedAt = video.currentTime;
-                  const observe = window.setTimeout(() => {
-                    if (disposed || videoRef.current !== video) {
-                      return;
-                    }
-                    const stopped = hasMediaStopped({
-                      paused: video.paused,
-                      readyState: video.readyState,
-                      currentTime: video.currentTime,
-                      startedAt,
-                    });
-                    if (!stopped) {
-                      return;
-                    }
-                    // 画面确实停住 = 判死证据：交给机器，交棒由 handOverLine 做。
-                    sessionActorRef.current?.send({
-                      type: "FAILED",
-                      cause: "flvInterrupted",
-                      detail,
-                    });
-                  }, 4_000);
-                  trackSwitchDisposer(() => window.clearTimeout(observe));
-                  return;
-                }
-                // 同 hls fatal：报 FAILED，撤海报 / 文案 / 交棒统一在 handOverLine。
-                sessionActorRef.current?.send({
-                  type: "FAILED",
-                  cause: "flvFatal",
-                  detail,
-                });
-              });
-              void video.play().catch(() => {
-                // 自动播放被拦截时保留控件，用户点一下即可。
-              });
-            } catch (err) {
-              setVideoError(`FLV 解码组件加载失败：${errorMessage(err)}`);
-            }
-          })();
+          attachFlvDecoder(decoderHost(video, instance as unknown as DecoderInstance), url);
         },
       },
     });

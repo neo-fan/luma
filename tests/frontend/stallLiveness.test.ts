@@ -68,8 +68,9 @@ describe("stall watchdog", () => {
     // 同一条红线还写进了转换表：就算解释器漏掉那个 if，机器也进不了判死路径。
     expect(vodMachine).toContain('STALL: { target: "probing", guard: "notPlayed" }');
     expect(vodMachine).toContain("notPlayed: ({ context }) => !context.hasPlayed");
-    // hls 致命错误在播过之后也只提示、不跳源。
-    expect(engine).toContain("网络波动导致播放中断");
+    // hls 致命错误在播过之后也只提示、不跳源（解码器侧，见 playerDecoders）。
+    const decoders = readFileSync(resolve(here, "../../src/hooks/playerDecoders.ts"), "utf8");
+    expect(decoders).toContain("网络波动导致播放中断");
   });
 
   it("counts proxy byte growth as a liveness signal", () => {

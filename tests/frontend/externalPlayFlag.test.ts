@@ -43,7 +43,7 @@ describe("external play is temporarily disabled", () => {
     const engine = read("src/hooks/usePlayerEngine.ts");
     const stage = read("src/components/player/PlayerStage.tsx");
     expect(page).toContain("PLAY_FAILURE_HINT");
-    expect(engine).toContain("PLAY_FAILURE_HINT");
+    expect(engine + read("src/hooks/playerDecoders.ts")).toContain("PLAY_FAILURE_HINT");
     expect(stage).toContain("EXTERNAL_PLAY_FALLBACK");
     // 关闭期间不能再出现无条件引导用户去用外部播放的硬编码文案。
     expect(page).not.toContain("可尝试外部播放。");
