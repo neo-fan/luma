@@ -468,12 +468,39 @@ fn is_number_char(ch: char) -> bool {
         )
 }
 
+/// 汉字区（含扩展 A/B 与兼容表意文字）：出现即说明尾缀可能是**另一部作品**的名字。
+fn is_cjk_ideograph(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff | 0x20000..=0x2ebef
+    )
+}
+
+/// 尾缀是否只是「原文名别名」。
+///
+/// 豆瓣对非中文作品的标题格式是 `中文名 原文名 (年份)`，规范化剥掉年份后多出来的
+/// 那一段是谚文 / 拉丁 / 假名，不是第二个作品名——「我的有罪之人 나의 유죄인간」
+/// 曾被 4 字尾缀上限整批拒掉。含数字或汉字就不算别名（「美版」「第二季」「2024」
+/// 都可能是另一部），这条放宽因此只对外语别名开口子。
+fn is_original_alias_tail(tail: &str) -> bool {
+    let mut saw_letter = false;
+    for ch in tail.chars() {
+        if ch.is_numeric() || is_cjk_ideograph(ch) {
+            return false;
+        }
+        if ch.is_alphabetic() {
+            saw_letter = true;
+        }
+    }
+    saw_letter
+}
+
 /// 候选打分，`None` = 「不是同一部」。
 ///
-/// 只在「规范化后相等」或「多出 4 个字符以内」的尾缀关系上给分，保守优先：
-/// 匹配错一部作品的代价（详情页挂错海报/简介）比漏匹配大得多。
-/// 分数取值是行为约定的一部分（测试按它断言）：
-/// 完全相同 100 > 候选多了尾缀 90 > 查询多了尾缀 85。
+/// 只在「规范化后相等」或「尾缀关系」上给分，保守优先：匹配错一部作品的代价
+/// （详情页挂错海报/简介）比漏匹配大得多。分数取值是行为约定的一部分（测试按它
+/// 断言）：完全相同 100 > 候选多了尾缀 90 > 查询多了尾缀 85。尾缀长度上限 4 个
+/// 字符，纯外语别名不受它限制（见 `is_original_alias_tail`）。
 pub fn title_score(query: &str, candidate: &str) -> Option<u32> {
     let query = normalize_title(query);
     let candidate = normalize_title(candidate);
@@ -483,13 +510,16 @@ pub fn title_score(query: &str, candidate: &str) -> Option<u32> {
     if query == candidate {
         return Some(100);
     }
-    let query_len = query.chars().count();
     let candidate_len = candidate.chars().count();
-    if candidate.starts_with(&query) && candidate_len - query_len <= 4 {
-        return Some(90);
+    if let Some(tail) = candidate.strip_prefix(&query) {
+        if tail.chars().count() <= 4 || is_original_alias_tail(tail) {
+            return Some(90);
+        }
     }
-    if query.starts_with(&candidate) && query_len - candidate_len <= 4 && candidate_len >= 2 {
-        return Some(85);
+    if let Some(tail) = query.strip_prefix(&candidate) {
+        if candidate_len >= 2 && (tail.chars().count() <= 4 || is_original_alias_tail(tail)) {
+            return Some(85);
+        }
     }
     None
 }
@@ -2281,6 +2311,27 @@ mod tests {
         assert_eq!(title_score("庆余年", "庆余年 番外篇"), Some(90));
         // 超出 4 个字符的尾缀不当成同一部。
         assert_eq!(title_score("三体", "三体 动画版 全三季合集"), None);
+        // 豆瓣对非中文作品的标题格式是「中文名 原文名 (年份)」：多出来的一段是
+        // 原文别名，不是第二部作品。《我的有罪之人》曾因 4 字上限整批漏匹配。
+        assert_eq!(
+            title_score("我的有罪之人", "我的有罪之人 나의 유죄인간‎ (2026)"),
+            Some(90),
+            "谚文别名尾缀不该被长度上限拒掉"
+        );
+        assert_eq!(
+            title_score("我的有罪之人 나의 유죄인간", "我的有罪之人"),
+            Some(85),
+            "反方向同理：查询带原文别名、豆瓣只给中文名也能认回"
+        );
+        assert_eq!(
+            title_score("玲子", "玲子 Reiko (1995)"),
+            Some(90),
+            "拉丁别名同样放行"
+        );
+        // 尾缀里混进数字就不是「原文别名」，不能靠这条放宽放行。
+        // （长汉字尾缀的拒绝已由上面「三体 动画版 全三季合集」那条守着；
+        // 「第二季」这类季/部尾缀在规范化阶段就被剥掉，不参与这里。）
+        assert_eq!(title_score("玲子", "玲子 Reiko 2"), None);
     }
 
     #[test]
