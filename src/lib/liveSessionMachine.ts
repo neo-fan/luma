@@ -101,11 +101,9 @@ export const liveSessionMachine = setup({
       failoverCause: ({ event }) => (event.type === "FAILED" ? event.cause : null),
       failoverDetail: ({ event }) => (event.type === "FAILED" ? (event.detail ?? "") : ""),
     }),
-    // ---- 副作用发起点：解释器在 createActor 时用 `actions` 覆盖实现 ----
-    acquireDecoder: () => undefined,
-    releaseDecoders: () => undefined,
-    showSpinner: () => undefined,
-    hideSpinner: () => undefined,
+    // ---- 副作用发起点：解释器用 `machine.provide({ actions })` 给出实现 ----
+    // 与点播机器同一取舍：解码器生命周期归 ArtPlayer 实例（`customType` 里挂），
+    // 转环等 UI 由状态本身驱动，机器不假装 owns 它们。
     requestLineSwitch: () => undefined,
     restartQuietClock: () => undefined,
     reportProbeInconclusive: () => undefined,
@@ -128,16 +126,15 @@ export const liveSessionMachine = setup({
       },
     },
     connecting: {
-      entry: "acquireDecoder",
       on: {
-        ATTACHED: { target: "buffering", actions: "showSpinner" },
+        ATTACHED: "buffering",
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
         FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     buffering: {
       on: {
-        MEDIA_ALIVE: { target: "playing", actions: ["markPlayed", "hideSpinner"] },
+        MEDIA_ALIVE: { target: "playing", actions: "markPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
         STALL: { target: "probing", guard: "notPlayed" },
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
@@ -197,7 +194,6 @@ export const liveSessionMachine = setup({
       },
     },
     failed: {
-      entry: "releaseDecoders",
       on: {
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
       },

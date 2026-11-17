@@ -15,8 +15,10 @@ import type { LineVerdict } from "./playProbe";
  * `usePlayerEngine` 作为解释器执行动作名。于是转换表能在 node 下逐条断言——这正是
  * 内核此前缺的行为测试网。
  *
- * 时间窗（音量 ramp / 初始化静默）本质是墙钟问题，留在解释器；机器只跟踪离散量
- * （`fadeDone`、`sessionId`、`resumeIntent`、`unresponsiveProbes`）。
+ * 时间窗（音量 ramp / 初始化静默 / 倍速静默）本质是墙钟问题，**留在解释器**；
+ * 机器只跟踪离散量（`sessionId`、`hasPlayed`、`resumeIntent`、`resumeAborted`、
+ * `unresponsiveProbes`、`failoverCause`）。曾经这里还带一个 `fadeDone` 布尔与
+ * `FADE_DONE` 事件，但引擎从不发它（音量淡入归时间窗），是纯装饰 —— 已删。
  */
 
 /**
@@ -42,9 +44,14 @@ export type VodSessionEvent =
   | { type: "STALL" }
   | { type: "PROBE"; verdict: ProbeVerdict }
   | { type: "USER_SWITCH"; url: string; resumeIntent: boolean }
+  /**
+   * 原地换集：新地址已经通过 `art.switchUrl` 挂上（音量淡入与倍速复位已在解释器
+   * 侧先行处理完）。这是**续播的唯一发起点**——机器据此在 `switching` 里跑
+   * `resumePlayback`（受 `wantsResume` 守卫）。
+   */
+  | { type: "SWITCH_ATTACHED" }
   | { type: "AUTOPLAY_BLOCKED" }
-  | { type: "FADE_DONE" }
-  | { type: "FAILED"; cause: FailoverCause; detail?: string };
+ | { type: "FAILED"; cause: FailoverCause; detail?: string };
 
 export interface VodSessionContext {
   /** 会话身份：每次换集/重载自增，取代散落的 `switchGeneration` 代数比较。 */
@@ -56,9 +63,7 @@ export interface VodSessionContext {
   resumeIntent: boolean;
   /** 「未知」探测累计次数，达阈值判死换线。 */
   unresponsiveProbes: number;
-  /** 音量淡入是否完成（取代 `fadeDone`）。 */
-  fadeDone: boolean;
-  /** 本轮切换是否被用户暂停打断过续播（取代 `resumeCancelled`）。 */
+ /** 本轮切换是否被用户暂停打断过续播（取代 `resumeCancelled`）。 */
   resumeAborted: boolean;
   /**
    * 进入 `recovering` 时携带的判死原因（离开 recovering 开新会话即清空）。
@@ -83,8 +88,7 @@ const initialContext: VodSessionContext = {
   hasPlayed: false,
   resumeIntent: false,
   unresponsiveProbes: 0,
-  fadeDone: false,
-  resumeAborted: false,
+ resumeAborted: false,
   failoverCause: null,
   failoverDetail: "",
 };
@@ -93,8 +97,7 @@ export const vodSessionMachine = setup({
   types: { context: {} as VodSessionContext, events: {} as VodSessionEvent },
   guards: {
     wantsResume: ({ context }) => context.resumeIntent,
-    canPersistVolume: ({ context }) => context.fadeDone,
-    /**
+   /**
      * 「出过画就再也不自动换线」是产品红线（用户明确要求）。此前它只写在解释器
      * `stallCheck` 的一个 `if` 里——机器收到 dead 照样进 recovering。现在把它写进
      * 转换表：机器层面就不可能判死，删掉那个 `if` 也不会破。
@@ -113,8 +116,7 @@ export const vodSessionMachine = setup({
       sessionId: ({ context }) => context.sessionId + 1,
       hasPlayed: () => false,
       unresponsiveProbes: () => 0,
-      fadeDone: () => false,
-      resumeAborted: () => false,
+     resumeAborted: () => false,
       // 开新一轮会话就把上一轮的判死原因清空：`recovering` 只在进入时带因由，
       // 离开后不能让解释器读到陈旧的 cause。
       failoverCause: () => null,
@@ -125,8 +127,7 @@ export const vodSessionMachine = setup({
       resumeIntent: ({ event }) => (event as { resumeIntent: boolean }).resumeIntent,
     }),
     markPlayed: assign({ hasPlayed: () => true, unresponsiveProbes: () => 0 }),
-    completeFade: assign({ fadeDone: () => true }),
-    incrementProbe: assign({
+   incrementProbe: assign({
       unresponsiveProbes: ({ context }) => context.unresponsiveProbes + 1,
     }),
     resetProbe: assign({ unresponsiveProbes: () => 0 }),
@@ -144,15 +145,13 @@ export const vodSessionMachine = setup({
       failoverCause: ({ event }) => (event.type === "FAILED" ? event.cause : null),
       failoverDetail: ({ event }) => (event.type === "FAILED" ? (event.detail ?? "") : ""),
     }),
-    // ---- 副作用发起点：解释器在 createActor 时用 `actions` 覆盖实现 ----
-    // 机器自己留 no-op，保证能在 node 下纯粹地跑转换表；一旦接线，「什么时候
-    // 撤海报 / 报错 / 交棒换线」只在这张表里决定一次，调用方不再各写一份。
-    acquireDecoder: () => undefined,
-    releaseDecoders: () => undefined,
-    showSpinner: () => undefined,
-    hideSpinner: () => undefined,
-    pinControls: () => undefined,
-    unpinControls: () => undefined,
+    // ---- 副作用发起点：解释器用 `machine.provide({ actions })` 给出实现 ----
+    // 只留**真正需要机器决定时机**的动作。原先这里还挂着 acquireDecoder /
+    // releaseDecoders / showSpinner / hideSpinner / pinControls / unpinControls
+    // 六个空描述符：解码器的创建与销毁属于 ArtPlayer 实例生命周期（在 `customType`
+    // 里挂 hls.js / mpegts.js，机器既碰不到也不该碰），转环与钉控制栏由
+    // `matches("switching")` 这个**状态本身**驱动。留着它们等于让模型假装owns
+    // 一些其实不归它的事——2026-11-17 删除。
     resumePlayback: () => undefined,
     cancelResume: () => undefined,
     navigateFailover: () => undefined,
@@ -178,23 +177,14 @@ export const vodSessionMachine = setup({
       },
     },
     attaching: {
-      entry: "acquireDecoder",
       on: {
-        ATTACHED: { target: "buffering", actions: "showSpinner" },
+        ATTACHED: "buffering",
         FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     buffering: {
       on: {
-        MEDIA_ALIVE: {
-          target: "playing",
-          actions: [
-            "markPlayed",
-            "hideSpinner",
-            "unpinControls",
-            { type: "resumePlayback", guard: "wantsResume" },
-          ],
-        },
+        MEDIA_ALIVE: { target: "playing", actions: "markPlayed" },
         // 反代字节在涨 = 极慢但活着：清零 unknown 累计，别把它熬成死线。
         FRAG_GROWTH: { actions: "resetProbe" },
         STALL: { target: "probing", guard: "notPlayed" },
@@ -206,11 +196,12 @@ export const vodSessionMachine = setup({
         // 出过画之后看门狗不再介入（红线见 notPlayed guard）：卡顿按网络抖动处理。
         STALL: { target: "probing", guard: "notPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
-        FADE_DONE: { actions: "completeFade" },
-        USER_SWITCH: {
+       USER_SWITCH: {
           target: "switching",
-          actions: ["setTarget", "setResumeIntent", "bumpSession", "showSpinner", "pinControls"],
+          actions: ["setTarget", "setResumeIntent", "bumpSession"],
         },
+        // 兜底超时（或复核）之后才挂上新地址：续播照样要发起，否则换集停在暂停态。
+        SWITCH_ATTACHED: [{ guard: "wantsResume", actions: "resumePlayback" }],
         FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
@@ -245,29 +236,29 @@ export const vodSessionMachine = setup({
         // 复核在途时用户换集 / 换源：本轮结论作废，跟着新会话走。
         USER_SWITCH: {
           target: "switching",
-          actions: ["setTarget", "setResumeIntent", "bumpSession", "showSpinner", "pinControls"],
+          actions: ["setTarget", "setResumeIntent", "bumpSession"],
         },
         LOAD: { target: "resolving", actions: ["setTarget", "bumpSession"] },
+        // 复核在途时新地址已经挂上：续播不等复核结论。
+        SWITCH_ATTACHED: [{ guard: "wantsResume", actions: "resumePlayback" }],
       },
     },
     switching: {
       // 兜底超时：即便漏喂退出事件，15s 后也自动离开 switching（撤 spinner/钉住），
       // 绝不让按钮转环或控制栏钉住永久卡住（对齐引擎 switchSource 的 15s 封顶）。
-      after: { 15000: { target: "playing", actions: ["hideSpinner", "unpinControls"] } },
+      after: { 15000: "playing" },
       on: {
-        MEDIA_ALIVE: {
-          target: "playing",
-          actions: [
-            "markPlayed",
-            "hideSpinner",
-            "unpinControls",
-            { type: "resumePlayback", guard: "wantsResume" },
-          ],
-        },
+        MEDIA_ALIVE: { target: "playing", actions: "markPlayed" },
         AUTOPLAY_BLOCKED: {
           target: "playing",
-          actions: ["hideSpinner", "markResumeAborted", "cancelResume"],
+          actions: ["markResumeAborted", "cancelResume"],
         },
+        // **续播的发起点在这里，不在 MEDIA_ALIVE**：现实是「新地址挂上后立刻试播 +
+        // canplay 兜底」，而 `MEDIA_ALIVE` 意味着首帧已经出来了——那时再 play() 就
+        // 成了「等到有画面才播」，正是 2026-11-15 那个「换集后黑屏不动」的反面。
+        // 所以解释器在 `art.switchUrl` 之后、音量淡入与倍速复位之后发这个事件，
+        // 顺序与原先的内联写法逐字等价。
+        SWITCH_ATTACHED: [{ guard: "wantsResume", actions: "resumePlayback" }],
         STALL: { target: "probing", guard: "notPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
         FAILED: { target: "recovering", actions: "failoverFromEvent" },
@@ -281,13 +272,12 @@ export const vodSessionMachine = setup({
         LOAD: { target: "resolving", actions: ["setTarget", "bumpSession"] },
         USER_SWITCH: {
           target: "switching",
-          actions: ["setTarget", "setResumeIntent", "bumpSession", "showSpinner", "pinControls"],
+          actions: ["setTarget", "setResumeIntent", "bumpSession"],
         },
         FAILED: "failed",
       },
     },
     failed: {
-      entry: "releaseDecoders",
       on: {
         LOAD: { target: "resolving", actions: ["setTarget", "bumpSession"] },
       },

@@ -192,14 +192,6 @@ describe("vodSessionMachine", () => {
     expect(a.getSnapshot().matches("recovering")).toBe(true);
   });
 
-  it("canPersistVolume 只在 FADE_DONE 后为真（三个时间窗收敛成一条）", () => {
-    const a = fresh();
-    toPlaying(a);
-    expect(a.getSnapshot().context.fadeDone).toBe(false);
-    a.send({ type: "FADE_DONE" });
-    expect(a.getSnapshot().context.fadeDone).toBe(true);
-  });
-
   it("failed 后 LOAD 开新会话", () => {
     const a = fresh();
     a.send({ type: "LOAD", url: "e1" });
@@ -226,6 +218,8 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
         actions: {
           navigateFailover: ({ context }) =>
             calls.push(`failover:${String(context.failoverCause)}:${context.failoverDetail}`),
+          resumePlayback: () => calls.push("resumePlayback"),
+          cancelResume: () => calls.push("cancelResume"),
           restartQuietClock: () => calls.push("restartQuietClock"),
           reportProbeInconclusive: () => calls.push("reportProbeInconclusive"),
           reportProbeSlow: () => calls.push("reportProbeSlow"),
@@ -308,5 +302,55 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
     actor.send({ type: "STALL" });
     actor.send({ type: "PROBE", verdict: "dead" });
     expect(calls).toEqual(["failover:probeDead:", "failover:probeDead:"]);
+  });
+
+  it("SWITCH_ATTACHED 才发起续播（不是出画之后）", () => {
+    // 现实要求 play() 在「新地址刚挂上」时就请求一次，等 MEDIA_ALIVE 再播等于
+    // 「等到有画面才播」——那正是 2026-11-15 的「换集后黑屏不动」。
+    const { actor, calls } = instrumented();
+    toPlaying(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "USER_SWITCH", url: "e2", resumeIntent: true });
+    expect(calls).toEqual([]); // 换集本身不播
+    actor.send({ type: "MEDIA_ALIVE" });
+    expect(calls).toEqual([]); // 出画也不该由机器发起续播
+    const b = instrumented();
+    toPlaying(b.actor as unknown as ReturnType<typeof fresh>);
+    b.actor.send({ type: "USER_SWITCH", url: "e2", resumeIntent: true });
+    b.actor.send({ type: "SWITCH_ATTACHED" });
+    expect(b.calls).toEqual(["resumePlayback"]);
+  });
+
+  it("换集前是暂停态（resumeIntent=false）→ 不抢控制权", () => {
+    const { actor, calls } = instrumented();
+    toPlaying(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "USER_SWITCH", url: "e2", resumeIntent: false });
+    actor.send({ type: "SWITCH_ATTACHED" });
+    expect(calls).toEqual([]);
+  });
+
+  it("用户中途暂停 → 机器发 cancelResume 撤掉挂起的重试", () => {
+    const { actor, calls } = instrumented();
+    toPlaying(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "USER_SWITCH", url: "e2", resumeIntent: true });
+    actor.send({ type: "SWITCH_ATTACHED" });
+    actor.send({ type: "AUTOPLAY_BLOCKED" });
+    expect(calls).toEqual(["resumePlayback", "cancelResume"]);
+    expect(actor.getSnapshot().context.resumeAborted).toBe(true);
+  });
+
+  it("兜底超时之后新地址才挂上，续播照样发起（不能停在暂停态）", () => {
+    vi.useFakeTimers();
+    try {
+      const { actor, calls } = instrumented();
+      toPlaying(actor as unknown as ReturnType<typeof fresh>);
+      actor.send({ type: "USER_SWITCH", url: "e2", resumeIntent: true });
+      // 15s 兜底先把 switching 收掉（模拟慢源），随后 switchUrl 才 resolve
+      vi.advanceTimersByTime(15_000);
+      expect(actor.getSnapshot().matches("playing")).toBe(true);
+      actor.send({ type: "SWITCH_ATTACHED" });
+      expect(calls).toEqual(["resumePlayback"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

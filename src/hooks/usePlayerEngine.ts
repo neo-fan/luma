@@ -60,6 +60,13 @@ let sessionInstanceSeq = 0;
 type SessionEffects = {
   /** 判死交棒：撤掉冻结帧、报出人话、把这一线交还给换线 / 换源链路。 */
   failover: (cause: FailoverCause, detail: string) => void;
+  /**
+   * 续播（原地换集后）：立即试一次 + `canplay` 兜底；期间用户主动暂停则放弃，
+   * 别跟用户抢控制权。由机器在进入 `switching` 后收到 `SWITCH_ATTACHED` 时发起。
+   */
+  resumePlayback: () => void;
+  /** 放弃续播：撤掉挂起的重试监听（机器在 `AUTOPLAY_BLOCKED` 时发起）。 */
+  cancelResume: () => void;
   /** 复核说「还活着」：静默计时推回当下，慢源不该被熬成死线。 */
   restartQuietClock: () => void;
   /** unknown（说不出所以然）未达阈值：只留证据，不动画面。 */
@@ -292,6 +299,10 @@ export function usePlayerEngine({
       reportProbeInconclusive: () => sessionEffectsRef.current?.reportInconclusive(),
       reportProbeSlow: () => sessionEffectsRef.current?.reportSlow(),
     };
+    const resumeNotes = {
+      resumePlayback: () => sessionEffectsRef.current?.resumePlayback(),
+      cancelResume: () => sessionEffectsRef.current?.cancelResume(),
+    };
     // live 演员按 vod 演员类型收口：引擎只发两台机器共有的事件，且两台都有
     // sessionId / hasPlayed / failover* 这几个上下文字段。
     // 副作用实现通过 `machine.provide({ actions })` 注入（v5 的实现覆盖点，
@@ -310,6 +321,7 @@ export function usePlayerEngine({
             vodSessionMachine.provide({
               actions: {
                 navigateFailover: ({ context }) => runFailover(context),
+                ...resumeNotes,
                 ...probeNotes,
               },
             }),
@@ -336,7 +348,7 @@ export function usePlayerEngine({
   /**
    * 会话代数真源：actor 的 sessionId（每次 LOAD/USER_SWITCH 自增）。取代原先手搓
    * 的 `switchGeneration` 计数器——在途探活/换集回调回来时比对它，判断结论是否属于
-   * 已被新一轮切换取代的旧集。影子模式已验证它与真实切换时序一致（dcc7a12）。
+   * 已被新一轮切换取代的旧集。影子阶段已验证它与真实切换时序一致（dcc7a12）。
    */
   const sessionGen = () => sessionActorRef.current?.getSnapshot().context.sessionId ?? 0;
   /** 首帧真源：actor.hasPlayed（MEDIA_ALIVE 置位、bumpSession 复位），取代本地 hasPlayed。 */
@@ -1305,9 +1317,45 @@ export function usePlayerEngine({
       setVideoError(message);
       void switchOrFailoverRef.current();
     };
+    /**
+     * 挂起的续播重试（`canplay` / `pause` 两个 once 监听 + play()）。
+     * 用户在这轮里主动暂停时由机器的 `cancelResume` 撤掉，不跟用户抢控制权。
+     */
+    let pendingResumeUndo: (() => void) | null = null;
     // 把这一轮实例的副作用实现挂给机器（机器 effect 先跑，只认这个 ref）。
     sessionEffectsRef.current = {
       failover: handOverLine,
+      resumePlayback: () => {
+        // switchUrl 返回时新解码器可能还没把 src 挂上（HLS 清单异步），此刻 play()
+        // 会被拒且不再重试，画面就停在暂停态 —— 所以立即试一次 + canplay 兜底。
+        const cancel = () => {
+          sessionActorRef.current?.send({ type: "AUTOPLAY_BLOCKED" });
+        };
+        const resumePlay = () => {
+          video.removeEventListener("pause", cancel);
+          if (
+            !(sessionActorRef.current?.getSnapshot().context.resumeAborted ?? false) &&
+            videoRef.current === video &&
+            video.paused
+          ) {
+            void video.play().catch(() => {});
+          }
+        };
+        video.addEventListener("pause", cancel, { once: true });
+        video.addEventListener("canplay", resumePlay, { once: true });
+        const undo = () => {
+          video.removeEventListener("pause", cancel);
+          video.removeEventListener("canplay", resumePlay);
+          pendingResumeUndo = null;
+        };
+        pendingResumeUndo = undo;
+        // 新一轮切换 / 卸载也要收：与淡入的 disposer 各自登记，Set 幂等。
+        trackSwitchDisposer(undo);
+        void video.play().catch(() => {});
+      },
+      cancelResume: () => {
+        pendingResumeUndo?.();
+      },
       restartQuietClock: noteAlive,
       reportInconclusive: () =>
         log.info("stall probe inconclusive", {
@@ -1484,7 +1532,7 @@ export function usePlayerEngine({
       // 否则缓冲完成了却停在暂停态，用户看到的就是「换集后黑屏不动」
       // （2026-11-15 实测）。
       const wasPlaying = !video.paused && !video.ended;
-      // 影子：换集 = USER_SWITCH，续播意图如实带入（机器据此决定是否 resumePlayback）。
+      // 换集 = USER_SWITCH，续播意图如实带入；要不要播由机器的 wantsResume 守卫决定。
       sessionActorRef.current?.send({ type: "USER_SWITCH", url, resumeIntent: wasPlaying });
       /**
        * 偏好沿用（与新建实例同一套纪律）：原地换集同样会被 ArtPlayer 把
@@ -1620,32 +1668,15 @@ export function usePlayerEngine({
         };
         video.addEventListener("canplay", swFadeIfPlaying, { once: true });
         const swFadeTimer = window.setTimeout(swFadeIfPlaying, 1500);
-        // 续播：switchUrl 返回时新解码器可能还没把 src 挂上（HLS 清单异步），
-        // 此刻 play() 会被拒且不再重试，画面就停在暂停态。立即试一次 +
-        // canplay 兜底；期间用户主动暂停则放弃续播，别跟用户抢控制权。
-        // 续播取消真源 = actor.resumeAborted（由 AUTOPLAY_BLOCKED 事件置位），
-        // 不再本地维护 resumeCancelled。
-        const cancelResume = () => {
-          // 用户在切换期主动暂停 → 放弃续播，别跟用户抢控制权。
-          sessionActorRef.current?.send({ type: "AUTOPLAY_BLOCKED" });
-        };
-        video.addEventListener("pause", cancelResume, { once: true });
-        const resumePlay = () => {
-          video.removeEventListener("pause", cancelResume);
-          const aborted = sessionActorRef.current?.getSnapshot().context.resumeAborted ?? false;
-          if (!aborted && videoRef.current === video && video.paused) {
-            void video.play().catch(() => {});
-          }
-        };
-        video.addEventListener("canplay", resumePlay, { once: true });
         trackSwitchDisposer(() => {
-          video.removeEventListener("pause", cancelResume);
-          video.removeEventListener("canplay", resumePlay);
           video.removeEventListener("playing", swFadeIn);
           video.removeEventListener("canplay", swFadeIfPlaying);
           window.clearTimeout(swFadeTimer);
         });
-        void video.play().catch(() => {});
+        // 续播改由机器发起（实现见下面的 `sessionEffects.resumePlayback`）：倍速复位
+        // 与音量淡入都已经在前面上方处理完，这一刻才请求播放——时机与原来的内联
+        // 写法逐字一致，区别只是「谁决定要播」从这段代码搬进了转换表。
+        sessionActorRef.current?.send({ type: "SWITCH_ATTACHED" });
       }
       /**
        * 等到新集**真正有画面**才算切换完成：调用方（PlayerPage）在这条 promise
@@ -1671,7 +1702,7 @@ export function usePlayerEngine({
         };
         const onAlive = () => {
           if (!video.paused && video.readyState >= 2 && video.videoWidth > 0) {
-            // 影子：新集真正出画 → MEDIA_ALIVE，机器 switching→playing 收口。
+            // 新集真正出画 → MEDIA_ALIVE，机器 switching→playing 收口。
             sessionActorRef.current?.send({ type: "MEDIA_ALIVE" });
             finish(true);
           }
@@ -1689,7 +1720,7 @@ export function usePlayerEngine({
         onAlive();
       });
     };
-    // 影子：此刻实例已建、解码器已挂（url 早已 resolved）。把「建实例」这段映射成
+    // 此刻实例已建、解码器已挂（url 早已 resolved）。把「建实例」这段映射成
     // LOAD→RESOLVED→ATTACHED，让机器进 buffering；首帧由 onMediaAlive 推 MEDIA_ALIVE。
     sessionActorRef.current?.send({ type: "LOAD", url: resolved.proxyUrl });
     sessionActorRef.current?.send({ type: "RESOLVED", url: resolved.proxyUrl });
