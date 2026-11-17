@@ -134,6 +134,10 @@ export const liveSessionMachine = setup({
     playing: {
       on: {
         STALL: { target: "probing", guard: "notPlayed" },
+        // 已在 playing 也要接受首帧证据：进入 playing 可能不经过 markPlayed
+        // （switching 兜底、probing 的 unknown），否则 hasPlayed 会永久停在 false，
+        // 「已出画不再自动换线路」这条红线被无声解除。
+        MEDIA_ALIVE: { actions: "markPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
         // 换台 = 全新一次播放尝试。
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },

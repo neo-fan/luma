@@ -262,8 +262,40 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
     expect(actor.getSnapshot().matches("playing")).toBe(true);
   });
 
-  it("红线在副作用层同样成立：出画之后一个副作用都不发", () => {
-    const { actor, calls } = instrumented();
+  it("经兜底超时回到 playing 之后，首帧证据仍会置位 hasPlayed", () => {
+    // 现场实测到的洞：慢源切换经 15s 兜底回 playing 时不带首帧标志，此后的
+    // MEDIA_ALIVE 若无转移，hasPlayed 会永久停在 false，红线被无声解除。
+    vi.useFakeTimers();
+    try {
+      const a = fresh();
+      toPlaying(a);
+      a.send({ type: "USER_SWITCH", url: "e2", resumeIntent: true });
+      expect(a.getSnapshot().matches("switching")).toBe(true);
+      vi.advanceTimersByTime(15_000);
+      expect(a.getSnapshot().matches("playing")).toBe(true);
+      expect(a.getSnapshot().context.hasPlayed).toBe(false); // bumpSession 复位过
+      a.send({ type: "MEDIA_ALIVE" });
+      expect(a.getSnapshot().context.hasPlayed).toBe(true);
+      // 置位之后红线立刻生效：再卡也不会被自动换线
+      a.send({ type: "STALL" });
+      expect(a.getSnapshot().matches("playing")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("冷启动还没出画就点下一集，机器同样进 switching", () => {
+    // 引擎在这条路径上照样会 switchUrl，模型不能当没发生。
+    const a = fresh();
+    toWaiting(a);
+    a.send({ type: "USER_SWITCH", url: "e2", resumeIntent: false });
+    const s = a.getSnapshot();
+    expect(s.matches("switching")).toBe(true);
+    expect(s.context.sessionId).toBe(2);
+    expect(s.context.targetUrl).toBe("e2");
+  });
+
+  it("红线在副作用层同样成立：出画之后一个副作用都不发", () => {    const { actor, calls } = instrumented();
     toPlaying(actor as unknown as ReturnType<typeof fresh>);
     actor.send({ type: "STALL" });
     actor.send({ type: "PROBE", verdict: "dead" });

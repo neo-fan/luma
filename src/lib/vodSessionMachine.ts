@@ -164,14 +164,24 @@ export const vodSessionMachine = setup({
         // 反代字节在涨 = 极慢但活着：清零 unknown 累计，别把它熬成死线。
         FRAG_GROWTH: { actions: "resetProbe" },
         STALL: { target: "probing", guard: "notPlayed" },
+        // 冷启动还没出画时用户就点了下一集：引擎照样会切，机器必须一起进 switching，
+        // 否则这一轮切换在模型里不存在，spinner 与代次都对不上。
+        USER_SWITCH: {
+          target: "switching",
+          actions: ["setTarget", "setResumeIntent", "bumpSession"],
+        },
         FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     playing: {
       on: {
         STALL: { target: "probing", guard: "notPlayed" },
+        // 已在 playing 也要接受首帧证据：进入 playing 不一定经过 markPlayed
+        // （switching 的 15s 兜底、probing 的 unknown 都不带首帧回来）。缺这条，
+        // hasPlayed 可能永久停在 false，把「已出画不再自动换线」无声解除。
+        MEDIA_ALIVE: { actions: "markPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
-       USER_SWITCH: {
+        USER_SWITCH: {
           target: "switching",
           actions: ["setTarget", "setResumeIntent", "bumpSession"],
         },

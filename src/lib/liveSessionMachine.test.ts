@@ -83,8 +83,21 @@ describe("liveSessionMachine", () => {
     expect(a.getSnapshot().matches("recovering")).toBe(true);
   });
 
-  it("红线：出过画之后 STALL 进不了 probing，不自动换线路", () => {
-    // 与点播同一条产品红线（「已经能播放了 就不要切」），写在转换表上而不是
+  it("复核未达阈值回到 playing 后，首帧证据仍会置位 hasPlayed", () => {
+    const a = fresh();
+    toLiveWaiting(a);
+    a.send({ type: "STALL" });
+    a.send({ type: "PROBE", verdict: "unknown" });
+    expect(a.getSnapshot().matches("playing")).toBe(true);
+    expect(a.getSnapshot().context.hasPlayed).toBe(false);
+    a.send({ type: "MEDIA_ALIVE" });
+    expect(a.getSnapshot().context.hasPlayed).toBe(true);
+    a.send({ type: "STALL" });
+    a.send({ type: "PROBE", verdict: "dead" });
+    expect(a.getSnapshot().matches("playing")).toBe(true);
+  });
+
+  it("红线：出过画之后 STALL 进不了 probing，不自动换线路", () => {    // 与点播同一条产品红线（「已经能播放了 就不要切」），写在转换表上而不是
     // 只写在解释器的 if 里；直播出画后的卡顿交给用户手动换线/换台。
     const a = fresh();
     toLivePlaying(a);
