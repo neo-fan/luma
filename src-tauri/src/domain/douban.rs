@@ -1228,9 +1228,13 @@ async fn fetch_detail(
             }
             Err(err) => {
                 if err.message.contains("HTTP 404") {
+                    // 探测 tv / movie 两条路径时，另一条必然 404：那是探测机制本身，
+                    // 不是故障。记进 not_found 计数，日志降到 debug。
                     not_found += 1;
+                    tracing::debug!(id, path, error = %err.message, "douban rexxar path not found");
+                } else {
+                    tracing::warn!(id, path, code = %err.code, error = %err.message, "douban rexxar failed");
                 }
-                tracing::warn!(id, path, code = %err.code, error = %err.message, "douban rexxar failed");
             }
         }
     }
