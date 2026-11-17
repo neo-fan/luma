@@ -175,7 +175,6 @@ mod tests {
         assert!(text.contains('\u{fffd}') || !text.is_empty());
     }
 
-
     #[test]
     fn empty_input_is_empty_string() {
         assert_eq!(decode(&[]), "");

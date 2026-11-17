@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PREFS,
+  DEFAULT_RATE,
   clampRate,
   clampVolume,
   readPlayerPrefs,
@@ -35,7 +36,7 @@ describe("clampVolume / clampRate", () => {
   it("非数字退回默认值", () => {
     expect(clampVolume(Number.NaN)).toBe(DEFAULT_PREFS.volume);
     // 非有限数按设计回落默认值，而非夹到上界。
-    expect(clampRate(Number.POSITIVE_INFINITY)).toBe(DEFAULT_PREFS.rate);
+    expect(clampRate(Number.POSITIVE_INFINITY)).toBe(DEFAULT_RATE);
   });
 
   it("静音（volume=0）能被记住，不被当成缺省值", () => {
@@ -54,6 +55,8 @@ describe("readPlayerPrefs", () => {
     const legacy = fakeStorage({ "luma:player:prefs": JSON.stringify({ volume: 0, rate: 1 }) });
     expect(readPlayerPrefs(legacy).volume).toBe(DEFAULT_PREFS.volume);
     expect(readPlayerPrefs(legacy).muted).toBe(false);
+    // 倍速已改按剧存在 history 行上：旧偏好里的 rate 直接忽略，不迁移给任何剧。
+    expect(readPlayerPrefs(legacy)).not.toHaveProperty("rate");
     // 新格式显式 muted=true 的 0 音量是用户真的静音，必须保留。
     const muted = fakeStorage({
       "luma:player:prefs": JSON.stringify({ volume: 0, rate: 1, muted: true }),
@@ -68,7 +71,7 @@ describe("readPlayerPrefs", () => {
       fakeStorage({ "luma:player:prefs": JSON.stringify({ volume: 5, rate: 0.1, height: 0 }) }),
     );
     expect(prefs.volume).toBe(1);
-    expect(prefs.rate).toBe(0.5);
+    expect(prefs).not.toHaveProperty("rate");
     expect(prefs.height).toBeUndefined();
   });
 });
@@ -77,9 +80,9 @@ describe("writePlayerPrefs", () => {
   it("按补丁合并并持久化", () => {
     const storage = fakeStorage();
     writePlayerPrefs({ volume: 0.4 }, storage);
-    const after = writePlayerPrefs({ rate: 1.5 }, storage);
-    expect(after).toEqual({ volume: 0.4, rate: 1.5, muted: false });
-    expect(readPlayerPrefs(storage)).toEqual({ volume: 0.4, rate: 1.5, muted: false });
+    const after = writePlayerPrefs({ height: 1080 }, storage);
+    expect(after).toEqual({ volume: 0.4, muted: false, height: 1080 });
+    expect(readPlayerPrefs(storage)).toEqual({ volume: 0.4, muted: false, height: 1080 });
   });
 
   it("清晰度按整数落地，非法值被清掉", () => {

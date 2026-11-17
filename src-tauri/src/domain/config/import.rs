@@ -1,5 +1,5 @@
-use super::*;
 use super::naming::{clean_name, default_name};
+use super::*;
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPOS: usize = 20;
@@ -163,7 +163,6 @@ fn normalize_value(plain: &str, origin: &str) -> Result<Value, AppError> {
     })?;
     normalize::normalize_config(&parsed, origin)
 }
-
 
 pub(crate) async fn import_config(
     state: tauri::State<'_, ConfigStore>,

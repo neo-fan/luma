@@ -157,9 +157,19 @@ fn split_scheme_link(url: &str) -> Option<(String, String)> {
 /// Protocols a WebView-based player cannot open. Report them explicitly instead
 /// of sending them through the parse pool / sniffer (which only wastes 15s).
 fn non_web_media_scheme(url: &str) -> Option<&'static str> {
-    const BLOCKED: &[&str] = &["magnet:", "ed2k:", "thunder:", "ftp:", "file:", "qbittorrent:"];
+    const BLOCKED: &[&str] = &[
+        "magnet:",
+        "ed2k:",
+        "thunder:",
+        "ftp:",
+        "file:",
+        "qbittorrent:",
+    ];
     let lower = url.trim_start().to_ascii_lowercase();
-    BLOCKED.iter().copied().find(|prefix| lower.starts_with(prefix))
+    BLOCKED
+        .iter()
+        .copied()
+        .find(|prefix| lower.starts_with(prefix))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -217,7 +227,14 @@ pub async fn resolve_play(
             ));
         }
         let base: HashMap<String, String> = explicit.iter().cloned().collect();
-        match crate::parse::resolve_scheme_link(&app, &configs.active_parses(), &scheme, &target, base).await
+        match crate::parse::resolve_scheme_link(
+            &app,
+            &configs.active_parses(),
+            &scheme,
+            &target,
+            base,
+        )
+        .await
         {
             Ok(hit) => {
                 effective_url = hit.url.clone();
@@ -264,8 +281,9 @@ pub async fn resolve_play(
         ));
     }
 
-    let mut parsed = Url::parse(&effective_url)
-        .map_err(|err| AppError::new(code::INVALID_ARGUMENT, "play url is invalid").with_cause(err.to_string()))?;
+    let mut parsed = Url::parse(&effective_url).map_err(|err| {
+        AppError::new(code::INVALID_ARGUMENT, "play url is invalid").with_cause(err.to_string())
+    })?;
 
     // Some sources hand back TVBox's own local proxy URL already
     // (`http://127.0.0.1:<port>/proxy?do=py&...`). That endpoint is playable by
@@ -282,7 +300,10 @@ pub async fn resolve_play(
     }
 
     if parsed.host_str().is_none() {
-        return Err(AppError::new(code::INVALID_ARGUMENT, "play url has no host"));
+        return Err(AppError::new(
+            code::INVALID_ARGUMENT,
+            "play url has no host",
+        ));
     }
     let port = state.port();
 
@@ -390,8 +411,9 @@ fn classify(url: &Url) -> &'static str {
 /// Hand the current URL to the system browser / default handler.
 #[tauri::command]
 pub fn open_external(url: String) -> Result<(), AppError> {
-    let parsed = Url::parse(&url)
-        .map_err(|err| AppError::new(code::INVALID_ARGUMENT, "url is invalid").with_cause(err.to_string()))?;
+    let parsed = Url::parse(&url).map_err(|err| {
+        AppError::new(code::INVALID_ARGUMENT, "url is invalid").with_cause(err.to_string())
+    })?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(AppError::new(
             code::INVALID_ARGUMENT,
@@ -410,9 +432,9 @@ pub fn open_external(url: String) -> Result<(), AppError> {
     #[cfg(all(unix, not(target_os = "macos")))]
     let status = std::process::Command::new("xdg-open").arg(&url).spawn();
 
-    status
-        .map(|_| ())
-        .map_err(|err| AppError::new(code::INTERNAL, "open external failed").with_cause(err.to_string()))
+    status.map(|_| ()).map_err(|err| {
+        AppError::new(code::INTERNAL, "open external failed").with_cause(err.to_string())
+    })
 }
 
 #[cfg(test)]
@@ -420,7 +442,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classify_detects_stream_kinds() {        let hls = Url::parse("http://127.0.0.1:8787/play.m3u8").unwrap();
+    fn classify_detects_stream_kinds() {
+        let hls = Url::parse("http://127.0.0.1:8787/play.m3u8").unwrap();
         assert_eq!(classify(&hls), "hls");
         let flv = Url::parse("http://127.0.0.1:8787/live/room.flv?token=1").unwrap();
         assert_eq!(classify(&flv), "flv");
@@ -432,7 +455,9 @@ mod tests {
 
     #[test]
     fn looks_like_playlist_accepts_only_extm3u_heads() {
-        assert!(looks_like_playlist(b"#EXTM3U\n#EXTINF:-1,CCTV1\nhttp://a/1.m3u8\n"));
+        assert!(looks_like_playlist(
+            b"#EXTM3U\n#EXTINF:-1,CCTV1\nhttp://a/1.m3u8\n"
+        ));
         // 带 BOM / 前导空行的列表也要认。
         assert!(looks_like_playlist(
             b"\xEF\xBB\xBF\n  #extm3u\n#EXTINF:-1,x\nhttp://a/1.m3u8\n"
@@ -445,7 +470,10 @@ mod tests {
     fn split_scheme_link_handles_parse_links() {
         assert_eq!(
             split_scheme_link("huangdou2://https://example.com/page"),
-            Some(("huangdou2".to_string(), "https://example.com/page".to_string()))
+            Some((
+                "huangdou2".to_string(),
+                "https://example.com/page".to_string()
+            ))
         );
         assert_eq!(
             split_scheme_link("huangdou2://page-only"),
@@ -488,11 +516,17 @@ mod tests {
 
     #[test]
     fn non_web_media_schemes_get_an_actionable_error() {
-        assert_eq!(non_web_media_scheme("magnet:?xt=urn:btih:abc"), Some("magnet:"));
+        assert_eq!(
+            non_web_media_scheme("magnet:?xt=urn:btih:abc"),
+            Some("magnet:")
+        );
         assert_eq!(non_web_media_scheme("ED2K://|file|abc|/"), Some("ed2k:"));
         assert_eq!(non_web_media_scheme("  thunder://abc"), Some("thunder:"));
         assert_eq!(non_web_media_scheme("https://example.com/a.m3u8"), None);
-        assert_eq!(non_web_media_scheme("huangdou2://https://example.com/p"), None);
+        assert_eq!(
+            non_web_media_scheme("huangdou2://https://example.com/p"),
+            None
+        );
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -547,7 +581,9 @@ mod tests {
                 .await
             }
         };
-        let err = run(hits.clone()).await.expect_err("sniff failure must error");
+        let err = run(hits.clone())
+            .await
+            .expect_err("sniff failure must error");
         assert_eq!(err.code, code::PLAY_RESOLVE_FAIL);
         let second = run(hits.clone()).await.err();
         assert!(second.is_some(), "第二次仍应尝试嗅探");
@@ -562,8 +598,13 @@ mod tests {
         // SNIFF_TTL` 视为未命中一致）。moka 淘汰靠后台任务驱动，多线程运行时
         // 显式 `run_pending_tasks()` 推进。
         let cache = sniff_test_cache(Duration::from_millis(20));
-        cache.insert("http://page/3".to_string(), "http://cdn/3.m3u8".to_string()).await;
-        assert!(cache.get("http://page/3").await.is_some(), "刚写入应在 TTL 内");
+        cache
+            .insert("http://page/3".to_string(), "http://cdn/3.m3u8".to_string())
+            .await;
+        assert!(
+            cache.get("http://page/3").await.is_some(),
+            "刚写入应在 TTL 内"
+        );
         tokio::time::sleep(Duration::from_millis(80)).await;
         cache.run_pending_tasks().await;
         assert!(

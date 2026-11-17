@@ -35,7 +35,9 @@ pub fn diagnostics(configs: tauri::State<'_, crate::config::ConfigStore>) -> Dia
 /// 把诊断 + 日志尾部写成一个纯文本反馈文件，并在资源管理器里选中。
 /// `write_report` 已经给出带 code 的 `AppError`，这里不再二次包装。
 #[tauri::command]
-pub fn export_report(configs: tauri::State<'_, crate::config::ConfigStore>) -> Result<String, AppError> {
+pub fn export_report(
+    configs: tauri::State<'_, crate::config::ConfigStore>,
+) -> Result<String, AppError> {
     logging::report::write_report(digest(configs.active_snapshot()))
 }
 

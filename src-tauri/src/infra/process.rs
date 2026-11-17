@@ -272,7 +272,10 @@ mod tests {
             .await
             .expect_err("should time out");
         assert_eq!(err.code, code::SITE_TIMEOUT);
-        assert!(started.elapsed() < Duration::from_secs(3), "kill must be prompt");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "kill must be prompt"
+        );
     }
 
     #[tokio::test]

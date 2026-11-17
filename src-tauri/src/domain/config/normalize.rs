@@ -45,8 +45,22 @@ fn site_known() -> BTreeSet<&'static str> {
 
 fn config_known() -> BTreeSet<&'static str> {
     [
-        "sites", "list", "lives", "parses", "parse", "spider", "jar", "wallpaper", "flags",
-        "headers", "ua", "urls", "home", "rules", "hosts", "logo",
+        "sites",
+        "list",
+        "lives",
+        "parses",
+        "parse",
+        "spider",
+        "jar",
+        "wallpaper",
+        "flags",
+        "headers",
+        "ua",
+        "urls",
+        "home",
+        "rules",
+        "hosts",
+        "logo",
     ]
     .into_iter()
     .collect()
@@ -91,7 +105,11 @@ pub fn route(site: &Map<String, Value>, global_spider: Option<&str>) -> &'static
 }
 
 /// 归一化单个站点；`global_spider` 是配置级 `spider`（`csp_*` 站点的 jar 来源）。
-pub fn normalize_site(raw: &Map<String, Value>, global_spider: Option<&str>, origin: &str) -> Value {
+pub fn normalize_site(
+    raw: &Map<String, Value>,
+    global_spider: Option<&str>,
+    origin: &str,
+) -> Value {
     let mut site = raw.clone();
     for (alias, canonical) in SITE_ALIASES {
         if !site.contains_key(canonical) && site.contains_key(alias) {
@@ -113,22 +131,23 @@ pub fn normalize_site(raw: &Map<String, Value>, global_spider: Option<&str>, ori
 
     let mut out = Map::new();
     out.insert("key".into(), text_of(site.get("key")).into());
-    out.insert(
-        "name".into(),
-        {
-            let name = text_of(site.get("name"));
-            if name.is_empty() {
-                text_of(site.get("key")).into()
-            } else {
-                name.into()
-            }
-        },
-    );
+    out.insert("name".into(), {
+        let name = text_of(site.get("name"));
+        if name.is_empty() {
+            text_of(site.get("key")).into()
+        } else {
+            name.into()
+        }
+    });
     out.insert("runtime".into(), runtime.into());
     out.insert("api".into(), text_of(site.get("api")).into());
     out.insert(
         "headers".into(),
-        header_map(site.get("headers").filter(|v| truthy(Some(v))).or_else(|| site.get("header"))),
+        header_map(
+            site.get("headers")
+                .filter(|v| truthy(Some(v)))
+                .or_else(|| site.get("header")),
+        ),
     );
     // 缺省语义在各分支相反：Box/TVBoxOS 的 `int searchable` 缺省 0（不可搜），
     // FongMi 的 `Integer searchable` 缺省按 1 算。社区配置大量站点干脆不写这个
@@ -139,8 +158,14 @@ pub fn normalize_site(raw: &Map<String, Value>, global_spider: Option<&str>, ori
         "searchable".into(),
         bool_of(site.get("searchable").unwrap_or(&json!(1))).into(),
     );
-    out.insert("quickSearch".into(), bool_of(site.get("quickSearch").unwrap_or(&json!(0))).into());
-    out.insert("filterable".into(), bool_of(site.get("filterable").unwrap_or(&json!(0))).into());
+    out.insert(
+        "quickSearch".into(),
+        bool_of(site.get("quickSearch").unwrap_or(&json!(0))).into(),
+    );
+    out.insert(
+        "filterable".into(),
+        bool_of(site.get("filterable").unwrap_or(&json!(0))).into(),
+    );
     out.insert("categories".into(), categories(site.get("categories")));
     out.insert("timeoutMs".into(), timeout_ms.into());
     // 分组分隔条留在快照里（界面能当标题渲染），但不参与任何扇出。
@@ -148,7 +173,16 @@ pub fn normalize_site(raw: &Map<String, Value>, global_spider: Option<&str>, ori
 
     // 规范要求原样透传的字段：放进 `site_known` 只表示「不进 _raw」，还得真的
     // 复制一份，否则整个字段会从快照里消失。
-    for passed in ["jar", "ext", "type", "ua", "filter", "playerType", "style", "indexs"] {
+    for passed in [
+        "jar",
+        "ext",
+        "type",
+        "ua",
+        "filter",
+        "playerType",
+        "style",
+        "indexs",
+    ] {
         if let Some(value) = site.get(passed) {
             if !matches!(value, Value::Null) && !is_empty_value(value) {
                 out.insert(passed.to_string(), value.clone());
@@ -324,9 +358,7 @@ pub fn resolve_ref(origin: &str, value: &Value) -> Value {
         || trimmed.starts_with("http://")
         || trimmed.starts_with("https://")
         || trimmed.starts_with("data:")
-        || !(trimmed.starts_with("./")
-            || trimmed.starts_with("../")
-            || trimmed.starts_with('/'))
+        || !(trimmed.starts_with("./") || trimmed.starts_with("../") || trimmed.starts_with('/'))
     {
         return value.clone();
     }
@@ -386,7 +418,9 @@ fn host_rules(value: Option<&Value>) -> Vec<Value> {
     };
     let mut out = Vec::new();
     for item in items {
-        let Some(obj) = item.as_object() else { continue };
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
         let host = text_of(obj.get("host")).trim().to_string();
         if host.is_empty() {
             continue;
@@ -419,7 +453,8 @@ fn stringify_map(value: Option<&Value>) -> Value {
     };
     match value {
         Value::Object(map) => Value::Object(non_empty_pairs(map)),
-        Value::String(text) if !text.trim().is_empty() => match serde_json::from_str::<Value>(text) {
+        Value::String(text) if !text.trim().is_empty() => match serde_json::from_str::<Value>(text)
+        {
             Ok(Value::Object(map)) => Value::Object(non_empty_pairs(&map)),
             _ => Value::Object(Map::new()),
         },
@@ -580,16 +615,34 @@ mod tests {
 
     #[test]
     fn routes_follow_spec_priority() {
-        assert_eq!(route(&site(json!({"api": "https://h/api.php/provide/vod"})), None), "cms");
-        assert_eq!(route(&site(json!({"api": "https://h/py/all.py", "jar": "py"})), None), "python");
+        assert_eq!(
+            route(&site(json!({"api": "https://h/api.php/provide/vod"})), None),
+            "cms"
+        );
+        assert_eq!(
+            route(
+                &site(json!({"api": "https://h/py/all.py", "jar": "py"})),
+                None
+            ),
+            "python"
+        );
         assert_eq!(route(&site(json!({"api": "./js/a.js"})), None), "quickjs");
         assert_eq!(route(&site(json!({"key": "csp_abc"})), None), "jvm");
         assert_eq!(route(&site(json!({"jar": "https://h/x.jar"})), None), "jvm");
         assert_eq!(route(&site(json!({"api": "csp_Xxx"})), None), "jvm");
         // 分组分隔条既不继承全局 spider，也不算 jvm。
-        assert_eq!(route(&site(json!({"key": "1", "name": "--- 1 ---"})), Some("https://h/s.jar")), "none");
+        assert_eq!(
+            route(
+                &site(json!({"key": "1", "name": "--- 1 ---"})),
+                Some("https://h/s.jar")
+            ),
+            "none"
+        );
         // 空 api 且无 ext/jar 时先命中分隔条判定，与 sidecars/py/normalize.py 一致。
-        assert_eq!(route(&site(json!({"api": ""})), Some("https://h/s.jar")), "none");
+        assert_eq!(
+            route(&site(json!({"api": ""})), Some("https://h/s.jar")),
+            "none"
+        );
         assert_eq!(route(&site(json!({"api": "https://h/api"})), None), "cms");
     }
 

@@ -239,7 +239,10 @@ pub async fn live_epg(
 
     let raw = load_epg_raw(state.inner(), &epg_url).await?;
 
-    let key = format!("{epg_url}\u{1}{channel}\u{1}{}", date.clone().unwrap_or_default());
+    let key = format!(
+        "{epg_url}\u{1}{channel}\u{1}{}",
+        date.clone().unwrap_or_default()
+    );
     let cache = epg_result_cache();
     if let Some(cached) = cache.get(key.as_str()).await {
         return Ok(cached);
@@ -260,7 +263,9 @@ mod tests {
         assert_eq!(epg_disk_path(raw), epg_disk_path(raw));
         assert_ne!(epg_disk_path(raw), epg_disk_path(other));
         assert_eq!(
-            epg_disk_path(raw).extension().and_then(|value| value.to_str()),
+            epg_disk_path(raw)
+                .extension()
+                .and_then(|value| value.to_str()),
             Some("xml")
         );
     }
@@ -283,17 +288,20 @@ mod tests {
     /// 用全局静态计数器会被并行测试互相污染（python.rs 第一版就因此得假阴性）。
     async fn ok_stub(hits: Arc<AtomicUsize>) -> (String, tokio::task::JoinHandle<()>) {
         let counter = hits.clone();
-        let router = axum::Router::new().route("/", get(move || {
-            let hits = counter.clone();
-            async move {
-                hits.fetch_add(1, Ordering::SeqCst);
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "application/xml")
-                    .body(Body::from("<tv>\n  <programme/>\n</tv>\n"))
-                    .unwrap()
-            }
-        }));
+        let router = axum::Router::new().route(
+            "/",
+            get(move || {
+                let hits = counter.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "application/xml")
+                        .body(Body::from("<tv>\n  <programme/>\n</tv>\n"))
+                        .unwrap()
+                }
+            }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
@@ -380,11 +388,7 @@ mod tests {
         for result in [results.0, results.1, results.2, results.3] {
             assert!(result.expect("source").contains("<tv"));
         }
-        assert_eq!(
-            hits.load(Ordering::SeqCst),
-            1,
-            "同 URL 并发只应回源一次"
-        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "同 URL 并发只应回源一次");
         task.abort();
         forget_epg_disk(&url);
     }

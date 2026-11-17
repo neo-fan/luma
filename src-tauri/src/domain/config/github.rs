@@ -1,5 +1,5 @@
-use super::*;
 use super::derive::runtime_of;
+use super::*;
 
 impl ConfigStore {
     /// 当前生效的 GitHub 加速前缀（空串 = 直连）。
@@ -30,7 +30,10 @@ impl ConfigStore {
         // 两阶段：先离锁算出要写什么、逐行落库，再一次性换内存。持 entries
         // 写锁去写 SQLite 会让「读列表」被一次全量重写卡住。
         let planned: Vec<(ConfigSnapshot, ConfigSnapshot, ConfigSource)> = {
-            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = self
+                .entries
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             guard
                 .iter()
                 .filter_map(|entry| {
@@ -64,7 +67,10 @@ impl ConfigStore {
         let configs = planned.len();
         let mut active_headers = None;
         if configs > 0 {
-            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = self
+                .entries
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for (imported, runtime, source) in planned {
                 if let Some(entry) = guard.iter_mut().find(|e| e.imported.id == imported.id) {
                     entry.imported = imported;
@@ -108,7 +114,6 @@ impl ConfigStore {
             .map(|entry| ghproxy::count_github(&entry.imported))
             .sum()
     }
-
 }
 
 /// 设置页「GitHub 加速」的完整状态。

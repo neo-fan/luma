@@ -590,16 +590,13 @@ async fn get_text(
         // ciao-cors 拿不到浏览器自动加的 CORS 头就直接 403，这里手工补一个。
         request = request.header(reqwest::header::ORIGIN, "https://movie.douban.com");
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|err| {
-            // 连接层失败（DNS 挂 / 超时 / 拒连）才是「代理没生效或镜像挂了」的
-            // 关键信号，这里唯一地带 actual host 告警；HTTP 非 2xx（含 rexxar
-            // path 探测的预期 404）交给外层各 step 的 warn，不在此翻倍。
-            tracing::warn!(proxy = kind.as_str(), host = %host, error = %err, "豆瓣请求发送失败");
-            douban_error("豆瓣请求失败", err.to_string())
-        })?;
+    let response = request.send().await.map_err(|err| {
+        // 连接层失败（DNS 挂 / 超时 / 拒连）才是「代理没生效或镜像挂了」的
+        // 关键信号，这里唯一地带 actual host 告警；HTTP 非 2xx（含 rexxar
+        // path 探测的预期 404）交给外层各 step 的 warn，不在此翻倍。
+        tracing::warn!(proxy = kind.as_str(), host = %host, error = %err, "豆瓣请求发送失败");
+        douban_error("豆瓣请求失败", err.to_string())
+    })?;
     let status = response.status();
     let bytes = response
         .bytes()
@@ -880,13 +877,11 @@ fn parse_search_data(data: &Value) -> Vec<SuggestItem> {
     };
     rows.iter()
         .filter_map(|row| {
-            let id = row
-                .get("id")
-                .and_then(|value| match value {
-                    Value::String(text) => Some(text.clone()),
-                    Value::Number(number) => Some(number.to_string()),
-                    _ => None,
-                })?;
+            let id = row.get("id").and_then(|value| match value {
+                Value::String(text) => Some(text.clone()),
+                Value::Number(number) => Some(number.to_string()),
+                _ => None,
+            })?;
             if id.trim().is_empty() {
                 return None;
             }
@@ -1053,30 +1048,28 @@ async fn search_candidates(
         percent_encode(title)
     );
     match get_text(kind, prefix, &target, DOUBAN_REFERER, "text/html, */*").await {
-        Ok(html) => {
-            match search_page_data(&html) {
-                Some(data) => {
-                    let error = data
-                        .get("error_info")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
-                    if !error.is_empty() {
-                        tracing::warn!(title, error, "douban search throttled, cooling down");
-                        cool_down_douban();
-                        return SearchOutcome::Inconclusive;
-                    }
-                    responded = true;
-                    let items = parse_search_data(&data);
-                    if !items.is_empty() {
-                        return SearchOutcome::Conclusive(items);
-                    }
-                    tracing::warn!(title, "douban search page returned no subjects");
+        Ok(html) => match search_page_data(&html) {
+            Some(data) => {
+                let error = data
+                    .get("error_info")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if !error.is_empty() {
+                    tracing::warn!(title, error, "douban search throttled, cooling down");
+                    cool_down_douban();
+                    return SearchOutcome::Inconclusive;
                 }
-                None => tracing::warn!(title, "douban search page had no embedded data"),
+                responded = true;
+                let items = parse_search_data(&data);
+                if !items.is_empty() {
+                    return SearchOutcome::Conclusive(items);
+                }
+                tracing::warn!(title, "douban search page returned no subjects");
             }
-        }
+            None => tracing::warn!(title, "douban search page had no embedded data"),
+        },
         Err(err) => {
             tracing::warn!(code = %err.code, error = %err.message, "douban search page failed");
         }
@@ -1314,12 +1307,7 @@ async fn fetch_with(
         return Err(AppError::new(code::INVALID_ARGUMENT, "豆瓣查询需要片名"));
     }
     let kind = ProxyKind::parse(req.proxy_type.as_deref());
-    let prefix = req
-        .proxy_prefix
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let prefix = req.proxy_prefix.as_deref().unwrap_or("").trim().to_string();
     if kind == ProxyKind::Custom && prefix.is_empty() {
         return Err(AppError::new(
             code::INVALID_ARGUMENT,
@@ -1567,11 +1555,13 @@ static ENRICH_WAKE: OnceLock<Notify> = OnceLock::new();
 static ENRICH_STARTED: OnceLock<()> = OnceLock::new();
 
 fn enrich_queue() -> &'static Mutex<EnrichQueue> {
-    ENRICH.get_or_init(|| Mutex::new(EnrichQueue {
-        heap: BinaryHeap::new(),
-        active: HashSet::new(),
-        seq: AtomicU64::new(0),
-    }))
+    ENRICH.get_or_init(|| {
+        Mutex::new(EnrichQueue {
+            heap: BinaryHeap::new(),
+            active: HashSet::new(),
+            seq: AtomicU64::new(0),
+        })
+    })
 }
 
 fn enrich_wake() -> &'static Notify {
@@ -1656,7 +1646,9 @@ async fn run_enrichment(
             let coarse = coarse_meta(&item);
             emit_douban(app, key, "cover", Some(&coarse));
             let full = build_meta(kind, prefix, &item, year, Instant::now).await;
-            positive_cache().insert(ckey.to_string(), full.clone()).await;
+            positive_cache()
+                .insert(ckey.to_string(), full.clone())
+                .await;
             emit_douban(app, key, "full", Some(&full));
         }
         Err(ColdFail::NotFound) => emit_douban(app, key, "none", None),
@@ -1880,7 +1872,9 @@ mod tests {
     }
 
     fn search_endpoint(url: &str) -> bool {
-        url.contains("subject_search") || url.contains("subject_suggest") || url.contains("search/subjects")
+        url.contains("subject_search")
+            || url.contains("subject_suggest")
+            || url.contains("search/subjects")
     }
 
     fn search_page_with(title: &str) -> String {
@@ -1961,7 +1955,10 @@ mod tests {
         assert_eq!(first.id, "25853071");
         let after_first = hits.load(Ordering::SeqCst);
         assert!(after_first >= 1, "first call must run the search chain");
-        let second = fetch_with(&req, stub_clock).await.expect("fetch").expect("meta");
+        let second = fetch_with(&req, stub_clock)
+            .await
+            .expect("fetch")
+            .expect("meta");
         assert_eq!(second, first);
         assert_eq!(
             hits.load(Ordering::SeqCst),
@@ -2095,7 +2092,9 @@ mod tests {
         let mut joins = Vec::new();
         for _ in 0..4 {
             let req = req.clone();
-            joins.push(tokio::spawn(async move { fetch_with(&req, stub_clock).await }));
+            joins.push(tokio::spawn(
+                async move { fetch_with(&req, stub_clock).await },
+            ));
         }
         let mut results = Vec::new();
         for join in joins {
@@ -2106,7 +2105,10 @@ mod tests {
                     .expect("四个并发调用都要拿到元数据"),
             );
         }
-        assert!(results.windows(2).all(|w| w[0] == w[1]), "并发返回必须是同一份元数据");
+        assert!(
+            results.windows(2).all(|w| w[0] == w[1]),
+            "并发返回必须是同一份元数据"
+        );
         assert_eq!(
             main_hits.load(Ordering::SeqCst),
             1,
@@ -2169,8 +2171,14 @@ mod tests {
         // 记住的路径失效（条目变更）：清掉记忆后重新双路径探测。
         forget_detail_path(id).await;
         let third_req = stubbed_request(base, "路径记忆己", Some("2020"));
-        assert!(fetch_with(&third_req, stub_clock).await.expect("fetch").is_some());
-        assert_eq!(probed_paths(&probed), vec!["tv", "movie", "movie", "tv", "movie"]);
+        assert!(fetch_with(&third_req, stub_clock)
+            .await
+            .expect("fetch")
+            .is_some());
+        assert_eq!(
+            probed_paths(&probed),
+            vec!["tv", "movie", "movie", "tv", "movie"]
+        );
     }
 
     fn probed_paths(probed: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
@@ -2559,7 +2567,9 @@ mod tests {
         assert_eq!(items[0].img, "https://img3.doubanio.com/p.jpg");
         // 没匹配到条目的搜索页 / 没有 __DATA__ 的页面不 panic。
         assert!(parse_search_page("<html>no data</html>").is_empty());
-        assert!(parse_search_page(r#"<script>window.__DATA__ = {"items": []};</script>"#).is_empty());
+        assert!(
+            parse_search_page(r#"<script>window.__DATA__ = {"items": []};</script>"#).is_empty()
+        );
         assert_eq!(trailing_year("庆余年 第二季"), "");
         assert_eq!(trailing_year("沙丘(2021)"), "2021");
     }
@@ -2583,7 +2593,10 @@ mod tests {
         );
         let key = cache_key("庆余年 第一季", Some("2019"));
         cache_put(key.clone(), Some(meta()));
-        assert_eq!(cache_get(&key).await.expect("hit").expect("positive"), meta());
+        assert_eq!(
+            cache_get(&key).await.expect("hit").expect("positive"),
+            meta()
+        );
         assert!(cache_get("roundtrip-missing-key|").await.is_none());
         // 负结果同样入缓存：轮播/详情页重复问同一个查不到的片名不再走网络。
         let neg_key = cache_key("查无此片roundtrip", None);

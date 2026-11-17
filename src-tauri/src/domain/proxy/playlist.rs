@@ -27,7 +27,11 @@ impl Fwd {
 }
 
 pub(super) fn wrap_url(port: u16, target: &str, fwd: &Fwd) -> String {
-    format!("http://127.0.0.1:{port}/proxy?url={}{}", urlencode(target), fwd.suffix())
+    format!(
+        "http://127.0.0.1:{port}/proxy?url={}{}",
+        urlencode(target),
+        fwd.suffix()
+    )
 }
 
 /// Resolve a playlist URI against the manifest URL. Absolute http(s) URLs are

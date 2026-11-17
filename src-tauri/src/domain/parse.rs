@@ -33,7 +33,9 @@ const TOTAL_BUDGET: Duration = Duration::from_secs(15);
 const PER_CANDIDATE: Duration = Duration::from_secs(12);
 /// Stream suffixes we accept from a JSON parser. Anything else is treated as
 /// another page and kept going through the webview path instead.
-const STREAM_HINTS: [&str; 8] = [".m3u8", ".flv", ".mp4", ".mkv", ".ts", ".mov", ".webm", "m3u8"];
+const STREAM_HINTS: [&str; 8] = [
+    ".m3u8", ".flv", ".mp4", ".mkv", ".ts", ".mov", ".webm", "m3u8",
+];
 /// Every web candidate opens its own hidden WebView2 and sniffing is
 /// serialised, so a pool with a dozen web parsers would queue a dozen windows.
 /// Upstream races them as iframes inside a single window; we cap the race.
@@ -76,7 +78,12 @@ struct Rule {
 }
 
 fn str_at(value: &Value, key: &str) -> String {
-    value.get(key).and_then(Value::as_str).unwrap_or("").trim().to_string()
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 fn parse_rules(parses: &[Value]) -> Vec<Rule> {
@@ -91,7 +98,11 @@ fn parse_rules(parses: &[Value]) -> Vec<Rule> {
         }
         let kind = item
             .get("type")
-            .and_then(|value| value.as_u64().or_else(|| value.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|value| {
+                value
+                    .as_u64()
+                    .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(0) as u8;
         let ext = item.get("ext").cloned().unwrap_or(Value::Null);
         let header = ext
@@ -153,7 +164,11 @@ fn narrow<'a>(rules: Vec<&'a Rule>, flag: &str) -> Vec<&'a Rule> {
     let matched: Vec<&Rule> = rules
         .iter()
         .copied()
-        .filter(|rule| rule.flags.iter().any(|item| item.eq_ignore_ascii_case(flag)))
+        .filter(|rule| {
+            rule.flags
+                .iter()
+                .any(|item| item.eq_ignore_ascii_case(flag))
+        })
         .collect();
     if matched.is_empty() {
         rules
@@ -214,7 +229,11 @@ async fn json_candidate(
                 continue;
             }
             if let Some(text) = value.as_str().filter(|text| !text.is_empty()) {
-                let canonical = if lower == "ua" { "User-Agent" } else { name.as_str() };
+                let canonical = if lower == "ua" {
+                    "User-Agent"
+                } else {
+                    name.as_str()
+                };
                 out_headers.push((canonical.to_string(), text.to_string()));
             }
         }
@@ -225,7 +244,10 @@ async fn json_candidate(
 
     if !resolved.starts_with("http") {
         // Some pools answer with another share link; keep it as a page.
-        return Err(format!("non-http result: {}", &resolved[..resolved.len().min(40)]));
+        return Err(format!(
+            "non-http result: {}",
+            &resolved[..resolved.len().min(40)]
+        ));
     }
     if !looks_like_stream(resolved) {
         // A JSON parser that returns a page is useless to us; let the webview
@@ -352,14 +374,8 @@ async fn resolve_with(
     }
 
     let flag = request.flag.as_str();
-    let json_rules = narrow(
-        rules.iter().filter(|rule| rule.kind == 1).collect(),
-        flag,
-    );
-    let web_rules = narrow(
-        rules.iter().filter(|rule| rule.kind == 0).collect(),
-        flag,
-    );
+    let json_rules = narrow(rules.iter().filter(|rule| rule.kind == 1).collect(), flag);
+    let web_rules = narrow(rules.iter().filter(|rule| rule.kind == 0).collect(), flag);
     let has_super = rules.iter().any(|rule| rule.kind == 4);
 
     // Type 4 is "race everything"; when the pool only has one flavour we still
@@ -384,14 +400,7 @@ async fn resolve_with(
     }
 
     let base_headers = request.headers.clone().unwrap_or_default();
-    run_pool(
-        app,
-        runs_json,
-        runs_web,
-        base_headers,
-        request.url.clone(),
-    )
-    .await
+    run_pool(app, runs_json, runs_web, base_headers, request.url.clone()).await
 }
 
 /// Resolve a `scheme://` style parse link (e.g. `huangdou2://<page>`).
@@ -509,14 +518,29 @@ mod tests {
         assert_eq!(rules[0].kind, 1);
         assert_eq!(rules[1].kind, 0, "string type must parse");
         assert_eq!(rules[0].flags, vec!["qq".to_string()]);
-        assert_eq!(rules[0].header.get("User-Agent").map(String::as_str), Some("ua-a"));
+        assert_eq!(
+            rules[0].header.get("User-Agent").map(String::as_str),
+            Some("ua-a")
+        );
     }
 
     #[test]
     fn flag_narrows_only_on_match() {
         let rules = vec![
-            Rule { name: "qq".into(), kind: 1, url: String::new(), header: Default::default(), flags: vec!["qq".into()] },
-            Rule { name: "all".into(), kind: 1, url: String::new(), header: Default::default(), flags: vec![] },
+            Rule {
+                name: "qq".into(),
+                kind: 1,
+                url: String::new(),
+                header: Default::default(),
+                flags: vec!["qq".into()],
+            },
+            Rule {
+                name: "all".into(),
+                kind: 1,
+                url: String::new(),
+                header: Default::default(),
+                flags: vec![],
+            },
         ];
         let refs: Vec<&Rule> = rules.iter().collect();
         let hit = narrow(refs.clone(), "qq");

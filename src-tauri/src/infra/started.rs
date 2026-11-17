@@ -42,6 +42,9 @@ mod tests {
         mark();
         assert_eq!(first, epoch_secs(), "第二次 mark 不能改写启动时刻");
         // 2024-01-01 之后的秒级时间戳：防止 shell 里手算成毫秒。
-        assert!(first > 1_704_067_200, "启动时刻看起来不像 epoch 秒: {first}");
+        assert!(
+            first > 1_704_067_200,
+            "启动时刻看起来不像 epoch 秒: {first}"
+        );
     }
 }

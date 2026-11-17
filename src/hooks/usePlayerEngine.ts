@@ -40,7 +40,12 @@ import { smoothBitrate } from "../lib/mediaMeasure";
 import { probeLineVerdict } from "../lib/playProbe";
 import { failoverCopy } from "../lib/sessionFailover";
 import type { FailoverCause } from "../lib/sessionFailover";
-import { readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
+import {
+  DEFAULT_RATE,
+  clampRate,
+  readPlayerPrefs,
+  writePlayerPrefs,
+} from "../lib/playerPrefs";
 import { createActor } from "xstate";
 import { vodSessionMachine } from "../lib/vodSessionMachine";
 import { liveSessionMachine } from "../lib/liveSessionMachine";
@@ -164,6 +169,15 @@ export interface UsePlayerEngineArgs {
    * 消费一次；刷新重建时不重复跳（由调用方在刷新时清零）。
    */
   resumeMsRef?: MutableRefObject<number>;
+  /**
+   * 这部剧记忆的倍速（来自 `HistoryItem.rate`，0/缺省视为没设过 → 1.0）。
+   *
+   * 用**取值函数**而不是数值：它随 history 查询异步落地，绝不能进内核 effect
+   * 的依赖——那会让正在播的实例因为一次倍速查询而重建。与 `resumeMsRef` 同理由。
+   */
+  rememberedRate?: () => number;
+  /** 用户改了倍速：调用方把它写回这部剧的 history 行。 */
+  onRememberedRate?: (rate: number) => void;
   resolved: PlayResolved | null;
   /** 新一轮地址解析中：此时旧 `resolved` 属于上一个源，不能再建播放实例。 */
   resolving: boolean;
@@ -227,6 +241,8 @@ export function usePlayerEngine({
   canNext,
   reloadRef,
   resumeMsRef,
+  rememberedRate,
+  onRememberedRate,
   resolved,
   resolving,
   siteKey,
@@ -370,7 +386,8 @@ export function usePlayerEngine({
     // 实测这一步是「两个声音」的根治点：React 自己卸载时也会漏掉已 detach
     // 却仍在播的 <video>，只有模块外的登记表能跨挂载 / 跨 HMR 收回它们。
     stopActivePlayer(container);
-    // 音量 / 倍速跨集沿用：连看 36 集不该每集重新调一次。
+    // 音量 / 静音 / 清晰度跨集沿用：连看 36 集不该每集重新调一次。
+    // 倍速不在这里——它是「看这部剧」的习惯，不是全局习惯，走 `rememberedRate`。
     const prefs = readPlayerPrefs();
     /**
      * 解码器（hls.js / mpegts.js）的直接销毁句柄。
@@ -790,7 +807,18 @@ export function usePlayerEngine({
         // 某些 HLS 在首分片到达前 seek 会抛 InvalidStateError，忽略即可。
       }
     };
-    video.addEventListener("loadedmetadata", applyResume, { once: true });
+    /**
+     * 这部剧记忆的倍速。取值函数（不是数值）：它随 history 查询异步落地，
+     * 绝不能进本 effect 的依赖，否则一次查询完成就会重建正在播的实例。
+     */
+    const wantedRate = () => clampRate(rememberedRate?.() ?? DEFAULT_RATE);
+    // 早设一次（构造后 ArtPlayer 还没有倍速概念），loadedmetadata 时再确认一次：
+    // 那才是真正开始用这份媒体的时刻，也是续播消费的节拍。
+    video.playbackRate = wantedRate();
+    video.addEventListener("loadedmetadata", () => {
+      video.playbackRate = wantedRate();
+      applyResume();
+    }, { once: true });
 
     // 全屏元素是 `.art-video-player` 本身（ArtPlayer 的 `$player`），所以角标
     // 这类要跟着画面走的浮层由调用方 portal 进这个节点，而不是排在 stage 里。
@@ -810,7 +838,6 @@ export function usePlayerEngine({
     };
     video.addEventListener("loadedmetadata", reportMeta);
     video.addEventListener("resize", reportMeta);
-    video.playbackRate = prefs.rate;
     /**
      * 倍速初始化静默期。
      *
@@ -832,8 +859,16 @@ export function usePlayerEngine({
       video,
       isCurrent: () => videoRef.current === video,
       fader,
-      read: readPlayerPrefs,
-      write: (patch) => writePlayerPrefs(patch),
+      read: () => ({ ...readPlayerPrefs(), rate: wantedRate() }),
+      write: (patch) => {
+        // 字段隔离：倍速归这部剧，音量/静音仍是全局偏好，一次事件只写自己那份。
+        if (patch.rate !== undefined) {
+          onRememberedRate?.(clampRate(patch.rate));
+        }
+        if (patch.volume !== undefined && patch.muted !== undefined) {
+          writePlayerPrefs({ volume: patch.volume, muted: patch.muted });
+        }
+      },
     });
     video.addEventListener("volumechange", prefsWriter.onVolumeChange);
     video.addEventListener("ratechange", prefsWriter.onRateChange);

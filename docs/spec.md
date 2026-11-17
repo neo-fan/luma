@@ -101,6 +101,11 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 - `<data>/luma.db` 单库，WAL + 事务写，先提交再刷内存缓存；无迁移逻辑。
   便携模式 = exe 同级存在 `data/`。
+- **history 行 = 这部剧的状态**：除进度/集/线路外，还带 `rate`（倍速，0 = 没设过
+  → 播放侧按 1.0）与 `skip_json`（跳过片头/片尾配置的 JSON 文本，空串 = 这次没带、
+  `[]` = 用户清空过）。表按剧名合并同一部剧，所以这两项天然跨源共享；写入沿用
+  「空值不覆盖已有值」这条既有规矩（与封面/备注/分辨率同构）。收藏不放这张表：
+  收藏能发生在从没看过的片上，而这张表有 `MAX_HISTORY` 的 LRU 裁剪。
 - **双快照**：`imported_json` 是导入原件，永不被运行策略改写；`runtime_json` 由
   `derive_runtime()` 单向派生（含 `enabled` / `disabledReason`）。fan-out / 播放 /
   前端缓存只读 runtime；`find_site` 查 imported 以兼容旧收藏；`spider_invoke` 单点

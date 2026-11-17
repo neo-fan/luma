@@ -84,8 +84,11 @@ pub async fn fetch(request: FetchRequest) -> Result<FetchResponse, AppError> {
                     .with_cause(err.to_string())
             })?;
             let header_value = HeaderValue::from_str(&value).map_err(|err| {
-                AppError::new(code::INVALID_ARGUMENT, format!("bad header value for {name}"))
-                    .with_cause(err.to_string())
+                AppError::new(
+                    code::INVALID_ARGUMENT,
+                    format!("bad header value for {name}"),
+                )
+                .with_cause(err.to_string())
             })?;
             headers.insert(header_name, header_value);
         }
@@ -109,11 +112,17 @@ pub async fn fetch(request: FetchRequest) -> Result<FetchResponse, AppError> {
 
     let response = builder.send().await.map_err(|err| {
         if err.is_timeout() {
-            AppError::new(code::SITE_TIMEOUT, format!("fetch {} timed out", request.url))
-                .with_cause(err.to_string())
+            AppError::new(
+                code::SITE_TIMEOUT,
+                format!("fetch {} timed out", request.url),
+            )
+            .with_cause(err.to_string())
         } else {
-            AppError::new(code::CONFIG_FETCH_FAIL, format!("fetch {} failed", request.url))
-                .with_cause(err.to_string())
+            AppError::new(
+                code::CONFIG_FETCH_FAIL,
+                format!("fetch {} failed", request.url),
+            )
+            .with_cause(err.to_string())
         }
     })?;
 

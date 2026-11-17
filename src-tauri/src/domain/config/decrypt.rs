@@ -31,18 +31,27 @@ pub fn decrypt(raw: &str) -> Result<Decrypted, AppError> {
     }
 
     if let Some(plain) = image_seed(text) {
-        return Ok(Decrypted { plain, method: "image-seed" });
+        return Ok(Decrypted {
+            plain,
+            method: "image-seed",
+        });
     }
 
     if let Some(plain) = validated(text) {
-        return Ok(Decrypted { plain, method: "plain" });
+        return Ok(Decrypted {
+            plain,
+            method: "plain",
+        });
     }
 
     if let Some(body) = text.strip_prefix("****") {
         if let Some(data) = decode_b64(body) {
             if let Ok(plain) = String::from_utf8(xor(&data)) {
                 if let Some(cleaned) = validated(&plain) {
-                    return Ok(Decrypted { plain: cleaned, method: "xor-base64" });
+                    return Ok(Decrypted {
+                        plain: cleaned,
+                        method: "xor-base64",
+                    });
                 }
             }
         }
@@ -53,7 +62,10 @@ pub fn decrypt(raw: &str) -> Result<Decrypted, AppError> {
             let inflated = maybe_gunzip(&data).unwrap_or(data);
             if let Ok(plain) = String::from_utf8(inflated) {
                 if let Some(cleaned) = validated(&plain) {
-                    return Ok(Decrypted { plain: cleaned, method: "digit-gzip" });
+                    return Ok(Decrypted {
+                        plain: cleaned,
+                        method: "digit-gzip",
+                    });
                 }
             }
         }
@@ -63,13 +75,19 @@ pub fn decrypt(raw: &str) -> Result<Decrypted, AppError> {
         if let Some(inflated) = maybe_gunzip(&data) {
             if let Ok(plain) = String::from_utf8(inflated) {
                 if let Some(cleaned) = validated(&plain) {
-                    return Ok(Decrypted { plain: cleaned, method: "gzip+base64" });
+                    return Ok(Decrypted {
+                        plain: cleaned,
+                        method: "gzip+base64",
+                    });
                 }
             }
         }
         if let Ok(plain) = String::from_utf8(data) {
             if let Some(cleaned) = validated(&plain) {
-                return Ok(Decrypted { plain: cleaned, method: "base64" });
+                return Ok(Decrypted {
+                    plain: cleaned,
+                    method: "base64",
+                });
             }
         }
     }
@@ -95,10 +113,7 @@ fn validated(text: &str) -> Option<String> {
 }
 
 fn parses_as_object(text: &str) -> bool {
-    matches!(
-        serde_json::from_str::<Value>(text),
-        Ok(Value::Object(_))
-    )
+    matches!(serde_json::from_str::<Value>(text), Ok(Value::Object(_)))
 }
 
 /// 去掉 `//`、`/* */` 注释与 `}`/`]` 前的尾逗号，字符串内部一个字符都不动。
@@ -264,7 +279,9 @@ fn maybe_gunzip(data: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let mut out = Vec::new();
-    flate2::read::GzDecoder::new(data).read_to_end(&mut out).ok()?;
+    flate2::read::GzDecoder::new(data)
+        .read_to_end(&mut out)
+        .ok()?;
     Some(out)
 }
 
@@ -346,8 +363,7 @@ mod tests {
     #[test]
     fn gzip_base64_shell_is_decoded() {
         use std::io::Write as _;
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(CONFIG.as_bytes()).expect("gzip");
         let raw = b64(&encoder.finish().expect("gz bytes"));
         let out = decrypt(&raw).expect("gzip");

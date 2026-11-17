@@ -1,9 +1,9 @@
-use super::*;
 use super::derive::{
     apply_manual_disables, content_signature, derive_runtime, ensure_refreshable,
     manual_disabled_keys, refresh_due,
 };
 use super::import::import_from_source;
+use super::*;
 
 impl ConfigStore {
     // ---- 订阅刷新 ----------------------------------------------------------
@@ -29,7 +29,11 @@ impl ConfigStore {
         out
     }
 
-    pub(super) fn write_refresh_state(&self, id: &str, state: &RefreshState) -> Result<(), AppError> {
+    pub(super) fn write_refresh_state(
+        &self,
+        id: &str,
+        state: &RefreshState,
+    ) -> Result<(), AppError> {
         let raw = serde_json::to_string(state)?;
         self.db
             .meta_write(&format!("{META_REFRESH_PREFIX}{id}"), &raw)
@@ -68,7 +72,10 @@ impl ConfigStore {
         RefreshSettings {
             interval_hours,
             config_id,
-            last_checked_at: state.as_ref().map(|state| state.checked_at).filter(|at| *at > 0),
+            last_checked_at: state
+                .as_ref()
+                .map(|state| state.checked_at)
+                .filter(|at| *at > 0),
             last_changed_at: state.as_ref().and_then(|state| state.changed_at),
             error: state.and_then(|state| state.error),
             next_due_at,
@@ -77,7 +84,8 @@ impl ConfigStore {
 
     pub fn set_refresh_interval(&self, hours: u32) -> Result<RefreshSettings, AppError> {
         let clamped = hours.min(MAX_REFRESH_HOURS);
-        self.db.meta_write(META_REFRESH_INTERVAL, &clamped.to_string())?;
+        self.db
+            .meta_write(META_REFRESH_INTERVAL, &clamped.to_string())?;
         Ok(self.refresh_settings())
     }
 
@@ -96,7 +104,10 @@ impl ConfigStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
         let (id, refreshable) = {
-            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = self
+                .entries
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let entry = pick(active.as_deref(), guard.as_slice())?;
             (entry.imported.id.clone(), entry.source.kind == "url")
         };
@@ -126,7 +137,10 @@ impl ConfigStore {
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone();
-            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = self
+                .entries
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let entry = match id {
                 Some(id) => guard.iter().find(|entry| entry.imported.id == id),
                 None => pick(active.as_deref(), guard.as_slice()),
@@ -216,8 +230,14 @@ impl ConfigStore {
             self.db.update_config(write)?;
         }
         {
-            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(entry) = guard.iter_mut().find(|entry| entry.imported.id == target_id) {
+            let mut guard = self
+                .entries
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(entry) = guard
+                .iter_mut()
+                .find(|entry| entry.imported.id == target_id)
+            {
                 entry.imported = fresh;
                 entry.runtime = Some(next_runtime.clone());
                 entry.source = source;
@@ -263,10 +283,17 @@ impl ConfigStore {
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone();
-            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = self
+                .entries
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let entry = pick(active.as_deref(), guard.as_slice())
                 .ok_or_else(|| AppError::new(code::INVALID_ARGUMENT, "no active config"))?;
-            (entry.imported.clone(), runtime_of(entry).clone(), entry.source.clone())
+            (
+                entry.imported.clone(),
+                runtime_of(entry).clone(),
+                entry.source.clone(),
+            )
         };
 
         let mut found = false;
@@ -319,8 +346,14 @@ impl ConfigStore {
         })?;
         // 直接整体替换 runtime 快照（不是只改 sites 字段）；不碰 active marker。
         {
-            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(entry) = guard.iter_mut().find(|entry| entry.imported.id == imported.id) {
+            let mut guard = self
+                .entries
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(entry) = guard
+                .iter_mut()
+                .find(|entry| entry.imported.id == imported.id)
+            {
                 entry.runtime = Some(runtime.clone());
             }
         }

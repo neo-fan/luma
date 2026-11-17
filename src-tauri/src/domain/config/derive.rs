@@ -91,7 +91,6 @@ fn unresolved_relative(site: &Value) -> bool {
 pub(crate) const RELATIVE_BLOCK_REASON: &str =
     "相对地址只有从 URL 导入的配置才能解析，请改用「导入 URL」";
 
-
 /// Reasons written by an *older* blocking policy. A row still carrying one of
 /// these is stale: the policy no longer blocks that runtime, so a restart must
 /// re-enable it instead of keeping the user's sources hidden forever.

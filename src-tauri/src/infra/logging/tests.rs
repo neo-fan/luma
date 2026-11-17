@@ -69,7 +69,11 @@ fn capped_writer_redacts_before_hitting_the_disk() {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create dir");
     let appender = appender(&dir, Channel::App).expect("appender");
-    let mut writer = CappedWriter::new(appender, dir.join(Channel::App.dir_name()), Channel::App.file_prefix());
+    let mut writer = CappedWriter::new(
+        appender,
+        dir.join(Channel::App.dir_name()),
+        Channel::App.file_prefix(),
+    );
     let line = b"proxy upstream failed: https://cdn.test/seg.ts?sign=SECRET-TOKEN&exp=1 (503)\n";
     writer.write_all(line).expect("write");
     writer.flush().expect("flush");
@@ -83,7 +87,10 @@ fn capped_writer_redacts_before_hitting_the_disk() {
     let _ = fs::remove_dir_all(&dir);
 
     assert!(text.contains("https://cdn.test/seg.ts"), "{text}");
-    assert!(!text.contains("SECRET-TOKEN"), "query token leaked to disk: {text}");
+    assert!(
+        !text.contains("SECRET-TOKEN"),
+        "query token leaked to disk: {text}"
+    );
     assert!(!text.contains("exp=1"), "query leaked to disk: {text}");
 }
 
@@ -96,7 +103,11 @@ fn capped_writer_survives_tiny_fragments() {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create dir");
     let appender = appender(&dir, Channel::App).expect("appender");
-    let mut writer = CappedWriter::new(appender, dir.join(Channel::App.dir_name()), Channel::App.file_prefix());
+    let mut writer = CappedWriter::new(
+        appender,
+        dir.join(Channel::App.dir_name()),
+        Channel::App.file_prefix(),
+    );
     // write_all 会反复调 write()：这里同时验证「返回值必须按输入长度消费」，
     // 否则脱敏后变短会让 write_all 把原文尾巴继续灌进来。
     writer.write_all(b"ab").expect("tiny fragment");

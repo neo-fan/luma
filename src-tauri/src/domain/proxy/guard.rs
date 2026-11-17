@@ -111,11 +111,12 @@ impl reqwest::dns::Resolve for PinnedResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_string();
         if let Some(pinned) = pinned(&host) {
-            let addrs: Vec<std::net::SocketAddr> =
-                pinned.ips.iter().map(|ip| std::net::SocketAddr::new(*ip, 0)).collect();
-            return Box::pin(async move {
-                Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
-            });
+            let addrs: Vec<std::net::SocketAddr> = pinned
+                .ips
+                .iter()
+                .map(|ip| std::net::SocketAddr::new(*ip, 0))
+                .collect();
+            return Box::pin(async move { Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs) });
         }
         let blocking_host = host.clone();
         let join = tokio::task::spawn_blocking(move || -> Result<Vec<IpAddr>, String> {
@@ -129,8 +130,10 @@ impl reqwest::dns::Resolve for PinnedResolver {
                 .map_err(|err| format!("dns task failed: {err}"))??;
             audit_addrs(&host, &ips)?;
             pin(&host, &ips, PIN_TTL);
-            let addrs: Vec<std::net::SocketAddr> =
-                ips.iter().map(|ip| std::net::SocketAddr::new(*ip, 0)).collect();
+            let addrs: Vec<std::net::SocketAddr> = ips
+                .iter()
+                .map(|ip| std::net::SocketAddr::new(*ip, 0))
+                .collect();
             Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
         })
     }
@@ -173,7 +176,9 @@ pub(super) async fn check_target(url: &Url, allow_local: bool) -> Result<(), Str
     if let Some(_ip) = check_literal(url.scheme(), url.host_str())? {
         return Ok(());
     }
-    let host = url.host_str().ok_or_else(|| "url has no host".to_string())?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| "url has no host".to_string())?;
     let port = url.port_or_known_default().unwrap_or(80);
     let addrs = tokio::net::lookup_host((host, port))
         .await
@@ -230,7 +235,9 @@ mod guard_tests {
             check_literal("http", Some("8.8.8.8")).unwrap(),
             Some("8.8.8.8".parse().unwrap())
         );
-        assert!(check_literal("http", Some("example.com")).unwrap().is_none());
+        assert!(check_literal("http", Some("example.com"))
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -272,7 +279,11 @@ mod guard_tests {
     #[tokio::test]
     async fn allow_local_admits_loopback_target() {
         let url = Url::parse("http://127.0.0.1:8787/cms/json").unwrap();
-        check_target(&url, true).await.expect("allow_local admits loopback");
-        check_target(&url, false).await.expect_err("guard denies loopback");
+        check_target(&url, true)
+            .await
+            .expect("allow_local admits loopback");
+        check_target(&url, false)
+            .await
+            .expect_err("guard denies loopback");
     }
 }

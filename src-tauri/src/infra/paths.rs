@@ -66,10 +66,11 @@ pub fn set_resource_dir(path: &std::path::Path) {
 
 /// 当前可见的 resource 目录：宿主发布值优先，其次环境变量覆盖。
 pub fn resource_dir() -> Option<String> {
-    RESOURCE_DIR
-        .get()
-        .cloned()
-        .or_else(|| std::env::var("LUMA_RESOURCE_DIR").ok().filter(|text| !text.is_empty()))
+    RESOURCE_DIR.get().cloned().or_else(|| {
+        std::env::var("LUMA_RESOURCE_DIR")
+            .ok()
+            .filter(|text| !text.is_empty())
+    })
 }
 
 /// Checkout root at compile time; only useful for `cargo run` / tests.
@@ -135,7 +136,10 @@ mod tests {
     #[test]
     fn source_root_contains_sidecars() {
         let root = source_root();
-        assert!(root.join("sidecars").is_dir(), "checkout root should have sidecars");
+        assert!(
+            root.join("sidecars").is_dir(),
+            "checkout root should have sidecars"
+        );
         assert!(find(&["sidecars", "py", "main.py"]).is_some());
     }
 

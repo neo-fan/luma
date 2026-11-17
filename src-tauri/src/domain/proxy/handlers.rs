@@ -342,13 +342,19 @@ async fn image_response(
     if body.len() > MAX_SNIFF_BYTES {
         return Err((
             ImageFailure::NotImage,
-            format!("image too large ({} bytes, type {content_type})", body.len()),
+            format!(
+                "image too large ({} bytes, type {content_type})",
+                body.len()
+            ),
         ));
     }
     let Some(kind) = image_format(&body) else {
         return Err((
             ImageFailure::NotImage,
-            format!("not an image (status {status}, type {content_type}, {} bytes)", body.len()),
+            format!(
+                "not an image (status {status}, type {content_type}, {} bytes)",
+                body.len()
+            ),
         ));
     };
     tracing::debug!(url = %target, sniffed = kind, "poster sniffed from non-image content-type");
@@ -513,7 +519,12 @@ pub(super) async fn handle_proxy(
         // them against 127.0.0.1:9978 and every segment 404s.
         let body = match upstream.bytes().await {
             Ok(bytes) => bytes,
-            Err(err) => return deny(StatusCode::BAD_GATEWAY, &format!("playlist read failed: {err}")),
+            Err(err) => {
+                return deny(
+                    StatusCode::BAD_GATEWAY,
+                    &format!("playlist read failed: {err}"),
+                )
+            }
         };
         let text = crate::textio::decode(&body);
         // A 200 with a non-playlist body is the normal shape of a dead source:
@@ -567,7 +578,10 @@ pub(super) async fn handle_proxy(
             match upstream_stream.next().await {
                 Some(Ok(chunk)) => head.extend_from_slice(&chunk),
                 Some(Err(err)) => {
-                    return deny(StatusCode::BAD_GATEWAY, &format!("upstream body failed: {err}"))
+                    return deny(
+                        StatusCode::BAD_GATEWAY,
+                        &format!("upstream body failed: {err}"),
+                    )
                 }
                 None => break,
             }
@@ -587,7 +601,11 @@ pub(super) async fn handle_proxy(
     let mut builder = Response::builder().status(status);
     for (name, value) in carried {
         // 剥离后长度/字节段全变了，这些头必须丢弃（cache 的 etag 也不再可信）。
-        if stripped && matches!(name, "content-length" | "content-range" | "accept-ranges" | "etag")
+        if stripped
+            && matches!(
+                name,
+                "content-length" | "content-range" | "accept-ranges" | "etag"
+            )
         {
             continue;
         }
@@ -695,7 +713,9 @@ pub(crate) fn parse_vod_pic_url(raw: &str) -> Option<(String, Vec<(String, Strin
     // @Headers is a percent-encoded JSON object; expand it first so explicit
     // @Referer/@User-Agent below can still override individual keys.
     if let Some(json) = grab("Headers") {
-        if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&percent_decode(&json)) {
+        if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
+            &percent_decode(&json),
+        ) {
             for (key, value) in map {
                 if let Some(text) = value.as_str().filter(|v| !v.is_empty()) {
                     headers.push((fix_header(&key), text.to_string()));
@@ -748,9 +768,18 @@ pub(super) async fn handle_image(
 ) -> Response {
     let pairs: Vec<(String, String)> = raw
         .as_deref()
-        .map(|text| url::form_urlencoded::parse(text.as_bytes()).into_owned().collect())
+        .map(|text| {
+            url::form_urlencoded::parse(text.as_bytes())
+                .into_owned()
+                .collect()
+        })
         .unwrap_or_default();
-    let pic = pairs.iter().rev().find(|(name, _)| name == "url").map(|(_, v)| v.clone()).unwrap_or_default();
+    let pic = pairs
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "url")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
 
     let (pure, inline) = match parse_vod_pic_url(&pic) {
         Some((url, headers)) => (url, headers),
@@ -916,9 +945,14 @@ pub(super) async fn handle_spider_proxy(kind: &str, pairs: &[(String, String)]) 
 }
 
 pub(super) fn extra_headers(payload: Option<&str>) -> Vec<(HeaderName, String)> {
-    let Some(payload) = payload else { return Vec::new() };
-    let Ok(decoded) = base64_decode(payload) else { return Vec::new() };
-    let Ok(map) = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&decoded) else {
+    let Some(payload) = payload else {
+        return Vec::new();
+    };
+    let Ok(decoded) = base64_decode(payload) else {
+        return Vec::new();
+    };
+    let Ok(map) = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&decoded)
+    else {
         return Vec::new();
     };
     map.into_iter()

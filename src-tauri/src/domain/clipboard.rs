@@ -13,9 +13,9 @@ use std::io::Write;
 #[cfg(any(target_os = "macos", all(unix, not(target_os = "macos"))))]
 use std::process::{Command, Stdio};
 
-use crate::error::AppError;
 #[cfg(not(target_os = "windows"))]
 use crate::error::code;
+use crate::error::AppError;
 
 /// 诊断 JSON 只有几 KB；上限只用于防御异常调用。
 const MAX_CHARS: usize = 20_000;
@@ -40,9 +40,7 @@ mod windows_clipboard {
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{
-        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
-    };
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
     use windows::Win32::System::Ole::CF_UNICODETEXT;
 
     use crate::error::{code, AppError};
@@ -57,8 +55,7 @@ mod windows_clipboard {
 
         unsafe {
             OpenClipboard(HWND(ptr::null_mut())).map_err(|err| {
-                AppError::new(code::INTERNAL, "open clipboard failed")
-                    .with_cause(err.to_string())
+                AppError::new(code::INTERNAL, "open clipboard failed").with_cause(err.to_string())
             })?;
 
             // 从这里开始无论成功失败都要 CloseClipboard，交给 Drop 保证。
@@ -66,8 +63,7 @@ mod windows_clipboard {
             let _ = EmptyClipboard();
 
             let handle = GlobalAlloc(GMEM_MOVEABLE, bytes).map_err(|err| {
-                AppError::new(code::INTERNAL, "clipboard alloc failed")
-                    .with_cause(err.to_string())
+                AppError::new(code::INTERNAL, "clipboard alloc failed").with_cause(err.to_string())
             })?;
             let target = GlobalLock(handle);
             if target.is_null() {
@@ -118,7 +114,10 @@ fn platform_copy(text: &str) -> Result<(), AppError> {
 #[cfg(all(unix, not(target_os = "macos")))]
 fn platform_copy(text: &str) -> Result<(), AppError> {
     // Wayland 优先 wl-copy，X11 退 xclip；都没有就报错，由前端降级成手动复制。
-    for (program, args) in [("wl-copy", &[][..]), ("xclip", &["-selection", "clipboard"][..])] {
+    for (program, args) in [
+        ("wl-copy", &[][..]),
+        ("xclip", &["-selection", "clipboard"][..]),
+    ] {
         let Ok(mut child) = Command::new(program)
             .args(args)
             .stdin(Stdio::piped())
@@ -136,13 +135,13 @@ fn platform_copy(text: &str) -> Result<(), AppError> {
 #[cfg(any(target_os = "macos", all(unix, not(target_os = "macos"))))]
 fn write_and_wait(child: &mut std::process::Child, text: &str) -> Result<(), AppError> {
     if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(text.as_bytes())
-            .map_err(|err| AppError::new(code::INTERNAL, "clipboard write failed").with_cause(err.to_string()))?;
+        stdin.write_all(text.as_bytes()).map_err(|err| {
+            AppError::new(code::INTERNAL, "clipboard write failed").with_cause(err.to_string())
+        })?;
     }
-    let status = child
-        .wait()
-        .map_err(|err| AppError::new(code::INTERNAL, "clipboard helper failed").with_cause(err.to_string()))?;
+    let status = child.wait().map_err(|err| {
+        AppError::new(code::INTERNAL, "clipboard helper failed").with_cause(err.to_string())
+    })?;
     if status.success() {
         Ok(())
     } else {

@@ -140,7 +140,6 @@ pub struct ProxyStatus {
     pub allow_local: bool,
 }
 
-
 /// Start the proxy on the Tauri runtime; failures are surfaced to the caller.
 pub fn start() -> Result<Arc<ProxyState>, AppError> {
     let allow_local = crate::env::is_enabled("PROXY_ALLOW_LOCAL");
@@ -148,7 +147,9 @@ pub fn start() -> Result<Arc<ProxyState>, AppError> {
     let listener = bind_listener()?;
     let port = listener
         .local_addr()
-        .map_err(|err| AppError::new(code::INTERNAL, "proxy local_addr failed").with_cause(err.to_string()))?
+        .map_err(|err| {
+            AppError::new(code::INTERNAL, "proxy local_addr failed").with_cause(err.to_string())
+        })?
         .port();
 
     let image_dir = crate::store::data_dir().join("cache").join("http-images");
@@ -199,23 +200,25 @@ fn bind_listener() -> Result<std::net::TcpListener, AppError> {
     let primary = format!("127.0.0.1:{DEFAULT_PORT}");
     match std::net::TcpListener::bind(&primary) {
         Ok(listener) => {
-            listener
-                .set_nonblocking(true)
-                .map_err(|err| AppError::new(code::INTERNAL, "proxy set_nonblocking failed").with_cause(err.to_string()))?;
+            listener.set_nonblocking(true).map_err(|err| {
+                AppError::new(code::INTERNAL, "proxy set_nonblocking failed")
+                    .with_cause(err.to_string())
+            })?;
             Ok(listener)
         }
         Err(err) => {
             tracing::warn!(port = DEFAULT_PORT, error = %err, "proxy port busy, falling back to ephemeral port");
-            let listener = std::net::TcpListener::bind("127.0.0.1:0")
-                .map_err(|err| AppError::new(code::INTERNAL, "proxy bind failed").with_cause(err.to_string()))?;
-            listener
-                .set_nonblocking(true)
-                .map_err(|err| AppError::new(code::INTERNAL, "proxy set_nonblocking failed").with_cause(err.to_string()))?;
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|err| {
+                AppError::new(code::INTERNAL, "proxy bind failed").with_cause(err.to_string())
+            })?;
+            listener.set_nonblocking(true).map_err(|err| {
+                AppError::new(code::INTERNAL, "proxy set_nonblocking failed")
+                    .with_cause(err.to_string())
+            })?;
             Ok(listener)
         }
     }
 }
-
 
 /// Build the player-facing proxy URL for one playable item (spec 7.5).
 pub fn build_proxy_url(

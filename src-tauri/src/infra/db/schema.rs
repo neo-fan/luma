@@ -40,6 +40,8 @@ impl Db {
                      position_ms INTEGER NOT NULL DEFAULT 0,
                      duration_ms INTEGER NOT NULL DEFAULT 0,
                      resolution  TEXT NOT NULL DEFAULT '',
+                     rate        REAL NOT NULL DEFAULT 0,
+                     skip_json   TEXT NOT NULL DEFAULT '',
                      updated_at  INTEGER NOT NULL,
                      PRIMARY KEY (site_key, vod_id)
                  );
@@ -62,10 +64,18 @@ impl Db {
             let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
-        for column in ["episode_name", "play_from", "resolution"] {
+        // `rate` 是「这部剧的倍速」，0 = 从没设过（前端按 1.0 起播）。放在 history 行上
+        // 而不是另开一张表：这张表已按剧名合并，换源后行会跟着走，倍速因此天然跨源共享。
+        for (column, ddl) in [
+            ("episode_name", "TEXT NOT NULL DEFAULT ''"),
+            ("play_from", "TEXT NOT NULL DEFAULT ''"),
+            ("resolution", "TEXT NOT NULL DEFAULT ''"),
+            ("rate", "REAL NOT NULL DEFAULT 0"),
+            ("skip_json", "TEXT NOT NULL DEFAULT ''"),
+        ] {
             if !existing.iter().any(|name| name == column) {
                 conn.execute(
-                    &format!("ALTER TABLE history ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"),
+                    &format!("ALTER TABLE history ADD COLUMN {column} {ddl}"),
                     [],
                 )?;
             }

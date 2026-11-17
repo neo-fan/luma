@@ -306,6 +306,14 @@ export default function PlayerPage({
    * 节流，切换瞬间的进度可能丢；history effect 把 write 挂到这里，
    * goToEpisode / pickSource / 自动换线跳转前先 flush 一次。
    */
+  /**
+   * 这部剧记忆的倍速（0 = 从没设过，播放侧按 1.0 起播）。
+   *
+   * 由 history 查询异步填、由内核的倍速变更回调更新。用 ref 不用 state：
+   * 它不该触发整页重渲染，更不能进播放内核 effect 的依赖（会重建实例）。
+   */
+  const rememberedRateRef = useRef(0);
+  const readRememberedRate = useCallback(() => rememberedRateRef.current, []);
   const flushHistoryRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     let alive = true;
@@ -319,6 +327,11 @@ export default function PlayerPage({
         const hit = title
           ? history.find((item) => item.name?.trim() === title)
           : undefined;
+        // 倍速与续播互不牵连：进度太靠前、已经看完、换到别的集，都不该让人
+        // 顺手丢掉这部剧的倍速，所以要在续播那些提前返回之前先摘出来。
+        if (hit?.rate) {
+          rememberedRateRef.current = hit.rate;
+        }
         const sameEpisode =
           hit?.playUrl === playUrl ||
           Boolean(hit?.episodeName && hit.episodeName === episodeName);
@@ -1124,6 +1137,12 @@ export default function PlayerPage({
     switching: episodeSwitching,
     reloadRef,
     resumeMsRef,
+    rememberedRate: readRememberedRate,
+    onRememberedRate: (rate) => {
+      rememberedRateRef.current = rate;
+      // 倍速是低频动作，改完立刻写一次：只靠 5 秒节流会让「调完就关窗」丢掉。
+      flushHistoryRef.current?.();
+    },
     resolved,
     resolving,
     siteKey,
@@ -1183,6 +1202,8 @@ export default function PlayerPage({
         episodeName: historyLabelRef.current.episodeName,
         playFrom: historyLabelRef.current.playFrom,
         resolution: knownResolution,
+        // 0 = 这次写入没带倍速，宿主侧不会覆盖库里已有的值。
+        rate: rememberedRateRef.current,
         positionMs:
           snapshot?.positionMs ?? Math.round(video.currentTime * 1000),
         durationMs:

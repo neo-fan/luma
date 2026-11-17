@@ -125,7 +125,10 @@ pub fn merged_for(url: &str, explicit: &[(String, String)]) -> Vec<(String, Stri
 /// Fill in the fallback UA / Referer only when neither the config table nor the
 /// spider supplied one. `play` probes the source while `proxy` actually fetches
 /// it; both must apply the same defaults or a stream can probe OK and then 403.
-pub fn with_defaults(target: &url::Url, mut headers: Vec<(String, String)>) -> Vec<(String, String)> {
+pub fn with_defaults(
+    target: &url::Url,
+    mut headers: Vec<(String, String)>,
+) -> Vec<(String, String)> {
     if !headers
         .iter()
         .any(|(key, _)| key.eq_ignore_ascii_case("User-Agent"))
@@ -203,7 +206,9 @@ mod tests {
         }]));
         let hit = headers_for("https://media.example.com/live/a.m3u8?t=1");
         assert_eq!(hit.len(), 2);
-        assert!(hit.iter().any(|(k, v)| k == "User-Agent" && v == "okHttp/Mod-1.5.0.0"));
+        assert!(hit
+            .iter()
+            .any(|(k, v)| k == "User-Agent" && v == "okHttp/Mod-1.5.0.0"));
         assert!(headers_for("https://other.example/a.m3u8").is_empty());
     }
 

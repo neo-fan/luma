@@ -65,7 +65,9 @@ fn measure(root: &Path) -> DirUsage {
     let mut files = 0u32;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let Ok(meta) = entry.metadata() else { continue };
@@ -88,14 +90,14 @@ fn current_log_files(root: &Path) -> std::collections::HashSet<PathBuf> {
     };
     for channel in channels.flatten() {
         let dir = channel.path();
-        let Ok(files) = fs::read_dir(&dir) else { continue };
+        let Ok(files) = fs::read_dir(&dir) else {
+            continue;
+        };
         let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
         for file in files.flatten() {
             let path = file.path();
             let Ok(meta) = file.metadata() else { continue };
-            if !meta.is_file()
-                || path.extension().and_then(|ext| ext.to_str()) != Some("log")
-            {
+            if !meta.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("log") {
                 continue;
             }
             let Ok(mtime) = meta.modified() else { continue };
@@ -120,7 +122,9 @@ fn purge(root: &Path, keep: &dyn Fn(&Path) -> bool) -> (u64, u32) {
     let mut skipped = 0u32;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let Ok(meta) = entry.metadata() else { continue };
@@ -266,7 +270,11 @@ mod tests {
         write_file(&root.join("app").join("luma.old.log"), 10, older);
         write_file(&root.join("app").join("luma.new.log"), 10, newest);
         // 滚动件后缀不是 .log，永远算可清理。
-        write_file(&root.join("app").join("luma.log.1"), 10, newest + Duration::from_secs(5));
+        write_file(
+            &root.join("app").join("luma.log.1"),
+            10,
+            newest + Duration::from_secs(5),
+        );
         write_file(&root.join("ui").join("ui.new.log"), 10, newest);
         write_file(&root.join("ui").join("ui.old.log"), 10, older);
 

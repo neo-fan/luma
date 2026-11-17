@@ -76,6 +76,16 @@ pub struct HistoryRow {
     /// 站点不提供分辨率字段，只有真正播出画面才知道；写入时是空的（还没解码）
     /// 就不覆盖库里已有值。
     pub resolution: String,
+    /// 这部剧的倍速（0 = 从没设过，读取方按 1.0 处理）。
+    ///
+    /// 记在行上而不是全局偏好里：倍速是「看这部剧的习惯」，换源、换线路都不该
+    /// 把它重置，而这张表按剧名合并同一部剧，行会跟着走。
+    pub rate: f64,
+    /// 这部剧的跳过片头/片尾配置（JSON 数组文本，`SkipSegment[]`）。
+    ///
+    /// 空串 = 这次写入没带；`[]` = 用户确实把片段全删了。宿主侧不理解片段语义，
+    /// 结构校验在写入方（前端 `lib/skipSegments.ts`）做，这里只保证不丢。
+    pub skip_json: String,
     pub updated_at: u64,
 }
 
@@ -129,7 +139,10 @@ impl Db {
         context: &str,
         f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>,
     ) -> Result<T, AppError> {
-        let mut conn = self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         f(&mut conn).map_err(|err| {
             AppError::new(code::INTERNAL, format!("sqlite {context} failed"))
                 .with_cause(err.to_string())

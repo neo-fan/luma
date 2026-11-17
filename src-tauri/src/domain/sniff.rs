@@ -111,7 +111,7 @@ fn install(
         COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
     };
     use webview2_com::WebResourceRequestedEventHandler;
-    use windows062::core::{HSTRING, Interface};
+    use windows062::core::{Interface, HSTRING};
 
     unsafe {
         let controller = webview.controller();
@@ -142,15 +142,15 @@ fn install(
                 Err(err) => eprintln!("[sniff] ICoreWebView2Settings2 unavailable: {err}"),
             }
         }
-        if let Err(err) =
-            core.AddWebResourceRequestedFilter(&HSTRING::from("*"), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
-        {
+        if let Err(err) = core.AddWebResourceRequestedFilter(
+            &HSTRING::from("*"),
+            COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+        ) {
             let _ = ready.send(Err(err.to_string()));
             return;
         }
         let handler = WebResourceRequestedEventHandler::create(Box::new(
-            move |_sender,
-                  args: Option<ICoreWebView2WebResourceRequestedEventArgs>| {
+            move |_sender, args: Option<ICoreWebView2WebResourceRequestedEventArgs>| {
                 if let Some(args) = args {
                     if let Ok(request) = args.Request() {
                         // WebView2 only lets the host rewrite outgoing headers
@@ -270,8 +270,9 @@ pub async fn sniff_with_headers(
         .lock()
         .await;
 
-    let parsed = Url::parse(page_url)
-        .map_err(|err| AppError::new(code::INVALID_ARGUMENT, "sniff url invalid").with_cause(err.to_string()))?;
+    let parsed = Url::parse(page_url).map_err(|err| {
+        AppError::new(code::INVALID_ARGUMENT, "sniff url invalid").with_cause(err.to_string())
+    })?;
     let blank = Url::parse("about:blank").expect("about:blank is a valid url");
     let label = format!("sniffer-{}", COUNTER.fetch_add(1, Ordering::Relaxed));
     let data_dir = app
@@ -314,8 +315,10 @@ pub async fn sniff_with_headers(
     if let Err(err) = window.with_webview(move |webview| install(webview, headers, tx, ready_tx)) {
         eprintln!("[sniff] with_webview failed: {err}");
         let _ = window.close();
-        return Err(AppError::new(code::RUNTIME_UNAVAILABLE, "sniffer hook failed")
-            .with_cause(err.to_string()));
+        return Err(
+            AppError::new(code::RUNTIME_UNAVAILABLE, "sniffer hook failed")
+                .with_cause(err.to_string()),
+        );
     }
 
     // `with_webview` dispatches to the UI thread; give the filter a moment so
@@ -331,8 +334,10 @@ pub async fn sniff_with_headers(
     if let Err(err) = window.navigate(parsed) {
         eprintln!("[sniff] navigate failed: {err}");
         let _ = window.close();
-        return Err(AppError::new(code::PLAY_RESOLVE_FAIL, "sniffer navigate failed")
-            .with_cause(err.to_string()));
+        return Err(
+            AppError::new(code::PLAY_RESOLVE_FAIL, "sniffer navigate failed")
+                .with_cause(err.to_string()),
+        );
     }
 
     let found = tokio::time::timeout(timeout, async {
@@ -352,7 +357,10 @@ pub async fn sniff_with_headers(
             tracing::info!(page = %page_url, media = %url, "sniffer found media url");
             Ok(url)
         }
-        Ok(None) => Err(AppError::new(code::PLAY_RESOLVE_FAIL, "sniffer found no media url")),
+        Ok(None) => Err(AppError::new(
+            code::PLAY_RESOLVE_FAIL,
+            "sniffer found no media url",
+        )),
         Err(_) => Err(AppError::new(
             code::PLAY_RESOLVE_FAIL,
             format!("sniffer exceeded {}ms", timeout.as_millis()),

@@ -58,6 +58,12 @@ pub struct HistoryItem {
     pub position_ms: u64,
     #[serde(default)]
     pub duration_ms: u64,
+    /// 这部剧的倍速（0 = 没带/没设过，读取方按 1.0 处理）。
+    #[serde(default)]
+    pub rate: f64,
+    /// 这部剧的跳过片段配置（JSON 文本）。空串 = 没带；`[]` = 用户清空过。
+    #[serde(default)]
+    pub skip_json: String,
     pub updated_at: u64,
 }
 
@@ -148,6 +154,8 @@ fn history_from_row(row: HistoryRow) -> HistoryItem {
         resolution: row.resolution,
         position_ms: row.position_ms,
         duration_ms: row.duration_ms,
+        rate: row.rate,
+        skip_json: row.skip_json,
         updated_at: row.updated_at,
     }
 }
@@ -158,7 +166,13 @@ fn same_vod(a: &VodRef, b: &VodRef) -> bool {
 
 /** 片名归一化：全半角空格、大小写差异都算同一部片。空名不参与合并。 */
 pub fn same_title(a: &str, b: &str) -> bool {
-    let norm = |s: &str| s.trim().chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase();
+    let norm = |s: &str| {
+        s.trim()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+            .to_lowercase()
+    };
     let left = norm(a);
     let right = norm(b);
     !left.is_empty() && left == right
@@ -166,11 +180,7 @@ pub fn same_title(a: &str, b: &str) -> bool {
 
 impl LibraryStore {
     pub fn load(db: Arc<Db>) -> Result<Self, AppError> {
-        let favorites = db
-            .favorites()?
-            .into_iter()
-            .map(favorite_from_row)
-            .collect();
+        let favorites = db.favorites()?.into_iter().map(favorite_from_row).collect();
         let history = db.history()?.into_iter().map(history_from_row).collect();
         Ok(Self {
             db,
@@ -212,9 +222,7 @@ impl LibraryStore {
         let added = self.db.toggle_favorite(&row)?;
         let mut guard = self.favorites.write().unwrap_or_else(|p| p.into_inner());
         // 与 db 层同口径：按片名剔除，换源后的旧条目不能留在缓存里。
-        guard.retain(|item| {
-            !(same_title(&item.vod.name, &vod.name) || same_vod(&item.vod, &vod))
-        });
+        guard.retain(|item| !(same_title(&item.vod.name, &vod.name) || same_vod(&item.vod, &vod)));
         if added {
             guard.push(FavoriteItem {
                 vod,
@@ -292,6 +300,8 @@ impl LibraryStore {
             resolution: item.resolution.clone(),
             position_ms: item.position_ms,
             duration_ms: item.duration_ms,
+            rate: item.rate,
+            skip_json: item.skip_json.clone(),
             // Always use a fresh timestamp: the caller's value may be stale
             // (e.g. a restored player session), and the cap relies on ordering.
             updated_at: now_ms(),
@@ -370,7 +380,10 @@ pub fn favorites_list(state: tauri::State<'_, LibraryStore>) -> Vec<FavoriteItem
 }
 
 #[tauri::command]
-pub fn favorites_toggle(state: tauri::State<'_, LibraryStore>, vod: VodRef) -> Result<bool, AppError> {
+pub fn favorites_toggle(
+    state: tauri::State<'_, LibraryStore>,
+    vod: VodRef,
+) -> Result<bool, AppError> {
     state.toggle_favorite(vod)
 }
 
@@ -389,7 +402,10 @@ pub fn history_list(state: tauri::State<'_, LibraryStore>) -> Vec<HistoryItem> {
 }
 
 #[tauri::command]
-pub fn history_upsert(state: tauri::State<'_, LibraryStore>, item: HistoryItem) -> Result<(), AppError> {
+pub fn history_upsert(
+    state: tauri::State<'_, LibraryStore>,
+    item: HistoryItem,
+) -> Result<(), AppError> {
     state.upsert_history(item)
 }
 
@@ -445,7 +461,10 @@ mod tests {
         assert!(store.is_favorite("stub_json", "1"));
         assert!(!store.toggle_favorite(sample("1")).unwrap());
         assert!(!store.is_favorite("stub_json", "1"));
-        assert!(dir.join("luma.db").exists(), "data lives in sqlite, not json");
+        assert!(
+            dir.join("luma.db").exists(),
+            "data lives in sqlite, not json"
+        );
 
         // A fresh store (i.e. an app restart) sees the committed state.
         assert!(store.toggle_favorite(sample("2")).unwrap());
@@ -476,7 +495,11 @@ mod tests {
         assert!(!store.is_favorite_by_title("Sample"));
 
         // 空片名不能互相吞并，退回复合键。
-        let blank = |id: &str| VodRef { name: String::new(), vod_id: id.into(), ..first.clone() };
+        let blank = |id: &str| VodRef {
+            name: String::new(),
+            vod_id: id.into(),
+            ..first.clone()
+        };
         assert!(store.toggle_favorite(blank("a")).unwrap());
         assert!(store.toggle_favorite(blank("b")).unwrap());
         assert_eq!(store.list_favorites().len(), 2);
@@ -495,6 +518,8 @@ mod tests {
                     episode_name: "第 2 集".into(),
                     play_from: "线路A".into(),
                     resolution: "1080P".into(),
+                    rate: 0.0,
+                    skip_json: String::new(),
                     position_ms: position,
                     duration_ms: 60000,
                     updated_at: 0,
@@ -524,6 +549,8 @@ mod tests {
             episode_name: String::new(),
             play_from: String::new(),
             resolution: String::new(),
+            rate: 0.0,
+            skip_json: String::new(),
             position_ms: 0,
             duration_ms: 0,
             updated_at: 0,

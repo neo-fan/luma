@@ -26,7 +26,8 @@ fn styles_css() -> String {
     files
         .iter()
         .map(|path| {
-            fs::read_to_string(path).unwrap_or_else(|err| panic!("读不到 {}: {err}", path.display()))
+            fs::read_to_string(path)
+                .unwrap_or_else(|err| panic!("读不到 {}: {err}", path.display()))
         })
         .collect::<Vec<_>>()
         .join("\n")

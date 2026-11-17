@@ -5,9 +5,11 @@ impl Db {
 
     pub(super) fn meta_get(&self, key: &str) -> Result<Option<String>, AppError> {
         self.with("read meta", |conn| {
-            conn.query_row("SELECT value FROM meta WHERE key = ?1", params![key], |row| {
-                row.get::<_, String>(0)
-            })
+            conn.query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
             .optional()
         })
     }

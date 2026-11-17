@@ -37,7 +37,8 @@ fn main() {
 
 /// 构建时刻（epoch 秒）。只作为兜底：运行时诊断优先读 exe 文件 mtime，
 /// 那个值不受 build script 缓存影响，永远对应真实的编译完成时刻。
-fn now_epoch_secs() -> String {    std::time::SystemTime::now()
+fn now_epoch_secs() -> String {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "0".to_string())
@@ -89,7 +90,11 @@ fn package_version() -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     text.lines().find_map(|line| {
         let rest = line.strip_prefix("  \"version\"")?;
-        let rest = rest.trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
+        let rest = rest
+            .trim_start()
+            .strip_prefix(':')?
+            .trim_start()
+            .strip_prefix('"')?;
         let value = rest.split('"').next()?.trim();
         (!value.is_empty()).then(|| value.to_string())
     })

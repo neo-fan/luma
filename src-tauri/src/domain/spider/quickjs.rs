@@ -116,8 +116,10 @@ impl Runner {
         if let Err(err) = write.await {
             lock_pending(&self.pending).remove(&id);
             self.alive.store(false, Ordering::SeqCst);
-            return Err(AppError::new(code::SPIDER_CRASH, "write to qjs-runner failed")
-                .with_cause(err.to_string()));
+            return Err(
+                AppError::new(code::SPIDER_CRASH, "write to qjs-runner failed")
+                    .with_cause(err.to_string()),
+            );
         }
 
         match tokio::time::timeout(timeout, rx).await {
@@ -125,7 +127,10 @@ impl Runner {
             // The reader task exited (pipe closed) and dropped every sender.
             Ok(Err(_)) => {
                 self.alive.store(false, Ordering::SeqCst);
-                Err(AppError::new(code::SPIDER_CRASH, "qjs-runner exited unexpectedly"))
+                Err(AppError::new(
+                    code::SPIDER_CRASH,
+                    "qjs-runner exited unexpectedly",
+                ))
             }
             Err(_) => {
                 // The interrupt handler covers loops inside a context, but a
@@ -145,8 +150,12 @@ impl Runner {
     }
 }
 
-fn lock_pending(pending: &Pending) -> std::sync::MutexGuard<'_, HashMap<u64, oneshot::Sender<Value>>> {
-    pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock_pending(
+    pending: &Pending,
+) -> std::sync::MutexGuard<'_, HashMap<u64, oneshot::Sender<Value>>> {
+    pending
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn decode_response(response: &Value) -> Result<Value, AppError> {
@@ -212,7 +221,11 @@ fn resolve_runner() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    let exe_name = if cfg!(windows) { "qjs-runner.exe" } else { "qjs-runner" };
+    let exe_name = if cfg!(windows) {
+        "qjs-runner.exe"
+    } else {
+        "qjs-runner"
+    };
     if let Ok(current) = std::env::current_exe() {
         if let Some(dir) = current.parent() {
             let beside = dir.join(exe_name);
@@ -283,7 +296,10 @@ fn bundled_engine(api: &str) -> Option<String> {
     if !BUNDLED_ENGINES.contains(&name) {
         return None;
     }
-    let path = resolve_assets_dir().join("js").join("lib").join("drpy2.min.js");
+    let path = resolve_assets_dir()
+        .join("js")
+        .join("lib")
+        .join("drpy2.min.js");
     crate::textio::read_file(&path).ok()
 }
 
@@ -334,7 +350,9 @@ async fn cold_source(site: Value) -> Result<String, AppError> {
         method: None,
         headers: site.get("headers").and_then(Value::as_object).map(|map| {
             map.iter()
-                .filter_map(|(key, value)| value.as_str().map(|text| (key.clone(), text.to_string())))
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|text| (key.clone(), text.to_string()))
+                })
                 .collect::<HashMap<String, String>>()
         }),
         body: None,
@@ -363,7 +381,10 @@ async fn cold_source(site: Value) -> Result<String, AppError> {
         },
         Err(err) => match bundled_engine(&api) {
             Some(text) => {
-                eprintln!("[qjs] {api} unreachable ({}); using bundled engine", err.message);
+                eprintln!(
+                    "[qjs] {api} unreachable ({}); using bundled engine",
+                    err.message
+                );
                 text
             }
             None => return Err(err),
@@ -418,7 +439,11 @@ async fn current_runner() -> Result<Arc<Runner>, AppError> {
 async fn retire_runner(target: &Arc<Runner>) {
     let mut slot = runner_slot().lock().await;
     // Only retire the instance that failed; a newer one may already be live.
-    if slot.as_ref().map(|runner| Arc::ptr_eq(runner, target)).unwrap_or(false) {
+    if slot
+        .as_ref()
+        .map(|runner| Arc::ptr_eq(runner, target))
+        .unwrap_or(false)
+    {
         let _ = slot.take();
         let _ = tokio::time::timeout(Duration::from_millis(800), target.kill()).await;
     }
@@ -474,7 +499,10 @@ impl SpiderRuntime for QuickJsRuntime {
         if resolve_runner().is_some() {
             Ok(())
         } else {
-            Err(AppError::new(code::RUNTIME_UNAVAILABLE, "qjs-runner missing"))
+            Err(AppError::new(
+                code::RUNTIME_UNAVAILABLE,
+                "qjs-runner missing",
+            ))
         }
     }
 
@@ -521,9 +549,8 @@ fn proxy_payload_from_js(value: &Value) -> Result<ProxyPayload, AppError> {
         .and_then(Value::as_str)
         .filter(|text| !text.is_empty())
     {
-        Some(encoded) => crate::proxy::base64_decode(encoded).map_err(|_| {
-            AppError::new(code::INTERNAL, "js proxy body is not valid base64")
-        })?,
+        Some(encoded) => crate::proxy::base64_decode(encoded)
+            .map_err(|_| AppError::new(code::INTERNAL, "js proxy body is not valid base64"))?,
         None => value
             .get("text")
             .and_then(Value::as_str)
@@ -602,7 +629,10 @@ mod tests {
         let dir = resolve_assets_dir();
         assert!(!dir.as_os_str().is_empty());
         // Dev and portable layouts both end in sidecars/qjs-assets.
-        assert!(dir.to_string_lossy().replace('\\', "/").ends_with("sidecars/qjs-assets"));
+        assert!(dir
+            .to_string_lossy()
+            .replace('\\', "/")
+            .ends_with("sidecars/qjs-assets"));
     }
 
     #[test]
@@ -611,7 +641,10 @@ mod tests {
         // drpy2 / JS0 modules must reach the sidecar; guard the intent here.
         let drpy_head = "import cheerio from\"assets://js/lib/cheerio.min.js\";";
         assert!(drpy_head.contains("import "));
-        assert_eq!(crate::config::blocked_reason(&json!({"runtime": "quickjs"})), None);
+        assert_eq!(
+            crate::config::blocked_reason(&json!({"runtime": "quickjs"})),
+            None
+        );
     }
 
     #[test]
@@ -678,7 +711,10 @@ mod tests {
     fn bundled_engine_is_shipped_and_readable() {
         // D3: the copy must exist next to the other js assets and parse as a
         // script, otherwise the fallback would hand garbage to QuickJS.
-        let path = resolve_assets_dir().join("js").join("lib").join("drpy2.min.js");
+        let path = resolve_assets_dir()
+            .join("js")
+            .join("lib")
+            .join("drpy2.min.js");
         assert!(path.is_file(), "missing bundled engine: {}", path.display());
         let text = crate::textio::read_file(&path).expect("read bundled engine");
         assert!(text.len() > 10_000);

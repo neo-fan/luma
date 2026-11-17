@@ -134,8 +134,16 @@ pub fn init() {
 
     match (appender(&dir, Channel::App), appender(&dir, Channel::Ui)) {
         (Ok(app), Ok(ui)) => {
-            let app = CappedWriter::new(app, dir.join(Channel::App.dir_name()), Channel::App.file_prefix());
-            let ui = CappedWriter::new(ui, dir.join(Channel::Ui.dir_name()), Channel::Ui.file_prefix());
+            let app = CappedWriter::new(
+                app,
+                dir.join(Channel::App.dir_name()),
+                Channel::App.file_prefix(),
+            );
+            let ui = CappedWriter::new(
+                ui,
+                dir.join(Channel::Ui.dir_name()),
+                Channel::Ui.file_prefix(),
+            );
             let (app_writer, app_guard) = tracing_appender::non_blocking(app);
             let (ui_writer, ui_guard) = tracing_appender::non_blocking(ui);
             let _ = LOG_GUARDS.set((app_guard, ui_guard));
@@ -168,7 +176,10 @@ pub fn init() {
     );
 }
 
-fn appender(dir: &Path, channel: Channel) -> Result<RollingFileAppender, tracing_appender::rolling::InitError> {
+fn appender(
+    dir: &Path,
+    channel: Channel,
+) -> Result<RollingFileAppender, tracing_appender::rolling::InitError> {
     RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
         .filename_prefix(channel.file_prefix())
@@ -209,7 +220,8 @@ impl CappedWriter {
             return;
         }
         prune_bytes(&self.dir, self.prefix, MAX_CHANNEL_BYTES);
-        self.written.store(dir_bytes(&self.dir, self.prefix), Ordering::Release);
+        self.written
+            .store(dir_bytes(&self.dir, self.prefix), Ordering::Release);
         self.pruning.store(false, Ordering::Release);
     }
 }
@@ -467,7 +479,10 @@ fn reveal(path: &Path) -> Result<(), AppError> {
     };
 
     #[cfg(target_os = "macos")]
-    let spawned = std::process::Command::new("open").arg("-R").arg(path).spawn();
+    let spawned = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn();
 
     #[cfg(all(unix, not(target_os = "macos")))]
     let spawned = std::process::Command::new("xdg-open")
@@ -478,9 +493,9 @@ fn reveal(path: &Path) -> Result<(), AppError> {
         })
         .spawn();
 
-    spawned
-        .map(|_| ())
-        .map_err(|err| AppError::new(code::INTERNAL, "reveal path failed").with_cause(err.to_string()))
+    spawned.map(|_| ()).map_err(|err| {
+        AppError::new(code::INTERNAL, "reveal path failed").with_cause(err.to_string())
+    })
 }
 
 // ---- 子模块 ---------------------------------------------------------------

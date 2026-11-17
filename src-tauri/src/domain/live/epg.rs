@@ -135,15 +135,12 @@ pub(crate) fn localize_time(value: &str) -> String {
     ) else {
         return trimmed.to_string();
     };
-    let offset = capture
-        .get(7)
-        .map(|raw| raw.as_str())
-        .and_then(|raw| {
-            let sign = if raw.starts_with('-') { -1 } else { 1 };
-            let hours: i32 = raw[1..3].parse().ok()?;
-            let minutes: i32 = raw[3..5].parse().ok()?;
-            FixedOffset::east_opt(sign * (hours * 3600 + minutes * 60))
-        });
+    let offset = capture.get(7).map(|raw| raw.as_str()).and_then(|raw| {
+        let sign = if raw.starts_with('-') { -1 } else { 1 };
+        let hours: i32 = raw[1..3].parse().ok()?;
+        let minutes: i32 = raw[3..5].parse().ok()?;
+        FixedOffset::east_opt(sign * (hours * 3600 + minutes * 60))
+    });
     let naive = NaiveDate::from_ymd_opt(year as i32, month, day)
         .and_then(|date| date.and_hms_opt(hour, minute, second));
     let Some(naive) = naive else {
@@ -161,9 +158,7 @@ pub(crate) fn localize_time(value: &str) -> String {
 
 fn norm_channel(value: &str) -> String {
     let trimmed = quality_suffix().replace(value.trim(), "");
-    separators()
-        .replace_all(&trimmed, "")
-        .to_lowercase()
+    separators().replace_all(&trimmed, "").to_lowercase()
 }
 
 /// 0 = 不匹配；分数越高越可信。
@@ -248,7 +243,9 @@ fn collect_channels(raw: &str) -> ChannelIndex {
                 b"channel" => {
                     if let Some(id) = current.take() {
                         for name in &names {
-                            names_to_id.entry(name.clone()).or_insert_with(|| id.clone());
+                            names_to_id
+                                .entry(name.clone())
+                                .or_insert_with(|| id.clone());
                         }
                         id_to_names.insert(id, std::mem::take(&mut names));
                     }

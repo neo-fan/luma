@@ -24,8 +24,7 @@ pub const DEFAULT_PROXY: &str = "https://gh-proxy.com/";
 
 /// 探测目标：一个长期存在的小文件，三家的 raw 通道都能取到。
 /// 用 GitHub 官方 raw 而不是某个具体源的 ext —— 探针要能长期活着。
-const PROBE_TARGET: &str =
-    "https://raw.githubusercontent.com/hunshcn/gh-proxy/master/README.md";
+const PROBE_TARGET: &str = "https://raw.githubusercontent.com/hunshcn/gh-proxy/master/README.md";
 
 /// GitHub 系主机。子域按后缀匹配（`objects.githubusercontent.com` 等）。
 const GITHUB_HOSTS: &[&str] = &[
@@ -77,7 +76,12 @@ pub fn choices() -> Vec<ProxyChoice> {
             "https://ghproxy.net/",
             "备用节点（1~18s 波动），大文件优先用前两个",
         ),
-        row("direct", "直连 GitHub", "", "不走代理，网络能直连 GitHub 时选这个"),
+        row(
+            "direct",
+            "直连 GitHub",
+            "",
+            "不走代理，网络能直连 GitHub 时选这个",
+        ),
     ]
 }
 
@@ -107,9 +111,7 @@ pub fn normalize_prefix(raw: &str) -> Result<String, AppError> {
 
 fn host_of(url: &str) -> Option<&str> {
     let (_, rest) = url.split_once("://")?;
-    let end = rest
-        .find(['/', '?', '#'])
-        .unwrap_or(rest.len());
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..end];
     // 去掉 userinfo 与端口：`user@host:443`
     let host = authority.rsplit('@').next().unwrap_or(authority);
@@ -190,7 +192,10 @@ pub fn rewrite_value(value: &mut Value, prefix: &str) -> usize {
                 0
             }
         }
-        Value::Array(items) => items.iter_mut().map(|item| rewrite_value(item, prefix)).sum(),
+        Value::Array(items) => items
+            .iter_mut()
+            .map(|item| rewrite_value(item, prefix))
+            .sum(),
         Value::Object(map) => map
             .values_mut()
             .map(|item| rewrite_value(item, prefix))
@@ -381,7 +386,10 @@ mod tests {
 
     #[test]
     fn direct_mode_strips_existing_prefix() {
-        assert_eq!(apply("https://ghfast.top/https://github.com/a/b", ""), "https://github.com/a/b");
+        assert_eq!(
+            apply("https://ghfast.top/https://github.com/a/b", ""),
+            "https://github.com/a/b"
+        );
         // 已经是裸地址时借原字符串
         assert!(matches!(
             apply("https://github.com/a/b", ""),
@@ -411,20 +419,21 @@ mod tests {
 
     #[test]
     fn snapshot_rewrite_covers_nested_fields() {
-        let mut snapshot: crate::config::ConfigSnapshot = serde_json::from_value(serde_json::json!({
-            "id": "c1",
-            "name": "demo",
-            "importedAt": "2026-11-14T00:00:00Z",
-            "sites": [{
-                "key": "a",
-                "api": "https://github.com/x/y/raw/main/a.py",
-                "ext": "https://raw.githubusercontent.com/x/y/main/e.js",
-                "logo": "https://img.example.com/logo.png"
-            }],
-            "parses": [{ "url": "https://github.com/p/q/releases/download/v1/jar" }],
-            "wallpaper": "https://github.com/w/wall/raw/main/1.jpg"
-        }))
-        .unwrap();
+        let mut snapshot: crate::config::ConfigSnapshot =
+            serde_json::from_value(serde_json::json!({
+                "id": "c1",
+                "name": "demo",
+                "importedAt": "2026-11-14T00:00:00Z",
+                "sites": [{
+                    "key": "a",
+                    "api": "https://github.com/x/y/raw/main/a.py",
+                    "ext": "https://raw.githubusercontent.com/x/y/main/e.js",
+                    "logo": "https://img.example.com/logo.png"
+                }],
+                "parses": [{ "url": "https://github.com/p/q/releases/download/v1/jar" }],
+                "wallpaper": "https://github.com/w/wall/raw/main/1.jpg"
+            }))
+            .unwrap();
         let changed = rewrite_snapshot(&mut snapshot, "https://gh-proxy.com/");
         assert_eq!(changed, 4, "sites.api/ext + parses.url + wallpaper");
         assert_eq!(
@@ -432,6 +441,9 @@ mod tests {
             "https://gh-proxy.com/https://github.com/x/y/raw/main/a.py"
         );
         // 非 GitHub 字段保持原样
-        assert_eq!(snapshot.sites[0]["logo"], "https://img.example.com/logo.png");
+        assert_eq!(
+            snapshot.sites[0]["logo"],
+            "https://img.example.com/logo.png"
+        );
     }
 }

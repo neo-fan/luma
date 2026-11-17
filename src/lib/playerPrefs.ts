@@ -1,16 +1,18 @@
 /**
- * 播放偏好（音量 / 倍速 / 上次清晰度）。
+ * 播放偏好（音量 / 静音 / 上次清晰度）。
  *
- * 连看 36 集时，每集都把音量、倍速重置回默认是最烦的体验问题之一；这里把
- * 三个值落到 localStorage，新一集 / 下一部片都沿用。清晰度只在「同一档位
- * 仍存在」时套用，源站换码率就退回自动，避免硬套一个不存在的档位。
+ * 连看 36 集时，每集都把音量重置回默认是最烦的体验问题之一；这里把它们落到
+ * localStorage，新一集 / 下一部片都沿用。清晰度只在「同一档位仍存在」时套用，
+ * 源站换码率就退回自动，避免硬套一个不存在的档位。
+ *
+ * **倍速不在这里**：倍速是「看这部剧的习惯」，不是全局习惯——同一晚上看悬疑剧
+ * 想 1.5 倍、看综艺想 1 倍是常态。它跟着 history 的那一行（按剧名合并，换源也
+ * 带着走），见 `HistoryItem.rate`。
  */
 
 export interface PlayerPrefs {
   /** 0~1。 */
   volume: number;
-  /** 倍速，0.5~3，实际可选值见 ArtPlayer 菜单。 */
-  rate: number;
   /**
    * 用户是否按过静音。单独记：音量 0 有两种含义（拖到 0 / 按了静音），
    * 只有后者点一次音量图标就该恢复，前者得靠用户重新拖。
@@ -20,7 +22,16 @@ export interface PlayerPrefs {
   height?: number;
 }
 
-export const DEFAULT_PREFS: PlayerPrefs = { volume: 0.8, rate: 1, muted: false };
+export const DEFAULT_PREFS: PlayerPrefs = { volume: 0.8, muted: false };
+
+/**
+ * 倍速合法区间。虽然倍速本身不再存在这份偏好里，区间仍是播放器的事实：
+ * ArtPlayer 菜单只给这几档，按剧记忆的值入库前也要过它。
+ */
+export const RATE_MIN = 0.5;
+export const RATE_MAX = 3;
+/** 没设过倍速的剧从这里起播。 */
+export const DEFAULT_RATE = 1;
 
 import { PLAYER_PREFS_KEY } from "./storageKeys";
 
@@ -38,8 +49,12 @@ export function clampVolume(value: number): number {
   return clamp(value, 0, 1, DEFAULT_PREFS.volume);
 }
 
+/**
+ * 倍速合法区间。倍速本身已不存在这份全局偏好里（它按剧存在 history 行上），
+ * 但区间仍是播放器的事实：ArtPlayer 菜单只给这几档，入库前也要过一遍。
+ */
 export function clampRate(value: number): number {
-  return clamp(value, 0.5, 3, DEFAULT_PREFS.rate);
+  return clamp(value, RATE_MIN, RATE_MAX, DEFAULT_RATE);
 }
 
 function storageOf(storage?: Storage): Storage | null {
@@ -75,7 +90,6 @@ export function readPlayerPrefs(storage?: Storage): PlayerPrefs {
     const legacyZero = parsed.muted === undefined && Number(parsed.volume) <= 0.01;
     const prefs: PlayerPrefs = {
       volume: legacyZero ? DEFAULT_PREFS.volume : clampVolume(Number(parsed.volume)),
-      rate: clampRate(Number(parsed.rate)),
       muted: parsed.muted === true,
     };
     const height = Number(parsed.height);
@@ -92,7 +106,6 @@ export function readPlayerPrefs(storage?: Storage): PlayerPrefs {
 export function writePlayerPrefs(patch: Partial<PlayerPrefs>, storage?: Storage): PlayerPrefs {
   const next = { ...readPlayerPrefs(storage), ...patch };
   next.volume = clampVolume(next.volume);
-  next.rate = clampRate(next.rate);
   next.muted = next.muted === true;
   if (next.height !== undefined) {
     next.height = Number.isFinite(next.height) && next.height > 0 ? Math.round(next.height) : undefined;

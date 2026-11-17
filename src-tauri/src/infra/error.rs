@@ -61,7 +61,11 @@ impl AppError {
         self
     }
 
-    pub fn from_io(code: impl Into<String>, message: impl Into<String>, err: &std::io::Error) -> Self {
+    pub fn from_io(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        err: &std::io::Error,
+    ) -> Self {
         Self::new(code, message).with_cause(err.to_string())
     }
 }

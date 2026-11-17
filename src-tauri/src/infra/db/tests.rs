@@ -46,7 +46,10 @@ fn schema_and_config_activation_are_transactional() {
 fn deleting_the_active_config_promotes_the_newest_remaining_one() {
     let dir = temp_dir("delete");
     let db = Db::at(dir.clone()).expect("open db");
-    for (id, stamp) in [("old", "2026-01-01T00:00:00Z"), ("box", "2026-11-10T00:00:00Z")] {
+    for (id, stamp) in [
+        ("old", "2026-01-01T00:00:00Z"),
+        ("box", "2026-11-10T00:00:00Z"),
+    ] {
         db.activate_config(ConfigWrite {
             id,
             name: id,
@@ -98,6 +101,8 @@ fn favourites_and_history_use_primary_keys_and_cap() {
             episode_name: format!("第 {index} 集"),
             play_from: "线路A".into(),
             resolution: String::new(),
+            rate: 0.0,
+            skip_json: String::new(),
             position_ms: 100,
             duration_ms: 1000,
             updated_at: index as u64,
@@ -117,6 +122,8 @@ fn favourites_and_history_use_primary_keys_and_cap() {
         episode_name: "第 5 集".into(),
         play_from: "线路B".into(),
         resolution: String::new(),
+        rate: 0.0,
+        skip_json: String::new(),
         position_ms: 999,
         duration_ms: 1000,
         updated_at: 9999,
@@ -143,26 +150,33 @@ fn favourites_and_history_use_primary_keys_and_cap() {
 fn history_dedupes_by_exact_title_across_sources() {
     let dir = temp_dir("history-title");
     let db = Db::at(dir.clone()).expect("open db");
-    let row = |site: &str, id: &str, name: &str, pic: &str, episode: &str, pos: u64| {
-        HistoryRow {
-            site_key: site.into(),
-            vod_id: id.into(),
-            name: name.into(),
-            pic: pic.into(),
-            remarks: String::new(),
-            site_name: "CMS".into(),
-            play_url: format!("http://x/{id}"),
-            episode_name: episode.into(),
-            play_from: "线路A".into(),
-            resolution: String::new(),
-            position_ms: pos,
-            duration_ms: 60000,
-            updated_at: pos,
-        }
+    let row = |site: &str, id: &str, name: &str, pic: &str, episode: &str, pos: u64| HistoryRow {
+        site_key: site.into(),
+        vod_id: id.into(),
+        name: name.into(),
+        pic: pic.into(),
+        remarks: String::new(),
+        site_name: "CMS".into(),
+        play_url: format!("http://x/{id}"),
+        episode_name: episode.into(),
+        play_from: "线路A".into(),
+        resolution: String::new(),
+        position_ms: pos,
+        duration_ms: 60000,
+        rate: 0.0,
+        skip_json: String::new(),
+        updated_at: pos,
     };
 
-    db.upsert_history(&row("cms_a", "11", "庆余年", "http://a/p.jpg", "第 1 集", 1000))
-        .unwrap();
+    db.upsert_history(&row(
+        "cms_a",
+        "11",
+        "庆余年",
+        "http://a/p.jpg",
+        "第 1 集",
+        1000,
+    ))
+    .unwrap();
     // 同名、不同站点不同 id：换源后只应保留这一条。
     db.upsert_history(&row("cms_b", "22", "庆余年", "", "第 2 集", 2000))
         .unwrap();
@@ -208,6 +222,8 @@ fn history_resolution_survives_empty_upsert() {
         episode_name: String::new(),
         play_from: String::new(),
         resolution: resolution.into(),
+        rate: 0.0,
+        skip_json: String::new(),
         position_ms,
         duration_ms: 1000,
         updated_at: position_ms,
@@ -237,6 +253,65 @@ fn history_resolution_survives_empty_upsert() {
 
 /// 回填封面：补到该补的行、空值不覆盖、而且绝不能改变历史顺序或收藏顺序。
 #[test]
+fn history_carries_rate_and_skip_json_across_sources() {
+    let dir = temp_dir("rate-skip");
+    let db = Db::at(dir.clone()).expect("open db");
+    let row = |site: &str, id: &str, rate: f64, skip: &str, pos: u64| HistoryRow {
+        site_key: site.into(),
+        vod_id: id.into(),
+        name: "庆余年".into(),
+        pic: String::new(),
+        remarks: String::new(),
+        site_name: "CMS".into(),
+        play_url: format!("http://x/{id}"),
+        episode_name: String::new(),
+        play_from: String::new(),
+        resolution: String::new(),
+        rate,
+        skip_json: skip.into(),
+        position_ms: pos,
+        duration_ms: 60000,
+        updated_at: pos,
+    };
+
+    db.upsert_history(&row(
+        "cms_a",
+        "11",
+        1.5,
+        "[{\"type\":\"opening\",\"start\":0,\"end\":90}]",
+        1000,
+    ))
+    .unwrap();
+    // 换源：新站这次写入既没带倍速也没带跳过配置（0 / 空串），要从同名旧行继承。
+    db.upsert_history(&row("cms_b", "22", 0.0, "", 2000))
+        .unwrap();
+    let hit = db.history().unwrap().remove(0);
+    assert_eq!(hit.site_key, "cms_b", "行跟着最近一次观看走");
+    assert_eq!(hit.rate, 1.5, "倍速不能被一次没带值的写入重置回默认");
+    assert_eq!(
+        hit.skip_json,
+        "[{\"type\":\"opening\",\"start\":0,\"end\":90}]"
+    );
+
+    // 用户真的改了倍速：非 0 值覆盖。
+    db.upsert_history(&row("cms_b", "22", 2.0, "", 3000))
+        .unwrap();
+    assert_eq!(db.history().unwrap()[0].rate, 2.0);
+
+    // 「清空片段」写成 `[]`，与「这次没带」的空串是两回事。
+    db.upsert_history(&row("cms_b", "22", 0.0, "[]", 4000))
+        .unwrap();
+    let after = db.history().unwrap()[0].skip_json.clone();
+    assert_eq!(after, "[]", "空数组是显式清空，必须落库");
+
+    // 重开库仍是这两份值（落在 SQLite，不是内存）。
+    let reopened = Db::at(dir.clone()).expect("reopen db").history().unwrap();
+    assert_eq!(reopened[0].rate, 2.0);
+    assert_eq!(reopened[0].skip_json, "[]");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn meta_patch_fills_cover_without_reordering() {
     let dir = temp_dir("meta");
     let db = Db::at(dir.clone()).expect("open db");
@@ -252,12 +327,15 @@ fn meta_patch_fills_cover_without_reordering() {
         episode_name: String::new(),
         play_from: String::new(),
         resolution: String::new(),
+        rate: 0.0,
+        skip_json: String::new(),
         position_ms: 0,
         duration_ms: 0,
         updated_at,
     };
     db.upsert_history(&history("1", "", 100)).unwrap();
-    db.upsert_history(&history("2", "http://old/2.jpg", 200)).unwrap();
+    db.upsert_history(&history("2", "http://old/2.jpg", 200))
+        .unwrap();
 
     // 详情页回填：命中一行，`updated_at` 不变（否则老记录会被顶到最前）。
     assert!(db
@@ -270,9 +348,7 @@ fn meta_patch_fills_cover_without_reordering() {
     assert_eq!(one.updated_at, 100);
 
     // 空参数不覆盖已有值；不存在的行返回 false。
-    assert!(db
-        .patch_history_meta("cms", "2", "", "", "", "")
-        .unwrap());
+    assert!(db.patch_history_meta("cms", "2", "", "", "", "").unwrap());
     let rows = db.history().unwrap();
     let two = rows.iter().find(|row| row.vod_id == "2").unwrap();
     assert_eq!(two.pic, "http://old/2.jpg");
@@ -301,7 +377,10 @@ fn meta_patch_fills_cover_without_reordering() {
         .unwrap());
     let favorites = db.favorites().unwrap();
     assert_eq!(favorites[0].pic, "http://new/1.jpg");
-    assert_eq!(favorites[0].added_at, 7, "backfill must not reorder favourites");
+    assert_eq!(
+        favorites[0].added_at, 7,
+        "backfill must not reorder favourites"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

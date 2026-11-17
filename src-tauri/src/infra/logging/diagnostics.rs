@@ -110,7 +110,11 @@ pub(crate) fn config_diagnostics(config: Option<ConfigDigest>) -> Option<ConfigD
     let enabled = snapshot
         .sites
         .iter()
-        .filter(|site| site.get("enabled").and_then(|item| item.as_bool()).unwrap_or(true))
+        .filter(|site| {
+            site.get("enabled")
+                .and_then(|item| item.as_bool())
+                .unwrap_or(true)
+        })
         .count();
     let blocked = snapshot
         .sites
@@ -179,7 +183,8 @@ fn log_files() -> (Vec<LogFileInfo>, u64) {
 /// 建好日志目录并在资源管理器里打开（命令层在 `mod.rs`）。
 pub(super) fn open_dir() -> Result<(), AppError> {
     let dir = log_dir();
-    fs::create_dir_all(&dir)
-        .map_err(|err| AppError::new(code::INTERNAL, "create log dir failed").with_cause(err.to_string()))?;
+    fs::create_dir_all(&dir).map_err(|err| {
+        AppError::new(code::INTERNAL, "create log dir failed").with_cause(err.to_string())
+    })?;
     reveal(&dir)
 }

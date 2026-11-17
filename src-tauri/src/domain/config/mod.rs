@@ -16,7 +16,6 @@ use derive::{derive_runtime, refresh_policy, runtime_of};
 use github::read_gh_state;
 use naming::clean_name;
 
-
 /// 站点体检里「手动禁用」写入的原因串。订阅定时刷新会重新派生 runtime，
 /// 必须按这个串把用户手动屏蔽的站点再禁一遍，否则每天更新一次订阅就把
 /// 用户挑出来的慢源/死源全部复活。
@@ -130,7 +129,6 @@ pub struct RefreshOutcome {
     pub snapshot: Option<ConfigSnapshot>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredConfig {
     /// Config exactly as imported + normalized. Runtime policy NEVER rewrites
@@ -170,12 +168,16 @@ impl ConfigStore {
     pub fn load(db: Arc<Db>) -> Result<Self, AppError> {
         let mut entries = Vec::new();
         for row in db.config_rows()? {
-            let imported: ConfigSnapshot = serde_json::from_str(&row.imported_json).map_err(|err| {
-                AppError::new(code::INTERNAL, format!("config {} import is corrupt", row.id))
+            let imported: ConfigSnapshot =
+                serde_json::from_str(&row.imported_json).map_err(|err| {
+                    AppError::new(
+                        code::INTERNAL,
+                        format!("config {} import is corrupt", row.id),
+                    )
                     .with_cause(err.to_string())
-            })?;
-            let source: ConfigSource = serde_json::from_str(&row.source_json)
-                .unwrap_or_else(|_| ConfigSource {
+                })?;
+            let source: ConfigSource =
+                serde_json::from_str(&row.source_json).unwrap_or_else(|_| ConfigSource {
                     kind: "text".into(),
                     value: String::new(),
                     name: None,
@@ -184,11 +186,18 @@ impl ConfigStore {
                 None
             } else {
                 Some(serde_json::from_str(&row.runtime_json).map_err(|err| {
-                    AppError::new(code::INTERNAL, format!("config {} runtime is corrupt", row.id))
-                        .with_cause(err.to_string())
+                    AppError::new(
+                        code::INTERNAL,
+                        format!("config {} runtime is corrupt", row.id),
+                    )
+                    .with_cause(err.to_string())
                 })?)
             };
-            let mut stored = StoredConfig { imported, runtime, source };
+            let mut stored = StoredConfig {
+                imported,
+                runtime,
+                source,
+            };
             if stored.runtime.is_none() {
                 let derived = derive_runtime(&stored.imported);
                 db.set_runtime_json(&stored.imported.id, &serde_json::to_string(&derived)?)?;
@@ -259,11 +268,17 @@ impl ConfigStore {
             source,
         };
         {
-            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = self
+                .entries
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             guard.retain(|entry| entry.imported.id != id);
             guard.push(stored);
         }
-        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.clone());
+        *self
+            .active
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.clone());
         crate::netrules::replace(&headers);
         // 刚导入即以「已检查」起算：否则后台任务在下一分钟就把同一份配置
         // 重拉一遍，白花一次请求。写入失败不影响导入结果。
@@ -284,7 +299,10 @@ impl ConfigStore {
         // 一次扫出全部刷新状态，避免配置列表逐行查库；读库失败只意味着
         // 状态列显示「未检查过」，不影响列表本身。
         let states = self.all_refresh_states();
-        let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard
             .iter()
             .map(|entry| {
@@ -319,7 +337,10 @@ impl ConfigStore {
     /// snapshot so the frontend can swap its site cache in the same breath.
     pub fn activate(&self, id: &str) -> Result<ConfigSnapshot, AppError> {
         let snapshot = {
-            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = self
+                .entries
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let entry = guard
                 .iter()
                 .find(|entry| entry.imported.id == id)
@@ -331,7 +352,10 @@ impl ConfigStore {
         // Persist first: if SQLite rejects the write the in-memory active id
         // must keep pointing at the config that is actually stored.
         self.db.set_active_config_id(Some(id))?;
-        *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.to_string());
+        *self
+            .active
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(id.to_string());
         crate::netrules::replace(&snapshot.headers);
         Ok(snapshot)
     }
@@ -343,17 +367,27 @@ impl ConfigStore {
     pub fn rename(&self, id: &str, name: &str) -> Result<ConfigMeta, AppError> {
         let name = clean_name(name);
         if name.is_empty() {
-            return Err(AppError::new(code::INVALID_ARGUMENT, "config name is empty"));
+            return Err(AppError::new(
+                code::INVALID_ARGUMENT,
+                "config name is empty",
+            ));
         }
         let (mut imported, mut runtime, source) = {
-            let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = self
+                .entries
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let entry = guard
                 .iter()
                 .find(|entry| entry.imported.id == id)
                 .ok_or_else(|| {
                     AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found"))
                 })?;
-            (entry.imported.clone(), runtime_of(entry).clone(), entry.source.clone())
+            (
+                entry.imported.clone(),
+                runtime_of(entry).clone(),
+                entry.source.clone(),
+            )
         };
         imported.name = name.clone();
         runtime.name = name.clone();
@@ -369,7 +403,10 @@ impl ConfigStore {
             source_json: &source_json,
         })?;
         {
-            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = self
+                .entries
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(entry) = guard.iter_mut().find(|entry| entry.imported.id == id) {
                 entry.imported.name = name.clone();
                 if let Some(snapshot) = entry.runtime.as_mut() {
@@ -385,7 +422,10 @@ impl ConfigStore {
             source,
             imported_at: imported.imported_at,
             refreshable,
-            last_checked_at: state.as_ref().map(|state| state.checked_at).filter(|at| *at > 0),
+            last_checked_at: state
+                .as_ref()
+                .map(|state| state.checked_at)
+                .filter(|at| *at > 0),
             last_changed_at: state.as_ref().and_then(|state| state.changed_at),
             refresh_error: state.and_then(|state| state.error),
         })
@@ -401,7 +441,10 @@ impl ConfigStore {
             .iter()
             .any(|entry| entry.imported.id == id);
         if !exists {
-            return Err(AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found")));
+            return Err(AppError::new(
+                code::INVALID_ARGUMENT,
+                format!("config {id} not found"),
+            ));
         }
         let was_active = self
             .active
@@ -415,14 +458,20 @@ impl ConfigStore {
         // 刷新状态跟着配置一起走：留着只会在 meta 表里堆孤儿键。
         let _ = self.db.meta_remove(&format!("{META_REFRESH_PREFIX}{id}"));
         {
-            let mut guard = self.entries.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut guard = self
+                .entries
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             guard.retain(|entry| entry.imported.id != id);
         }
         // Only now touch `active`, and only if it pointed at the removed entry.
         // `all_sites` acquires active then entries; taking them in the opposite
         // order (or overlapping) lets the two callers deadlock.
         if was_active {
-            *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = next_active;
+            *self
+                .active
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = next_active;
         }
         if let Some(snapshot) = self.active_snapshot() {
             crate::netrules::replace(&snapshot.headers);
@@ -434,7 +483,10 @@ impl ConfigStore {
         // Look in the imported configs on purpose: a favourite/history entry
         // may still point at a site that the runtime policy now blocks. The
         // caller (`spider_invoke`) enforces the policy before dispatch.
-        let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for entry in guard.iter() {
             for site in &entry.imported.sites {
                 if site.get("key").and_then(Value::as_str) == Some(site_key) {
@@ -458,7 +510,10 @@ impl ConfigStore {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         pick(active.as_deref(), guard.as_slice()).map(|entry| runtime_of(entry).clone())
     }
 
@@ -471,7 +526,10 @@ impl ConfigStore {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         pick(active.as_deref(), guard.as_slice())
             .map(|entry| runtime_of(entry).parses.clone())
             .unwrap_or_default()
@@ -489,7 +547,10 @@ impl ConfigStore {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        let guard = self.entries.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = self
+            .entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let has_active = active
             .as_ref()
             .map(|id| guard.iter().any(|entry| &entry.imported.id == id))

@@ -11,11 +11,7 @@ use crate::spider::SpiderMethod;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-pub async fn invoke(
-    site: &Value,
-    method: SpiderMethod,
-    args: &[Value],
-) -> Result<Value, AppError> {
+pub async fn invoke(site: &Value, method: SpiderMethod, args: &[Value]) -> Result<Value, AppError> {
     // CMS has no `playerContent`: play URLs ship inside `detailContent`'s
     // `vod_play_url`. Return an empty object rather than INVALID_ARGUMENT —
     // the caller (usePlayResolution) then keeps the detail URL, and the app
@@ -165,7 +161,10 @@ mod tests {
     fn separator_keeps_trailing_slash_for_extensionless_paths() {
         assert_eq!(separator_for("https://x.com/api.php/provide/vod"), "/?");
         assert_eq!(separator_for("https://x.com/api.php"), "?");
-        assert_eq!(separator_for("https://x.com/api.php/provide/vod?token=1"), "&");
+        assert_eq!(
+            separator_for("https://x.com/api.php/provide/vod?token=1"),
+            "&"
+        );
         assert_eq!(separator_for("http://127.0.0.1:8787/cms/vod"), "/?");
     }
 

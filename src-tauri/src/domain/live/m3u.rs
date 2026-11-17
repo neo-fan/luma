@@ -294,9 +294,14 @@ mod tests {
     fn merging_same_name_channels_keeps_first_declared_headers() {
         let raw = "#EXTM3U\n#EXTINF:-1 http-user-agent=\"first\" group-title=\"央视\",CCTV1\nhttp://a/1.m3u8\n#EXTINF:-1 http-user-agent=\"second\" group-title=\"央视\",CCTV1\nhttp://b/2.m3u8\n";
         let parsed = parse(raw, "");
-        let channels = parsed["groups"][0]["channels"].as_array().expect("channels");
+        let channels = parsed["groups"][0]["channels"]
+            .as_array()
+            .expect("channels");
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0]["ua"], "first");
-        assert_eq!(channels[0]["urls"], json!(["http://a/1.m3u8", "http://b/2.m3u8"]));
+        assert_eq!(
+            channels[0]["urls"],
+            json!(["http://a/1.m3u8", "http://b/2.m3u8"])
+        );
     }
 }

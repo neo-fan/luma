@@ -149,7 +149,9 @@ async fn cold_source(site: Value) -> Result<Source, AppError> {
         method: None,
         headers: site.get("headers").and_then(Value::as_object).map(|map| {
             map.iter()
-                .filter_map(|(key, value)| value.as_str().map(|text| (key.clone(), text.to_string())))
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|text| (key.clone(), text.to_string()))
+                })
                 .collect::<HashMap<String, String>>()
         }),
         body: None,
@@ -201,10 +203,9 @@ impl SpiderRuntime for PythonRuntime {
         let source = source_for(site).await?;
         let ext = site.get("ext").and_then(Value::as_str).unwrap_or("");
 
-        let _permit = concurrency()
-            .acquire()
-            .await
-            .map_err(|err| AppError::new(code::INTERNAL, "py semaphore closed").with_cause(err.to_string()))?;
+        let _permit = concurrency().acquire().await.map_err(|err| {
+            AppError::new(code::INTERNAL, "py semaphore closed").with_cause(err.to_string())
+        })?;
 
         let params = json!({
             "source": source,
@@ -217,12 +218,15 @@ impl SpiderRuntime for PythonRuntime {
             "api": site.get("api").and_then(Value::as_str).unwrap_or(""),
             "timeoutMs": timeout.as_millis() as u64,
         });
-        bridge::call_with_timeout("spider.py", params, timeout).await
+        bridge::call_with_timeout("spider.py", params, timeout)
+            .await
             .map(|value| normalize(site, method, args, value))
     }
 
     async fn health(&self) -> Result<(), AppError> {
-        bridge::call_with_timeout("ping", json!({}), Duration::from_secs(5)).await.map(|_| ())
+        bridge::call_with_timeout("ping", json!({}), Duration::from_secs(5))
+            .await
+            .map(|_| ())
     }
 
     /// `Spider.proxy(Map)` for `/proxy?do=py`. Python returns
@@ -293,25 +297,33 @@ mod tests {
     /// 起一个本地桩：返回什么由 `mode` 决定（`ok` 给合法 Spider 脚本，
     /// `junk` 给不是脚本的内容）。命中次数记在**调用方传入的计数器**上——
     /// 用全局静态会被并行测试互相污染（第一版就因此得到 3 次命中的假阴性）。
-    async fn stub(mode: &'static str, hits: Arc<AtomicUsize>) -> (String, tokio::task::JoinHandle<()>) {
+    async fn stub(
+        mode: &'static str,
+        hits: Arc<AtomicUsize>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         let counter = hits.clone();
-        let router = axum::Router::new().route("/", get(move || {
-            let hits = counter.clone();
-            async move {
-                hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let body = if mode == "ok" {
-                    "class Spider:\n    pass\n"
-                } else {
-                    "<!doctype html><html>gate page</html>"
-                };
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "text/plain; charset=utf-8")
-                    .body(Body::from(body))
-                    .unwrap()
-            }
-        }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let router = axum::Router::new().route(
+            "/",
+            get(move || {
+                let hits = counter.clone();
+                async move {
+                    hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let body = if mode == "ok" {
+                        "class Spider:\n    pass\n"
+                    } else {
+                        "<!doctype html><html>gate page</html>"
+                    };
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "text/plain; charset=utf-8")
+                        .body(Body::from(body))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
         let addr = listener.local_addr().expect("addr");
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;

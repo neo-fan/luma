@@ -21,7 +21,7 @@ impl Db {
             let mut stmt = conn.prepare(
                 "SELECT site_key, vod_id, name, pic, remarks, site_name,
                         play_url, position_ms, duration_ms, updated_at,
-                        episode_name, play_from, resolution
+                        episode_name, play_from, resolution, rate, skip_json
                  FROM history",
             )?;
             let rows = stmt.query_map([], history_from_row)?;
@@ -45,20 +45,21 @@ impl Db {
             let mut removed: Vec<(String, String)> = Vec::new();
             if !name.is_empty() {
                 // 换源时旧行会被删掉，但它可能已经补过封面 / 备注 / 站点名 /
-                // 分辨率；这些空值不该被一次「详情还没回来」的写入抹掉。
-                // 先挑一条同名旧行把非空字段继承过来，再删除所有同名旧行。
+                // 分辨率，也可能已经存过这部剧的倍速与跳过配置；这些都不该被
+                // 一次「详情还没回来」的写入抹掉。先挑一条同名旧行把值继承
+                // 过来，再删除所有同名旧行。
                 let mut stmt = tx.prepare(
-                    "SELECT pic, remarks, site_name, resolution FROM history
+                    "SELECT pic, remarks, site_name, resolution, rate, skip_json FROM history
                      WHERE name = ?1 AND (site_key <> ?2 OR vod_id <> ?3)
                      ORDER BY updated_at DESC LIMIT 1",
                 )?;
-                let inherited: Option<(String, String, String, String)> = stmt
+                let inherited: Option<(String, String, String, String, f64, String)> = stmt
                     .query_row(params![name, row.site_key, row.vod_id], |r| {
-                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
                     })
                     .optional()?;
                 drop(stmt);
-                if let Some((pic, remarks, site_name, resolution)) = inherited {
+                if let Some((pic, remarks, site_name, resolution, rate, skip_json)) = inherited {
                     if merged.pic.is_empty() {
                         merged.pic = pic;
                     }
@@ -70,6 +71,13 @@ impl Db {
                     }
                     if merged.resolution.is_empty() {
                         merged.resolution = resolution;
+                    }
+                    // 倍速 0、跳过配置空串都表示「这次写入没带」，不是「用户清成了默认」。
+                    if merged.rate == 0.0 {
+                        merged.rate = rate;
+                    }
+                    if merged.skip_json.is_empty() {
+                        merged.skip_json = skip_json;
                     }
                 }
                 // 被同名合并删掉的行先查出来（同一事务内，行数最多是这部剧的
@@ -93,42 +101,49 @@ impl Db {
                 )?;
             }
             tx.execute(
-                "INSERT INTO history
-                     (site_key, vod_id, name, pic, remarks, site_name,
-                      play_url, position_ms, duration_ms, updated_at,
-                      episode_name, play_from, resolution)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                 ON CONFLICT(site_key, vod_id) DO UPDATE SET
-                     name = excluded.name,
-                     -- 详情还没拉到时写入的是空封面；不能用空串覆盖掉库里已有的
-                     -- 封面 / 备注 / 站点名，否则一次「先播放后详情」就把列表打回空白。
-                     pic = CASE WHEN excluded.pic <> '' THEN excluded.pic ELSE pic END,
-                     remarks = CASE WHEN excluded.remarks <> '' THEN excluded.remarks ELSE remarks END,
-                     site_name = CASE WHEN excluded.site_name <> '' THEN excluded.site_name ELSE site_name END,
-                     play_url = excluded.play_url,
-                     position_ms = excluded.position_ms,
-                     duration_ms = excluded.duration_ms,
-                     updated_at = excluded.updated_at,
-                     episode_name = excluded.episode_name,
-                     play_from = excluded.play_from,
-                     -- 分辨率只有真出画后才拿得到，空值（还没解码）不能抹掉已有值。
-                     resolution = CASE WHEN excluded.resolution <> '' THEN excluded.resolution ELSE resolution END",
-                params![
-                    merged.site_key,
-                    merged.vod_id,
-                    merged.name,
-                    merged.pic,
-                    merged.remarks,
-                    merged.site_name,
-                    merged.play_url,
-                    merged.position_ms as i64,
-                    merged.duration_ms as i64,
-                    merged.updated_at as i64,
-                    merged.episode_name,
-                    merged.play_from,
-                    merged.resolution,
-                ],
-            )?;
+                 "INSERT INTO history
+                      (site_key, vod_id, name, pic, remarks, site_name,
+                       play_url, position_ms, duration_ms, updated_at,
+                       episode_name, play_from, resolution, rate, skip_json)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                  ON CONFLICT(site_key, vod_id) DO UPDATE SET
+                      name = excluded.name,
+                      -- 详情还没拉到时写入的是空封面；不能用空串覆盖掉库里已有的
+                      -- 封面 / 备注 / 站点名，否则一次「先播放后详情」就把列表打回空白。
+                      pic = CASE WHEN excluded.pic <> '' THEN excluded.pic ELSE pic END,
+                      remarks = CASE WHEN excluded.remarks <> '' THEN excluded.remarks ELSE remarks END,
+                      site_name = CASE WHEN excluded.site_name <> '' THEN excluded.site_name ELSE site_name END,
+                      play_url = excluded.play_url,
+                      position_ms = excluded.position_ms,
+                      duration_ms = excluded.duration_ms,
+                      updated_at = excluded.updated_at,
+                      episode_name = excluded.episode_name,
+                      play_from = excluded.play_from,
+                      -- 分辨率只有真出画后才拿得到，空值（还没解码）不能抹掉已有值。
+                      resolution = CASE WHEN excluded.resolution <> '' THEN excluded.resolution ELSE resolution END,
+                      -- 倍速与跳过配置同理：空值 = 这次写入没带这个信息，不是用户清过。
+                      -- 「真的清掉了」由调用方写显式值表达（rate 写 1.0 之外的合法值、
+                      -- skip_json 写 `[]`）。
+                      rate = CASE WHEN excluded.rate > 0 THEN excluded.rate ELSE rate END,
+                      skip_json = CASE WHEN excluded.skip_json <> '' THEN excluded.skip_json ELSE skip_json END",
+                 params![
+                     merged.site_key,
+                     merged.vod_id,
+                     merged.name,
+                     merged.pic,
+                     merged.remarks,
+                     merged.site_name,
+                     merged.play_url,
+                     merged.position_ms as i64,
+                     merged.duration_ms as i64,
+                     merged.updated_at as i64,
+                     merged.episode_name,
+                     merged.play_from,
+                     merged.resolution,
+                     merged.rate,
+                     merged.skip_json,
+                 ],
+             )?;
             // Keep the newest MAX_HISTORY rows instead of rebuilding a Vec.
             // 先问「这次会裁掉谁」（正常路径 0～1 行），再删；被裁的键一并报告。
             let mut stmt = tx.prepare(
@@ -216,5 +231,7 @@ fn history_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRow> {
         episode_name: row.get(10)?,
         play_from: row.get(11)?,
         resolution: row.get(12)?,
+        rate: row.get(13)?,
+        skip_json: row.get(14)?,
     })
 }

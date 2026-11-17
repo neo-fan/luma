@@ -112,7 +112,10 @@ fn as_int(value: Option<&Value>, default: i64) -> i64 {
 
 pub(crate) fn page_from_json(payload: &Map<String, Value>) -> Value {
     let items: Vec<Value> = match payload.get("list") {
-        Some(Value::Array(list)) => list.iter().filter_map(|item| item.as_object().map(vod)).collect(),
+        Some(Value::Array(list)) => list
+            .iter()
+            .filter_map(|item| item.as_object().map(vod))
+            .collect(),
         _ => Vec::new(),
     };
     let classes = match payload.get("class").or_else(|| payload.get("classes")) {
@@ -256,9 +259,12 @@ fn attributes(start: &BytesStart<'_>) -> HashMap<String, String> {
         .attributes()
         .flatten()
         .filter_map(|attr| {
-            attr.unescape_value()
-                .ok()
-                .map(|value| (String::from_utf8_lossy(attr.key.as_ref()).to_string(), value.into_owned()))
+            attr.unescape_value().ok().map(|value| {
+                (
+                    String::from_utf8_lossy(attr.key.as_ref()).to_string(),
+                    value.into_owned(),
+                )
+            })
         })
         .collect()
 }
@@ -301,9 +307,15 @@ pub(crate) fn parse_page(raw: &str) -> Result<Value, AppError> {
 fn detail_from_payload(output: &Map<String, Value>) -> Vec<Value> {
     let is_vod = |value: &Value| {
         value.as_object().is_some_and(|object| {
-            ["vod_id", "vod_name", "vod_play_url", "vod_play_from", "vod_pic"]
-                .iter()
-                .any(|key| object.contains_key(*key))
+            [
+                "vod_id",
+                "vod_name",
+                "vod_play_url",
+                "vod_play_from",
+                "vod_pic",
+            ]
+            .iter()
+            .any(|key| object.contains_key(*key))
         })
     };
     for key in ["list", "data", "result", "vod"] {
@@ -355,7 +367,10 @@ pub(crate) fn empty_page() -> Value {
 /// 列表 / 对象包在 `data` / `result` / `vod` 里。
 fn detail_items(result: &Value) -> Vec<Value> {
     if let Some(list) = result.as_array() {
-        return list.iter().filter_map(|item| item.as_object().map(vod)).collect();
+        return list
+            .iter()
+            .filter_map(|item| item.as_object().map(vod))
+            .collect();
     }
     match result.as_object() {
         Some(object) => detail_from_payload(object),
@@ -425,7 +440,10 @@ mod tests {
         assert_eq!(item["vod_id"], "7");
         assert_eq!(item["vod_name"], "流浪地球");
         assert_eq!(item["vod_play_from"], "m3u8$$$mp4");
-        assert_eq!(item["vod_play_url"], "第1集$http://a/1.m3u8$$$第2集$http://a/2.mp4");
+        assert_eq!(
+            item["vod_play_url"],
+            "第1集$http://a/1.m3u8$$$第2集$http://a/2.mp4"
+        );
     }
 
     #[test]
@@ -450,7 +468,8 @@ mod tests {
 
     #[test]
     fn spider_detail_accepts_every_community_shape() {
-        let single = json!({"vod_id": 7, "vod_name": "走马上任", "vod_play_url": "正片$http://a/7.m3u8"});
+        let single =
+            json!({"vod_id": 7, "vod_name": "走马上任", "vod_play_url": "正片$http://a/7.m3u8"});
         let payloads = [
             ("bare list", json!([single.clone()])),
             ("list is one object", json!({"list": single.clone()})),
@@ -461,7 +480,9 @@ mod tests {
         ];
         for (label, payload) in payloads {
             let items = normalize_spider_result("detailContent", &payload);
-            let list = items.as_array().unwrap_or_else(|| panic!("{label}: {items}"));
+            let list = items
+                .as_array()
+                .unwrap_or_else(|| panic!("{label}: {items}"));
             assert_eq!(list.len(), 1, "{label}: {items}");
             assert_eq!(list[0]["vod_id"], "7", "{label}");
             assert_eq!(list[0]["vod_name"], "走马上任", "{label}");
@@ -472,11 +493,23 @@ mod tests {
     fn spider_shapes_that_cannot_be_videos_degrade_to_empty() {
         let detail = normalize_spider_result("detailContent", &json!({"list": []}));
         assert_eq!(detail, json!([]));
-        assert_eq!(normalize_spider_result("detailContent", &json!(null)), json!([]));
-        assert_eq!(normalize_spider_result("detailContent", &json!("oops")), json!([]));
-        assert_eq!(normalize_spider_result("playerContent", &json!("oops")), json!({}));
+        assert_eq!(
+            normalize_spider_result("detailContent", &json!(null)),
+            json!([])
+        );
+        assert_eq!(
+            normalize_spider_result("detailContent", &json!("oops")),
+            json!([])
+        );
+        assert_eq!(
+            normalize_spider_result("playerContent", &json!("oops")),
+            json!({})
+        );
         assert_eq!(normalize_spider_result("proxy", &json!([1])), json!({}));
-        assert_eq!(normalize_spider_result("liveContent", &json!(null)), json!({}));
+        assert_eq!(
+            normalize_spider_result("liveContent", &json!(null)),
+            json!({})
+        );
     }
 
     #[test]

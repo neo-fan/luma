@@ -348,7 +348,7 @@ try {
   const ep1 = await cdp.eval(`document.querySelector('.page-title__sub')?.textContent?.trim() || ''`);
   assert(/第1集/.test(ep1), "playing episode 1", ep1);
 
-  // ---- A. 播放偏好记忆：改音量 / 倍速 → 节流落盘 -----------------------------
+  // ---- A. 播放偏好记忆：音量落 localStorage，倍速落这部剧的 history 行 --------
   // 播放器有 2s 的「倍速初始化静默期」（ArtPlayer 会把新 video 的 playbackRate
   // 覆盖成默认 1，静默期内不认 ratechange）。等静默期过去再模拟用户改倍速，
   // 否则会被当成初始化噪声忽略。
@@ -363,21 +363,31 @@ try {
     return JSON.stringify({ volume: v.volume, rate: v.playbackRate });
   })()`);
   console.log(`[info] applied prefs: ${setPrefs}`);
-  // 倍速（ratechange）立即落盘：不等节流窗口就该读到 1.5，证明不再被音量事件吞掉。
-  await sleep(120);
-  const rateNow = await cdp.eval(`(() => {
-    try { return JSON.parse(localStorage.getItem('luma:player:prefs') || '{}').rate; } catch { return null; }
-  })()`);
-  assert(Math.abs(Number(rateNow) - 1.5) < 0.02, "rate persisted immediately (not swallowed by volume throttle)", String(rateNow));
   // 音量（volumechange）走 500ms 节流 + trailing 补写，等窗口过去再读最终值。
   await sleep(900);
   const stored = await cdp.eval(`localStorage.getItem('luma:player:prefs') || ''`);
   let storedObj = {};
   try { storedObj = JSON.parse(stored) || {}; } catch { /* 空或损坏 */ }
+  assert(Math.abs(Number(storedObj.volume) - 0.35) < 0.02, "volume persisted to localStorage", stored);
+  // 倍速改按剧存之后，全局偏好里不该再有 rate：留着它就有第二个真源，
+  // 换剧时会看到「哪份说了算」的行为漂移。
+  assert(!('rate' in storedObj), "prefs no longer carry a global rate", stored);
+
+  // 倍速落在这部剧的 history 行上（列表按最近更新排序，第一条就是本页刚写的）。
+  await sleep(400);
+  const rateRow = await cdp
+    .eval(`(async () => {
+      const items = await window.__TAURI_INTERNALS__.invoke('history_list');
+      const top = Array.isArray(items) ? items[0] : null;
+      return top ? JSON.stringify({ name: top.name, rate: top.rate }) : null;
+    })()`)
+    .catch(() => null);
+  let rateObj = null;
+  try { rateObj = JSON.parse(rateRow || 'null'); } catch { /* 读不到由断言暴露 */ }
   assert(
-    Math.abs(Number(storedObj.volume) - 0.35) < 0.02 && Math.abs(Number(storedObj.rate) - 1.5) < 0.02,
-    "volume/rate persisted to localStorage",
-    stored,
+    rateObj !== null && Math.abs(Number(rateObj.rate) - 1.5) < 0.02,
+    "rate persisted on this title's history row",
+    String(rateRow),
   );
 
   // ---- B. 自动下一集：派发 ended → 标题副标题变成「第2集」+ 提示条 ----------

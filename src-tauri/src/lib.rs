@@ -30,10 +30,10 @@ pub mod http;
 pub mod logging;
 #[path = "infra/netrules.rs"]
 pub mod netrules;
-#[path = "infra/pct.rs"]
-pub(crate) mod pct;
 #[path = "infra/paths.rs"]
 pub mod paths;
+#[path = "infra/pct.rs"]
+pub(crate) mod pct;
 #[path = "infra/process.rs"]
 pub mod process;
 #[path = "infra/started.rs"]
@@ -74,8 +74,8 @@ pub mod storage;
 pub use error::{code, AppError};
 
 use config::ConfigStore;
-use store::LibraryStore;
 use std::sync::Arc;
+use store::LibraryStore;
 use tauri::{Emitter, Manager};
 
 /// dev（debug）默认打开 WebView2 远程调试口 9222，返回是否由本函数设置。
@@ -144,7 +144,9 @@ pub fn run() {
             tracing::info!(links, configs, "github proxy applied to stored configs");
         }
         Ok(_) => {}
-        Err(err) => tracing::warn!(code = %err.code, error = %err.message, "github proxy sync failed"),
+        Err(err) => {
+            tracing::warn!(code = %err.code, error = %err.message, "github proxy sync failed")
+        }
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -296,11 +298,9 @@ pub fn run() {
             // runtime；两个 shutdown 自身幂等（slot 空则直接返回）。
             if let tauri::RunEvent::Exit = event {
                 tauri::async_runtime::block_on(async {
-                    let bridge = tokio::time::timeout(
-                        std::time::Duration::from_secs(3),
-                        bridge::shutdown(),
-                    )
-                    .await;
+                    let bridge =
+                        tokio::time::timeout(std::time::Duration::from_secs(3), bridge::shutdown())
+                            .await;
                     let runner = tokio::time::timeout(
                         std::time::Duration::from_secs(3),
                         spider::quickjs::shutdown(),
@@ -308,7 +308,9 @@ pub fn run() {
                     .await;
                     // 关停失败不阻断退出：Job Object 仍是最后兜底。
                     if bridge.is_err() {
-                        tracing::warn!("python adapter shutdown timed out; job object will reap it");
+                        tracing::warn!(
+                            "python adapter shutdown timed out; job object will reap it"
+                        );
                     }
                     if runner.is_err() {
                         tracing::warn!("qjs-runner shutdown timed out; job object will reap it");

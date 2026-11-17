@@ -32,7 +32,9 @@ pub(crate) fn host_of(value: &str) -> Option<String> {
         .unwrap_or(trimmed);
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     // Drop `user:pass@` and the port; keep an IPv6 literal in brackets.
-    let host_port = authority.rsplit_once('@').map_or(authority, |(_, tail)| tail);
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, tail)| tail);
     let host = if let Some(inner) = host_port.strip_prefix('[') {
         inner.split(']').next().map(|hex| format!("[{hex}]"))?
     } else {

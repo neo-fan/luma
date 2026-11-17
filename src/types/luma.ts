@@ -279,6 +279,20 @@ export interface HistoryItem extends VodRef {
   resolution?: string;
   positionMs?: number;
   durationMs?: number;
+  /**
+   * 这部剧的倍速（0 或缺省 = 没设过，播放侧按 1.0 起播）。
+   *
+   * 记在 history 行上而不是全局偏好里：这一行按剧名合并，换源、换线路都跟着走，
+   * 倍速因此天然跨源共享；写入时空值**不会覆盖**库里已有值。
+   */
+  rate?: number;
+  /**
+   * 这部剧的跳过片头/片尾配置（`SkipSegment[]` 的 JSON 文本）。
+   *
+   * 空串 = 这次写入没带（不覆盖）；`"[]"` = 用户真的清空过片段。宿主侧只存文本，
+   * 结构由 `src/lib/skipSegments.ts` 解释与校验。
+   */
+  skipJson?: string;
   updatedAt: number;
 }
 

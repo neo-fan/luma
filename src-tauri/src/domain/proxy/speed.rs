@@ -95,7 +95,10 @@ mod tests {
         meter.add(64 * 1024);
         let (rate, total) = meter.sample();
         assert_eq!(total, 1024 + 64 * 1024);
-        assert!(rate > 0, "rate should be positive after traffic, got {rate}");
+        assert!(
+            rate > 0,
+            "rate should be positive after traffic, got {rate}"
+        );
     }
 
     #[test]

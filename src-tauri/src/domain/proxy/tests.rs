@@ -52,7 +52,10 @@ async fn image_cache_serves_repeat_requests_without_hitting_upstream() {
 #[test]
 fn urlencode_keeps_unreserved_only() {
     assert_eq!(urlencode("a-b_c.d~e"), "a-b_c.d~e");
-    assert_eq!(urlencode("http://a b/?x=1&y=2"), "http%3A%2F%2Fa%20b%2F%3Fx%3D1%26y%3D2");
+    assert_eq!(
+        urlencode("http://a b/?x=1&y=2"),
+        "http%3A%2F%2Fa%20b%2F%3Fx%3D1%26y%3D2"
+    );
 }
 
 #[test]
@@ -70,8 +73,12 @@ fn parse_vod_pic_douban_inline_headers() {
     let (url, headers) = parse_vod_pic_url(raw).expect("inline header");
     assert_eq!(url, "https://img3.doubanio.com/p.jpg");
     assert_eq!(headers.len(), 2);
-    assert!(headers.iter().any(|(k, v)| k == "Referer" && v == "https://api.douban.com/"));
-    assert!(headers.iter().any(|(k, v)| k == "User-Agent" && v == "Mozilla/5.0 (Windows NT 10.0)"));
+    assert!(headers
+        .iter()
+        .any(|(k, v)| k == "Referer" && v == "https://api.douban.com/"));
+    assert!(headers
+        .iter()
+        .any(|(k, v)| k == "User-Agent" && v == "Mozilla/5.0 (Windows NT 10.0)"));
 }
 
 #[test]
@@ -79,8 +86,12 @@ fn parse_vod_pic_cookie_and_header_aliases() {
     let raw = "https://cdn/x.png@ua=okhttp%2F3.15@referer=https%3A%2F%2Fh%2F@Cookie=a%3D1%3Bb%3D2";
     let (url, headers) = parse_vod_pic_url(raw).expect("aliases");
     assert_eq!(url, "https://cdn/x.png");
-    assert!(headers.iter().any(|(k, v)| k == "User-Agent" && v == "okhttp/3.15"));
-    assert!(headers.iter().any(|(k, v)| k == "Referer" && v == "https://h/"));
+    assert!(headers
+        .iter()
+        .any(|(k, v)| k == "User-Agent" && v == "okhttp/3.15"));
+    assert!(headers
+        .iter()
+        .any(|(k, v)| k == "Referer" && v == "https://h/"));
     assert!(headers.iter().any(|(k, v)| k == "Cookie" && v == "a=1;b=2"));
 }
 
@@ -90,10 +101,18 @@ fn parse_vod_pic_headers_json_and_explicit_override() {
     let raw = "https://cdn/x.webp@Headers=%7B%22Referer%22%3A%22https%3A%2F%2Fjson%2F%22%2C%22X-Token%22%3A%22abc%22%7D@Referer=https%3A%2F%2Fexplicit%2F";
     let (url, headers) = parse_vod_pic_url(raw).expect("headers json");
     assert_eq!(url, "https://cdn/x.webp");
-    let get = |k: &str| headers.iter().find(|(name, _)| name == k).map(|(_, v)| v.as_str());
+    let get = |k: &str| {
+        headers
+            .iter()
+            .find(|(name, _)| name == k)
+            .map(|(_, v)| v.as_str())
+    };
     assert_eq!(get("Referer"), Some("https://explicit/")); // explicit wins, single entry
     assert_eq!(get("X-Token"), Some("abc"));
-    assert_eq!(headers.iter().filter(|(name, _)| name == "Referer").count(), 1);
+    assert_eq!(
+        headers.iter().filter(|(name, _)| name == "Referer").count(),
+        1
+    );
 }
 
 #[test]
@@ -105,7 +124,13 @@ fn percent_decode_handles_invalid_utf8_gracefully() {
 
 #[test]
 fn proxy_url_includes_optional_headers() {
-    let url = build_proxy_url(9978, "http://cdn/x.m3u8", Some("okhttp/3.15"), Some("http://ref/"), None);
+    let url = build_proxy_url(
+        9978,
+        "http://cdn/x.m3u8",
+        Some("okhttp/3.15"),
+        Some("http://ref/"),
+        None,
+    );
     assert!(url.starts_with("http://127.0.0.1:9978/proxy?url=http%3A%2F%2Fcdn%2Fx.m3u8"));
     assert!(url.contains("ua=okhttp%2F3.15"));
     assert!(url.contains("referer=http%3A%2F%2Fref%2F"));
@@ -114,7 +139,14 @@ fn proxy_url_includes_optional_headers() {
 
 #[test]
 fn blocked_ranges_cover_private_and_loopback() {
-    for ip in ["127.0.0.1", "10.1.2.3", "192.168.1.1", "169.254.1.1", "::1", "fd00::1"] {
+    for ip in [
+        "127.0.0.1",
+        "10.1.2.3",
+        "192.168.1.1",
+        "169.254.1.1",
+        "::1",
+        "fd00::1",
+    ] {
         assert!(is_blocked(ip.parse().unwrap()), "{ip} should be blocked");
     }
     for ip in ["8.8.8.8", "1.1.1.1"] {
@@ -139,7 +171,9 @@ async fn redirect_to_loopback_is_refused_not_followed() {
         }
     };
     let flippy_port = flippy.local_addr().expect("addr").port();
-    let victim = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind loop");
+    let victim = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loop");
     let victim_port = victim.local_addr().expect("victim addr").port();
     let secret = "SSRF-PAYLOAD-MUST-NOT-FLOW-BACK";
 
@@ -164,7 +198,9 @@ async fn redirect_to_loopback_is_refused_not_followed() {
         let secret = secret.to_string();
         tauri::async_runtime::spawn(async move {
             for _ in 0..4 {
-                let Ok((mut sock, _)) = victim.accept().await else { break };
+                let Ok((mut sock, _)) = victim.accept().await else {
+                    break;
+                };
                 use tokio::io::AsyncWriteExt;
                 let _ = sock
                     .write_all(
@@ -184,9 +220,7 @@ async fn redirect_to_loopback_is_refused_not_followed() {
     let state = ProxyState {
         port: AtomicU16::new(0),
         allow_local: false,
-        client: streaming_builder(false)
-            .build()
-            .expect("streaming client"),
+        client: streaming_builder(false).build().expect("streaming client"),
         image_client: std::sync::Arc::new(wrap_image(
             reqwest::Client::builder()
                 .redirect(guard::redirect_guard(false))
@@ -198,7 +232,9 @@ async fn redirect_to_loopback_is_refused_not_followed() {
     };
     let jump = Url::parse(&format!("http://8.8.8.8:{flippy_port}/jump")).expect("parse");
     // 初跳 IP 字面量 8.8.8.8 合法（is_blocked=false），守卫必须只在「跳转」处生效。
-    check_target(&jump, false).await.expect("initial hop allowed");
+    check_target(&jump, false)
+        .await
+        .expect("initial hop allowed");
     let result = state
         .client
         .get(jump.clone())
@@ -209,7 +245,9 @@ async fn redirect_to_loopback_is_refused_not_followed() {
         Err(err) => {
             let text = err.to_string();
             assert!(
-                text.contains("redirect refused") || text.contains("not allowed") || text.contains("blocked"),
+                text.contains("redirect refused")
+                    || text.contains("not allowed")
+                    || text.contains("blocked"),
                 "expected redirect guard error, got: {text}"
             );
         }
@@ -247,9 +285,20 @@ fn playlist_rewrites_relative_segments_and_key_uris() {
     };
     let source = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXTINF:2,\nseg0.ts\n#EXTINF:2,\nhttps://other.example/seg1.ts\n";
     let out = rewrite_playlist(source, &base, 9978, &fwd);
-    assert!(out.contains("http://127.0.0.1:9978/proxy?url=https%3A%2F%2Fcdn.example%2Fx%2Fseg0.ts"), "{out}");
-    assert!(out.contains("URI=\"http://127.0.0.1:9978/proxy?url=https%3A%2F%2Fcdn.example%2Fx%2Fkey.bin"), "{out}");
-    assert!(out.contains("url=https%3A%2F%2Fother.example%2Fseg1.ts"), "{out}");
+    assert!(
+        out.contains("http://127.0.0.1:9978/proxy?url=https%3A%2F%2Fcdn.example%2Fx%2Fseg0.ts"),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "URI=\"http://127.0.0.1:9978/proxy?url=https%3A%2F%2Fcdn.example%2Fx%2Fkey.bin"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("url=https%3A%2F%2Fother.example%2Fseg1.ts"),
+        "{out}"
+    );
     assert!(out.contains("ua=okhttp%2F3.15"), "{out}");
     assert!(out.contains("#EXTM3U"), "{out}");
 }
@@ -271,7 +320,9 @@ fn looks_like_playlist_accepts_bom_and_blank_leading_lines() {
 #[test]
 fn looks_like_playlist_rejects_dead_source_payloads() {
     // Netdisk resolver answering 200 while its token no longer works.
-    assert!(!looks_like_playlist(r#"{"code":201,"msg":"解析失败了","url":""}"#));
+    assert!(!looks_like_playlist(
+        r#"{"code":201,"msg":"解析失败了","url":""}"#
+    ));
     assert!(!looks_like_playlist("<html><body>404</body></html>"));
     assert!(!looks_like_playlist(""));
     assert!(!looks_like_playlist("#EXTINF:4,\nseg.ts\n"));
@@ -310,7 +361,10 @@ fn disguised_ts_offset_strips_png_prefix() {
     let body = disguised_segment();
     let offset = disguised_ts_offset(&body).expect("should detect disguise");
     assert_eq!(body[offset], 0x47);
-    assert_eq!(offset, body.windows(4).position(|w| w == b"IEND").unwrap() + 8);
+    assert_eq!(
+        offset,
+        body.windows(4).position(|w| w == b"IEND").unwrap() + 8
+    );
 }
 
 #[test]
@@ -339,8 +393,14 @@ fn image_format_sniffs_common_headers() {
     assert_eq!(image_format(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
     assert_eq!(image_format(b"\x89PNG\r\n\x1a\n0000"), Some("image/png"));
     assert_eq!(image_format(b"GIF89a000000"), Some("image/gif"));
-    assert_eq!(image_format(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("image/webp"));
-    assert_eq!(image_format(b"\x00\x00\x00\x20ftypavif0000"), Some("image/avif"));
+    assert_eq!(
+        image_format(b"RIFF\x00\x00\x00\x00WEBPVP8 "),
+        Some("image/webp")
+    );
+    assert_eq!(
+        image_format(b"\x00\x00\x00\x20ftypavif0000"),
+        Some("image/avif")
+    );
     assert_eq!(image_format(b"BM000000"), Some("image/bmp"));
 }
 
@@ -432,7 +492,9 @@ fn next_image_attempt_retries_browser_headers_only_for_retryable_kinds() {
 #[test]
 fn classify_error_text_separates_network_from_picture() {
     assert_eq!(
-        classify_error_text("dns error: failed to lookup address information: Name or service not known"),
+        classify_error_text(
+            "dns error: failed to lookup address information: Name or service not known"
+        ),
         ImageFailure::Dns
     );
     assert_eq!(
@@ -444,11 +506,20 @@ fn classify_error_text_separates_network_from_picture() {
         classify_error_text("tcp connect error: Connection refused (os error 10061)"),
         ImageFailure::Connect
     );
-    assert_eq!(classify_error_text("connection reset by peer"), ImageFailure::Connect);
-    assert_eq!(classify_error_text("operation timed out"), ImageFailure::Timeout);
+    assert_eq!(
+        classify_error_text("connection reset by peer"),
+        ImageFailure::Connect
+    );
+    assert_eq!(
+        classify_error_text("operation timed out"),
+        ImageFailure::Timeout
+    );
     assert_eq!(classify_error_text("something odd"), ImageFailure::Other);
     // 失败的 UA / 状态码不参与分类，别把 403 当成 TLS。
-    assert_eq!(classify_error_text("upstream status 403 Forbidden"), ImageFailure::Other);
+    assert_eq!(
+        classify_error_text("upstream status 403 Forbidden"),
+        ImageFailure::Other
+    );
 }
 
 #[derive(Debug)]
@@ -462,7 +533,9 @@ impl std::fmt::Display for ChainLink {
 
 impl std::error::Error for ChainLink {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.1.as_deref().map(|link| link as &(dyn std::error::Error + 'static))
+        self.1
+            .as_deref()
+            .map(|link| link as &(dyn std::error::Error + 'static))
     }
 }
 
@@ -474,12 +547,18 @@ fn error_chain_flattens_source_chain() {
         "error sending request for url (https://img.example/a.jpg)",
         Some(Box::new(ChainLink(
             "client error (Connect)",
-            Some(Box::new(ChainLink("invalid peer certificate: UnknownIssuer", None))),
+            Some(Box::new(ChainLink(
+                "invalid peer certificate: UnknownIssuer",
+                None,
+            ))),
         ))),
     );
     let text = error_chain(&err);
     assert!(text.contains("error sending request"), "{text}");
-    assert!(text.contains("invalid peer certificate: UnknownIssuer"), "{text}");
+    assert!(
+        text.contains("invalid peer certificate: UnknownIssuer"),
+        "{text}"
+    );
     // 同一段文本不重复拼（source 链里偶尔会有等价的 io::Error）。
     let dup = ChainLink("same", Some(Box::new(ChainLink("same", None))));
     assert_eq!(error_chain(&dup), "same");

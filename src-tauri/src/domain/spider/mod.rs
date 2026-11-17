@@ -158,10 +158,7 @@ pub fn note_play_site(site: &Value) {
 }
 
 pub fn last_play_site() -> Option<Value> {
-    last_play_cell()
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone())
+    last_play_cell().lock().ok().and_then(|guard| guard.clone())
 }
 
 pub fn decode_proxy_payload(value: &Value) -> Result<ProxyPayload, AppError> {
@@ -221,7 +218,9 @@ pub fn route(site: &Value) -> RuntimeKind {
         return RuntimeKind::Jvm;
     }
     // A bare identifier (not a URL) means "spider class", which needs the jar.
-    if api.starts_with("csp_") || (!api.is_empty() && !api.starts_with("http") && !api.contains('/')) {
+    if api.starts_with("csp_")
+        || (!api.is_empty() && !api.starts_with("http") && !api.contains('/'))
+    {
         return RuntimeKind::Jvm;
     }
 
@@ -295,8 +294,8 @@ pub async fn spider_invoke(
     let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
 
     if request.site_key == "all" {
-        let streaming = request.stream.unwrap_or(false)
-            && request.method == SpiderMethod::SearchContent;
+        let streaming =
+            request.stream.unwrap_or(false) && request.method == SpiderMethod::SearchContent;
         return aggregate(
             &state,
             request.method,
@@ -400,17 +399,16 @@ async fn aggregate(
                 .unwrap_or("")
                 .to_string();
             let outcome = match semaphore.acquire_owned().await {
-                Ok(_permit) => tokio::time::timeout(
-                    timeout,
-                    invoke_one(&site, method, &args, timeout),
-                )
-                .await
-                .unwrap_or_else(|_| {
-                    Err(AppError::new(
-                        code::SITE_TIMEOUT,
-                        format!("site {key} exceeded {}ms", timeout.as_millis()),
-                    ))
-                }),
+                Ok(_permit) => {
+                    tokio::time::timeout(timeout, invoke_one(&site, method, &args, timeout))
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(AppError::new(
+                                code::SITE_TIMEOUT,
+                                format!("site {key} exceeded {}ms", timeout.as_millis()),
+                            ))
+                        })
+                }
                 Err(err) => Err(AppError::new(code::INTERNAL, "fan-out semaphore closed")
                     .with_cause(err.to_string())),
             };
@@ -638,10 +636,8 @@ pub async fn site_health(
                     (result, site_started.elapsed().as_millis() as u64)
                 }
                 Err(err) => (
-                    Err(
-                        AppError::new(code::INTERNAL, "health semaphore closed")
-                            .with_cause(err.to_string()),
-                    ),
+                    Err(AppError::new(code::INTERNAL, "health semaphore closed")
+                        .with_cause(err.to_string())),
                     0,
                 ),
             };
@@ -649,49 +645,47 @@ pub async fn site_health(
         });
     }
 
-    let into_row = |site_key: String,
-                    site_name: String,
-                    outcome: Result<Value, AppError>,
-                    took_ms: u64| {
-        match outcome {
-            Ok(data) => {
-                let list = data
-                    .get("list")
-                    .and_then(Value::as_array)
-                    .map(|items| items.len());
-                let classes = data
-                    .get("classes")
-                    .and_then(Value::as_array)
-                    .map(|items| items.len());
-                let count = if list.is_some() || classes.is_some() {
-                    Some(list.unwrap_or(0) + classes.unwrap_or(0))
-                } else {
-                    None
-                };
-                SiteHealthRow {
+    let into_row =
+        |site_key: String, site_name: String, outcome: Result<Value, AppError>, took_ms: u64| {
+            match outcome {
+                Ok(data) => {
+                    let list = data
+                        .get("list")
+                        .and_then(Value::as_array)
+                        .map(|items| items.len());
+                    let classes = data
+                        .get("classes")
+                        .and_then(Value::as_array)
+                        .map(|items| items.len());
+                    let count = if list.is_some() || classes.is_some() {
+                        Some(list.unwrap_or(0) + classes.unwrap_or(0))
+                    } else {
+                        None
+                    };
+                    SiteHealthRow {
+                        site_key,
+                        site_name,
+                        status: "ok".into(),
+                        took_ms,
+                        message: None,
+                        count,
+                    }
+                }
+                Err(err) => SiteHealthRow {
                     site_key,
                     site_name,
-                    status: "ok".into(),
+                    status: if err.code == code::SITE_TIMEOUT {
+                        "timeout"
+                    } else {
+                        "failed"
+                    }
+                    .into(),
                     took_ms,
-                    message: None,
-                    count,
-                }
+                    message: Some(err.message),
+                    count: None,
+                },
             }
-            Err(err) => SiteHealthRow {
-                site_key,
-                site_name,
-                status: if err.code == code::SITE_TIMEOUT {
-                    "timeout"
-                } else {
-                    "failed"
-                }
-                .into(),
-                took_ms,
-                message: Some(err.message),
-                count: None,
-            },
-        }
-    };
+        };
 
     let mut rows: Vec<SiteHealthRow> = Vec::with_capacity(sites.len());
     // 用 index 记录哪些站点已产出结果行：比 site_key 可靠（key 可能重复或
@@ -820,7 +814,9 @@ mod tests {
         ));
         // 没声明 ≠ 不可搜：旧快照与不写该字段的配置必须继续参与搜索，
         // 否则会把大量能搜的源一并排除（各分支缺省语义相反，见函数注释）。
-        assert!(is_searchable(&json!({ "key": "legacy", "searchable": false })));
+        assert!(is_searchable(
+            &json!({ "key": "legacy", "searchable": false })
+        ));
         assert!(is_searchable(&json!({ "key": "bare" })));
     }
 
