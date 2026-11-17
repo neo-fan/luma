@@ -42,6 +42,22 @@ struct Entry {
     referer: String,
 }
 
+/// TVBox `http-header="Key=Value;Key=Value"`：把通用请求头属性拆成键值对。
+/// 分隔按 TVBox 约定用 `;` 与 `,`；值里若仍含分隔符（URL 少见）只取第一段，
+/// 宁可少拆不可拆错。空值、无 `=` 的碎片忽略。
+fn split_http_header(value: &str) -> Vec<(String, String)> {
+    value
+        .split([';', ','])
+        .map(str::trim)
+        .filter_map(|pair| {
+            let (key, val) = pair.split_once('=')?;
+            let key = key.trim();
+            let val = val.trim();
+            (!key.is_empty() && !val.is_empty()).then(|| (key.to_lowercase(), val.to_string()))
+        })
+        .collect()
+}
+
 fn parse_extinf(line: &str) -> Entry {
     let mut attrs: HashMap<String, String> = HashMap::new();
     for capture in attr_regex().captures_iter(line) {
@@ -63,13 +79,25 @@ fn parse_extinf(line: &str) -> Entry {
         .cloned()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_GROUP.to_string());
+    let mut ua = attrs.get("http-user-agent").cloned().unwrap_or_default();
+    let mut referer = attrs.get("http-referer").cloned().unwrap_or_default();
+    // `http-header` 与专用属性表达同一件事，只是更通用；专用属性先声明则不被覆盖。
+    if let Some(header) = attrs.get("http-header") {
+        for (key, value) in split_http_header(header) {
+            match key.as_str() {
+                "user-agent" if ua.is_empty() => ua = value,
+                "referer" | "referrer" if referer.is_empty() => referer = value,
+                _ => {}
+            }
+        }
+    }
     Entry {
         name,
         logo: attrs.get("tvg-logo").cloned().unwrap_or_default(),
         epg: attrs.get("tvg-id").cloned().unwrap_or_default(),
         group,
-        ua: attrs.get("http-user-agent").cloned().unwrap_or_default(),
-        referer: attrs.get("http-referer").cloned().unwrap_or_default(),
+        ua,
+        referer,
     }
 }
 
@@ -286,6 +314,33 @@ mod tests {
         let raw = "#EXTM3U\n#EXTINF:-1,普通台\nhttp://a/1.m3u8\n";
         let parsed = parse(raw, "");
         let channel = &parsed["groups"][0]["channels"][0];
+        assert!(channel.get("ua").is_none());
+        assert!(channel.get("referer").is_none());
+    }
+
+    #[test]
+    fn http_header_supplies_referer_when_no_dedicated_attr() {
+        // 江苏卫视这类：UA 走行内，必需 Referer 只写在 http-header 里。
+        let raw = "#EXTM3U\n#EXTINF:-1 tvg-name=\"江苏卫视\" http-user-agent=\"AptvPlayer-UA\" http-header=\"Referer=https://litchi-play-encrypted-site.jstv.com/\",江苏卫视\nhttp://a/jsws4k.m3u8\n";
+        let channel = &parse(raw, "")["groups"][0]["channels"][0];
+        assert_eq!(channel["ua"], "AptvPlayer-UA");
+        assert_eq!(channel["referer"], "https://litchi-play-encrypted-site.jstv.com/");
+    }
+
+    #[test]
+    fn http_header_splits_multiple_pairs_and_prefers_dedicated_attrs() {
+        // 专用 http-referer 先声明，不被 http-header 里的 Referer 覆盖；
+        // http-header 里的 User-Agent 在行内没写时才补上。
+        let raw = "#EXTM3U\n#EXTINF:-1 http-referer=\"http://inline/\" http-header=\"User-Agent=aliplayer;Referer=http://other/\",X\nhttp://a/1.m3u8\n";
+        let channel = &parse(raw, "")["groups"][0]["channels"][0];
+        assert_eq!(channel["referer"], "http://inline/");
+        assert_eq!(channel["ua"], "aliplayer");
+    }
+
+    #[test]
+    fn http_header_ignores_unknown_keys() {
+        let raw = "#EXTM3U\n#EXTINF:-1 http-header=\"X-Foo=bar\",Y\nhttp://a/1.m3u8\n";
+        let channel = &parse(raw, "")["groups"][0]["channels"][0];
         assert!(channel.get("ua").is_none());
         assert!(channel.get("referer").is_none());
     }
