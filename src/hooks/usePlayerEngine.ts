@@ -28,6 +28,8 @@ import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { registerPlayer, stopActivePlayer } from "../lib/playerRegistry";
 import { api, errorMessage } from "../lib/invoke";
 import { formatBytesPerSec } from "../lib/bytes";
+import { createPosterHold } from "./playerPosterHold";
+import { createPrefsWriter } from "./playerPrefsWriter";
 import { createVolumeFader } from "./playerVolumeFade";
 import { log } from "../lib/logger";
 import { mediaIsAdvancing } from "../lib/mediaAlive";
@@ -40,6 +42,7 @@ import { createActor } from "xstate";
 import { vodSessionMachine } from "../lib/vodSessionMachine";
 import { liveSessionMachine } from "../lib/liveSessionMachine";
 import type { VideoMeta } from "../lib/resolution";
+import type { PosterElement } from "./playerPosterHold";
 import type { PlayResolved } from "../types/luma";
 
 /** 内置播放器能直接解码的 kind；page/share 之类要交给解析池或外部播放。 */
@@ -794,7 +797,7 @@ export function usePlayerEngine({
             // 否则用户看到跳到别的源会以为是逻辑错了。
             // 失败路径必须撤掉首帧前的冻结帧 / 海报：接下来要么报错要么换线，
             // 绝不允许一张静帧永久盖住画面（超时复核路径除外——那还在等）。
-            finishPoster(false);
+            posterHold.finish(false);
             if (sessionHasPlayed()) {
               // 已经在播的流突然致命：网络上抖一下的概率远高于线路真的坏了，
               // 自动跳走会把用户正在看的内容切没。只提示，由用户决定。
@@ -924,88 +927,22 @@ export function usePlayerEngine({
      * 新源真正出画（playing，或 readyState>=3 的 timeupdate），再 250ms 渐隐。
      *
      * 失败路径（video error / hls fatal / 看门狗判死）必须能立刻撤掉它：
-     * 冻结帧只是过渡，绝不允许永久盖住画面。finishPoster(false) 即硬撤。
+     * 冻结帧只是过渡，绝不允许永久盖住画面。posterHold.finish(false) 即硬撤。
      */
-    const $poster = art.template.$poster;
-    let posterHoldActive = false;
-    let posterFadeTimer: number | null = null;
-    let onPosterPlay: (() => void) | null = null;
-    let onPosterPlaying: (() => void) | null = null;
-    let onPosterTimeUpdate: (() => void) | null = null;
-    const releasePosterHold = () => {
-      posterHoldActive = false;
-      if (onPosterPlay) {
-        art.off("video:play", onPosterPlay);
-        onPosterPlay = null;
-      }
-      if (onPosterPlaying) {
-        video.removeEventListener("playing", onPosterPlaying);
-        onPosterPlaying = null;
-      }
-      if (onPosterTimeUpdate) {
-        video.removeEventListener("timeupdate", onPosterTimeUpdate);
-        onPosterTimeUpdate = null;
-      }
-      if (posterFadeTimer !== null) {
-        window.clearTimeout(posterFadeTimer);
-        posterFadeTimer = null;
-      }
-    };
-    const clearPosterVisual = () => {
-      $poster.style.transition = "";
-      $poster.style.opacity = "";
-      // 不能用 art.poster = ""：ArtPlayer 拼成 `url()`，空值是非法 CSS，
-      // 浏览器直接忽略这次赋值，旧图会永远留在层上。直接清 style。
-      $poster.style.backgroundImage = "";
-      $poster.style.display = "none";
-    };
-    const finishPoster = (fade: boolean) => {
-      releasePosterHold();
-      if (!fade) {
-        clearPosterVisual();
-        return;
-      }
-      $poster.style.transition = "opacity 250ms ease";
-      $poster.style.opacity = "0";
-      // 渐隐结束再清图：提前清会闪一帧黑底。定时器由 cleanup / hardStop 收。
-      posterFadeTimer = window.setTimeout(() => {
-        posterFadeTimer = null;
-        clearPosterVisual();
-      }, 300);
-    };
-    const holdPoster = () => {
-      // 连续快速换集：先收掉上一轮的监听，再按当前帧重新保持。
-      releasePosterHold();
-      posterHoldActive = true;
-      $poster.style.transition = "";
-      $poster.style.opacity = "";
-      $poster.style.display = "";
-      // ArtPlayer 内部的 video:play 监听先于我们注册，会把 display 设成 none；
-      // 同一事件里我们的回调后执行，把它抬回来，poster 得以盖到首帧。
-      onPosterPlay = () => {
-        if (posterHoldActive) {
-          $poster.style.display = "";
-        }
-      };
-      art.on("video:play", onPosterPlay);
-      onPosterPlaying = () => {
-        if (posterHoldActive) {
-          finishPoster(true);
-        }
-      };
-      onPosterTimeUpdate = () => {
-        // playing 在个别源上会丢（缓冲态翻来覆去），timeupdate + 足够缓冲兜底。
-        // 必须排除暂停态：缓冲期间 timeupdate 也会触发，那时首帧还没出画，
-        // 渐隐会露出黑屏（2026-11-15 实测）。
-        if (posterHoldActive && !video.paused && video.readyState >= 3) {
-          finishPoster(true);
-        }
-      };
-      video.addEventListener("playing", onPosterPlaying);
-      video.addEventListener("timeupdate", onPosterTimeUpdate);
-    };
+    /**
+     * 首帧前的海报 / 冻结帧保持。为什么要接管 ArtPlayer 的退场时机、失败路径
+     * 为什么必须硬撤，都写在 `playerPosterHold.ts`；这里只接线。
+     */
+    const posterHold = createPosterHold({
+      poster: art.template.$poster as unknown as PosterElement,
+      video,
+      onPlay: (callback) => {
+        art.on("video:play", callback);
+        return () => art.off("video:play", callback);
+      },
+    });
     if (posterRef.current) {
-      holdPoster();
+      posterHold.hold();
     }
 
     /**
@@ -1055,7 +992,7 @@ export function usePlayerEngine({
         // 已 detach 的 <video> 可能抛 InvalidStateError，忽略即可。
       }
       // 海报保持的监听与渐隐定时器随实例一起收，不留残留回调。
-      releasePosterHold();
+      posterHold.dispose();
       teardownDecoders?.();
       art.destroy();
     };
@@ -1119,99 +1056,19 @@ export function usePlayerEngine({
      * ratechange 仍在静默期内被忽略，只纠正 video 实际值、不污染 storage。
      * 静默期之后用户手动点倍速，才正常落盘。
      */
-    let rateReadyAt = Date.now() + 2000;
-    const rateReplay = window.setTimeout(() => {
-      if (videoRef.current !== video) {
-        return;
-      }
-      // 倍速：ArtPlayer 的倍速设置初始化晚于构造参数，会把刚设的值覆盖回 1。
-      const wanted = readPlayerPrefs().rate;
-      if (Math.abs(video.playbackRate - wanted) > 0.01) {
-        video.playbackRate = wanted;
-      }
-      // 音量同理：构造时的 `volume` 会被 ArtPlayer 自己恢复的持久化音量盖掉，
-      // 结果换集后音量回到 100%——而卸载时又把 100% 写回偏好，用户的音量被
-      // 永久冲掉。这里按「当前偏好」再对一次，静默期内用户没动就一定是噪声。
-      const wantedVolume = readPlayerPrefs().volume;
-      if (Math.abs(video.volume - wantedVolume) > 0.01) {
-        video.volume = wantedVolume;
-      }
-    }, 1200);
-    // 音量拖动会连发 volumechange，做 500ms 前缘节流；被跳过的最后一次变更
-    // 用 trailing 定时器补写，否则「拖完音量马上切集」会丢最终值。倍速是手动
-    // 点档的低频事件，立即落盘。两者各写各的字段：音量事件绝不碰 rate、倍速
-    // 事件绝不碰 volume——否则拖音量时若 playbackRate 尚未就绪就会把 rate 写坏。
-    //
-    // 回调都校验 `videoRef.current === video`：切集/换源前置空引用后，旧
-    // <video> 销毁触发的变更（已失格）不会覆盖当前偏好。
-    let volumeWrittenAt = 0;
-    let volumeTrailing: number | null = null;
-    const persistVolume = () => {
-      if (videoRef.current !== video) {
-        return;
-      }
-
-      // 写的中间值，整段不落盘。淡入还没开始的暂停态不拦——自动播放被拦时
-      // 用户可能先拖音量，曾用 !fadeDone 一并吞掉，偏好永远丢
-      // （2026-11-16 实测）。
-      if (Date.now() < fader.silentUntil) {
-        return;
-      }
-      // 新建实例的静默期（只在 load 时立起，原地换集不续窗）：
-      // ArtPlayer 会把自己缓存的音量写回来（100%），那不是用户操作——不落盘、
-      // 即时纠正回记忆值，否则卸载补写会把噪声固化成偏好（历史实测）。
-      if (Date.now() < rateReadyAt) {
-        const wantedVolume = readPlayerPrefs().volume;
-        if (Math.abs(video.volume - wantedVolume) > 0.01) {
-          video.volume = wantedVolume;
-        }
-        return;
-      }
-      // 用户点音量图标从静音恢复时，<video>.volume 可能还停在 0（ArtPlayer
-      // 只切 muted，不还原音量）：恢复到最近一次有声值，否则图标亮了还是没声。
-      if (!video.muted && video.volume <= 0.01) {
-        video.volume = fader.lastAudible;
-        return;
-      }
-      if (!video.muted && video.volume > 0.01) {
-        fader.noteAudible(video.volume);
-      }
-      const now = Date.now();
-      if (now - volumeWrittenAt < 500) {
-        if (volumeTrailing !== null) {
-          window.clearTimeout(volumeTrailing);
-        }
-        volumeTrailing = window.setTimeout(() => {
-          volumeTrailing = null;
-          if (videoRef.current !== video) {
-            return;
-          }
-          volumeWrittenAt = Date.now();
-          writePlayerPrefs({ volume: video.volume, muted: video.muted });
-        }, 500);
-        return;
-      }
-      volumeWrittenAt = now;
-      writePlayerPrefs({ volume: video.volume, muted: video.muted });
-    };
-    const persistRate = () => {
-      if (videoRef.current !== video) {
-        return;
-      }
-      // 静默期内 ArtPlayer 会把 playbackRate 覆盖成默认 1：那不是用户选择，
-      // 不记录，并即时纠正回记忆值，避免「切集后前 1.2s 是 1 倍速、随后突然
-      // 加速」的抖变。设回后再次触发 ratechange，但值已相等，递归自然终止。
-      if (Date.now() < rateReadyAt) {
-        const wanted = readPlayerPrefs().rate;
-        if (Math.abs(video.playbackRate - wanted) > 0.01) {
-          video.playbackRate = wanted;
-        }
-        return;
-      }
-      writePlayerPrefs({ rate: video.playbackRate });
-    };
-    video.addEventListener("volumechange", persistVolume);
-    video.addEventListener("ratechange", persistRate);
+    /**
+     * 偏好写入：实例静默期的噪声纠正、音量节流 + trailing、字段隔离，
+     * 全部在 `playerPrefsWriter.ts`（那里有 9 条行为测试）。
+     */
+    const prefsWriter = createPrefsWriter({
+      video,
+      isCurrent: () => videoRef.current === video,
+      fader,
+      read: readPlayerPrefs,
+      write: (patch) => writePlayerPrefs(patch),
+    });
+    video.addEventListener("volumechange", prefsWriter.onVolumeChange);
+    video.addEventListener("ratechange", prefsWriter.onRateChange);
 
     const onError = () => {
       const mediaError = video.error;
@@ -1271,7 +1128,7 @@ export function usePlayerEngine({
         detail,
       });
       // 线路已判死：冻结帧的使命结束，撤掉后交给换线链路，绝不让静帧盖住后续画面。
-      finishPoster(false);
+      posterHold.finish(false);
       setVideoError(message);
       void switchOrFailoverRef.current();
     };
@@ -1504,8 +1361,8 @@ export function usePlayerEngine({
         !fader.fadeDone || video.muted || video.volume <= 0.01 ? fader.lastAudible : video.volume;
       const swMuted = video.muted;
       const swRate = video.playbackRate;
-      // 静默窗（rateReadyAt）**不在这里续**：那是新建实例的 load 窗口，换集
-      // 时续窗会把用户紧随换集的音量调节也吞掉（persistVolume 的纠正分支
+      // 实例静默窗（见 `playerPrefsWriter`）**不在这里续**：那是新建实例的 load 窗口，换集
+      // 时续窗会把用户紧随换集的音量调节也吞掉（写入器的纠正分支
       // 按存储值回写）。ArtPlayer 在 switchUrl 后恢复缓存音量/倍速的噪声，
       // 由下面的显式重放 + swFadeIn 的 ramp 窗口负责压住与纠正。
       const swReplay = window.setTimeout(() => {
@@ -1568,7 +1425,7 @@ export function usePlayerEngine({
       onVideoMeta?.({ width: 0, height: 0, declaredHeight: 0 });
       if (frozen) {
         art.poster = frozen;
-        holdPoster();
+        posterHold.hold();
       }
       await art.switchUrl(url);
       // 倍速先立起来：ratechange 在静默期内只会「纠正回切换前的倍速」，
@@ -1652,21 +1509,18 @@ export function usePlayerEngine({
       // 卸载/HMR 后不允许有任何活着的切换句柄继续摸 <video>。
       disposeSwitchCycle();
       // 海报保持的监听 / 渐隐定时器随卸载收回（DOM 由 art.destroy 移除）。
-      releasePosterHold();
+      posterHold.dispose();
       window.clearInterval(speedTimer);
       clearSlowNotice();
-      window.clearTimeout(rateReplay);
-      if (volumeTrailing !== null) {
-        window.clearTimeout(volumeTrailing);
-      }
+      prefsWriter.dispose();
       video.removeEventListener("error", onError);
       video.removeEventListener("progress", onMediaAlive);
       video.removeEventListener("loadeddata", onMediaAlive);
       video.removeEventListener("loadedmetadata", onMediaAlive);
       video.removeEventListener("playing", onMediaAlive);
       video.removeEventListener("timeupdate", onMediaAlive);
-      video.removeEventListener("volumechange", persistVolume);
-      video.removeEventListener("ratechange", persistRate);
+      video.removeEventListener("volumechange", prefsWriter.onVolumeChange);
+      video.removeEventListener("ratechange", prefsWriter.onRateChange);
       video.removeEventListener("loadedmetadata", reportMeta);
       video.removeEventListener("resize", reportMeta);
       video.removeEventListener("loadedmetadata", applyResume);
@@ -1678,8 +1532,8 @@ export function usePlayerEngine({
       // 但淡入还没开始/没走完就卸载（连点换台）时 volume 还接近 0，别把它写成
       // 偏好（1.0.4 开发期踩过：写成 0 之后整机默认静音）。
       // 倍速绝不能在这里覆盖——ended 触发卸载那一刻 video.playbackRate 可能已被
-      // 播放内核重置为 1（实测），写回会抹掉用户刚选的倍速。倍速由 persistRate
-      // 在变更时立即落盘，无需、也不允许在卸载时再写。
+      // 播放内核重置为 1（实测），写回会抹掉用户刚选的倍速。倍速由写入器在变更时
+      // 立即落盘，无需、也不允许在卸载时再写。
       if (fader.fadeDone && Date.now() >= fader.silentUntil) {
         writePlayerPrefs({ volume: video.volume, muted: video.muted });
       }
