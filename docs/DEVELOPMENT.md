@@ -56,7 +56,7 @@ cargo test   --manifest-path src-tauri/Cargo.toml --lib
 |---|---|---|---|
 | 数据目录（库/日志/收藏） | `%APPDATA%\Luma` | `%APPDATA%\Luma-debug`（`store::data_dir` 按 `cfg!(debug_assertions)` 分叉） | 已隔离，dev 折腾不影响真实数据 |
 | WebView2 用户数据目录 | `%LOCALAPPDATA%\dev.luma.desktop` | `%LOCALAPPDATA%\dev.luma.desktop.debug` | **必须隔离**，见下 |
-| 本地反代 | `127.0.0.1:9978` | 同左，后启动的自动退到临时端口（`proxy::bind_listener`） | 各自可用，只是 debug 的端口不固定 |
+| 本地反代 | `127.0.0.1:9978` | `127.0.0.1:9979`（`DEFAULT_PORT` 按 `cfg!(debug_assertions)` 分叉；被占仍退临时端口，`proxy::bind_listener`） | 各自固定端口，互不抢占、不再随机漂移 |
 | CDP | 不开 | `127.0.0.1:9222` | release 不占，无冲突 |
 
 **WebView2 那条是硬约束**：Tauri 在 Windows 上把 webview 的 data dir 钉成 `app_local_data_dir()`（= `%LOCALAPPDATA%\<identifier>`），而 wry 明确要求「**browser args 不同的 webview 必须用不同的 data dir**」。debug 构建会额外注入 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`，于是：
@@ -184,7 +184,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 |---|---|---|
 | `LUMA_PYTHON` | 覆盖 Python 解释器 | 临时切测试解释器 |
 
-| `LUMA_PROXY_PORT` | 本地反代端口 | 默认 9978 |
+| `LUMA_PROXY_PORT` | 本地反代端口（宿主 `proxy::start` 绑定后**写入并注入子进程**，非手填） | release 9978 / debug 9979 |
 | `LUMA_DATA_DIR` | 覆盖数据目录 | — |
 | `LUMA_PROXY_ALLOW_LOCAL` | 允许反代访问 `127.0.0.1` | `1`（仅本地联调） |
 | `LUMA_SELFCHECK` | 启动自检写日志 | `1` |

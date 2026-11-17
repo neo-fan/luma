@@ -118,7 +118,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 ## 8. 播放与本地反代
 
-- 反代 `127.0.0.1:9978`（被占用时回退动态端口并把实际端口注入脚本）。
+- 反代 `127.0.0.1:9978`（debug 用 9979 与正式版分离；被占用时回退动态端口并把实际端口注入脚本）。
 - **headers 优先级**：爬虫显式 UA/Referer/Cookie > 配置级 `headers[]`（host 精确 →
   通配）> 默认值（`okhttp/3.15` + `{scheme}://{host}/`）。默认值由反代最后补，不提前
   折进 proxyUrl 的 query。

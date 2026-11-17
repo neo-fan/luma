@@ -176,6 +176,11 @@ pub fn start() -> Result<Arc<ProxyState>, AppError> {
         image_client: Arc::new(wrap_image(image_base, &image_dir)),
     });
     ACTIVE_PORT.store(port, Ordering::Relaxed);
+    // The Python adapter builds `getProxyUrl()` from `LUMA_PROXY_PORT` (base/
+    // spider.py), which it inherits from the host env; without this it falls
+    // back to 0 and py play URLs point at no proxy. Publishing the *bound*
+    // port here means lazily-spawned py children match release/debug split.
+    std::env::set_var("LUMA_PROXY_PORT", port.to_string());
 
     let shared = state.clone();
     // `setup` runs outside the Tokio context, so the std listener is handed to
