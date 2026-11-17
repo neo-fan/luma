@@ -123,6 +123,7 @@ corepack pnpm dev:app
 | 版本 | 侧栏 `version: <x.y.z>`，**无 `v` 前缀** | `AppShell.tsx`、`lib/version.ts` |
 | 日志 | 三通道 `logs/{app,spider,ui}/<name>.<date>.log` | `infra/logging/` |
 | 存储清理 | 三行 `.config-item` 固定「缓存 / 日志 / 反馈报告」；用量文本是 `X MB · N 个文件`（空条目为 `0 B · 0 个文件` 且按钮 disabled）；清理结果看 `.tip.tip--ok` 的「释放 / 剩余」 | `components/settings/StorageSection.tsx` |
+| 头图到货 | 海报来源看 `.home-hero__poster[data-origin]`（`source` / `douban`，别用 URL 猜——源站海报本身就常挂豆瓣域名）；双缓冲是两个 `<img>`，交叉淡入期间同时有 `src`；豆瓣终态判据是 `data-origin="douban"` 与 `.home-hero__meta` 的 `★` 同一批出现 | `components/HomeHero.tsx` |
 
 ### 6.4 非 DOM 的取证点
 
