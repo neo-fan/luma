@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 const root = resolve(__dirname, "../..");
 const engine = readFileSync(resolve(root, "src/hooks/usePlayerEngine.ts"), "utf8");
 const fader = readFileSync(resolve(root, "src/hooks/playerVolumeFade.ts"), "utf8");
+const writer = readFileSync(resolve(root, "src/hooks/playerPrefsWriter.ts"), "utf8");
 
 describe("player audio fade", () => {
   it("delegates the fade to a single implementation", () => {
@@ -48,26 +49,27 @@ describe("player audio fade", () => {
   });
 
   it("does not persist the volume while the fade is running", () => {
-    const gate = "if (Date.now() < fader.silentUntil) {";
-    expect(engine).toContain(gate);
+    // 落盘闸门 2.0.0 起归 `playerPrefsWriter.ts`（那里有 9 条行为测试）。
+    const gate = "if (now() < fader.silentUntil) {";
+    expect(writer).toContain(gate);
     // 「淡入还没开始」不能压住落盘：自动播放被拦时淡入闸门恒关，
     // 用户在起播前拖的音量会被整段吞掉（2026-11-16 探针回归实测）。
-    expect(engine).not.toContain("!fader.fadeDone || Date.now() < fader.silentUntil");
-    // 卸载补写：淡入完成且过了静默窗才允许落最终值。
+    expect(writer).not.toContain("!fader.fadeDone || now() < fader.silentUntil");
+    // 引擎侧：卸载补写仍要求淡入完成且过了静默窗，且不再自己维护节流状态。
     expect(engine).toContain("if (fader.fadeDone && Date.now() >= fader.silentUntil) {");
+    expect(engine).not.toContain("let volumeTrailing");
+    expect(engine).toContain("prefsWriter.dispose();");
     // 淡入的监听与兜底定时器由模块统一回收，引擎不再手写三份 removeEventListener。
-    expect(engine).toContain("fader.dispose();");
+    expect(engine).toContain("posterHold.dispose();");
     expect(engine).not.toContain('video.removeEventListener("playing", fadeInVolume);');
   });
 
   it("keeps the volume icon able to restore sound", () => {
-    // 上次静音 / 音量 0 就保持静音，别摊成「没静音但没声音」
+    // 上次静音 / 音量 0 就保持静音，别摊成「没静音但没声音」（淡入侧）
     expect(fader).toContain("if (wanted.muted || wanted.volume <= AUDIBLE_FLOOR) {");
-    // 从静音恢复但音量还是 0 时，补回最近一次有声的音量（这一半在引擎里）
-    expect(engine).toContain("video.volume = fader.lastAudible;");
+    // 从静音恢复但音量还是 0 时，补回最近一次有声的音量（写入器侧）
+    expect(writer).toContain("video.volume = fader.lastAudible;");
     // 静音状态要跟音量一起落盘，否则重开又回到默认有声
-    expect(engine).toContain(
-      "writePlayerPrefs({ volume: video.volume, muted: video.muted });",
-    );
+    expect(writer).toContain("write({ volume: video.volume, muted: video.muted });");
   });
 });
