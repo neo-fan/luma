@@ -1561,6 +1561,8 @@ struct Pending {
     key: String,
     /// 后端归一缓存键（正/负/搜索表用）。
     ckey: String,
+    /// 采集库自带的豆瓣 subject id（`vod_douban_id`，已归一：没填是空）。
+    subject_id: Option<String>,
 }
 
 // 手写比较：只按排序相关字段（priority/seq）比，避免对 AppHandle 派生 Eq。
@@ -1655,9 +1657,20 @@ async fn enrich_worker() {
             year,
             key,
             ckey,
+            subject_id,
             ..
         } = item;
-        run_enrichment(&app, kind, &prefix, &title, year.as_deref(), &key, &ckey).await;
+        run_enrichment(
+            &app,
+            kind,
+            &prefix,
+            &title,
+            year.as_deref(),
+            subject_id.as_deref(),
+            &key,
+            &ckey,
+        )
+        .await;
         let mut guard = match enrich_queue().lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -1669,18 +1682,73 @@ async fn enrich_worker() {
     }
 }
 
+/// 取字符串开头的四位年份（源的 `vod_year` 常是「2026韩国」这种脏值）。
+fn first_year(raw: &str) -> Option<i32> {
+    let digits: String = raw.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.len() == 4 {
+        digits.parse().ok()
+    } else {
+        None
+    }
+}
+
+/// id 反查到的条目与源给的信息是否还是同一部作品。
+///
+/// 存在的理由：62% 的条目带 id 且抽检全对，但仍可能有整库乱填（同一个 id、填 0）
+/// 这种脏数据，形态检查发现不了。标题判据直接复用 `title_score`（含原文别名规则）；
+/// 年份允许 ±1（跨地区上映年份常差一年）。任一边拿不到年份就不否决——宁可用 id，
+/// 也不因缺年份退回更弱的标题匹配。
+fn id_matches_source(meta: &DoubanMeta, title: &str, year: Option<&str>) -> bool {
+    if meta.title.trim().is_empty() || title_score(title, &meta.title).is_none() {
+        return false;
+    }
+    match (year.and_then(first_year), first_year(&meta.year)) {
+        (Some(wanted), Some(found)) => (wanted - found).abs() <= 1,
+        _ => true,
+    }
+}
+
 /// 单条富化链：搜索到货推 cover，详情到货推 full；无匹配推 none，传输失败推 error
 /// （error 不写负缓存，前端可据 phase 决定是否再试）。`key` 回带给前端路由，
 /// `ckey` 是后端归一缓存键。
+///
+/// `subject_id` 来自采集库自带的 `vod_douban_id`：有值时先按 id 直取详情（一次请求，
+/// 省掉搜索那一跳），取到后仍过一遍弱校验；对不上就回退标题匹配路径。
 async fn run_enrichment(
     app: &tauri::AppHandle,
     kind: ProxyKind,
     prefix: &str,
     title: &str,
     year: Option<&str>,
+    subject_id: Option<&str>,
     key: &str,
     ckey: &str,
 ) {
+    if let Some(id) = subject_id {
+        let item = SuggestItem {
+            id: id.to_string(),
+            title: title.to_string(),
+            sub_title: String::new(),
+            year: year.unwrap_or_default().to_string(),
+            img: String::new(),
+            url: format!("https://movie.douban.com/subject/{}/", id),
+        };
+        let meta = build_meta(kind, prefix, &item, year, Instant::now).await;
+        if id_matches_source(&meta, title, year) {
+            positive_cache()
+                .insert(ckey.to_string(), meta.clone())
+                .await;
+            emit_douban(app, key, "full", Some(&meta));
+            return;
+        }
+        tracing::warn!(
+            id,
+            title,
+            douban_title = %meta.title,
+            douban_year = %meta.year,
+            "douban: subject_id 与源给的名字/年份对不上，回退标题匹配"
+        );
+    }
     match resolve_candidate(kind, prefix, title, year, Instant::now).await {
         Ok(item) => {
             let coarse = coarse_meta(&item);
@@ -1710,6 +1778,8 @@ pub async fn douban_request(
     proxy_prefix: Option<String>,
     priority: bool,
     key: String,
+    // 采集库自带的豆瓣 subject id；有值时富化按 id 直取，跳过搜索与标题匹配。
+    subject_id: Option<String>,
 ) -> Result<(), AppError> {
     let title = title.trim().to_string();
     if title.is_empty() {
@@ -1726,7 +1796,15 @@ pub async fn douban_request(
     let year = year
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let ckey = cache_key(&title, year.as_deref());
+    let subject_id = subject_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "0");
+    // 缓存键分槽：按 id 取与按标题取是两条不同证据链，不能让标题路径写下的
+    // 「无匹配」负缓存把 id 直取也压掉（反之亦然，id 填错的库也不该污染标题路径）。
+    let ckey = match &subject_id {
+        Some(id) => format!("id:{id}"),
+        None => cache_key(&title, year.as_deref()),
+    };
 
     // 已有完整结果 → 直接推，省一次排队。
     if let Some(meta) = positive_cache().get(&ckey).await {
@@ -1749,6 +1827,7 @@ pub async fn douban_request(
         year,
         key,
         ckey,
+        subject_id,
     });
     Ok(())
 }
@@ -2295,6 +2374,49 @@ mod tests {
         // 只含年份的括号被去掉，其他括号原样保留。
         assert_eq!(normalize_title("沙丘(2021)"), "沙丘");
         assert_eq!(normalize_title("沙丘(TV版)"), "沙丘tv版");
+    }
+
+    #[test]
+    fn subject_id_result_is_weakly_validated_against_source() {
+        let meta = |title: &str, year: &str| {
+            coarse_meta(&SuggestItem {
+                id: "36344548".into(),
+                title: title.into(),
+                sub_title: String::new(),
+                year: year.into(),
+                img: String::new(),
+                url: String::new(),
+            })
+        };
+        // 实测样本：源名「童年阴影」+ 豆瓣「童年阴影 Long Shadows (2025)」，年份同为 2025。
+        assert!(id_matches_source(
+            &meta("童年阴影 Long Shadows‎ (2025)", "2025"),
+            "童年阴影",
+            Some("2025")
+        ));
+        // 脏值年份（源常给「2026韩国」）只要开头年份能对上就放行。
+        assert!(id_matches_source(
+            &meta("谷雨", "2026"),
+            "谷雨",
+            Some("2026韩国")
+        ));
+        // 年份差 2 年：不是同一部，回退标题匹配。
+        assert!(!id_matches_source(
+            &meta("谷雨", "2024"),
+            "谷雨",
+            Some("2026")
+        ));
+        // 标题毫无交集 / id 反查空返回：都判不通过。
+        assert!(!id_matches_source(
+            &meta("流浪地球", "2019"),
+            "三体",
+            Some("2019")
+        ));
+        assert!(!id_matches_source(&meta("", ""), "三体", Some("2019")));
+        // 缺年份不否决：宁可用 id，也不退回更弱的标题匹配。
+        assert!(id_matches_source(&meta("谷雨", ""), "谷雨", None));
+        assert_eq!(first_year("2026韩国"), Some(2026));
+        assert_eq!(first_year("韩国2026"), None);
     }
 
     #[test]
