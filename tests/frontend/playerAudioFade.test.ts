@@ -1,12 +1,15 @@
 /**
  * 起播音频淡入的源码契约（2026-11-15 用户反馈「直播频道切换时候 有个声音」）。
  *
- * 两条约束不能退化：
- * 1. 新实例必须先静音（`muted = true` + `volume = 0`）等 `playing` 再淡入，
- *    否则 ArtPlayer 初始化时会把音量恢复成自己缓存的 100%，首帧就是满音量；
- * 2. 硬停时必须先静音再 `pause()`，拖着一小段缓冲直接掐断会留一声爆音。
+ * 2.0.0 起淡入本体抽到 `src/hooks/playerVolumeFade.ts`，那里有 10 条**行为**测试
+ * （假时钟 + 假帧队列，能精确断言「先立静默窗再取消静音」这类顺序），比读源码
+ * 字符串强得多。所以本文件不再抄一遍内部实现，只钉三件仍然只在引擎里成立的事：
  *
- * 这些都在 `usePlayerEngine.ts` 里，靠行为测试要真起播放器，用源码契约兜住。
+ * 1. 引擎确实**委托**给那个模块，并且全仓**只有这一份**淡入实现（不许再出现
+ *    第二处 `requestAnimationFrame` 爬坡——原先冷启动与换集各抄一份，正是
+ *    「拖音量后换集丢音量」的产地）；
+ * 2. 硬停时必须先静音再 `pause()`，拖着一小段缓冲直接掐断会留一声爆音；
+ * 3. 落盘闸门仍按静默窗判断，且**不能**用「淡入还没开始」压住用户操作。
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -14,29 +17,29 @@ import { describe, expect, it } from "vitest";
 
 const root = resolve(__dirname, "../..");
 const engine = readFileSync(resolve(root, "src/hooks/usePlayerEngine.ts"), "utf8");
+const fader = readFileSync(resolve(root, "src/hooks/playerVolumeFade.ts"), "utf8");
 
 describe("player audio fade", () => {
-  it("mutes the element and starts from zero volume", () => {
-    expect(engine).toContain("const FADE_IN_MS = 200;");
-    expect(engine).toContain("video.muted = true;");
-    expect(engine).toContain("video.volume = 0;");
-    expect(engine).toContain('video.addEventListener("playing", fadeInVolume, { once: true });');
-  });
-
-  it("fades in to the remembered volume instead of jumping to it", () => {
-    // 锚点丢失=重构改了函数名：必须先显性失败。否则 indexOf 返回 -1 时
-    // slice(-1) 只剩一个字符，下面的 toContain 会以「内容缺失」的面目
-    // 报错误导排查，而 `not.toContain` 类断言干脆静默通过（漏报）。
-    const anchor = engine.indexOf("const fadeInVolume = () => {");
-    expect(anchor, "锚点丢失：fadeInVolume 函数名变了？").toBeGreaterThanOrEqual(0);
-    const fade = engine.slice(anchor);
-    expect(fade).toContain("readPlayerPrefs().volume");
-    expect(fade).toContain("video.volume = wanted * progress;");
-    expect(fade).toContain("window.requestAnimationFrame(tick);");
+  it("delegates the fade to a single implementation", () => {
+    expect(engine).toContain('import { createVolumeFader } from "./playerVolumeFade";');
+    expect(engine).toContain("fader.armColdStart();");
+    expect(engine).toContain("fader.armSwitch({ volume: swVolume, muted: swMuted })");
+    // 引擎里不再自己爬坡：淡入只有一处实现。
+    expect(engine).not.toContain("requestAnimationFrame(");
+    expect(engine).not.toContain("FADE_IN_MS");
+    // 模块侧的两个入口与顺序约束还在。
+    expect(fader).toContain("export const FADE_IN_MS = 200;");
+    expect(fader).toContain("silentUntil = now() + FADE_IN_MS + 150;");
+    expect(fader).toContain("target.volume = wanted.volume * progress;");
+    // addEventListener 第三参数传布尔是 capture，不是 once —— 写错会让冷启动
+    // 那轮淡入在换集之后复活（单测能抓到，这里也钉一道）。
+    expect(fader).toContain('target.addEventListener(type, handler, once ? { once: true } : undefined);');
   });
 
   it("mutes before pausing when tearing the player down", () => {
-    const hardStop = engine.slice(engine.indexOf("const hardStop = () => {"));
+    const hardStopAnchor = engine.indexOf("const hardStop = () => {");
+    expect(hardStopAnchor, "锚点丢失：hardStop 函数名变了？").toBeGreaterThanOrEqual(0);
+    const hardStop = engine.slice(hardStopAnchor);
     const muteAt = hardStop.indexOf("video.muted = true;");
     const pauseAt = hardStop.indexOf("video.pause();");
     expect(muteAt).toBeGreaterThan(-1);
@@ -45,28 +48,23 @@ describe("player audio fade", () => {
   });
 
   it("does not persist the volume while the fade is running", () => {
-    expect(engine).toContain("let volumeFadeUntil = 0;");
-    expect(engine).toContain("if (Date.now() < volumeFadeUntil) {");
-    // 「淡入还没开始」不能压住落盘：自动播放被拦时 fadeDone 恒 false，
+    const gate = "if (Date.now() < fader.silentUntil) {";
+    expect(engine).toContain(gate);
+    // 「淡入还没开始」不能压住落盘：自动播放被拦时淡入闸门恒关，
     // 用户在起播前拖的音量会被整段吞掉（2026-11-16 探针回归实测）。
-    expect(engine).not.toContain("if (!fadeDone || Date.now() < volumeFadeUntil) {");
-    expect(engine).toContain("if (fadeDone && Date.now() >= volumeFadeUntil) {");
-    expect(engine).toContain('video.removeEventListener("playing", fadeInVolume);');
-    expect(engine).toContain('video.removeEventListener("canplay", fadeIfPlaying);');
-    expect(engine).toContain("window.clearTimeout(fadeTimer);");
+    expect(engine).not.toContain("!fader.fadeDone || Date.now() < fader.silentUntil");
+    // 卸载补写：淡入完成且过了静默窗才允许落最终值。
+    expect(engine).toContain("if (fader.fadeDone && Date.now() >= fader.silentUntil) {");
+    // 淡入的监听与兜底定时器由模块统一回收，引擎不再手写三份 removeEventListener。
+    expect(engine).toContain("fader.dispose();");
+    expect(engine).not.toContain('video.removeEventListener("playing", fadeInVolume);');
   });
 
   it("keeps the volume icon able to restore sound", () => {
-    // 淡入前先立静默窗口：否则 muted=false 触发的那次 volumechange 会把 0
-    // 写进偏好，之后「点图标取消静音」也没有声音（2026-11-15 实测）。
-    const order = engine.indexOf("volumeFadeUntil = Date.now() + FADE_IN_MS + 150;");
-    const unmute = engine.indexOf("video.muted = false;", order);
-    expect(order).toBeGreaterThan(-1);
-    expect(unmute).toBeGreaterThan(order);
     // 上次静音 / 音量 0 就保持静音，别摊成「没静音但没声音」
-    expect(engine).toContain("if (stored.muted || wanted <= 0.01) {");
-    // 从静音恢复但音量还是 0 时，补回最近一次有声的音量
-    expect(engine).toContain("video.volume = lastAudible;");
+    expect(fader).toContain("if (wanted.muted || wanted.volume <= AUDIBLE_FLOOR) {");
+    // 从静音恢复但音量还是 0 时，补回最近一次有声的音量（这一半在引擎里）
+    expect(engine).toContain("video.volume = fader.lastAudible;");
     // 静音状态要跟音量一起落盘，否则重开又回到默认有声
     expect(engine).toContain(
       "writePlayerPrefs({ volume: video.volume, muted: video.muted });",

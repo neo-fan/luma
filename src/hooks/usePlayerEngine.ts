@@ -28,13 +28,14 @@ import { EXTERNAL_PLAY_ENABLED, PLAY_FAILURE_HINT } from "../lib/features";
 import { registerPlayer, stopActivePlayer } from "../lib/playerRegistry";
 import { api, errorMessage } from "../lib/invoke";
 import { formatBytesPerSec } from "../lib/bytes";
+import { createVolumeFader } from "./playerVolumeFade";
 import { log } from "../lib/logger";
 import { mediaIsAdvancing } from "../lib/mediaAlive";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
 import { failoverCopy } from "../lib/sessionFailover";
 import type { FailoverCause } from "../lib/sessionFailover";
-import { DEFAULT_PREFS, readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
+import { readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import { createActor } from "xstate";
 import { vodSessionMachine } from "../lib/vodSessionMachine";
 import { liveSessionMachine } from "../lib/liveSessionMachine";
@@ -1019,61 +1020,18 @@ export function usePlayerEngine({
      * 200ms 淡入到记忆音量。淡入期间的 volumechange 不落盘（见 volumeFadeUntil），
      * 否则「0」会被写成用户偏好。
      */
-    const FADE_IN_MS = 200;
-    let volumeFadeUntil = 0;
-    /** 淡入是否已开始。false 期间任何 volumechange 都不落盘（见 persistVolume）。 */
-    let fadeDone = false;
-    /** 最近一次「有声」的音量：从静音恢复时用它，别恢复到 0。 */
-    let lastAudible = prefs.volume > 0.01 ? prefs.volume : DEFAULT_PREFS.volume;
-    const fadeInVolume = () => {
-      if (fadeDone) {
-        return;
-      }
-      fadeDone = true;
-      const stored = readPlayerPrefs();
-      const wanted = Math.min(1, Math.max(0, stored.volume));
-      // 用户上次是静音（或音量拖到 0）：保持 muted。别把 0 摊成一个「没静音
-      // 但没声音」的状态，否则用户点取消静音后仍然是哑的。
-      if (stored.muted || wanted <= 0.01) {
-        video.volume = wanted;
-        video.muted = true;
-        return;
-      }
-      // 先把静默窗口立起来，再动 muted / volume：顺序反了的话，`muted=false`
-      // 先触发一次 volumechange，persistVolume 会把此刻的 0 当成用户在调音量
-      // 写进偏好，整机从此默认静音（2026-11-15 实测踩到）。
-      volumeFadeUntil = Date.now() + FADE_IN_MS + 150;
-      video.volume = 0;
-      video.muted = false;
-      const startedAt = performance.now();
-      const tick = () => {
-        if (videoRef.current !== video) {
-          return;
-        }
-        const progress = Math.min(1, (performance.now() - startedAt) / FADE_IN_MS);
-        video.volume = wanted * progress;
-        if (progress < 1) {
-          window.requestAnimationFrame(tick);
-        }
-      };
-      window.requestAnimationFrame(tick);
-    };
-    video.muted = true;
-    video.volume = 0;
-    video.addEventListener("playing", fadeInVolume, { once: true });
     /**
-     * `playing` 在直播首帧偶尔不触发（源在缓冲状态里翻来覆去、或者视频已经被
-     * 另一个实例接管），只靠它会让画面在播、声音永远是 0。补两个兜底：能播即
-     * 解（canplay / 第一个 timeupdate），再加 1.5s 定时器兜最后一层。
+     * 起播音量淡入。为什么必须先立静默窗再动 `muted`、为什么要 `canplay` /
+     * 1.5s 兜底、换集为什么不能复用冷启动目标——那些顺序与历史都写在
+     * `playerVolumeFade.ts`，这里只负责接线与偏好读写。
      */
-    const fadeIfPlaying = () => {
-      if (!video.paused) {
-        fadeInVolume();
-      }
-    };
-    video.addEventListener("canplay", fadeIfPlaying);
-    video.addEventListener("timeupdate", fadeIfPlaying, { once: true });
-    const fadeTimer = window.setTimeout(fadeIfPlaying, 1500);
+    const fader = createVolumeFader({
+      target: video,
+      isCurrent: () => videoRef.current === video,
+      readStored: readPlayerPrefs,
+      writePrefs: (prefs) => writePlayerPrefs(prefs),
+    });
+    fader.armColdStart();
 
     /**
      * 幂等硬停：既由本 effect 的 cleanup 调用，也登记到全局唯一实例登记表，
@@ -1192,11 +1150,11 @@ export function usePlayerEngine({
       if (videoRef.current !== video) {
         return;
       }
-      // 淡入 ramp 进行中（volumeFadeUntil 窗口内）的连续音量变更是我们自己
+
       // 写的中间值，整段不落盘。淡入还没开始的暂停态不拦——自动播放被拦时
       // 用户可能先拖音量，曾用 !fadeDone 一并吞掉，偏好永远丢
       // （2026-11-16 实测）。
-      if (Date.now() < volumeFadeUntil) {
+      if (Date.now() < fader.silentUntil) {
         return;
       }
       // 新建实例的静默期（只在 load 时立起，原地换集不续窗）：
@@ -1212,11 +1170,11 @@ export function usePlayerEngine({
       // 用户点音量图标从静音恢复时，<video>.volume 可能还停在 0（ArtPlayer
       // 只切 muted，不还原音量）：恢复到最近一次有声值，否则图标亮了还是没声。
       if (!video.muted && video.volume <= 0.01) {
-        video.volume = lastAudible;
+        video.volume = fader.lastAudible;
         return;
       }
       if (!video.muted && video.volume > 0.01) {
-        lastAudible = video.volume;
+        fader.noteAudible(video.volume);
       }
       const now = Date.now();
       if (now - volumeWrittenAt < 500) {
@@ -1543,7 +1501,7 @@ export function usePlayerEngine({
        * 丢了它就是把用户的手动调节抹掉。
        */
       const swVolume =
-        !fadeDone || video.muted || video.volume <= 0.01 ? lastAudible : video.volume;
+        !fader.fadeDone || video.muted || video.volume <= 0.01 ? fader.lastAudible : video.volume;
       const swMuted = video.muted;
       const swRate = video.playbackRate;
       // 静默窗（rateReadyAt）**不在这里续**：那是新建实例的 load 窗口，换集
@@ -1557,7 +1515,7 @@ export function usePlayerEngine({
         if (Math.abs(video.playbackRate - swRate) > 0.01) {
           video.playbackRate = swRate;
         }
-        if (!video.muted && fadeDone && Math.abs(video.volume - swVolume) > 0.01) {
+        if (!video.muted && fader.fadeDone && Math.abs(video.volume - swVolume) > 0.01) {
           video.volume = swVolume;
         }
       }, 1250);
@@ -1619,60 +1577,11 @@ export function usePlayerEngine({
         video.playbackRate = swRate;
       }
       if (wasPlaying) {
-        // 新集声音重走淡入，但**目标 = 切换前的有效音量**（不是存储偏好）：
-        // 重置淡入闸门从静音起播，playing 后 200ms 渐回，canplay 兜底——
-        // 既压掉解码首帧爆音，也不会像复用 fadeInVolume 那样把音量冲成
-        // ArtPlayer 刚恢复的存储值（2026-11-16 实测拖音量后换集丢音量）。
-        fadeDone = false;
-        video.volume = 0;
-        video.muted = true;
-        const swFadeIn = () => {
-          if (fadeDone || videoRef.current !== video) {
-            return;
-          }
-          fadeDone = true;
-          if (swMuted) {
-            video.volume = swVolume;
-            video.muted = true;
-            return;
-          }
-          // 先把静默窗口立起来再动 muted/volume（同 fadeInVolume 的顺序教训：
-          // 顺序反了会把此刻的 0 写成用户偏好）。
-          volumeFadeUntil = Date.now() + FADE_IN_MS + 150;
-          video.volume = 0;
-          video.muted = false;
-          const startedAt = performance.now();
-          const tick = () => {
-            if (videoRef.current !== video) {
-              return;
-            }
-            const progress = Math.min(1, (performance.now() - startedAt) / FADE_IN_MS);
-            video.volume = swVolume * progress;
-            if (progress < 1) {
-              window.requestAnimationFrame(tick);
-            } else {
-              // 渐入完成：再压 400ms 静默窗，让 ramp 期间挂上的节流/trailing
-              // 写全部作废，并把切换前的有效音量正式落盘——否则下一次
-              // ArtPlayer 恢复缓存音量时，存储里还是被冲掉前的旧值。
-              volumeFadeUntil = Date.now() + 400;
-              writePlayerPrefs({ volume: swVolume, muted: swMuted });
-            }
-          };
-          window.requestAnimationFrame(tick);
-        };
-        video.addEventListener("playing", swFadeIn, { once: true });
-        const swFadeIfPlaying = () => {
-          if (!video.paused) {
-            swFadeIn();
-          }
-        };
-        video.addEventListener("canplay", swFadeIfPlaying, { once: true });
-        const swFadeTimer = window.setTimeout(swFadeIfPlaying, 1500);
-        trackSwitchDisposer(() => {
-          video.removeEventListener("playing", swFadeIn);
-          video.removeEventListener("canplay", swFadeIfPlaying);
-          window.clearTimeout(swFadeTimer);
-        });
+        // 新集声音重走一次淡入，**目标 = 切换前的有效音量**（不是存储偏好）——
+        // 复用冷启动那条会把音量冲成 ArtPlayer 刚恢复的存储值（2026-11-16 实测
+        // 「拖音量后换集丢音量」）。淡入本身、静默窗、完成后的正式落盘都在
+        // `fader.armSwitch` 里；撤销函数交给切换句柄回收器，与原来的 disposer 等价。
+        trackSwitchDisposer(fader.armSwitch({ volume: swVolume, muted: swMuted }));
         // 续播改由机器发起（实现见下面的 `sessionEffects.resumePlayback`）：倍速复位
         // 与音量淡入都已经在前面上方处理完，这一刻才请求播放——时机与原来的内联
         // 写法逐字一致，区别只是「谁决定要播」从这段代码搬进了转换表。
@@ -1761,10 +1670,7 @@ export function usePlayerEngine({
       video.removeEventListener("loadedmetadata", reportMeta);
       video.removeEventListener("resize", reportMeta);
       video.removeEventListener("loadedmetadata", applyResume);
-      window.clearTimeout(fadeTimer);
-      video.removeEventListener("playing", fadeInVolume);
-      video.removeEventListener("canplay", fadeIfPlaying);
-      video.removeEventListener("timeupdate", fadeIfPlaying);
+      fader.dispose();
       // 先通知上层把 portal 里的角标摘掉，再销毁 ArtPlayer：反过来的话 React
       // 会往一个已经被 remove() 的节点里做移除。
       onPlayerRoot?.(null);
@@ -1774,7 +1680,7 @@ export function usePlayerEngine({
       // 倍速绝不能在这里覆盖——ended 触发卸载那一刻 video.playbackRate 可能已被
       // 播放内核重置为 1（实测），写回会抹掉用户刚选的倍速。倍速由 persistRate
       // 在变更时立即落盘，无需、也不允许在卸载时再写。
-      if (fadeDone && Date.now() >= volumeFadeUntil) {
+      if (fader.fadeDone && Date.now() >= fader.silentUntil) {
         writePlayerPrefs({ volume: video.volume, muted: video.muted });
       }
       // 先置空引用，避免 destroy 过程中的 video:error 再触发换源。
