@@ -79,6 +79,8 @@ const PROBES = [
   { key: "storage_clean", script: "tools/probes/probe_storage_clean.mjs", label: "设置 存储与清理（用量 / 二次确认 / 清理生效）" },
   // 冷 reload 才可比（豆瓣 store 是进程内的），需要真实配置与豆瓣出数，放最后。
   { key: "hero_douban_once", script: "tools/probes/probe_hero_douban_once.mjs", label: "首页头图 豆瓣到货一次性（同批 + 淡入）" },
+  // 自己抓 CMS 列表找一个带 vod_douban_id 的条目再进详情；源没填就 SKIP。
+  { key: "douban_subject_id", script: "tools/probes/probe_douban_subject_id.mjs", label: "豆瓣 subject_id 直取（真实数据端到端）" },
   // 会把 active 切成桩配置，必须最后；默认不跑。
   { key: "ui", script: "tools/probes/probe_ui.mjs", label: "UI 冒烟（会切桩配置）", needsStub: true, optIn: true },
 ];

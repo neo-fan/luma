@@ -474,6 +474,26 @@ describe("douban ui contract", () => {
     expect(invoke).toContain("onDoubanMeta(");
   });
 
+  it("detail and player pages actually hand the source's subject id to the request", () => {
+    // 后端能吃 subjectId、lib 会透传，都不等于页面真的把卡片/详情上的字段取出来了。
+    // 这一段没有网络就不能在窗口里稳定复现（源的 id 覆盖率约 62%，取样会飘），
+    // 所以用源码契约钉住「取值 + 传参」，真源出数时另有探针补实测。
+    const detail = read("src/pages/DetailPage.tsx");
+    const player = read("src/pages/PlayerPage.tsx");
+    expect(detail).toContain("vod?.vod_douban_id || emptyCard?.vod_douban_id");
+    expect(detail).toContain("subjectId: doubanSubjectId || undefined");
+    // 派生值必须进 effect 依赖：详情是异步到的，不依赖它就只会用标题发一次。
+    expect(detail).toContain("[doubanTitle, doubanYear, doubanSubjectId]");
+    expect(player).toContain("subjectId: vod?.vod_douban_id?.trim() || undefined");
+    expect(player).toContain("vod?.vod_douban_id, vodName]");
+  });
+
+  it("keeps vod_douban_id through the card index that feeds the detail page", () => {
+    // 卡片→详情是主路径：白名单里没有这个字段，页面就拿不到 id、按 id 直取轮不上。
+    const index = read("src/lib/cardIndex.ts");
+    expect(index).toContain("vod_douban_id: vod.vod_douban_id");
+  });
+
   it("prefers douban metadata on the detail page and keeps source as fallback", () => {
     const detail = read("src/pages/DetailPage.tsx");
     const hero = read("src/components/VodMetaHero.tsx");
