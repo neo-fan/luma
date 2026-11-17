@@ -16,7 +16,8 @@
  * 判定口径（重要）：
  *   - 真实点播源不可用 / 没出画 → **SKIP**（exit 0，环境依赖，不是回归）；
  *   - 出画后机器状态与现实不符（没进 playing、hasPlayed 没置位、健康播放中被误判
- *     probing/recovering、unknown 计数非 0、原地换集不进 switching 或不收口）→ **FAIL**。
+ *     probing/recovering、unknown 计数非 0、原地换集不进 switching 或不收口）→ **FAIL**；
+ *   - 交棒链断了（注入坏源后既不进 recovering 也没有判死红条，或 30s 没人接手）→ **FAIL**。
  *
  * 依赖 dev 窗口（CDP 9222）、真实配置与外网。关键词可用 LUMA_KEYWORD 覆盖。
  *
@@ -178,6 +179,7 @@ if (bad.length > 0) {
 console.log("健康播放 12 拍:", JSON.stringify(healthy.slice(0, 3)), "...");
 
 // 4) 真实换集：两条合法路径分别断言
+let chainReady = false;
 const pre = await cdp.eval(SESSION);
 const clicked = await clickNextEpisode(30000);
 if (!clicked) {
@@ -218,11 +220,13 @@ if (!clicked) {
       console.log(`[SKIP] 70s 内新集没出画（${JSON.stringify(await cdp.eval(SESSION))}），源侧环境问题`);
     }
   } else if (outcome.instance !== pre.instance) {
+    chainReady = true;
     console.log("换集走的是退回整页重建（新 actor）:", JSON.stringify({ instance: outcome.instance, ctx: outcome.ctx }));
     if (outcome.state !== "playing") problems.push(`重建后机器应回到 playing，实际 ${outcome.state}`);
     if (outcome.ctx?.hasPlayed !== true) problems.push("重建后 hasPlayed 没置位（LOAD/MEDIA_ALIVE 没喂到）");
     if (outcome.ctx?.unresponsiveProbes !== 0) problems.push("重建后 unknown 计数非 0（bumpSession 没复位）");
   } else {
+    chainReady = true;
     console.log("换集走的是原地切换（同一 actor）:", JSON.stringify({ ctx: outcome.ctx }));
     if (!sawSwitching) problems.push("原地换集期间没观测到 switching 状态（USER_SWITCH 没喂进机器）");
     if (outcome.ctx?.sessionId !== pre.ctx.sessionId + 1) {
@@ -231,6 +235,81 @@ if (!clicked) {
     if (outcome.ctx?.hasPlayed !== true) problems.push("原地换集收口后 hasPlayed 没回到 true");
     if (outcome.ctx?.unresponsiveProbes !== 0) problems.push("原地换集后 unknown 计数没被 bumpSession 复位");
   }
+}
+
+// 5) 交棒链实测：2.0.0 起「撤海报 / 挂红条 / 交棒换线」不再由各调用点手写，
+//    而是机器进入 recovering 时回调解释器唯一的实现。这条断言整条链真的通：
+//    对正在播的 <video> 塞一个坏 src → 触发 error → 引擎报 FAILED → 机器进
+//    recovering → 错误条出现判死文案 → 上层换线/换源接管（会话身份变化）。
+if (chainReady) {
+  const before = await cdp.eval(SESSION);
+  const forced = await cdp.eval(`(() => {
+    const v = document.querySelector('.player-art video') || document.querySelector('video');
+    if (!v) return 'no-video';
+    v.src = 'data:video/mp4;base64,AAAA';
+    v.load();
+    return 'forced';
+  })()`);
+  if (forced !== "forced") {
+    problems.push(`无法注入坏源：${forced}`);
+  } else {
+    const seen = await until(
+      `(() => {
+        const s = window.__lumaPlayerSession;
+        const bar = document.querySelector('.error-bar__text');
+        return {
+          state: s ? s.value : null,
+          instance: s ? s.instance : null,
+          sessionId: s ? (s.context && s.context.sessionId) : null,
+          cause: s ? (s.context && s.context.failoverCause) : null,
+          bar: bar ? bar.textContent.trim() : null,
+        };
+      })()`,
+      // 交棒是同步发生的（XState 在 send 里执行 action），所以 recovering 与红条
+      // 谁先被采样到都算链通；两者都没抓到才算断链。
+      (r) => r.state === "recovering" || r.cause === "mediaDecode" || (r.bar || "").includes("播放器加载失败"),
+      8000,
+      150,
+    );
+    console.log("交棒链:", JSON.stringify(seen.value));
+    if (!seen.ok) {
+      problems.push(`注入坏源后 8s 内既没进 recovering、也没有判死红条：${JSON.stringify(seen.value)}`);
+    }
+    // 交棒之后必须有人接管：换线 / 换源会开新一轮（重建实例 → instance 变，
+    // 或同实例重新 LOAD → ctx.sessionId 变）。卡死在 recovering 说明机器发起了
+    // 但上层没接住。注意 `SESSION` 的 sessionId 在 ctx 里，别拿顶层字段比 ——
+    // 那样恒为 undefined，断言会假绿（2026-11-17 第一次写就踩了这个）。
+    const preInstance = before.instance;
+    const preSession = before.ctx?.sessionId;
+    let stuckSince = Date.now();
+    let handed = { ok: false, value: null };
+    const chainDeadline = Date.now() + 30000;
+    while (Date.now() < chainDeadline) {
+      const r = await cdp.eval(SESSION);
+      if (r.state !== "recovering") {
+        stuckSince = Date.now();
+      }
+      if (r.instance !== preInstance || r.ctx?.sessionId !== preSession) {
+        handed = { ok: true, value: r };
+        break;
+      }
+      if (Date.now() - stuckSince > 20000) {
+        problems.push(`交棒后机器卡在 recovering 超过 20s，上层没有接住：${JSON.stringify(r.ctx)}`);
+        break;
+      }
+      await cdp.sleep(400);
+    }
+    if (!handed.ok && problems.length === 0) {
+      problems.push("交棒后 30s 内没有新会话接手（既没重建实例也没自增 sessionId）");
+    } else if (handed.ok) {
+      console.log(
+        "新会话:",
+        JSON.stringify({ state: handed.value.state, instance: handed.value.instance, sessionId: handed.value.ctx?.sessionId }),
+      );
+    }
+  }
+} else {
+  console.log("（没走到原地换集，跳过交棒链实测）");
 }
 
 if (cdp.exceptions.length > 0) {

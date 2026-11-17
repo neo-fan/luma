@@ -109,3 +109,14 @@ tools/
 | 版本 | 侧栏 `version: <x.y.z>`，**无 `v` 前缀** | `AppShell.tsx`、`lib/version.ts` |
 | 日志 | 三通道 `logs/{app,spider,ui}/<name>.<date>.log` | `infra/logging/` |
 
+### 6.4 非 DOM 的取证点
+
+| 场景 | 契约 | 出处 |
+|---|---|---|
+| 播放会话状态机 | **仅 dev**：`window.__lumaPlayerSession = { instance, value, context }`。`instance` 区分「同一实例内原地换集（`sessionId` 自增）」与「整页重建（`instance` 变）」；`context` 携带 `sessionId` / `hasPlayed` / `unresponsiveProbes` / `failoverCause`。探针按它比对「模型 ↔ 现实」，产品逻辑一律不读它 | `usePlayerEngine.ts`、`vodSessionMachine.ts`、`liveSessionMachine.ts` |
+| 判死文案与日志 stage | `failoverCopy(cause)` 是唯一来源；新增 `FailoverCause` 必须同时给文案与 stage（`sessionFailover.test.ts` 钉穷尽性与 stage 唯一性） | `sessionFailover.ts` |
+| 错误条 | `.error-bar__text`（人话）/ `.error-bar__raw`（技术详情 `<pre>`） | `ErrorBar.tsx` |
+
+> 比对 `instance` / `sessionId` 时注意 `SESSION` 快照的形状：`sessionId` 在 `context`
+> 里，取顶层 `sessionId` 恒为 `undefined`，断言会**假绿**（2026-11-17 踩过一次）。
+

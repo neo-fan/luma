@@ -30,6 +30,13 @@
 
 ### 工程
 
+- **判死交棒改由状态机发起（解释器化第 4 步：actions 落地）**：原先引擎里有 **5 个交棒点**各写一遍「撤冻结帧 → 挂红条 → `switchOrFailoverRef`」（看门狗判死、`<video>` 解码错误、hls fatal、FLV fatal、直播 FLV EOF 停住），顺序全靠人记，漏一处就有一张静帧永久盖住画面。现在这五处合成一个 `handOverLine`，由机器在进入 `recovering` 时通过动作发起（点播 `navigateFailover` / 直播 `requestLineSwitch`），实现用 `machine.provide({ actions })` 注入（v5 的实现覆盖点是 `.provide()`，`createActor` 的 options 里没有 `actions`）。配套：
+  - 新增 `src/lib/sessionFailover.ts`：`FailoverCause`（`probeDead` / `probeUnresponsive` / `mediaDecode` / `hlsFatal` / `flvFatal` / `flvInterrupted` / `linesExhausted`）与「用户文案 + 日志 stage」的**唯一映射表**——机器只说为什么，产品文案不进模型。
+  - 事件形状收敛：`FAILED` 由自由文本 `reason` 改成 `cause` + `detail`；探活结论直接复用 `playProbe.LineVerdict`，`PROBE` 的后果（复位静默计时 `restartQuietClock`、留证据 `reportProbeInconclusive` / `reportProbeSlow`）也搬进转换表，解释器的探活回调从此**只有一行 send、零分支**，不再读 `matches("recovering")` 决定文案。
+  - 卸载时先摘掉副作用实现（机器 actor 按 `siteKey` 比实例活得久，不能让它回调到已销毁闭包）。
+  - 行为收紧一处：所有交棒原因统一置 `watchStopped`（此前 hls / FLV / 解码错误三条不设闸门，同一实例内可以与看门狗各交棒一次）。
+  - 测试：+13 条（10 条用 `provide` 注入 recorder，断言「进入 recovering 只发一次交棒、原因随事件带出、unknown 前两次只留证据、出画后一个副作用都不发、离开 recovering 不重放旧原因」；3 条钉文案表穷尽性与 stage 唯一性）。前端 `pnpm test` 532 / 65 文件。
+  - **窗口端到端实测**：在 dev 窗口对正在播的 `<video>` 注入坏 src 逼出真实 `error` → 观测到 `state: "recovering"` + `failoverCause: "mediaDecode"` + 红条文案「播放器加载失败，可尝试换源或稍后重试。」，30s 内 `instance 2 → 4` 说明上层确实接了棒。
 - **新增常驻探针 `probe_session_machine`（会话状态机 ↔ 现实）**：机器测试只能证明模型自洽，证明不了「引擎真的把事件喂对了」。这条探针在真实点播里读 dev 观测点 `window.__lumaPlayerSession`，钉：出画后必须 `playing` + `hasPlayed` + `sessionId ≥ 1` + unknown 计数为 0；健康播放 12 拍内不得出现 `probing`/`recovering` 或计数非 0；换集分两条合法路径分别断言——同一 actor 的原地切换必须出现 `switching` 且收口后 `sessionId` 自增 1，退回整页重建（`线路不可解析` 等）则 `instance` 变化、不得按回归算。为此给观测点补了 actor 实例身份 `instance`（只读、dev-only，不参与产品逻辑）。首轮实跑即抓到自己探针的口径错误（误把「退回重建」当回归），已按现实改写。
 - **`probe_live_audio` 场景 3 对齐常驻层契约**：它原先断言「离开直播页后 DOM 里不该有 `<video>`」，而 `.live-host` / `.player-host` 自 1.0.3 起的设计是「只藏不卸载、音频照播、回直播页复用同一条流」（`layout.css` 的注释即设计说明）——这条红是探针没跟上改造，不是产品回归（用「临时回退本轮三个产品文件 + 同一配置重跑」做过对照，且频道可用性本身在抖，冷缓存时轨道读到 0 会假 SKIP）。改成钉当前真会出事的三件事：不堆叠（至多 1 条流）、不双声 / 无幽灵音（至多 1 个在推进、脱离 DOM 的旧元素不得还在播、无 `<audio>`）、隐藏态必须真的断掉命中测试（`is-idle` + `aria-hidden` + `visibility:hidden` + `pointer-events:none` + `elementsFromPoint` 命中栈不含常驻层节点）。改写后实跑通过并正向抓到隐藏层不再吃点击。
 
