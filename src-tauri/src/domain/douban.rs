@@ -1420,9 +1420,19 @@ async fn resolve_candidate(
                 SearchOutcome::Conclusive(items) => {
                     let picked = pick_candidate(&items, &title_owned, year_owned.as_deref());
                     if picked.is_none() {
+                        // 判成「不是同一部」时，光有 candidates=N 答不了「为什么」：
+                        // 把候选标题一起留下，才能看出是打分太保守，还是豆瓣那边
+                        // 本来就挂的是别名（韩剧 / 港剧常见）。
+                        let samples = items
+                            .iter()
+                            .map(|item| item.display_title().trim())
+                            .take(6)
+                            .collect::<Vec<_>>()
+                            .join(" | ");
                         tracing::info!(
                             title = %title_owned,
                             candidates = items.len(),
+                            samples = %samples,
                             "douban: no matching subject"
                         );
                         // 确认无匹配：写负缓存压制重复查询（粗/细都靠它短路）。
