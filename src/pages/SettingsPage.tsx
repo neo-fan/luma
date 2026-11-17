@@ -8,7 +8,7 @@ import DiagnosticSection from "../components/settings/DiagnosticSection";
 import EpgsSection from "../components/settings/EpgsSection";
 import GhProxySection from "../components/settings/GhProxySection";
 import HealthCheckSection from "../components/settings/HealthCheckSection";
-import HistorySection from "../components/settings/HistorySection";
+import StorageSection from "../components/settings/StorageSection";
 import ProxySection from "../components/settings/ProxySection";
 import {
   DOUBAN_PROXY_OPTIONS,
@@ -37,16 +37,16 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: "s-proxy", label: "本地反代" },
   { id: "s-health", label: "站点体检" },
   { id: "s-diagnostic", label: "诊断" },
-  { id: "s-history", label: "历史" },
+  { id: "s-storage", label: "存储与清理" },
 ];
 
 /**
  * 设置页只做编排：持有跨 section 共享的 error / notice，把导入、配置管理、反代、
- * 站点体检、诊断、历史各自拆成独立 section 组件（见 components/settings/*），
+ * 站点体检、诊断、存储清理各自拆成独立 section 组件（见 components/settings/*），
  * 每个 section 自管自己的加载/错误状态，互不耦合。
  *
  * 左侧 180px 吸顶目录（DSH 规格的 SettingNav）：设置页现在有 9 个 block、
- * 纵向超过两屏，目录让「历史 / 诊断」这类深处的 section 一次可达。
+ * 纵向超过两屏，目录让「存储与清理 / 诊断」这类深处的 section 一次可达。
  *
  * 「豆瓣信息」是唯一不单独建 components/settings/* 的 section：它的状态只有
  * 三个 localStorage 字段（见 `src/lib/doubanSettings.ts`），拆组件反而要为它
@@ -211,8 +211,8 @@ export default function SettingsPage({
     },
     { id: "s-diagnostic", node: <DiagnosticSection reload={reload} /> },
     {
-      id: "s-history",
-      node: <HistorySection onError={setError} onNotice={setNotice} />,
+      id: "s-storage",
+      node: <StorageSection onError={setError} onNotice={setNotice} />,
     },
   ];
 

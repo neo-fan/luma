@@ -68,6 +68,8 @@ pub mod proxy;
 pub mod sniff;
 #[path = "domain/spider/mod.rs"]
 pub mod spider;
+#[path = "domain/storage.rs"]
+pub mod storage;
 
 pub use error::{code, AppError};
 
@@ -279,6 +281,8 @@ pub fn run() {
             diagnostics::diagnostics,
             logging::open_log_dir,
             diagnostics::export_report,
+            storage::storage_usage,
+            storage::storage_clear,
             clipboard::copy_text,
         ])
         .build(tauri::generate_context!())

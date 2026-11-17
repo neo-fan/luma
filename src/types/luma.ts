@@ -462,3 +462,25 @@ export interface GhProxyState {
   /** active 运行快照：URL 改写过，前端缓存必须整份替换。 */
   snapshot?: ConfigSnapshot | null;
 }
+
+/** 一个本机目录的占用（设置页「存储与清理」）。 */
+export interface DirUsage {
+  bytes: number;
+  files: number;
+}
+
+/** 一次手动清理的结果。 */
+export interface ClearOutcome {
+  freedBytes: number;
+  remaining: DirUsage;
+  /** 正被占用、既删不掉也清不空的条目数（通常是当天正在写的日志）。 */
+  skipped: number;
+}
+
+export interface StorageUsage {
+  logs: DirUsage;
+  reports: DirUsage;
+  imageCache: DirUsage;
+}
+
+export type StorageTarget = "logs" | "reports" | "imageCache";

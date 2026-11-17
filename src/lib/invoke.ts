@@ -47,6 +47,9 @@ import type {
   SpiderRequest,
   VodInfo,
   VodRef,
+  ClearOutcome,
+  StorageTarget,
+  StorageUsage,
 } from "../types/luma";
 
 /** 把 invoke 抛出的任意错误收敛成 AppError。 */
@@ -607,6 +610,16 @@ export const api = {
   /** 生成一份「诊断 + 日志尾部」的反馈文件，返回其绝对路径。 */
   exportReport(): Promise<string> {
     return call("export_report");
+  },
+
+  /** 本机三类可清理存储的当前占用。 */
+  storageUsage(): Promise<StorageUsage> {
+    return call("storage_usage");
+  },
+
+  /** 手动清理一类存储，返回释放了多少。 */
+  storageClear(target: StorageTarget): Promise<ClearOutcome> {
+    return call("storage_clear", { target });
   },
 
   /** 写系统剪贴板（避开 WebView2 的 clipboard 权限弹窗）。 */
