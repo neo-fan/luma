@@ -1300,6 +1300,9 @@ export default function PlayerPage({
     const episode = target.episodes[index];
     // 立刻上锁并点亮 loading，且在 `!resolved` 分支之前：冷路径直接 navigate
     // 重建，若等到快路径才置真，这一路既不转圈也不挡并发入口。
+    // 切换前是不是在播：决定切换后要不要自动续播（由机器据此发起 resumePlayback），
+    // 也决定收口文案要不要提示「点播放继续」。
+    const wasPlayingBefore = videoRef.current ? !videoRef.current.paused : false;
     markSwitching(true);
     flushHistoryRef.current?.();
 
@@ -1366,9 +1369,15 @@ export default function PlayerPage({
           playFrom: target.name,
           url: episode.url,
         };
-        // 「正在播放」的高亮只在这里移动：切换真落地了才算数。
+        // 「当前集」的高亮只在这里移动：切换真落地了才算数。
         setManualPick({ lineIndex: targetLine, episodeIndex: index });
-        setSwitchTip("");
+        // 切换前是暂停态就不抢控制权自动播（机器据此不发 resumePlayback），
+        // 但画面会停在 0:00 不动 —— 必须说清楚在等什么，否则看着像卡住。
+        setSwitchTip(
+          !wasPlayingBefore
+            ? `已切到「${episode.name}」，点播放继续`
+            : "",
+        );
       } catch (err) {
         // 原地切换失败要退回整页重建：这份解析结论（可能来自缓存）已不可信，
         // 作废掉，免得新页面首次解析又命中同一个坏地址。

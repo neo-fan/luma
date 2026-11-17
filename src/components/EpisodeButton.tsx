@@ -4,7 +4,7 @@ interface EpisodeButtonProps {
   name: string;
   /** 上次看到的这一集：右上角绿点，完整文案在 title 里。 */
   seen?: boolean;
-  /** 播放页里「正在播放」的那一集：右上角状态点。 */
+  /** 当前集：右上角状态点。暂停时也成立，所以文案用「当前集」而不是「正在播放」。 */
   active?: boolean;
   /** 已请求但还没切换成功：排队态，与 active 互斥优先由调用方保证。 */
   pending?: boolean;
@@ -83,7 +83,7 @@ export default function EpisodeButton({
         </span>
       ) : active ? (
         <span className="episode__now">
-          <span className="sr-only">正在播放</span>
+          <span className="sr-only">当前集</span>
         </span>
       ) : null}
     </button>
