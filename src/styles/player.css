@@ -436,20 +436,15 @@
   transition-delay: 0s !important;
 }
 
-/* 「下一集」按钮的进行中态：切换时**用转环取代箭头**（隐藏 .player-next-glyph、
-   显示居中的 .player-next-spin），而不是把描弧叠在箭头上——两者同框会糊成一团
-   （2026-11-16 反馈「太不协调」）。同时把按钮锁成不可点：cursor:not-allowed +
-   抹掉 .art-icon 的 hover 缩放，消除「还能点」的视觉邀请。刻意不用 opacity 压暗
-   整颗按钮——那与 .is-disabled（最后一集）撞相，用户会读成「到最后一集了」而不是
-   「正在切」。 */
+/* 「下一集」按钮的进行中态：切换时用转环取代箭头（隐藏 .player-next-glyph、显示
+   居中的 .player-next-spin），两者同框会糊成一团。刻意不用 opacity 压暗整颗按钮——
+   那与 .is-disabled（已到最后一集）撞相，会被读成「到最后一集了」而不是「正在切」。
+   光标形状保持不变：切换中的按钮只是还没响应，不是不可用，改成 not-allowed 会让
+   用户以为出了错。重复点击由切换锁拦下，不靠光标表达。 */
 .art-control-next-episode .player-next-spin {
   display: none;
   transform-box: fill-box;
   transform-origin: center;
-}
-
-.art-control-next-episode.is-switching {
-  cursor: not-allowed;
 }
 
 .art-control-next-episode.is-switching .player-next-glyph {
@@ -461,12 +456,10 @@
   animation: player-next-spin 0.9s linear infinite;
 }
 
-/* 切换中抑制 hover 反馈：ArtPlayer 给 .art-icon 的悬停缩放会在转环上复现，
-   看起来仍像可点，这里连同我们的锁定语义一起压掉。 */
+/* 切换中转环上不复现 ArtPlayer 给 .art-icon 的悬停缩放。 */
 .art-control-next-episode.is-switching .art-icon,
 .art-control-next-episode.is-switching .art-icon:hover {
   transform: none;
-  cursor: not-allowed;
 }
 
 @keyframes player-next-spin {
