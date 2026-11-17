@@ -492,7 +492,11 @@ class Spider:
         return [404, "text/plain", b""]
 
     def proxy(self, params: Any) -> Any:
-        return [404, "text/plain", ""]
+        # FongMi semantics: the host invokes `proxy`; community spiders usually
+        # implement `localProxy` instead, so delegate. A spider that overrides
+        # `proxy` directly is unaffected; one that implements neither falls back
+        # to the `localProxy` stub (404), exactly as before.
+        return self.localProxy(params)
 
     # ------------------------------------------- standard content method stubs
     # Native TVBox `base.spider.Spider` defines these so the host (Java/Kotlin)

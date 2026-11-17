@@ -432,8 +432,18 @@ pub(super) async fn handle_proxy(
         return handle_spider_proxy(&kind, &pairs).await;
     }
 
+    // Spider local proxy without a `do=` marker. TVBox spiders built for the
+    // FongMi contract emit `proxy?url=&type=m3u8&slug=…` (they append their own
+    // params to `getProxyUrl()` and expect the host to hand the whole query map
+    // back to `Spider.localProxy`). An empty `url=` is never a valid upstream
+    // fetch, so route it to the spider proxy instead of 400-ing on `Url::parse("")`.
+    let target_url = get("url").unwrap_or_default();
+    if target_url.is_empty() && !pairs.is_empty() {
+        return handle_spider_proxy("spider", &pairs).await;
+    }
+
     let query = ProxyQuery {
-        url: get("url").unwrap_or_default(),
+        url: target_url,
         ua: get("ua"),
         referer: get("referer"),
         cookie: get("cookie"),

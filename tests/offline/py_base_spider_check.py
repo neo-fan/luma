@@ -145,6 +145,15 @@ def test_native_helpers() -> None:
     check(s.getDependence() == [] and s.getName() == "", "stub", "getDependence/getName 空桩")
     check(s.action({}) == {} and s.destroy() is None, "stub", "action/destroy 空桩")
     check(s.localProxy({})[0] == 404 and s.proxy({})[0] == 404, "stub", "localProxy/proxy 空桩")
+
+    # FongMi 语义：宿主调 proxy()，社区爬虫多只实现 localProxy()。基类 proxy 必须
+    # 委派 localProxy，否则只实现 localProxy 的源（如央视频 yangshipin）永远拿 404。
+    class _LocalOnly(Spider):
+        def localProxy(self, param):
+            return [200, "application/vnd.apple.mpegurl", b"#EXTM3U\n", {}]
+
+    lp = _LocalOnly()
+    check(lp.proxy({"type": "m3u8", "slug": "cctv2"})[0] == 200, "proxy", "proxy 委派 localProxy")
     check(s.page([1, 2, 3], 1, 2).get("total") == 3, "util", "page 工具（fongmi）")
     check("[a=cr:" in s.link("x", {"a": "b"}), "util", "link 工具（fongmi）")
 
