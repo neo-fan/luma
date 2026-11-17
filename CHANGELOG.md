@@ -14,6 +14,8 @@
 
 ### 变更
 
+- **页面宽度自适应铺满窗口（去掉居中封顶）**：`.page` 原 `max-width:1360 + margin:0 auto`、播放页 `max-width:1600`，宽窗下内容封顶居中、两侧留大片空白，hero 负 margin 只撑到居中的 `.page` 盒、到不了窗口边（表现为「宽度不对/右边像被裁/固定尺寸」），且普通页与播放页上限不一致。改为全宽自适应：`.page` 去掉 `max-width` 与居中 `margin`、`width:100%` 填满内容区（窗口−侧栏），各页共用同一套骨架不再各自封顶，hero 自然全出血贴窗口边；播放页去掉页级 1600 上限、保留按画面宽高比收口的 `--player-width`。CDP 实测 960/1280/1440/1920/2560 × 全页均 `scrollWidth==innerWidth` 无横滚、箭头右缘恒 `vw−4` 不裁。DOM 骨架（`.page`/`.page-head`/`.page-body`）本就全页统一，本次仅收口宽度模型。
+
 - **debug 与正式版反代端口分离（9978 → debug 9979）**：`proxy::DEFAULT_PORT` 按 `cfg!(debug_assertions)` 分叉——正式版仍 9978、debug 固定 9979。此前 debug 与在跑的正式版抢 9978、靠 `bind_listener` 回退到随机临时端口，端口不固定，且 JS/py 侧若按默认 9978 兜底会指向错实例。绑定后宿主把实际端口 `set_var("LUMA_PROXY_PORT")` 注入子进程环境（补齐此前只有 qjs 经 `active_port()` 拿真实端口、py `base/spider.py` 的 `getProxyUrl()` 因环境变量缺失误落 0 的缺口），让 py 运行时也跟随 release/debug 分离。CDP（9222）与 vite（1420）本就仅 debug 使用、与正式版不冲突，未改动。同步更新 `docs/DEVELOPMENT.md` §2.1 并存表与 env 表、`docs/ARCHITECTURE.md` §6、`docs/spec.md`。
 
 ### 新增
