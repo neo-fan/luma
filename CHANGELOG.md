@@ -54,6 +54,8 @@
 
 - **暂停态换集不再「看着像卡住」**：切换前是暂停就不自动播（不跟用户抢控制权），但画面会停在 0:00、什么都不说。现在收口时给一条常驻提示「已切到「X」，点播放继续」，播放中切换则不加。选集格的无障碍文案同时从「正在播放」改成「当前集」——暂停时它本来就不成立。
 
+- **清掉前端死代码与多余导出**：`navResetTo`、`pageStateSize`、`clearProxyBaseUrl`、`doubanProxyLabel`、`clearLiveGroups`、`version.BUILD_HASH` 六处无任何调用点（诊断数据里的 buildHash 来自 Rust 的 `env!("BUILD_HASH")`，前端那份是重复注入）；`STALL_TICK_MS` / `STALL_PROBE_TIMEOUT_MS` / `normalizeEpisodeName` / `readLiveSource` 收为模块私有。
+
 ### 修复
 
 - **豆瓣缓存跨季串数据**：无年份时「庆余年 第一季 / 第二季」曾归一到同一缓存键，第二季会命中第一季的条目（缓存早于 `pick_candidate` 打分）。缓存键保留季标记后消除。

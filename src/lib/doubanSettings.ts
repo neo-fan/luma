@@ -86,10 +86,6 @@ export function isDoubanProxyType(value: unknown): value is DoubanProxyType {
   return typeof value === "string" && (PROXY_TYPES as string[]).includes(value);
 }
 
-/** 代理模式的短标签（设置页状态行 / 悬浮提示用）。 */
-export function doubanProxyLabel(type: DoubanProxyType): string {
-  return DOUBAN_PROXY_OPTIONS.find((item) => item.value === type)?.label ?? "直连豆瓣";
-}
 
 function storageOf(storage?: Storage): Storage | null {
   if (storage) {

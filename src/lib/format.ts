@@ -229,7 +229,7 @@ export function titleMatchScore(
  * `EP1`）。换线时「同集优先」若只做字符串相等，这些线路全被归成「别的集」，
  * 排序退化后连不是同一集的候选都会一起参与竞速，结果就是切到了别的集。
  */
-export function normalizeEpisodeName(value: string | null | undefined): string {
+function normalizeEpisodeName(value: string | null | undefined): string {
   return String(value ?? "")
     .replace(/[\uFF01-\uFF5E]/g, (ch) =>
       String.fromCharCode(ch.charCodeAt(0) - 0xfee0),

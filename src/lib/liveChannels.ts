@@ -99,7 +99,7 @@ export function rememberLiveSource(sourceKey: string, source: LiveSource): void 
   }
 }
 
-export function readLiveSource(sourceKey: string): SourceMemo | null {
+function readLiveSource(sourceKey: string): SourceMemo | null {
   const memo = readMemos()[sourceKey];
   return memo && memo.url ? memo : null;
 }
@@ -143,11 +143,6 @@ export async function loadLiveGroups(sourceKey: string): Promise<LiveGroup[]> {
   return task;
 }
 
-/** 切换 active 配置后旧源的频道列表不再适用。 */
-export function clearLiveGroups(): void {
-  groups.clear();
-  inflight.clear();
-}
 
 /* ---------- 上次看的频道 ---------- */
 

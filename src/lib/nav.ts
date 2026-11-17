@@ -126,6 +126,3 @@ export function navBack(): void {
   impl?.back();
 }
 
-export function navResetTo(view: View): void {
-  impl?.resetTo(view);
-}

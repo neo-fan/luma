@@ -64,9 +64,9 @@ export const STALL_QUIET_MS = 20_000;
 /** 两次复核的间隔：慢源上别把源站打成 DDOS，也别重复刷提示。 */
 export const STALL_RECHECK_MS = 20_000;
 /** 轮询粒度。 */
-export const STALL_TICK_MS = 4_000;
+const STALL_TICK_MS = 4_000;
 /** 单次复核的超时。 */
-export const STALL_PROBE_TIMEOUT_MS = 12_000;
+const STALL_PROBE_TIMEOUT_MS = 12_000;
 
 export function createStallWatchdog(options: StallWatchdogOptions): StallWatchdog {
   const {

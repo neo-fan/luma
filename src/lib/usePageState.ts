@@ -77,6 +77,3 @@ export function clearPageStates(): void {
   states.clear();
 }
 
-export function pageStateSize(): number {
-  return states.size;
-}

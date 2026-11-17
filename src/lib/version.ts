@@ -3,8 +3,6 @@
  * 不要在页面里硬编码版本号，Cargo / tauri.conf / package.json 必须一致。
  */
 export const APP_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
-/** 提交 short hash：只用于日志排查，界面上一律不显示（用户要求 build 号只看时间戳）。 */
-export const BUILD_HASH = typeof __BUILD_HASH__ === "string" ? __BUILD_HASH__ : "unknown";
 /** 构建时刻的 epoch 秒（不是提交时间）：一眼看出这次是不是新构建出来的包。 */
 export const BUILD_TIME = typeof __BUILD_TIME__ === "string" ? __BUILD_TIME__ : "";
 

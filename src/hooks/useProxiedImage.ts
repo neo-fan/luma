@@ -96,11 +96,6 @@ export function getProxyBaseUrl(): Promise<string | null> {
   return proxyBasePromise;
 }
 
-/** Reset hook (tests / config reload can clear the cached base URL). */
-export function clearProxyBaseUrl(): void {
-  proxyBasePromise = null;
-  cachedProxyBase = null;
-}
 
 export interface ProxiedImage {
   /** Ready-to-use `src`; null while the proxy base is being resolved. */
