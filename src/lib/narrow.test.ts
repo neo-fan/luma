@@ -76,10 +76,23 @@ describe("narrowLives", () => {
     expect(log.warn).toHaveBeenCalledWith("ipc narrow dropped lives", { dropped: 5 });
   });
 
-  it("drops url-less container sources by design (trust boundary)", () => {
+  it("logs url-less containers as info, not warn (by design, every read)", () => {
     vi.mocked(log.warn).mockClear();
+    vi.mocked(log.info).mockClear();
     const container = { name: "分组", group: "g", channels: [{ name: "c", urls: ["u"] }] };
     expect(narrowLives([container])).toEqual([]);
+    // 分组容器每次读都会被丢一遍，是设计而非故障：刷 WARN 会把真问题埋掉。
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.info).toHaveBeenCalledWith("ipc narrow skipped live groups", { containers: 1, kept: 0 });
+  });
+
+  it("still warns when real user data is being dropped", () => {
+    vi.mocked(log.warn).mockClear();
+    vi.mocked(log.info).mockClear();
+    const container = { name: "分组", channels: [] };
+    const broken = { name: "缺 url" };
+    expect(narrowLives([container, broken])).toEqual([]);
+    expect(log.info).toHaveBeenCalledWith("ipc narrow skipped live groups", { containers: 1, kept: 0 });
     expect(log.warn).toHaveBeenCalledWith("ipc narrow dropped lives", { dropped: 1 });
   });
 

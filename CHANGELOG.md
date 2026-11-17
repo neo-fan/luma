@@ -54,6 +54,8 @@
 
 - **暂停态换集不再「看着像卡住」**：切换前是暂停就不自动播（不跟用户抢控制权），但画面会停在 0:00、什么都不说。现在收口时给一条常驻提示「已切到「X」，点播放继续」，播放中切换则不加。选集格的无障碍文案同时从「正在播放」改成「当前集」——暂停时它本来就不成立。
 
+- **日志噪声按语义分级**：豆瓣 rexxar 双路径探测里「另一条必然 404」是探测机制，不是故障 —— 从 WARN 降为 `douban rexxar path not found`（debug），其它错误保持 WARN。debug 级实测：404 探测 2 条 DEBUG、0 条 WARN。`narrowLives` 原先把「分组容器（只有 channels、无 url）」和「结构漂移」混成同一条 WARN，而前者每次读站点缓存都会重复出现（实测 UI 日志里 45 次），把真问题埋掉了：现在容器记 `ipc narrow skipped live groups`（info，带 kept 数），真正的数据丢失仍记 WARN。
+- **`probe_live_audio` 的频道轨道改带超时轮询**：原先固定 sleep 1.5s 后读轨道，冷缓存下读到 0 个台就假 SKIP（把「源不可用」和「还没加载完」混成一件事）。现在轮询到 ≥2 个台为止（30s 上限）。实测同一配置读到 2945 个台并通过。
 - **清掉前端死代码与多余导出**：`navResetTo`、`pageStateSize`、`clearProxyBaseUrl`、`doubanProxyLabel`、`clearLiveGroups`、`version.BUILD_HASH` 六处无任何调用点（诊断数据里的 buildHash 来自 Rust 的 `env!("BUILD_HASH")`，前端那份是重复注入）；`STALL_TICK_MS` / `STALL_PROBE_TIMEOUT_MS` / `normalizeEpisodeName` / `readLiveSource` 收为模块私有。
 
 ### 修复

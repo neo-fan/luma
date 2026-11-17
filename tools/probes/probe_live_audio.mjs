@@ -66,12 +66,20 @@ async function playChannel(index) {
 }
 
 await cdp.eval("location.hash = '#/live'");
-await cdp.sleep(1500);
-
-const items = await railItems();
+// 频道轨道是异步填充的（一份配置两千多个台，冷缓存下 1.5s 读到 0 会假 SKIP，
+// 把「源不可用」和「还没加载完」混成一件事）。轮询到出内容为止再判定。
+let items = [];
+const railDeadline = Date.now() + 30000;
+while (Date.now() < railDeadline) {
+  items = await railItems();
+  if (items.length >= 2) {
+    break;
+  }
+  await cdp.sleep(1200);
+}
 console.log("频道数:", items.length, items.slice(0, 6));
 if (items.length < 2) {
-  console.log("[SKIP] 当前配置没有足够的直播源，跳过独占回归");
+  console.log("[SKIP] 30s 内频道轨道没内容或不足 2 个台（配置无直播源，或目录拉不回来）");
   cdp.close();
   process.exit(0);
 }

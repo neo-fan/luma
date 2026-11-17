@@ -114,7 +114,7 @@ function isNonEmptyString(value: unknown): value is string {
  * 收窄站点数组：每项必须是对象且 `key` / `name` 为非空字符串，否则**整项丢弃**。
  * 整体不是数组时返回 `[]`。合法项原样返回（保留对象引用，不改字段）。
  *
- * 丢弃会发一条 `log.warn`（带 dropped 计数）：这是用户数据，不该静默消失。
+ * 丢弃不静默：结构漂移记 `log.warn`，按设计不进列表的分组容器记 `log.info`。
  */
 export function narrowSites(value: unknown): Site[] {
   if (!Array.isArray(value)) {
@@ -154,7 +154,8 @@ export function narrowLives(value: unknown): LiveSource[] {
     return [];
   }
   const kept: LiveSource[] = [];
-  let dropped = 0;
+  let containers = 0;
+  let malformed = 0;
   for (const item of value) {
     if (
       item &&
@@ -163,12 +164,22 @@ export function narrowLives(value: unknown): LiveSource[] {
       isNonEmptyString((item as { url?: unknown }).url)
     ) {
       kept.push(item as LiveSource);
+      continue;
+    }
+    // 分组容器（只有 channels、没有 url）按设计就不进按索引寻址的列表，每次读
+    // 都会丢同一批项 —— 那是预期行为，记 info 供对账，不该刷 WARN。
+    // 其余（结构漂移、缺 name/url）仍然是用户数据在消失，保持 WARN。
+    if (item && typeof item === "object" && Array.isArray((item as { channels?: unknown }).channels)) {
+      containers += 1;
     } else {
-      dropped += 1;
+      malformed += 1;
     }
   }
-  if (dropped > 0) {
-    log.warn("ipc narrow dropped lives", { dropped });
+  if (containers > 0) {
+    log.info("ipc narrow skipped live groups", { containers, kept: kept.length });
+  }
+  if (malformed > 0) {
+    log.warn("ipc narrow dropped lives", { dropped: malformed });
   }
   return kept;
 }
