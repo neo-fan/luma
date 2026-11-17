@@ -29,6 +29,7 @@ import { registerPlayer, stopActivePlayer } from "../lib/playerRegistry";
 import { api, errorMessage } from "../lib/invoke";
 import { formatBytesPerSec } from "../lib/bytes";
 import { createPosterHold } from "./playerPosterHold";
+import { createStallWatchdog } from "./playerStallWatchdog";
 import { createPrefsWriter } from "./playerPrefsWriter";
 import { createVolumeFader } from "./playerVolumeFade";
 import { log } from "../lib/logger";
@@ -71,12 +72,6 @@ type SessionEffects = {
   resumePlayback: () => void;
   /** 放弃续播：撤掉挂起的重试监听（机器在 `AUTOPLAY_BLOCKED` 时发起）。 */
   cancelResume: () => void;
-  /** 复核说「还活着」：静默计时推回当下，慢源不该被熬成死线。 */
-  restartQuietClock: () => void;
-  /** unknown（说不出所以然）未达阈值：只留证据，不动画面。 */
-  reportInconclusive: () => void;
-  /** 清单与分片都拿得到：只是慢，继续等，并撤掉「已等待 Ns」提示。 */
-  reportSlow: () => void;
 };
 
 /**
@@ -298,11 +293,6 @@ export function usePlayerEngine({
         context.failoverCause ?? "linesExhausted",
         context.failoverDetail,
       );
-    const probeNotes = {
-      restartQuietClock: () => sessionEffectsRef.current?.restartQuietClock(),
-      reportProbeInconclusive: () => sessionEffectsRef.current?.reportInconclusive(),
-      reportProbeSlow: () => sessionEffectsRef.current?.reportSlow(),
-    };
     const resumeNotes = {
       resumePlayback: () => sessionEffectsRef.current?.resumePlayback(),
       cancelResume: () => sessionEffectsRef.current?.cancelResume(),
@@ -317,7 +307,6 @@ export function usePlayerEngine({
             liveSessionMachine.provide({
               actions: {
                 requestLineSwitch: ({ context }) => runFailover(context),
-                ...probeNotes,
               },
             }),
           ) as unknown as ReturnType<typeof createActor<typeof vodSessionMachine>>)
@@ -326,7 +315,6 @@ export function usePlayerEngine({
               actions: {
                 navigateFailover: ({ context }) => runFailover(context),
                 ...resumeNotes,
-                ...probeNotes,
               },
             }),
           );
@@ -580,6 +568,8 @@ export function usePlayerEngine({
         slowNoticeRef.current?.(null);
       }
     };
+    /** 距最近一次「确认源还在动」多久了（看门狗与日志共用一个口径）。 */
+    const quietMs = () => Date.now() - lastAliveAt;
     const noteAlive = () => {
       lastAliveAt = Date.now();
     };
@@ -1095,20 +1085,12 @@ export function usePlayerEngine({
     // 静默只用来触发一次**独立复核**（直接探清单 + 首个分片），只有复核给出
     // 明确失败（HTTP 错误 / 内容不是 m3u8 / 分片是占位图）才换线；
     // 超时或说不出所以然（unknown）一律继续等，把决定权留给用户。
-    const STALL_QUIET_MS = 20_000;
-    /** 两次复核的间隔：慢源上别把源站打成 DDOS，也别重复刷提示。 */
-    const STALL_RECHECK_MS = 20_000;
-    const STALL_TICK_MS = 4_000;
     /**
      * 连续多少次「复核也拿不到任何响应」才算确认失效，以及 unknown 的累计与判死
      * 转移，都在会话状态机里（`UNRESPONSIVE_LIMIT` / `vodSessionMachine.probing`）。
      * 这里不复制阈值，也不另有判决模块：解释器只负责取证据（下面的计时闸门 +
      * `probeLineVerdict`），把三态结论喂给机器，由转换表决定「继续等 / 累计 / 交棒」。
      */
-    let probeBusy = false;
-    let lastProbeAt = 0;
-    /** 本轮会话的看门狗一次性闸门：已交棒或已确认存活就不再探。 */
-    let watchStopped = false;
     /**
      * 交棒换线的**唯一**执行点：机器进入 `recovering`（点播）/ `recovering`（直播，
      * 动作名 `requestLineSwitch`）时调到这里。文案与日志 stage 由 `failoverCopy`
@@ -1119,11 +1101,12 @@ export function usePlayerEngine({
      */
     const handOverLine = (cause: FailoverCause, detail: string) => {
       const { message, stage } = failoverCopy(cause, detail);
-      watchStopped = true;
+      // 已经交棒：本轮不必再看（真源在 watchdog 里，见 playerStallWatchdog）。
+      watchdog.stop();
       log.warn(stage, {
         siteKey,
         vodId,
-        quietMs: Date.now() - lastAliveAt,
+        quietMs: quietMs(),
         unresponsiveProbes: sessionUnresponsiveProbes(),
         detail,
       });
@@ -1171,89 +1154,31 @@ export function usePlayerEngine({
       cancelResume: () => {
         pendingResumeUndo?.();
       },
-      restartQuietClock: noteAlive,
-      reportInconclusive: () =>
-        log.info("stall probe inconclusive", {
-          siteKey,
-          vodId,
-          unresponsiveProbes: sessionUnresponsiveProbes(),
-          quietMs: Date.now() - lastAliveAt,
-        }),
-      reportSlow: () => {
-        // 清单和分片都拿得到 → 只是慢，继续等；这也是生命信号。
-        noteAlive();
-        clearSlowNotice();
-        log.info("stall probe alive but slow", {
-          siteKey,
-          vodId,
-          quietMs: Date.now() - lastAliveAt,
-        });
-      },
     };
-    const stallCheck = () => {
-      if (watchStopped) {
-        return;
-      }
-      // 用户主动暂停（不是播完）：没有任何「线路坏了」的证据，绝不能探活换源。
-      // 同时把存活计时推到当前时刻，恢复播放后不会因为「暂停了十分钟」立刻判死。
-      if (video.paused && !video.ended) {
-        lastAliveAt = Date.now();
-        return;
-      }
-      if (sessionHasPlayed()) {
-        // 播过就再也不自动换线：卡住很可能是网络抖动，看门狗只撤掉慢提示，
-        // 让用户在控制栏自己点刷新/换线。
-        clearSlowNotice();
-        return;
-      }
-      // 通用存活判据：缓冲到位之外，媒体时钟在走（声音已经出来、画面还在
-      // 解码）也算活着 —— 这种线路不能判死，也不该继续挂着「加载中」。
-      if (video.readyState >= 2 || mediaIsAdvancing(video)) {
-        watchStopped = true;
-        clearSlowNotice();
-        return;
-      }
-      if (failoverStarted.current || lineSwitchStarted.current) {
-        return;
-      }
-      const quiet = Date.now() - lastAliveAt;
-      if (quiet < STALL_QUIET_MS) {
-        return;
-      }
-      if (probeBusy || Date.now() - lastProbeAt < STALL_RECHECK_MS) {
-        return;
-      }
-      // 只有真正开始探活才报 STALL（前面 hasPlayed / alive / failover 早退都不报）：
-      // 机器据此从 playing/buffering 进 probing。
-      sessionActorRef.current?.send({ type: "STALL" });
-      probeBusy = true;
-      lastProbeAt = Date.now();
+    /**
+     * 卡顿看门狗：只取证据，判决在状态机。为什么「时间不是证据」、三条早退
+     * 各对应哪次回归，都写在 `playerStallWatchdog.ts`（那里有 12 条行为测试）。
+     */
+    const watchdog = createStallWatchdog({
+      video,
+      isAdvancing: () => mediaIsAdvancing(video),
+      quietMs,
+      markAlive: noteAlive,
+      clearSlowNotice,
+      generation: sessionGen,
+      hasPlayed: sessionHasPlayed,
+      unresponsiveProbes: sessionUnresponsiveProbes,
+      send: (event) => sessionActorRef.current?.send(event),
       // 探「当前真实地址」而不是 resolved.proxyUrl：原地换集后 resolved 不变，
       // 照旧探旧地址会拿旧集的生死结论误杀新一集。
-      const generation = sessionGen();
-      void probeLineVerdict(activeProxyUrl, resolved.kind, 12_000)
-        .then((verdict) => {
-          probeBusy = false;
-          if (
-            generation !== sessionGen() ||
-            watchStopped ||
-            video.readyState >= 2 ||
-            mediaIsAdvancing(video)
-          ) {
-            return;
-          }
-          if (failoverStarted.current || lineSwitchStarted.current) {
-            return;
-          }
-          // 解释器在这里只交证据：三态结论原样喂进机器（不翻译 ok↔alive、没有
-          // 第二个判决模块、也不再读状态决定文案）。机器自己决定继续等 / 累计，
-          // 并在进入 recovering 时回调本实例的 handOverLine 完成交棒。
-          sessionActorRef.current?.send({ type: "PROBE", verdict });
-        })
-        .catch(() => {
-          probeBusy = false;
-        });
-    };
+      probeTarget: () => ({ url: activeProxyUrl, kind: resolved.kind }),
+      probe: probeLineVerdict,
+      isYielded: () => failoverStarted.current || lineSwitchStarted.current,
+      log: (level, stage, context) => {
+        log[level](stage, { siteKey, vodId, ...context });
+      },
+    });
+    const stopWatchdog = watchdog.start();
     // 媒体侧的生命信号：缓冲有增长、元数据到位、开始播放都算活着。
     // `waiting` / `stalled` 不算——它们恰恰是「卡住」的表现，不能重置计时。
     const onMediaAlive = () => {
@@ -1262,7 +1187,6 @@ export function usePlayerEngine({
       }
       noteAlive();
     };
-    const watchTimer = window.setInterval(stallCheck, STALL_TICK_MS);
     /**
      * 「在动，只是慢」的等待提示：只报事实（等了多久），不参与任何判决。
      *
@@ -1412,8 +1336,7 @@ export function usePlayerEngine({
        */
       // hasPlayed 与 unknown 累计都由 USER_SWITCH→bumpSession 复位（本函数开头已 send）。
       measuredKbps = 0;
-      watchStopped = false;
-      lastProbeAt = 0;
+      watchdog.reset();
       // 会话代数由 USER_SWITCH 事件驱动 actor.sessionId 自增（本函数开头已 send），
       // 这里不再手动 ++。
       activeProxyUrl = url;
@@ -1501,7 +1424,7 @@ export function usePlayerEngine({
       // 副作用实现先摘：机器 actor 按 siteKey 存活，比这一轮实例活得久，不能让它
       // 回调到已销毁闭包（那会对着旧 <video> 撤海报 / 交棒）。
       sessionEffectsRef.current = null;
-      window.clearInterval(watchTimer);
+      stopWatchdog();
       window.clearInterval(hintTimer);
       switchRef.current = null;
       noticeRef.current = null;

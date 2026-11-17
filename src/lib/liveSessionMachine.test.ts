@@ -134,9 +134,7 @@ describe("liveSessionMachine 副作用发起（解释器接线的契约）", () 
         actions: {
           requestLineSwitch: ({ context }) =>
             calls.push(`switch:${String(context.failoverCause)}:${context.failoverDetail}`),
-          restartQuietClock: () => calls.push("restartQuietClock"),
-          reportProbeInconclusive: () => calls.push("reportProbeInconclusive"),
-          reportProbeSlow: () => calls.push("reportProbeSlow"),
+
         },
       }),
     );

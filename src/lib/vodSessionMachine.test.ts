@@ -220,9 +220,6 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
             calls.push(`failover:${String(context.failoverCause)}:${context.failoverDetail}`),
           resumePlayback: () => calls.push("resumePlayback"),
           cancelResume: () => calls.push("cancelResume"),
-          restartQuietClock: () => calls.push("restartQuietClock"),
-          reportProbeInconclusive: () => calls.push("reportProbeInconclusive"),
-          reportProbeSlow: () => calls.push("reportProbeSlow"),
         },
       }),
     );
@@ -245,25 +242,24 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
       actor.send({ type: "STALL" });
       actor.send({ type: "PROBE", verdict: "unknown" });
     }
-    expect(calls).toEqual([
-      "reportProbeInconclusive",
-      "reportProbeInconclusive",
-    ]);
+    // 未达阈值：机器不做任何副作用（记日志是看门狗的事），只把计数累上去
+    expect(calls).toEqual([]);
+    expect(actor.getSnapshot().context.unresponsiveProbes).toBe(UNRESPONSIVE_LIMIT - 1);
     actor.send({ type: "STALL" });
     actor.send({ type: "PROBE", verdict: "unknown" });
-    expect(calls).toEqual([
-      "reportProbeInconclusive",
-      "reportProbeInconclusive",
-      "failover:probeUnresponsive:",
-    ]);
+    expect(calls).toEqual(["failover:probeUnresponsive:"]);
   });
 
-  it("PROBE ok 复位静默计时并报告「慢」，绝不交棒", () => {
+  it("PROBE ok 只复位计数，绝不交棒", () => {
     const { actor, calls } = instrumented();
     toWaiting(actor as unknown as ReturnType<typeof fresh>);
     actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "unknown" });
+    actor.send({ type: "STALL" });
     actor.send({ type: "PROBE", verdict: "ok" });
-    expect(calls).toEqual(["restartQuietClock", "reportProbeSlow"]);
+    expect(calls).toEqual([]);
+    expect(actor.getSnapshot().context.unresponsiveProbes).toBe(0);
+    expect(actor.getSnapshot().matches("playing")).toBe(true);
   });
 
   it("红线在副作用层同样成立：出画之后一个副作用都不发", () => {

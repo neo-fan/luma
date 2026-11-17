@@ -155,12 +155,6 @@ export const vodSessionMachine = setup({
     resumePlayback: () => undefined,
     cancelResume: () => undefined,
     navigateFailover: () => undefined,
-    /** 复核拿到明确「还活着」：把静默计时推回当下（墙钟归解释器管）。 */
-    restartQuietClock: () => undefined,
-    /** unknown 未达阈值：只记证据，不判死。 */
-    reportProbeInconclusive: () => undefined,
-    /** 慢但活着：清单与分片都拿得到。 */
-    reportProbeSlow: () => undefined,
   },
 }).createMachine({
   id: "playerSession",
@@ -221,12 +215,12 @@ export const vodSessionMachine = setup({
           {
             guard: "isUnknown",
             target: "playing",
-            actions: ["incrementProbe", "reportProbeInconclusive"],
+            actions: "incrementProbe",
           },
           {
             guard: "isOk",
             target: "playing",
-            actions: ["resetProbe", "restartQuietClock", "reportProbeSlow"],
+            actions: "resetProbe",
           },
         ],
         MEDIA_ALIVE: { target: "playing", actions: "resetProbe" },

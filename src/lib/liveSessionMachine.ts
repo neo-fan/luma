@@ -105,9 +105,6 @@ export const liveSessionMachine = setup({
     // 与点播机器同一取舍：解码器生命周期归 ArtPlayer 实例（`customType` 里挂），
     // 转环等 UI 由状态本身驱动，机器不假装 owns 它们。
     requestLineSwitch: () => undefined,
-    restartQuietClock: () => undefined,
-    reportProbeInconclusive: () => undefined,
-    reportProbeSlow: () => undefined,
   },
 }).createMachine({
   id: "liveSession",
@@ -168,12 +165,12 @@ export const liveSessionMachine = setup({
           {
             guard: "isUnknown",
             target: "playing",
-            actions: ["incrementProbe", "reportProbeInconclusive"],
+            actions: "incrementProbe",
           },
           {
             guard: "isOk",
             target: "playing",
-            actions: ["resetProbe", "restartQuietClock", "reportProbeSlow"],
+            actions: "resetProbe",
           },
         ],
         MEDIA_ALIVE: { target: "playing", actions: "resetProbe" },

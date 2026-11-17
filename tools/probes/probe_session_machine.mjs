@@ -244,7 +244,12 @@ if (!clicked) {
 if (chainReady) {
   const before = await cdp.eval(SESSION);
   const forced = await cdp.eval(`(() => {
-    const v = document.querySelector('.player-art video') || document.querySelector('video');
+    // 必须是**当前在放的那一个** <video>：交棒/换线会让引擎重建实例（本探针上一轮
+    // 就见过 instance 2 → 4），此时页面上会短暂同时存在旧的游离元素；注到失格元素上
+    // 只会让这条链永远不触发（表现像「断链」，其实是注错对象）。
+    const live = [...document.querySelectorAll('video')]
+      .find((node) => node.isConnected && !node.paused && node.readyState >= 2);
+    const v = live || document.querySelector('.player-host:not(.is-idle) video') || document.querySelector('video');
     if (!v) return 'no-video';
     v.src = 'data:video/mp4;base64,AAAA';
     v.load();

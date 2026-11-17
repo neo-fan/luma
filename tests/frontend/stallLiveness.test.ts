@@ -25,17 +25,23 @@ const vodMachine = readFileSync(resolve(here, "../../src/lib/vodSessionMachine.t
 // 交棒文案与日志 stage 的唯一来源（5 个交棒点 2.0.0 起合成一处）。
 const failoverCopy = readFileSync(resolve(here, "../../src/lib/sessionFailover.ts"), "utf8");
 
+// 看门狗 2.0.0 起独立成 `playerStallWatchdog.ts`（那里有 12 条行为测试）；
+// 判决在状态机转换表；这里只钉「三块各自的位置没跑偏」与几条真实回归的接线。
+const watchdog = readFileSync(resolve(here, "../../src/hooks/playerStallWatchdog.ts"), "utf8");
+
 describe("stall watchdog", () => {
   it("needs repeated unknown probes before switching lines", () => {
-    // 唯一真源在机器：解释器不留阈值副本、不留计数器副本，也没有第二个判决模块。
+    // 唯一真源在机器：看门狗与解释器都不留阈值副本、不留计数器副本，也没有第二个判决模块。
+    expect(watchdog).not.toContain("STALL_UNRESPONSIVE_LIMIT");
     expect(engine).not.toContain("STALL_UNRESPONSIVE_LIMIT");
     expect(engine).not.toContain("let unresponsiveProbes");
     expect(engine).not.toContain("decideWatchdogVerdict");
     expect(vodMachine).toContain("export const UNRESPONSIVE_LIMIT = 3;");
     expect(vodMachine).toContain("context.unresponsiveProbes + 1 >= UNRESPONSIVE_LIMIT");
-    // 引擎侧：结论原样喂进机器（不再翻译 ok↔alive），然后**什么都不决定**——
+    // 看门狗只交证据（不翻译 ok↔alive），引擎把结论原样转给机器，
     // 交棒由机器进入 recovering 时回调唯一的实现点 handOverLine 完成。
-    expect(engine).toContain('send({ type: "PROBE", verdict })');
+    expect(watchdog).toContain('send({ type: "PROBE", verdict })');
+    expect(engine).toContain("send: (event) => sessionActorRef.current?.send(event)");
     expect(engine).not.toContain('matches("recovering")');
     expect(engine).toContain("navigateFailover");
     expect(engine).toContain("requestLineSwitch");
@@ -46,20 +52,19 @@ describe("stall watchdog", () => {
   });
 
   it("never treats a paused video as a dead line", () => {
-    expect(engine).toContain("if (video.paused && !video.ended)");
+    expect(watchdog).toContain("if (video.paused && !video.ended)");
     // 暂停时把存活计时推到当前时刻：恢复播放后重新计窗口，而不是立刻判死。
-    expect(engine).toContain("lastAliveAt = Date.now();");
+    expect(watchdog).toContain("markAlive();");
+    // 静默只是触发器，不是判决——时间不够就不探。
+    expect(watchdog).toContain("if (quietMs() < STALL_QUIET_MS) {");
   });
 
   it("stops switching once the video has actually played", () => {
-    // 首帧标志真源已迁到 actor.hasPlayed（sessionHasPlayed 读），不再是本地 let。
-    expect(engine).toContain("const sessionHasPlayed =");
-    // 出过画之后看门狗直接让路：只撤慢提示，不判死。
-    const guard = engine.indexOf("if (sessionHasPlayed()) {");
-    const probe = engine.indexOf("probeLineVerdict(");
-    expect(guard).toBeGreaterThan(-1);
-    expect(probe).toBeGreaterThan(-1);
-    expect(guard).toBeLessThan(probe);
+    // 首帧标志真源 = actor.hasPlayed，看门狗通过注入的 hasPlayed() 读它。
+    expect(engine).toContain("hasPlayed: sessionHasPlayed");
+    expect(watchdog).toContain("if (hasPlayed()) {");
+    // 探的是「当前真实地址」：原地换集后 resolved 不变，照旧地址探会误杀新一集。
+    expect(engine).toContain("probeTarget: () => ({ url: activeProxyUrl, kind: resolved.kind })");
     // 同一条红线还写进了转换表：就算解释器漏掉那个 if，机器也进不了判死路径。
     expect(vodMachine).toContain('STALL: { target: "probing", guard: "notPlayed" }');
     expect(vodMachine).toContain("notPlayed: ({ context }) => !context.hasPlayed");

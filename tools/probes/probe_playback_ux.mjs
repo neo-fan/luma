@@ -21,6 +21,9 @@
  *   node tools/probes/probe_playback_ux.mjs
  */
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PORT = 8791;
 const CMS_URL = `http://127.0.0.1:${PORT}/cms/multi`;
@@ -213,26 +216,43 @@ try {
   } catch { /* Network domain 不可用时忽略 */ }
   console.log(`target: ${page.url}`);
 
-  // 自检：确认 dev server 提供的是含「身份校验 + 倍速字段隔离」的新版播放链路。
-  // 内核 effect 已从 PlayerPage 抽到 usePlayerEngine，故两处源码都取来拼接检查；
-  // 这样模块再搬迁也不易碎。Vite 转换缓存曾让探针测到旧代码、误判修复无效，
-  // 这里主动验证，避免重蹈覆辙。注意别在被 fetch 的源文件注释里复刻这两个
-  // 字面串，否则自检会形同虚设。
+  // 自检：确认 dev server 提供的是当前这份源码，而不是 Vite 的旧转换缓存
+  // （历史上它让探针测到旧代码、误判修复无效）。
+  // 标记**从磁盘源码推导**，不钉产品字符串：内核反复抽模块（usePlayerEngine →
+  // playerVolumeFade / playerPosterHold / playerPrefsWriter / playerStallWatchdog），
+  // 硬编码字面串每次都要跟着改，还会在「忘了改」时假报 stale。
   const bust = Date.now();
-  const [pgSrc, engSrc] = await Promise.all([
-    fetch(`http://localhost:1420/src/pages/PlayerPage.tsx?ux=${bust}`)
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const readDisk = (rel) => {
+    try {
+      return readFileSync(resolve(repoRoot, rel), "utf8");
+    } catch {
+      return "";
+    }
+  };
+  const fetchMod = (rel) =>
+    fetch(`http://localhost:1420/${rel}?ux=${bust}`)
       .then((r) => r.text())
-      .catch(() => ""),
-    fetch(`http://localhost:1420/src/hooks/usePlayerEngine.ts?ux=${bust}`)
-      .then((r) => r.text())
-      .catch(() => ""),
+      .catch(() => "");
+  const diskEngine = readDisk("src/hooks/usePlayerEngine.ts");
+  // 引擎在磁盘上引用了哪些同目录模块，被 service 的那份就必须也引用它们；
+  // 少一个说明 server 发的是重构前的缓存版本。
+  const localDeps = [...diskEngine.matchAll(/from "\.\/([A-Za-z0-9_]+)"/g)].map((m) => m[1]);
+  const [servedEngine, servedWriter] = await Promise.all([
+    fetchMod("src/hooks/usePlayerEngine.ts"),
+    fetchMod("src/hooks/playerPrefsWriter.ts"),
   ]);
-  const pgBundle = `${pgSrc}\n${engSrc}`;
+  const missingDeps = localDeps.filter((name) => !servedEngine.includes(name));
+  // 倍速字段隔离这条行为契约：从磁盘写入器里取那行原文，验证 server 发的就是它。
+  const isoLine = (readDisk("src/hooks/playerPrefsWriter.ts").split("\n")
+    .find((line) => line.includes("rate: video.playbackRate")) ?? "").trim();
   const codeIsFresh =
-    pgBundle.includes("videoRef.current !== video") &&
-    pgBundle.includes("writePlayerPrefs({ rate: video.playbackRate })");
-  assert(codeIsFresh, "dev server serves fresh player (identity check + field isolation)",
-    codeIsFresh ? "" : "stale Vite module cache; restart the dev server");
+    localDeps.length > 0 &&
+    missingDeps.length === 0 &&
+    isoLine.length > 0 &&
+    servedWriter.includes(isoLine);
+  assert(codeIsFresh, "dev server serves fresh player (derived from disk sources)",
+    codeIsFresh ? "" : `stale Vite module cache; restart the dev server (missing=[${missingDeps.join(",")}] iso=${isoLine ? "ok" : "missing"})`);
   if (!codeIsFresh) throw new Error("stale dev module; abort to avoid false product bug report");
 
   before = JSON.parse(await readState());
