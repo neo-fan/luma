@@ -152,6 +152,25 @@ export const log: Logger = createLogger({
 });
 
 /**
+ * 是否为「play() 被 pause() 打断」这一类规范内竞态。
+ *
+ * ArtPlayer 内部自己会调 `video.play()`；若在 promise resolve 之前发生 `pause()`，
+ * HTML 规范规定该 promise 以 `AbortError` 拒绝。应用自己的 6 处 `play()` 全部已
+ * `catch`，漏网的正是库内部那一次——它不是缺陷，也不该被当成缺陷上报。
+ *
+ * 必须识别它（而不是只降日志级别）：未处理的 rejection 会被浏览器上报成
+ * `Runtime.exceptionThrown`，CDP 探针因此长期红，错误日志也会被这类噪声占满。
+ * 只认 name 与 message 同时命中的，其它 rejection 一律照旧上报。
+ */
+export function isBenignMediaAbort(reason: unknown): boolean {
+  const error = reason as { name?: string; message?: string } | undefined;
+  if (error?.name !== "AbortError") {
+    return false;
+  }
+  return /play\(\)\s+request was interrupted/i.test(String(error.message ?? ""));
+}
+
+/**
  * 兜底捕获未处理异常。React 的 error boundary 只覆盖渲染树，异步回调、
  * Promise rejection 与模块初始化异常仍会打到这里。
  */
@@ -171,6 +190,15 @@ export function installGlobalErrorLogging(logger: Logger = log): void {
   });
   window.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason as { message?: string; stack?: string } | undefined;
+    if (isBenignMediaAbort(event.reason)) {
+      // 标成已处理，浏览器才不会再报 Runtime.exceptionThrown；仍留一条 warn，
+      // 排查「点了没声音」时它是线索（debug 在 release 会被丢掉，所以不用 debug）。
+      event.preventDefault();
+      logger.warn("media play interrupted by pause", {
+        reason: clip(reason?.message ?? "", 200),
+      });
+      return;
+    }
     logger.error("unhandled rejection", {
       reason: clip(reason?.message ?? String(event.reason ?? ""), 1200),
       stack: clip(reason?.stack, 1500),
