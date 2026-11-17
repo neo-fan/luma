@@ -103,6 +103,14 @@
    （`domain/config`、`domain/proxy`、`infra/db`、`infra/logging` 已按职责拆分，见 §10。）
 
 4. 四端协议靠约定 + 5 类结构校验，未做代码生成。
+5. **`probe_page_cache` 的注入点已失效**：它靠 `import("src/lib/pageCache.ts")` 挂 spy，而该模块在
+   TanStack Query 迁移（`63b70f9`）中删除，探针现在必然红在「Failed to fetch dynamically imported module」。
+   要改成对现有层的调用计数（`lib/queryClient.ts` 的 `loadCached`，或 `api.detail` 的 IPC 计数），
+   并把「刷新强制重新请求」这一原始契约重新钉住。
+6. **套件级状态耦合**：约 20 条探针共用一个 dev 窗口与进程级可变状态（active 配置、缓存、历史、常驻播放层），
+   单跑绿不代表套件绿，失败集会随轮次漂移（实测：同一轮里 `artplayer`/`session_machine` 绿、
+   `flv`/`page_cache` 红，而 `flv` 单独跑过）。修法在 harness：`run_probes.mjs` 中央快照/还原 + 独立数据集，
+   禁止靠放宽断言收敛。
 
 ## 10. 已还的债（留档，避免重复讨论）
 
