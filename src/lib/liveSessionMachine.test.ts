@@ -119,9 +119,67 @@ describe("liveSessionMachine", () => {
     toLiveWaiting(a);
     a.send({ type: "STALL" });
     a.send({ type: "PROBE", verdict: "dead" }); // recovering
-    a.send({ type: "FAILED", reason: "all lines tried" });
+    a.send({ type: "FAILED", cause: "linesExhausted" });
     expect(a.getSnapshot().matches("failed")).toBe(true);
     a.send({ type: "LOAD", url: "c3", lineIndex: 0 });
     expect(a.getSnapshot().matches("tuning")).toBe(true);
+  });
+});
+
+describe("liveSessionMachine 副作用发起（解释器接线的契约）", () => {
+  function instrumented() {
+    const calls: string[] = [];
+    const actor = createActor(
+      liveSessionMachine.provide({
+        actions: {
+          requestLineSwitch: ({ context }) =>
+            calls.push(`switch:${String(context.failoverCause)}:${context.failoverDetail}`),
+          restartQuietClock: () => calls.push("restartQuietClock"),
+          reportProbeInconclusive: () => calls.push("reportProbeInconclusive"),
+          reportProbeSlow: () => calls.push("reportProbeSlow"),
+        },
+      }),
+    );
+    actor.start();
+    return { actor, calls };
+  }
+
+  it("判死只发一次换线路请求，原因随事件带出", () => {
+    const { actor, calls } = instrumented();
+    toLiveWaiting(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "dead" });
+    expect(calls).toEqual(["switch:probeDead:"]);
+  });
+
+  it("unknown 累计到阈值才换线路，之前只留证据", () => {
+    const { actor, calls } = instrumented();
+    toLiveWaiting(actor as unknown as ReturnType<typeof fresh>);
+    for (let i = 0; i < LIVE_UNRESPONSIVE_LIMIT - 1; i += 1) {
+      actor.send({ type: "STALL" });
+      actor.send({ type: "PROBE", verdict: "unknown" });
+    }
+    expect(calls.filter((c) => c.startsWith("switch:")).length).toBe(0);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "unknown" });
+    expect(calls.filter((c) => c.startsWith("switch:"))).toEqual(["switch:probeUnresponsive:"]);
+  });
+
+  it("红线：出过画之后不再自动换线路", () => {
+    const { actor, calls } = instrumented();
+    toLivePlaying(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "dead" });
+    expect(calls).toEqual([]);
+  });
+
+  it("手动换线路清空上一轮的判死原因", () => {
+    const { actor } = instrumented();
+    toLiveWaiting(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "dead" });
+    actor.send({ type: "LINE_SWITCH", url: "line2", lineIndex: 1 });
+    expect(actor.getSnapshot().context.failoverCause).toBeNull();
+    expect(actor.getSnapshot().matches("tuning")).toBe(true);
   });
 });

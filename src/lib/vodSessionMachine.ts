@@ -25,6 +25,13 @@ import type { LineVerdict } from "./playProbe";
  */
 export type ProbeVerdict = LineVerdict;
 
+/**
+ * 「这条线判死了」的离散原因。机器只说**为什么**，具体文案 / 日志 stage /
+ * 撤不撤海报由解释器决定（见 `lib/sessionFailover.ts`）——产品文案不进模型。
+ */
+export type { FailoverCause } from "./sessionFailover";
+import type { FailoverCause } from "./sessionFailover";
+
 export type VodSessionEvent =
   | { type: "LOAD"; url: string }
   | { type: "RESOLVED"; url: string }
@@ -37,7 +44,7 @@ export type VodSessionEvent =
   | { type: "USER_SWITCH"; url: string; resumeIntent: boolean }
   | { type: "AUTOPLAY_BLOCKED" }
   | { type: "FADE_DONE" }
-  | { type: "FAILED"; reason: string };
+  | { type: "FAILED"; cause: FailoverCause; detail?: string };
 
 export interface VodSessionContext {
   /** 会话身份：每次换集/重载自增，取代散落的 `switchGeneration` 代数比较。 */
@@ -53,6 +60,13 @@ export interface VodSessionContext {
   fadeDone: boolean;
   /** 本轮切换是否被用户暂停打断过续播（取代 `resumeCancelled`）。 */
   resumeAborted: boolean;
+  /**
+   * 进入 `recovering` 时携带的判死原因（离开 recovering 开新会话即清空）。
+   * 解释器在 `navigateFailover` 实现里读它来决定文案与日志口径。
+   */
+  failoverCause: FailoverCause | null;
+  /** 与 `failoverCause` 同行的原始细节（hls 错误名等），只用于日志与提示。 */
+  failoverDetail: string;
 }
 
 /**
@@ -71,6 +85,8 @@ const initialContext: VodSessionContext = {
   unresponsiveProbes: 0,
   fadeDone: false,
   resumeAborted: false,
+  failoverCause: null,
+  failoverDetail: "",
 };
 
 export const vodSessionMachine = setup({
@@ -99,6 +115,10 @@ export const vodSessionMachine = setup({
       unresponsiveProbes: () => 0,
       fadeDone: () => false,
       resumeAborted: () => false,
+      // 开新一轮会话就把上一轮的判死原因清空：`recovering` 只在进入时带因由，
+      // 离开后不能让解释器读到陈旧的 cause。
+      failoverCause: () => null,
+      failoverDetail: () => "",
     }),
     setTarget: assign({ targetUrl: ({ event }) => (event as { url: string }).url }),
     setResumeIntent: assign({
@@ -111,7 +131,22 @@ export const vodSessionMachine = setup({
     }),
     resetProbe: assign({ unresponsiveProbes: () => 0 }),
     markResumeAborted: assign({ resumeAborted: () => true }),
-    // 副作用动作名：由解释器执行，机器不实现（保持可单测、无 DOM 依赖）。
+    /** 判死原因：由具体转移写入，解释器在 `navigateFailover` 实现里读。 */
+    failoverProbeDead: assign({
+      failoverCause: () => "probeDead" as const,
+      failoverDetail: () => "",
+    }),
+    failoverUnresponsive: assign({
+      failoverCause: () => "probeUnresponsive" as const,
+      failoverDetail: () => "",
+    }),
+    failoverFromEvent: assign({
+      failoverCause: ({ event }) => (event.type === "FAILED" ? event.cause : null),
+      failoverDetail: ({ event }) => (event.type === "FAILED" ? (event.detail ?? "") : ""),
+    }),
+    // ---- 副作用发起点：解释器在 createActor 时用 `actions` 覆盖实现 ----
+    // 机器自己留 no-op，保证能在 node 下纯粹地跑转换表；一旦接线，「什么时候
+    // 撤海报 / 报错 / 交棒换线」只在这张表里决定一次，调用方不再各写一份。
     acquireDecoder: () => undefined,
     releaseDecoders: () => undefined,
     showSpinner: () => undefined,
@@ -121,6 +156,12 @@ export const vodSessionMachine = setup({
     resumePlayback: () => undefined,
     cancelResume: () => undefined,
     navigateFailover: () => undefined,
+    /** 复核拿到明确「还活着」：把静默计时推回当下（墙钟归解释器管）。 */
+    restartQuietClock: () => undefined,
+    /** unknown 未达阈值：只记证据，不判死。 */
+    reportProbeInconclusive: () => undefined,
+    /** 慢但活着：清单与分片都拿得到。 */
+    reportProbeSlow: () => undefined,
   },
 }).createMachine({
   id: "playerSession",
@@ -140,7 +181,7 @@ export const vodSessionMachine = setup({
       entry: "acquireDecoder",
       on: {
         ATTACHED: { target: "buffering", actions: "showSpinner" },
-        FAILED: "recovering",
+        FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     buffering: {
@@ -157,7 +198,7 @@ export const vodSessionMachine = setup({
         // 反代字节在涨 = 极慢但活着：清零 unknown 累计，别把它熬成死线。
         FRAG_GROWTH: { actions: "resetProbe" },
         STALL: { target: "probing", guard: "notPlayed" },
-        FAILED: "recovering",
+        FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     playing: {
@@ -170,21 +211,37 @@ export const vodSessionMachine = setup({
           target: "switching",
           actions: ["setTarget", "setResumeIntent", "bumpSession", "showSpinner", "pinControls"],
         },
-        FAILED: "recovering",
+        FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     probing: {
       on: {
         PROBE: [
-          { guard: "isDead", target: "recovering", actions: "incrementProbe" },
-          { guard: "isUnknownExhausted", target: "recovering", actions: "incrementProbe" },
-          { guard: "isUnknown", target: "playing", actions: "incrementProbe" },
-          { guard: "isOk", target: "playing", actions: "resetProbe" },
+          {
+            guard: "isDead",
+            target: "recovering",
+            actions: ["incrementProbe", "failoverProbeDead"],
+          },
+          {
+            guard: "isUnknownExhausted",
+            target: "recovering",
+            actions: ["incrementProbe", "failoverUnresponsive"],
+          },
+          {
+            guard: "isUnknown",
+            target: "playing",
+            actions: ["incrementProbe", "reportProbeInconclusive"],
+          },
+          {
+            guard: "isOk",
+            target: "playing",
+            actions: ["resetProbe", "restartQuietClock", "reportProbeSlow"],
+          },
         ],
         MEDIA_ALIVE: { target: "playing", actions: "resetProbe" },
         FRAG_GROWTH: { target: "playing", actions: "resetProbe" },
         // 探活期间解码器直接报错 = 比任何复核都硬的证据。
-        FAILED: { target: "recovering", actions: "incrementProbe" },
+        FAILED: { target: "recovering", actions: ["incrementProbe", "failoverFromEvent"] },
         // 复核在途时用户换集 / 换源：本轮结论作废，跟着新会话走。
         USER_SWITCH: {
           target: "switching",
@@ -213,7 +270,7 @@ export const vodSessionMachine = setup({
         },
         STALL: { target: "probing", guard: "notPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
-        FAILED: "recovering",
+        FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     recovering: {

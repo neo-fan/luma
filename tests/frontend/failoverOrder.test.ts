@@ -45,8 +45,10 @@ describe("auto line switch order", () => {
   });
 
   it("does not claim a source switch while switching lines", () => {
-    const engine = read("src/hooks/usePlayerEngine.ts");
-    expect(engine).toContain("正在切换线路");
-    expect(engine).not.toContain("，正在换源");
+    // 2.0.0 起交棒文案集中在 `lib/sessionFailover.ts`（原先散在引擎 5 个交棒点），
+    // 所以这条口径在那儿钉；引擎侧只把「为什么判死」交给机器。
+    const copy = read("src/lib/sessionFailover.ts");
+    expect(copy).toContain("正在切换线路");
+    expect(copy).not.toContain("，正在换源");
   });
 });

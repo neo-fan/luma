@@ -17,6 +17,10 @@ import type { LineVerdict } from "./playProbe";
 /** 与点播同一套探活词汇，直接用 `playProbe.LineVerdict`（不再自造 `alive`）。 */
 export type LiveVerdict = LineVerdict;
 
+/** 判死原因（与点播机器同一分层：机器说为什么，文案归 `lib/sessionFailover.ts`）。 */
+export type { FailoverCause } from "./sessionFailover";
+import type { FailoverCause } from "./sessionFailover";
+
 export type LiveSessionEvent =
   | { type: "LOAD"; url: string; lineIndex?: number }
   | { type: "RESOLVED"; url: string }
@@ -27,7 +31,7 @@ export type LiveSessionEvent =
   | { type: "STALL" }
   | { type: "PROBE"; verdict: LiveVerdict }
   | { type: "LINE_SWITCH"; url: string; lineIndex: number }
-  | { type: "FAILED"; reason: string };
+  | { type: "FAILED"; cause: FailoverCause; detail?: string };
 
 export interface LiveSessionContext {
   sessionId: number;
@@ -36,6 +40,9 @@ export interface LiveSessionContext {
   lineIndex: number;
   hasPlayed: boolean;
   unresponsiveProbes: number;
+  /** 进入 `recovering` 时携带的判死原因，解释器在 `requestLineSwitch` 里读。 */
+  failoverCause: FailoverCause | null;
+  failoverDetail: string;
 }
 
 /** 与点播同一条判决：**这里唯一真源**，解释器不再自带阈值。 */
@@ -47,6 +54,8 @@ const initialContext: LiveSessionContext = {
   lineIndex: 0,
   hasPlayed: false,
   unresponsiveProbes: 0,
+  failoverCause: null,
+  failoverDetail: "",
 };
 
 export const liveSessionMachine = setup({
@@ -67,6 +76,8 @@ export const liveSessionMachine = setup({
       sessionId: ({ context }) => context.sessionId + 1,
       hasPlayed: () => false,
       unresponsiveProbes: () => 0,
+      failoverCause: () => null,
+      failoverDetail: () => "",
     }),
     setTarget: assign({
       targetUrl: ({ event }) => (event as { url: string }).url,
@@ -78,12 +89,27 @@ export const liveSessionMachine = setup({
       unresponsiveProbes: ({ context }) => context.unresponsiveProbes + 1,
     }),
     resetProbe: assign({ unresponsiveProbes: () => 0 }),
-    // 副作用动作名：由解释器执行。
+    failoverProbeDead: assign({
+      failoverCause: () => "probeDead" as const,
+      failoverDetail: () => "",
+    }),
+    failoverUnresponsive: assign({
+      failoverCause: () => "probeUnresponsive" as const,
+      failoverDetail: () => "",
+    }),
+    failoverFromEvent: assign({
+      failoverCause: ({ event }) => (event.type === "FAILED" ? event.cause : null),
+      failoverDetail: ({ event }) => (event.type === "FAILED" ? (event.detail ?? "") : ""),
+    }),
+    // ---- 副作用发起点：解释器在 createActor 时用 `actions` 覆盖实现 ----
     acquireDecoder: () => undefined,
     releaseDecoders: () => undefined,
     showSpinner: () => undefined,
     hideSpinner: () => undefined,
     requestLineSwitch: () => undefined,
+    restartQuietClock: () => undefined,
+    reportProbeInconclusive: () => undefined,
+    reportProbeSlow: () => undefined,
   },
 }).createMachine({
   id: "liveSession",
@@ -106,7 +132,7 @@ export const liveSessionMachine = setup({
       on: {
         ATTACHED: { target: "buffering", actions: "showSpinner" },
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
-        FAILED: "recovering",
+        FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     buffering: {
@@ -115,7 +141,7 @@ export const liveSessionMachine = setup({
         FRAG_GROWTH: { actions: "resetProbe" },
         STALL: { target: "probing", guard: "notPlayed" },
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
-        FAILED: "recovering",
+        FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     playing: {
@@ -126,20 +152,36 @@ export const liveSessionMachine = setup({
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
         // 手动换线路。
         LINE_SWITCH: { target: "tuning", actions: ["setTarget", "bumpSession"] },
-        FAILED: "recovering",
+        FAILED: { target: "recovering", actions: "failoverFromEvent" },
       },
     },
     probing: {
       on: {
         PROBE: [
-          { guard: "isDead", target: "recovering", actions: "incrementProbe" },
-          { guard: "isUnknownExhausted", target: "recovering", actions: "incrementProbe" },
-          { guard: "isUnknown", target: "playing", actions: "incrementProbe" },
-          { guard: "isOk", target: "playing", actions: "resetProbe" },
+          {
+            guard: "isDead",
+            target: "recovering",
+            actions: ["incrementProbe", "failoverProbeDead"],
+          },
+          {
+            guard: "isUnknownExhausted",
+            target: "recovering",
+            actions: ["incrementProbe", "failoverUnresponsive"],
+          },
+          {
+            guard: "isUnknown",
+            target: "playing",
+            actions: ["incrementProbe", "reportProbeInconclusive"],
+          },
+          {
+            guard: "isOk",
+            target: "playing",
+            actions: ["resetProbe", "restartQuietClock", "reportProbeSlow"],
+          },
         ],
         MEDIA_ALIVE: { target: "playing", actions: "resetProbe" },
         FRAG_GROWTH: { target: "playing", actions: "resetProbe" },
-        FAILED: { target: "recovering", actions: "incrementProbe" },
+        FAILED: { target: "recovering", actions: ["incrementProbe", "failoverFromEvent"] },
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
         // 复核在途时用户手动换线：本轮结论作废。
         LINE_SWITCH: { target: "tuning", actions: ["setTarget", "bumpSession"] },

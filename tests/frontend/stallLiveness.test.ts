@@ -22,6 +22,8 @@ const engine = readFileSync(resolve(here, "../../src/hooks/usePlayerEngine.ts"),
 // liveSessionMachine.test.ts）；这里钉「引擎把结论交给了机器、且不再自带阈值与
 // 计数器副本」，副作用顺序仍由下面几条源码契约守护。
 const vodMachine = readFileSync(resolve(here, "../../src/lib/vodSessionMachine.ts"), "utf8");
+// 交棒文案与日志 stage 的唯一来源（5 个交棒点 2.0.0 起合成一处）。
+const failoverCopy = readFileSync(resolve(here, "../../src/lib/sessionFailover.ts"), "utf8");
 
 describe("stall watchdog", () => {
   it("needs repeated unknown probes before switching lines", () => {
@@ -31,10 +33,16 @@ describe("stall watchdog", () => {
     expect(engine).not.toContain("decideWatchdogVerdict");
     expect(vodMachine).toContain("export const UNRESPONSIVE_LIMIT = 3;");
     expect(vodMachine).toContain("context.unresponsiveProbes + 1 >= UNRESPONSIVE_LIMIT");
-    // 引擎侧：结论原样喂进机器（不再翻译 ok↔alive），交棒与否由机器的状态说话。
-    expect(engine).toContain('actor.send({ type: "PROBE", verdict })');
-    expect(engine).toContain('actor.getSnapshot().matches("recovering")');
-    expect(engine).toContain("stall probe unresponsive");
+    // 引擎侧：结论原样喂进机器（不再翻译 ok↔alive），然后**什么都不决定**——
+    // 交棒由机器进入 recovering 时回调唯一的实现点 handOverLine 完成。
+    expect(engine).toContain('send({ type: "PROBE", verdict })');
+    expect(engine).not.toContain('matches("recovering")');
+    expect(engine).toContain("navigateFailover");
+    expect(engine).toContain("requestLineSwitch");
+    expect(engine).toContain("const handOverLine =");
+    // 文案与日志 stage 的唯一来源。
+    expect(failoverCopy).toContain("stall probe unresponsive");
+    expect(failoverCopy).toContain("stall probe dead");
   });
 
   it("never treats a paused video as a dead line", () => {

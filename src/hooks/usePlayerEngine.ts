@@ -32,6 +32,8 @@ import { log } from "../lib/logger";
 import { mediaIsAdvancing } from "../lib/mediaAlive";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { probeLineVerdict } from "../lib/playProbe";
+import { failoverCopy } from "../lib/sessionFailover";
+import type { FailoverCause } from "../lib/sessionFailover";
 import { DEFAULT_PREFS, readPlayerPrefs, writePlayerPrefs } from "../lib/playerPrefs";
 import { createActor } from "xstate";
 import { vodSessionMachine } from "../lib/vodSessionMachine";
@@ -48,6 +50,23 @@ export const BUILTIN_KINDS = ["hls", "flv", "file"];
  * 用这个区分两条路径，不参与任何产品逻辑。
  */
 let sessionInstanceSeq = 0;
+
+/**
+ * 机器发起的副作用在这里落地：由主 effect 在实例挂载期间提供实现。
+ *
+ * 这四个动作原先散在 5 个交棒点里各写一遍（撤海报 / 挂红条 / `switchOrFailoverRef`
+ * 的顺序全靠人记），现在「什么时候做」只由转换表决定一次。
+ */
+type SessionEffects = {
+  /** 判死交棒：撤掉冻结帧、报出人话、把这一线交还给换线 / 换源链路。 */
+  failover: (cause: FailoverCause, detail: string) => void;
+  /** 复核说「还活着」：静默计时推回当下，慢源不该被熬成死线。 */
+  restartQuietClock: () => void;
+  /** unknown（说不出所以然）未达阈值：只留证据，不动画面。 */
+  reportInconclusive: () => void;
+  /** 清单与分片都拿得到：只是慢，继续等，并撤掉「已等待 Ns」提示。 */
+  reportSlow: () => void;
+};
 
 /**
  * 「下一集」控制栏按钮的禁用态。
@@ -241,29 +260,60 @@ export function usePlayerEngine({
   const noticeRef = useRef<((text: string | null) => void) | null>(null);
 
   /**
-   * 影子模式（2.0.0 内核重构·接线第 1 步）：并行跑一个 `playerSessionMachine`，
-   * 把生命周期事件喂进去，**只观测、不改任何现有行为**（多余的 send 在 XState 里
-   * 是无害 no-op）。dev 下把机器快照暴露到 `window.__lumaPlayerSession`，供 CDP
-   * 探针对比「机器状态 vs 现实行为」；确认模型与现实一致后，才进第 2 步（把真源
-   * 切成 actor、逐簇删掉散落的守卫）。
+   * 会话状态机（2.0.0 内核解释器化）。直播与点播生命周期不同，按 `siteKey` 各选
+   * 一台机器；引擎喂事件、机器决定**何时**发生什么，副作用在这里给出实现。
+   *
+   * 实现走 `sessionEffectsRef` 间接引用：机器 effect 比主 effect 先跑，而副作用
+   * （撤海报 / 挂红条 / 交棒换线 / 复位静默计时）全都依赖某个具体 `<video>` 闭包，
+   * 只能由主 effect 在挂载时填、卸载时清空。实现缺席 = 实例已销毁，此时是 no-op，
+   * 绝不会对着已释放的播放器动手。与 `switchRef` / `noticeRef` 是同一套路数。
    */
   const sessionActorRef = useRef<ReturnType<typeof createActor<typeof vodSessionMachine>> | null>(null);
+  const sessionEffectsRef = useRef<SessionEffects | null>(null);
   useEffect(() => {
     // dev 观测：actor 实例身份。`sessionId` 只在一台 ArtPlayer 实例的生命周期内
     // 唯一（换集退回整页重建时会新建 actor，序号重新从 1 开始），CDP 探针要靠
     // 这个序号区分「同一实例内原地换集（USER_SWITCH，sessionId 自增）」与
     // 「整页重建（instance 变化）」。
     const instance = ++sessionInstanceSeq;
-    // 直播与点播生命周期不同，各用各的机器。引擎只喂两者共有的事件
-    // （LOAD/RESOLVED/ATTACHED/MEDIA_ALIVE）；点播独有的 USER_SWITCH/AUTOPLAY_BLOCKED
-    // 只在 switchRef（点播换集）里发，直播走不到。live 演员按 vod 演员类型收口，
-    // 因为引擎只发共有事件、且两台机器都有 sessionId/hasPlayed 上下文。
+    /** 判死交棒：原因由机器写在 context 上，动作由当前实例的实现执行。 */
+    const runFailover = (context: {
+      failoverCause: FailoverCause | null;
+      failoverDetail: string;
+    }) =>
+      sessionEffectsRef.current?.failover(
+        // context 里为 null 只可能出现在直接进 recovering 的极端路径，按「没
+        // 线路可用」处理，保证交棒一定有文案、不会静默。
+        context.failoverCause ?? "linesExhausted",
+        context.failoverDetail,
+      );
+    const probeNotes = {
+      restartQuietClock: () => sessionEffectsRef.current?.restartQuietClock(),
+      reportProbeInconclusive: () => sessionEffectsRef.current?.reportInconclusive(),
+      reportProbeSlow: () => sessionEffectsRef.current?.reportSlow(),
+    };
+    // live 演员按 vod 演员类型收口：引擎只发两台机器共有的事件，且两台都有
+    // sessionId / hasPlayed / failover* 这几个上下文字段。
+    // 副作用实现通过 `machine.provide({ actions })` 注入（v5 的实现覆盖点，
+    // `createActor` 的 options 里没有 actions 这一项）。
     const actor =
       siteKey === "live"
-        ? (createActor(liveSessionMachine) as unknown as ReturnType<
-            typeof createActor<typeof vodSessionMachine>
-          >)
-        : createActor(vodSessionMachine);
+        ? (createActor(
+            liveSessionMachine.provide({
+              actions: {
+                requestLineSwitch: ({ context }) => runFailover(context),
+                ...probeNotes,
+              },
+            }),
+          ) as unknown as ReturnType<typeof createActor<typeof vodSessionMachine>>)
+        : createActor(
+            vodSessionMachine.provide({
+              actions: {
+                navigateFailover: ({ context }) => runFailover(context),
+                ...probeNotes,
+              },
+            }),
+          );
     sessionActorRef.current = actor;
     actor.subscribe((snap) => {
       if (import.meta.env.DEV) {
@@ -738,12 +788,14 @@ export function usePlayerEngine({
               setVideoError(`网络波动导致播放中断：${reason}，可点刷新重试`);
               return;
             }
-            setVideoError(`HLS 播放失败：${reason}，正在切换线路`);
-            // hls 自己报致命 = 有明确证据，报 FAILED 让机器进 recovering。
-            // 出画后那条分支不报：红线是「已能播放就不自动跳」，机器侧同样由
-            // notPlayed guard 兜住，两边口径一致。
-            sessionActorRef.current?.send({ type: "FAILED", reason: "hls fatal" });
-            void switchOrFailoverRef.current();
+            // hls 自己报致命 = 有明确证据，报 FAILED 交给机器；文案、撤海报与交棒
+            // 由 handOverLine 统一做一次。出画后那条分支不报：红线是「已能播放就不
+            // 自动跳」，机器侧同样由 notPlayed guard 兜住，两边口径一致。
+            sessionActorRef.current?.send({
+              type: "FAILED",
+              cause: "hlsFatal",
+              detail: reason,
+            });
           });
         },
         flv: (video, url, instance) => {
@@ -819,16 +871,22 @@ export function usePlayerEngine({
                     if (!stopped) {
                       return;
                     }
-                    setVideoError(`FLV 播放中断：${detail}`);
-                    void switchOrFailoverRef.current();
+                    // 画面确实停住 = 判死证据：交给机器，交棒由 handOverLine 做。
+                    sessionActorRef.current?.send({
+                      type: "FAILED",
+                      cause: "flvInterrupted",
+                      detail,
+                    });
                   }, 4_000);
                   trackSwitchDisposer(() => window.clearTimeout(observe));
                   return;
                 }
-                setVideoError(`FLV 播放失败：${detail}`);
-                // 同 hls fatal：报错换线前撤掉冻结帧，不让静帧盖住后续画面。
-                finishPoster(false);
-                void switchOrFailoverRef.current();
+                // 同 hls fatal：报 FAILED，撤海报 / 文案 / 交棒统一在 handOverLine。
+                sessionActorRef.current?.send({
+                  type: "FAILED",
+                  cause: "flvFatal",
+                  detail,
+                });
               });
               void video.play().catch(() => {
                 // 自动播放被拦截时保留控件，用户点一下即可。
@@ -1189,17 +1247,14 @@ export function usePlayerEngine({
       const mediaError = video.error;
       // 3 = MEDIA_ERR_DECODE, 4 = MEDIA_ERR_SRC_NOT_SUPPORTED。WebView2 常见于
       // HEVC：同一编码换源也救不了，只能交给换线路 / 换源流程。
-      log.warn("media decode failed", {
-        siteKey,
-        vodId,
-        mediaCode: mediaError?.code ?? 0,
+      // 解码器直接报错比任何复核都硬：只报 FAILED 把证据交给机器，撤海报 / 文案 /
+      // 交棒由机器进入 recovering 后回调 handOverLine 一次完成（mediaCode 随 detail
+      // 进同一条日志，不再分两处写）。
+      sessionActorRef.current?.send({
+        type: "FAILED",
+        cause: "mediaDecode",
+        detail: `code=${mediaError?.code ?? 0}`,
       });
-      // 解码失败要换线了：先撤掉冻结帧，别让静帧盖住错误提示与后续画面。
-      finishPoster(false);
-      // 解码器直接报错比任何复核都硬：报 FAILED，机器进 recovering（让模型跟上现实）。
-      sessionActorRef.current?.send({ type: "FAILED", reason: "media decode" });
-      setVideoError(`播放器加载失败，${PLAY_FAILURE_HINT}。`);
-      void switchOrFailoverRef.current();
     };
     video.addEventListener("error", onError);
 
@@ -1227,19 +1282,50 @@ export function usePlayerEngine({
     let lastProbeAt = 0;
     /** 本轮会话的看门狗一次性闸门：已交棒或已确认存活就不再探。 */
     let watchStopped = false;
-    /** 收尾：停止看门狗、报原因、交棒给换线/换源链路。 */
-    const giveUpLine = (message: string, stage: string) => {
+    /**
+     * 交棒换线的**唯一**执行点：机器进入 `recovering`（点播）/ `recovering`（直播，
+     * 动作名 `requestLineSwitch`）时调到这里。文案与日志 stage 由 `failoverCopy`
+     * 给出，原因（判死依据）由机器写在 context 上。
+     *
+     * 取代原先 5 处各写一遍的「finishPoster + setVideoError + switchOrFailover」：
+     * 那里头任何一处漏了撤海报，就会有一张静帧永久盖住画面。
+     */
+    const handOverLine = (cause: FailoverCause, detail: string) => {
+      const { message, stage } = failoverCopy(cause, detail);
       watchStopped = true;
       log.warn(stage, {
         siteKey,
         vodId,
         quietMs: Date.now() - lastAliveAt,
         unresponsiveProbes: sessionUnresponsiveProbes(),
+        detail,
       });
-      // 看门狗确认线路失效：冻结帧的使命结束，撤掉后交给换线链路。
+      // 线路已判死：冻结帧的使命结束，撤掉后交给换线链路，绝不让静帧盖住后续画面。
       finishPoster(false);
       setVideoError(message);
       void switchOrFailoverRef.current();
+    };
+    // 把这一轮实例的副作用实现挂给机器（机器 effect 先跑，只认这个 ref）。
+    sessionEffectsRef.current = {
+      failover: handOverLine,
+      restartQuietClock: noteAlive,
+      reportInconclusive: () =>
+        log.info("stall probe inconclusive", {
+          siteKey,
+          vodId,
+          unresponsiveProbes: sessionUnresponsiveProbes(),
+          quietMs: Date.now() - lastAliveAt,
+        }),
+      reportSlow: () => {
+        // 清单和分片都拿得到 → 只是慢，继续等；这也是生命信号。
+        noteAlive();
+        clearSlowNotice();
+        log.info("stall probe alive but slow", {
+          siteKey,
+          vodId,
+          quietMs: Date.now() - lastAliveAt,
+        });
+      },
     };
     const stallCheck = () => {
       if (watchStopped) {
@@ -1296,39 +1382,10 @@ export function usePlayerEngine({
           if (failoverStarted.current || lineSwitchStarted.current) {
             return;
           }
-          // 判决交给机器：三态结论原样喂进去（不再翻译 ok↔alive，也没有第二个判决
-          // 模块）。unknown 的累计、达阈值判死、出画后不判死，全在转换表里。
-          const actor = sessionActorRef.current;
-          if (!actor) {
-            return;
-          }
-          actor.send({ type: "PROBE", verdict });
-          if (!actor.getSnapshot().matches("recovering")) {
-            if (verdict === "ok") {
-              // 清单和分片都拿得到 → 只是慢，继续等（这也是 life signal）。
-              noteAlive();
-              log.info("stall probe alive but slow", {
-                siteKey,
-                vodId,
-                quietMs: Date.now() - lastAliveAt,
-              });
-            } else {
-              // unknown：还是没回话。累计到阈值前一律继续等，绝不跳走。
-              log.info("stall probe inconclusive", {
-                siteKey,
-                vodId,
-                unresponsiveProbes: sessionUnresponsiveProbes(),
-                quietMs: Date.now() - lastAliveAt,
-              });
-            }
-            return;
-          }
-          giveUpLine(
-            verdict === "dead"
-              ? "当前线路已确认无法加载，正在切换…"
-              : "当前线路多次无响应，正在切换…",
-            verdict === "dead" ? "stall probe dead" : "stall probe unresponsive",
-          );
+          // 解释器在这里只交证据：三态结论原样喂进机器（不翻译 ok↔alive、没有
+          // 第二个判决模块、也不再读状态决定文案）。机器自己决定继续等 / 累计，
+          // 并在进入 recovering 时回调本实例的 handOverLine 完成交棒。
+          sessionActorRef.current?.send({ type: "PROBE", verdict });
         })
         .catch(() => {
           probeBusy = false;
@@ -1644,6 +1701,9 @@ export function usePlayerEngine({
     video.addEventListener("timeupdate", onMediaAlive);
 
     return () => {
+      // 副作用实现先摘：机器 actor 按 siteKey 存活，比这一轮实例活得久，不能让它
+      // 回调到已销毁闭包（那会对着旧 <video> 撤海报 / 交棒）。
+      sessionEffectsRef.current = null;
       window.clearInterval(watchTimer);
       window.clearInterval(hintTimer);
       switchRef.current = null;

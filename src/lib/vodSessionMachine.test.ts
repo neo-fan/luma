@@ -188,7 +188,7 @@ describe("vodSessionMachine", () => {
     const a = fresh();
     toWaiting(a);
     a.send({ type: "STALL" });
-    a.send({ type: "FAILED", reason: "media decode" });
+    a.send({ type: "FAILED", cause: "mediaDecode" });
     expect(a.getSnapshot().matches("recovering")).toBe(true);
   });
 
@@ -204,11 +204,109 @@ describe("vodSessionMachine", () => {
     const a = fresh();
     a.send({ type: "LOAD", url: "e1" });
     // 解析阶段就失败（拿不到地址）→ failed；解码阶段失败才走 recovering 换线。
-    a.send({ type: "FAILED", reason: "no url" });
+    a.send({ type: "FAILED", cause: "linesExhausted" });
     expect(a.getSnapshot().matches("failed")).toBe(true);
     const before = a.getSnapshot().context.sessionId;
     a.send({ type: "LOAD", url: "e2" });
     expect(a.getSnapshot().matches("resolving")).toBe(true);
     expect(a.getSnapshot().context.sessionId).toBe(before + 1);
+  });
+});
+
+describe("vodSessionMachine 副作用发起（解释器接线的契约）", () => {
+  /**
+   * 用 `machine.provide({ actions })` 注入实现，断言「机器到底发起了什么、发起几次」。
+   * 这是 actions 落地的证明：交棒的时机与次数只在转换表里决定，解释器只提供
+   * 怎么做——所以这里不需要碰 DOM 就能钉住「不会漏交棒、不会重复交棒」。
+   */
+  function instrumented() {
+    const calls: string[] = [];
+    const actor = createActor(
+      vodSessionMachine.provide({
+        actions: {
+          navigateFailover: ({ context }) =>
+            calls.push(`failover:${String(context.failoverCause)}:${context.failoverDetail}`),
+          restartQuietClock: () => calls.push("restartQuietClock"),
+          reportProbeInconclusive: () => calls.push("reportProbeInconclusive"),
+          reportProbeSlow: () => calls.push("reportProbeSlow"),
+        },
+      }),
+    );
+    actor.start();
+    return { actor, calls };
+  }
+
+  it("PROBE dead 只发起一次交棒，原因随事件带出", () => {
+    const { actor, calls } = instrumented();
+    toWaiting(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "dead" });
+    expect(calls).toEqual(["failover:probeDead:"]);
+  });
+
+  it("unknown 前两次只留证据，第三次才交棒", () => {
+    const { actor, calls } = instrumented();
+    toWaiting(actor as unknown as ReturnType<typeof fresh>);
+    for (let i = 0; i < UNRESPONSIVE_LIMIT - 1; i += 1) {
+      actor.send({ type: "STALL" });
+      actor.send({ type: "PROBE", verdict: "unknown" });
+    }
+    expect(calls).toEqual([
+      "reportProbeInconclusive",
+      "reportProbeInconclusive",
+    ]);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "unknown" });
+    expect(calls).toEqual([
+      "reportProbeInconclusive",
+      "reportProbeInconclusive",
+      "failover:probeUnresponsive:",
+    ]);
+  });
+
+  it("PROBE ok 复位静默计时并报告「慢」，绝不交棒", () => {
+    const { actor, calls } = instrumented();
+    toWaiting(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "ok" });
+    expect(calls).toEqual(["restartQuietClock", "reportProbeSlow"]);
+  });
+
+  it("红线在副作用层同样成立：出画之后一个副作用都不发", () => {
+    const { actor, calls } = instrumented();
+    toPlaying(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "dead" });
+    expect(calls).toEqual([]);
+  });
+
+  it("FAILED 的每个来源都带上自己的原因与细节", () => {
+    const a = instrumented();
+    toWaiting(a.actor as unknown as ReturnType<typeof fresh>);
+    a.actor.send({ type: "FAILED", cause: "mediaDecode", detail: "code=3" });
+    expect(a.calls).toEqual(["failover:mediaDecode:code=3"]);
+
+    const b = instrumented();
+    toWaiting(b.actor as unknown as ReturnType<typeof fresh>);
+    b.actor.send({ type: "FAILED", cause: "hlsFatal", detail: "manifestError" });
+    expect(b.calls).toEqual(["failover:hlsFatal:manifestError"]);
+  });
+
+  it("交棒不重放：离开 recovering 后必须重新取证才会再交一次", () => {
+    const { actor, calls } = instrumented();
+    toWaiting(actor as unknown as ReturnType<typeof fresh>);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "dead" });
+    // 上层换源成功 → 新会话；此时 context 里的判死原因必须被清空
+    actor.send({ type: "LOAD", url: "e2" });
+    expect(actor.getSnapshot().context.failoverCause).toBeNull();
+    expect(actor.getSnapshot().matches("recovering")).toBe(false);
+    // 新一轮：不重新取证就不会再交棒
+    actor.send({ type: "RESOLVED", url: "e2" });
+    actor.send({ type: "ATTACHED" });
+    expect(calls).toEqual(["failover:probeDead:"]);
+    actor.send({ type: "STALL" });
+    actor.send({ type: "PROBE", verdict: "dead" });
+    expect(calls).toEqual(["failover:probeDead:", "failover:probeDead:"]);
   });
 });
