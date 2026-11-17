@@ -46,6 +46,16 @@
 - **`docs/MAINTENANCE.md` 新增 §11「优先主流库、不手搓」逐项裁决**：把清单正面收口，避免每轮重开讨论。已换：moka（缓存 + 同 key 并发）、TanStack Query（页面读缓存）、XXH3（稳定指纹，替掉 sha1/FNV）、`percent-encoding`（编码侧）。明确不换并给出依据：百分号解码（要「非法 UTF-8 整串退回」，库的 `decode_utf8_lossy` 是插 U+FFFD 的另一种语义）、`AppError` 不上 thiserror（thiserror 收益在枚举，这里是字段名被契约锁定的 struct）、IP 判定不上 ipnet（`proxy/guard.rs` 已在用 std 的 `is_private/is_loopback/...` 谓词，ipnet 解决的是 CIDR 匹配，此问题不存在）、取消令牌无对象（全仓无手搓取消标志，`switchDisposers` 是 timer/listener 回收）。`governor` 属**环境阻塞**而非取舍：本机 crates.io 无网络，crate 缓存里没有它。`sourceCache` 不迁 Query 并列出三条具体失效模式（跨 key 同步派生无处安放；Query 会打破现有「全站聚合搜索串行化」的限流，改成并发打爆约 300 个站点；`partial`/`complete` 语义挤进 meta 比显式字段更难读）。
 - **`infra/pct.rs` 的百分号编码改用 `percent-encoding`**：注意库的 `NON_ALPHANUMERIC` 连 `- _ . ~` 一起编掉（实测 `a-b` → `a%2Db`），与替换前的手搓口径不同；用 `AsciiSet::remove` 显式放回这四个字节，由既有单测逐字钉住（第一次替换即被 `encode_keeps_unreserved_only` 打回，同时带崩 3 处 URL 编码相关用例）。回归：`cargo test --lib` 233 passed / 2 ignored。
 
+- **`usePlayerEngine` 拆出四个可测模块（1760 → 1481 行）**：按「谁负责时序、谁只做计算」切，不是按行数硬切。
+  - `playerVolumeFade.ts`（10 条行为测试）：淡入本体，两个入口 `armColdStart` / `armSwitch` 共用一台，替掉原先冷启动与换集各抄一份的写法；顺带修掉 `addEventListener` 第三参数被当 `once` 用（那是 capture）与在途 ramp 缺代次校验两处隐患。
+  - `playerPosterHold.ts`（6 条）：首帧前海报/冻结帧的接管与硬撤，含「暂停态 `timeupdate` 不能渐隐」「重复 hold 不叠加监听」两条实测回归。
+  - `playerPrefsWriter.ts`（9 条）：音量/倍速落盘的静默期纠正、前缘节流 + trailing、**字段隔离**（音量事件绝不写 rate）。
+  - `playerStallWatchdog.ts`（12 条）：看门狗只取证据（静默 20s 触发独立复核、复核节流、换代丢弃迟到结论、三条早退），判决仍在状态机；同时把 `restartQuietClock` / `reportProbeInconclusive` / `reportProbeSlow` 三个动作**退回看门狗自己**——记日志与推静默计时是取证方的记账，不是机器的判决，机器只留 `navigateFailover` / `requestLineSwitch` / `resumePlayback` / `cancelResume` 四个真正的决策出口（引擎侧 `provide` 的实现一一对应，无空描述符）。
+  - `playerThroughputMeter.ts`（6 条）：反代 `/meter` 轮询（基准地址问 `proxyStatus()` 要，debug 回退临时端口时不能写死 9978；累计字节在涨 = 极慢但活着；取不到不闪 0）。
+  - **不再往外拆的部分与理由**：ArtPlayer 实例装配、`customType` 里的 hls.js / mpegts.js 挂载、原地换集 promise 三者互相够着 `art` / `video` / `teardownDecoders` 与同一条切换时序，硬拆只能穿参数拼出假模块（形似解耦、实为换个写法保存耦合）。已写进 `MAINTENANCE §9`。
+- **`probe_playback_ux` 的构建自检改为从磁盘源码推导**：它原先硬编码两条产品字符串做「dev server 是否在发旧模块」的判定，内核一搬家就假报 stale（本轮就撞上了：全新生 Vite 也报旧缓存，实际是探针自己的指纹过期）。现在从磁盘上的 `usePlayerEngine.ts` 读出它 import 的同目录模块清单，逐一验证被 service 的那份也引用了它们，并以磁盘上「倍速字段隔离」那行原文作为行为指纹 —— 以后再抽模块不用改探针，而它抓旧缓存的能力不减。
+- **`probe_session_machine` 的交棒注入改选「当前在放的那个 `<video>`」**：换线/换源会让引擎重建实例（实测 `instance 4 → 6`），注到已失格的游离元素上会让这条链看起来「断链」，其实是注错对象。
+
 ### 修复
 
 - **豆瓣缓存跨季串数据**：无年份时「庆余年 第一季 / 第二季」曾归一到同一缓存键，第二季会命中第一季的条目（缓存早于 `pick_candidate` 打分）。缓存键保留季标记后消除。

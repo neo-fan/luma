@@ -94,11 +94,16 @@
 
 1. **CI 首次远端运行待验证**：`.github/workflows/check.yml` 已落地（`checks` / `rust` / `py-adapter` 三个 job），但本机没有远端仓库，尚未在 GitHub runner 上实跑过；首次推送后要按实际报错调（重点看 `rust` job 的 `pnpm build` + 资源桩是否够用）。
 2. Rust `#[path]` 是物理分层，逻辑模块名仍是 `crate::config`，依赖方向不受编译器约束（刻意取舍，第二阶段再做前缀化）。
-3. 超长文件：`PlayerPage.tsx`（1750）、`usePlayerEngine.ts`（1709）、`domain/spider/mod.rs`（928）、`domain/spider/quickjs.rs`（738）。
-   `usePlayerEngine` 2.0.0 已经吐出两块真正独立的东西：看门狗**判决**进了会话状态机（`lib/vodSessionMachine.ts` /
-   `lib/liveSessionMachine.ts`），音量**淡入**进了 `hooks/playerVolumeFade.ts`（原来冷启动与换集各抄一份）。
-   剩下的体量是「实例装配 + ArtPlayer 配置与 `customType` 解码器 + 反代测速角标 + 切换 promise」，
-   彼此通过 `<video>` 与一批墙钟变量耦合，属于**要先解耦再拆**的部分，别按行数硬切。
+3. 超长文件：`PlayerPage.tsx`（1750）、`usePlayerEngine.ts`（1481）、`domain/spider/mod.rs`（928）、`domain/spider/quickjs.rs`（738）。
+   `usePlayerEngine` 2.0.0 已经吐出**四块**独立模块，各带行为测试：看门狗判决进会话状态机、
+   `playerVolumeFade.ts`（淡入，10 条）、`playerPosterHold.ts`（首帧前海报，6 条）、
+   `playerPrefsWriter.ts`（偏好写入，9 条）、`playerStallWatchdog.ts`（取证据，12 条）、
+   `playerThroughputMeter.ts`（反代吞吐，6 条）。
+   剩下的体量是「ArtPlayer 实例装配 + `customType` 里挂 hls.js / mpegts.js + 原地换集
+   promise」：**刻意不再往外拆**——那三块互相够着 `art` / `video` / `teardownDecoders`
+   与同一条切换时序，硬拆只能靠穿参数字面拼出假模块（形似解耦，实为把耦合换一种写法）。
+   真要再降行数，前提是先给 ArtPlayer 的解码器挂载找一层真正的边界（换 hls 实例的所有权），
+   那是另一件事，不要顺手做。
    （`domain/config`、`domain/proxy`、`infra/db`、`infra/logging` 已按职责拆分，见 §10。）
 4. 四端协议靠约定 + 5 类结构校验，未做代码生成。
 
