@@ -397,7 +397,9 @@
 
 .page {
   /* 页面骨架：padding 内边距 + 固定区（页头/工具栏）+ 滚动区（.page-body）。
-     所有页面共用这一套，单页只覆盖变量或头部高度，不再各自拼布局。 */
+     所有页面共用这一套，单页只覆盖变量或头部高度，不再各自拼布局。
+     宽度自适应：填满内容区（窗口 − 侧栏），不封顶居中——宽窗不留大片空白、
+     窄窗不留横向滚动；hero 等全出血元素靠负 margin 贴到窗口边。 */
   --page-pad-t: 30px;
   --page-pad-x: 36px;
   display: flex;
@@ -405,8 +407,6 @@
   flex: 1;
   min-height: 0;
   width: 100%;
-  max-width: 1360px;
-  margin: 0 auto;
   padding: var(--page-pad-t) var(--page-pad-x) 0;
 }
 
@@ -425,12 +425,11 @@
   --player-max-h: 80vh;
   --player-width: min(100%, calc(var(--player-max-h) * 16 / 9));
   --page-pad-x: 28px;
-  max-width: 1600px;
   padding-inline: 28px;
 }
 
-/* 首页与其它页同一套骨架：1360 居中 + 36px 缩进。头图用负 margin 吃掉
-   左右内边距，贴到内容框边缘（不再越过 1360 栏），海报行与页头同基线。 */
+/* 首页与其它页同一套骨架：随窗口自适应铺满、36px 缩进。头图用负 margin 吃掉
+   左右内边距，贴到窗口边缘（全出血），海报行与页头同基线。 */
 
 .page--player .page-body {
   padding-bottom: 36px;
