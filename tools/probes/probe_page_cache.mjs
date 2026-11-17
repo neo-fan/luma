@@ -4,8 +4,8 @@
  *
  * 手段：Tauri 把 __TAURI_INTERNALS__.invoke 定义为不可写属性，直接包装
  * window.invoke 会静默失败（计数恒为 0）。改为通过 Vite dev 的动态 import
- * 拿到应用正在使用的 pageCache 单例，包装它的 load：只有真正执行 loader
- * 才计数，也就是真正发出 detailContent IPC 的次数。验证
+ * 拿到应用正在使用的 QueryClient 单例，包装 fetchQuery 的 queryFn：只有真正执行
+ * loader（react-query 判旧回源）才计数，也就是真正发出 detailContent IPC 的次数。验证
  *   搜索 → 详情 → 播放 → 返回详情 全程不再重新拉取剧集列表，
  *   而点详情页「↻ 刷新」会强制重新请求，且返回详情时滚动位置被恢复。
  *
@@ -148,22 +148,33 @@ const assert = (ok, label, detail = "") => {
   if (!ok) failures += 1;
 };
 
-// 缓存层 spy 注入（幂等）。Vite dev 下动态 import 同一 URL 会命中浏览器模块
-// 缓存，拿到的就是 App 正在用的那个 pageCache 单例；包装实例上的 load 后，
-// 只有 loader 真正执行（= 真的发 IPC）才记一笔。
+// 缓存层 spy 注入（幂等）。Vite dev 下动态 import 同一 URL 会命中浏览器模块缓存，
+// 拿到的就是 App 正在用的那个 QueryClient 单例。包装 fetchQuery 的 queryFn：
+// 只有它真被执行（react-query 判旧、真的回源）才记一笔，新鲜命中不计数 ——
+// 与迁移前（自研 pageCache）的计数口径一致。force 的判据是 staleTime === 0：
+// loadCached 只在 force 时把 staleTime 打到 0。
 const INJECT_SPY = `(async () => {
   try {
-    const m = await import('/src/lib/pageCache.ts');
-    const cache = m.pageCache;
-    if (!cache || typeof cache.load !== 'function') return 'NO_CACHE';
-    if (cache.__cacheSpyWrapped) return 'ALREADY';
-    const orig = cache.load.bind(cache);
+    const m = await import('/src/lib/queryClient.ts');
+    const client = m.queryClient;
+    if (!client || typeof client.fetchQuery !== 'function') return 'NO_CACHE';
+    if (client.__cacheSpyWrapped) return 'ALREADY';
+    const orig = client.fetchQuery.bind(client);
     window.__cacheSpy = [];
-    cache.load = (key, ttl, loader, force) => orig(key, ttl, () => {
-      try { window.__cacheSpy.push({ key, force: !!force, at: Date.now() }); } catch {}
-      return loader();
-    }, force);
-    cache.__cacheSpyWrapped = true;
+    client.fetchQuery = (options) => {
+      const inner = options && options.queryFn;
+      if (typeof inner !== 'function') return orig(options);
+      const key = Array.isArray(options.queryKey) ? String(options.queryKey[0]) : String(options.queryKey);
+      const force = options.staleTime === 0;
+      return orig({
+        ...options,
+        queryFn: (ctx) => {
+          try { window.__cacheSpy.push({ key, force, at: Date.now() }); } catch {}
+          return inner(ctx);
+        },
+      });
+    };
+    client.__cacheSpyWrapped = true;
     return true;
   } catch (e) { return 'ERR:' + String(e); }
 })()`;
@@ -271,7 +282,7 @@ try {
   if (tauriReady !== "OK") await diag("tauri-not-ready");
 
   const injected = await cdp.eval(INJECT_SPY);
-  assert(injected === true || injected === "ALREADY", "pageCache.load spy injected (idempotent)", String(injected));
+  assert(injected === true || injected === "ALREADY", "queryClient.fetchQuery spy injected (idempotent)", String(injected));
   const spyReady = await cdp.eval(`Array.isArray(window.__cacheSpy) ? 'OK' : null`);
   assert(spyReady === "OK", "window.__cacheSpy array live after injection", String(spyReady));
   await logState("after-inject");
