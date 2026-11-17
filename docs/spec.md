@@ -82,14 +82,14 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 ## 6. 宿主 IPC 与前端路由
 
-- **37 个 command 闭集**（`src-tauri/src/lib.rs` 注册）：config 12
+- **39 个 command 闭集**（`src-tauri/src/lib.rs` 注册）：config 12
   （`config_import` / `config_list` / `config_active` / `config_activate` /
   `config_rename` / `config_remove` / `config_refresh` / `config_refresh_settings` /
   `config_set_refresh_interval`、`gh_proxy_state` / `gh_proxy_set` / `gh_proxy_test`）、
   http 1、spider 2（`spider_invoke` / `site_health`）、live 3（`live_parse` /
   `live_epg` / `live_epg_warm`）、proxy 1、play 2（`resolve_play` / `open_external`）、
   parse 1（`parse_resolve`）、douban 1、store 8（收藏 3 + 历史 5）、logging 4、
-  clipboard 1、`site_set_enabled`。
+  storage 2（`storage_usage` / `storage_clear`）、clipboard 1、`site_set_enabled`。
 - 前端不得绕过 `src/lib/invoke.ts`；detail / player 的大字段走 `history.state`，
   不进 URL。
 - **8 条路由**（`src/routes.tsx`，`createHashRouter`）：首页、收藏、历史、搜索、
@@ -146,14 +146,17 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
   文件里（`layer: "py-adapter"`）。
 - 诊断（设置 → 诊断）：版本、build 号、运行平台、数据目录、日志目录、日志文件、
   当前配置。
+- 存储与清理（设置 → 存储与清理）：日志 / 反馈报告 / 封面与页面缓存三项的本机占用
+  （字节 + 文件数）与分项手动清理；当天被 writer 持有的日志改为清空内容，剩余量按
+  实测量回报。观看历史不在此处清理（入口在历史页）。
 
 ## 11. 验收与测试分层
 
 | 层 | 命令 | 基线 |
 | --- | --- | --- |
 | 离线门禁（9 项） | `python tools/check.py` | 全 PASS：契约 / 版本一致性 / py 兼容 / py 框架 / 适配层健壮性 / 运行时候检 / py 语法 / 前端单测 / Rust 单测 |
-| 前端单测 | `corepack pnpm test` | 577 / 70 文件 |
-| Rust 单测 | `cargo test --lib` | 233 passed / 2 ignored |
+| 前端单测 | `corepack pnpm test` | 601 / 73 文件 |
+| Rust 单测 | `cargo test --lib` | 239 passed / 2 ignored |
 | 验收脚本 | `python tests/acceptance/p0.py`、`p1.py --adapter` | 见脚本输出；p1 适配层阶段只断言 `ping` + `spider.py`，并反向断言已删方法 |
 | 窗口探针 | `node tools/run_probes.mjs` | 需 debug 窗口 + CDP 9222 |
 
@@ -165,7 +168,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
   桩类符号守恒、jar 跑通率、`tests/fixtures/jars/`、JDK 17 / `jlink` 已全部删除；
   规格里的「Spider API 12 方法」随之作废。站点仍识别为 `jvm` 并导入即屏蔽。
 - **适配层旧方法**：11 → 2（`ping` + `spider.py`），见 §5。
-- **命令面**：7 → 37，见 §6。
+- **命令面**：7 → 39，见 §6。
 - **`externalBin`**：只剩 `binaries/qjs-runner`；Python 以 `resources` 随包
   （`sidecars/python-embed`、`sidecars/py`、`sidecars/qjs-assets`）。
 - **测试分层**：`tests/acceptance/p2.py` 与 `tests/offline/` 里与 Python 解析链重复的

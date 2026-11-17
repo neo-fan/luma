@@ -122,6 +122,7 @@ corepack pnpm dev:app
 | 常驻播放层 | 判页用 `location.hash` + `.player-host:not(.is-idle)`；详情页/选集查询必须 scope 到 `.content`（后台层不随切页卸载，全局查会把两份选集数在一起） | `AppShell.tsx`、`PlayerHost.tsx` |
 | 版本 | 侧栏 `version: <x.y.z>`，**无 `v` 前缀** | `AppShell.tsx`、`lib/version.ts` |
 | 日志 | 三通道 `logs/{app,spider,ui}/<name>.<date>.log` | `infra/logging/` |
+| 存储清理 | 三行 `.config-item` 固定「缓存 / 日志 / 反馈报告」；用量文本是 `X MB · N 个文件`（空条目为 `0 B · 0 个文件` 且按钮 disabled）；清理结果看 `.tip.tip--ok` 的「释放 / 剩余」 | `components/settings/StorageSection.tsx` |
 
 ### 6.4 非 DOM 的取证点
 
