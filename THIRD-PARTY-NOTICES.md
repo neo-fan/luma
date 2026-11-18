@@ -18,7 +18,7 @@
 | `node-rsa.js` | `lib/node-rsa.js` | 167,481 | MIT（node-rsa） |
 | `pako.min.js` | `lib/pako.min.js` | 46,859 | MIT（pako） |
 | `json5.js` | `lib/json5.js` | 60,431 | MIT（JSON5） |
-| `jinja.js` | `lib/jinja.js` | 22,706 | **未声明**（上游未给出许可证与来源） |
+| `jinja.js` | `lib/jinja.js` | 22,706 | **BSD-3-Clause** — `sstur/jinja-js` v0.1.8（作者 Simon Sturmer，<https://github.com/sstur/jinja-js>），Jinja2 风格 JS 模板引擎 |
 | `gbk.js` | `lib/gbk.js` | 56,313 | **未声明**（上游未给出许可证与来源） |
 | `template.js` | `js/template.js` | 15,217 | **未声明**，且上游仓库该路径已不可达（我们按固定提交留档） |
 | `drpy2.min.js` | `lib/drpy2.min.js` | 67,385 | **LGPL-3.0**——TVBox JS 蜘蛛引擎本体（`drpy2 3.9.51beta2 20240711`，源自 `hjdhnx/dr_py`，经 `cluntop/tvbox` 固定提交逐字节抓取）。以可替换资源随包，LGPL 不强制宿主整体 copyleft |
@@ -30,7 +30,7 @@
    保留。Luma 把它与其它随包 JS 放在可独立替换的 `sidecars/qjs-assets/`（带 SHA256 清单、
    支持 `QJS_ASSETS_DIR` 覆盖），满足这些条件，**因此它并不强制本仓库整体 copyleft**。
    本仓库仍选 GPL-3.0 是主动的稳妥/生态一致选择，而非 LGPL 所迫。
-2. **`template.js` / `gbk.js` / `jinja.js` 授权仍不明。** 这三个文件在随包的上游仓库
+2. **`template.js` / `gbk.js` 授权仍不明。** 这两个文件在随包的上游仓库
    快照里没有独立许可证声明，法律上默认「保留所有权利」。当前保留只为兼容真实配置所需
    （离线兜底），**不代表我们对其再分发有明确授权**；如果权利方提出异议，会在下一个
    版本移除，改为「首次使用时由用户自行下载」。
