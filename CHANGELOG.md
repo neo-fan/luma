@@ -8,6 +8,8 @@
 
 ### 修复
 
+- **直播 m3u 解析 `#EXTGRP` 独立行分组（对齐 TVBox `ParseM3u8`）**：此前只认 `#EXTINF group-title`、把其它 `#` 行一律跳过，gambiarras 等源（现网实测 298 处 `#EXTGRP`）用 `#EXTGRP:<组名>` 独立行分组 → 频道全落「未分组」。加 `#EXTGRP` 处理：记住最近 EXTGRP 组名，EXTINF 没写 group-title 时兜底，兼容 EXTGRP 在 EXTINF 前/后两种写法（显式 group-title 仍优先）。实测 gambiarras 从「全落未分组」变 26 个具名分组（299 频道），`live::m3u` 15 测全过。
+
 - **首页横向可滑动 / hero「下一张」箭头被右缘裁切**：`.page-body` 是竖向滚动容器（`overflow-y:auto` 按 CSS 规范把 `overflow-x` 强制成 `auto`），而 hero 用负 margin 全出血撑宽内容框 → 那 36px 溢出变成可横向滚动区，箭头落进裁剪区外（表现为「页面能往右滑、按钮只露一半」）。hero（含骨架屏）去掉负 margin、与推荐行同基线内缩；`.page-body` 显式 `overflow-x:hidden` 兜底。CDP 实测 page-body `scrollWidth==clientWidth`、canScrollX=0、箭头 right=1400 完整可见。（推荐行最右半露一张是横向轮播正常表现，非页面溢出。）
 
 - **python 爬虫实例常驻复用：修复有状态直播「直播[py]」并提速**：`pyspider.run` 原每次调用起一个新 pyrun 子进程，既让每次付解释器/import/源码重编译/`new Spider` 冷启动（py 源卡顿主因），又无法承载有状态爬虫——`live_mode=proxy` 的央视频 yangshipin 把滚动 `seq→真URL` 窗口存在实例内存（其 `getCache/setCache` 是返回 None/"fail" 的桩，不落盘），清单调用建的窗口在分片那次新进程里是空的 → 分片恒回 503「切片已过期」，当前进程模型下结构性不可能播通。改为在常驻桥进程内维护 `{fingerprint(className,source,ext) → Spider 实例}` 池、逐帧派发到常驻实例（对齐 FongMi 单例）。收口：按实例加锁串行化同源调用（跨源仍并发）、空闲 TTL 驱逐 + 数量上限、源码/ext 变更换 key 重建、崩溃/挂死靠宿主超时 + `bridge.rs` respawn 兜底、补回 `json_safe` dropped 的 `unsafe_result` 日志。离线实测同源连续两次 proxy 命中同一实例、窗口 segs 跨调用单调增长（旧模型每次空窗口立刻过期），机制确证；`check.py` 9/9 全绿。实时 UI 端到端出画待 cctv 对本机 IP 限流冷却后复测。
