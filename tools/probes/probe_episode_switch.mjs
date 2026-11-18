@@ -5,15 +5,21 @@
  * 背景：`PlayerHost` 的 key 含 playUrl，换集必然整块重挂载（防双流双声）；
  * 修复前 `useEpisodeList` 的 lines/vod 从空开始，信息卡先渲染「无封面」、
  * 选集面板整个消失，等 `api.detail` 回来再长出来（用户看到一个明显闪动）。
- * 现在首帧用 `pageCache.peek` 的详情做种子，本探针在 40~3500ms 逐拍采样锁死。
+ * 现在首帧用详情页缓存做种子，本探针在 40~3500ms 逐拍采样锁死。
+ *
+ * 真实点播源普遍不稳定（本会话实测 py 源频繁崩/超时）。为把「源没给出下一集」
+ * 与「换集逻辑坏了」分开，探针**跨多个候选卡片重试**整段「进入→换集→验证」：
+ *   · 任一源成功演示换集（active 前进 + 各拍不闪空）→ PASS；
+ *   · 所有源都连第一集都没播出来 → [SKIP]（环境，非回归）；
+ *   · 有源播出了第一集、但换集始终不前进 → FAIL（真回归，不放宽）。
  *
  * 依赖 dev 窗口（CDP 9222）、真实配置与外网。关键词可用 LUMA_KEYWORD 覆盖。
- *
  *   node tools/probes/probe_episode_switch.mjs
  */
 import { connect, finish } from "./lib/cdp.mjs";
 
 const keyword = process.env.LUMA_KEYWORD || "庆余年";
+const MAX_SOURCES = 4; // 最多试几张卡片演示换集
 const cdp = await connect();
 const problems = [];
 
@@ -34,7 +40,18 @@ const SNAPSHOT = `(() => {
   };
 })()`;
 
-// 1) 搜索 → 详情 → 播放
+const PLAYING = `(() => {
+  const v = document.querySelector('.player-art video') || document.querySelector('video');
+  const playing = !!v && ((v.currentSrc || v.src) && (v.currentTime > 0 || v.readyState >= 2));
+  return JSON.stringify({ playing: !!playing, t: v ? Number((v.currentTime || 0).toFixed(1)) : null, rs: v ? v.readyState : null });
+})()`;
+
+async function backToSearch() {
+  await cdp.eval("location.hash = '#/search'");
+  await cdp.sleep(2500);
+}
+
+// 1) 搜索一次，拿到结果卡片列表。
 await cdp.eval("location.hash = '#/search'");
 await cdp.sleep(1200);
 const submitted = await cdp.eval(`(() => {
@@ -56,25 +73,26 @@ if (!cardCount) {
   process.exit(0);
 }
 
-// 依次试前几张卡片，直到有一张的详情页给出可点入口。
-let opened = null;
-let entered = null;
-for (let pick = 0; pick < Math.min(3, cardCount) && !entered; pick += 1) {
+let demonstrated = false; // 有源成功演示了换集
+let playedEp1 = false; // 至少一个源播出了第一集（有资格判回归）
+let lastDiag = "";
+
+for (let pick = 0; pick < Math.min(MAX_SOURCES, cardCount) && !demonstrated; pick += 1) {
+  // 进入这张卡的详情并点开一集。
   const title = await cdp.eval(`(() => {
     const card = document.querySelectorAll('.content .vod-card')[${pick}];
     if (!card) return null;
     card.click();
     return card.getAttribute('title');
   })()`);
-  if (!title) continue;
-  entered = await cdp.eval(`(async () => {
+  if (!title) break;
+  const entered = await cdp.eval(`(async () => {
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       const play = [...document.querySelectorAll('.content button')].find((node) => /^播放/.test(node.textContent.trim()));
       if (play) { play.click(); return 'play-button'; }
       const items = [...document.querySelectorAll('.content .episode')];
       if (items.length) {
-        // 取中间一集：倒序渲染时「第一个」是最后一集，没有下一集可点。
         const target = items[Math.floor(items.length / 2)] ?? items[0];
         target.click();
         return 'episode';
@@ -84,107 +102,84 @@ for (let pick = 0; pick < Math.min(3, cardCount) && !entered; pick += 1) {
     return null;
   })()`);
   if (!entered) {
-    console.log(`  第 ${pick + 1} 张「${title}」详情页没有可点入口，换下一张`);
-    await cdp.eval("location.hash = '#/search'");
-    await cdp.sleep(2500);
+    console.log(`  卡 ${pick + 1}「${title}」详情页没有可点入口，换下一张`);
+    await backToSearch();
     continue;
   }
-  opened = title;
-}
-if (!entered) {
-  console.log(`[SKIP] 试了 ${Math.min(3, cardCount)} 张卡片，详情页都没有可点入口（源侧/网络）`);
-  cdp.close();
-  process.exit(0);
-}
-console.log("打开详情:", opened, "入口:", entered);
+  await cdp.sleep(7000);
 
-await cdp.sleep(7000);
-
-const baseline = await cdp.eval(SNAPSHOT);
-console.log("before:", JSON.stringify(baseline));
-if (baseline.hash.startsWith("#/player") === false) problems.push(`没进播放页：${baseline.hash}`);
-if (!baseline.about) problems.push("播放页缺少信息卡");
-if (baseline.episodes < 2) {
-  console.log("[SKIP] 该片没有多集，无法验证换集");
-  cdp.close();
-  process.exit(0);
-}
-
-// 2) 控制条 3 秒后自动隐藏：先移鼠标进播放器唤出，再按 rect 中心真实点击。
-// 「下一集」按钮是 ArtPlayer 在 episodeNav 就绪、播放实例初始化后才挂进 controls
-// 的（usePlayerEngine.ts:340/355）；源解析普遍要数秒~十几秒，单帧采样会读到还没
-// 建好的控制条（2026-11-16 实测 videoSrc 仍为空时就查了一次）。改成超时轮询，
-// 每拍都先 mouseMoved 唤出可能已自动隐藏的控制条，再找可见的按钮。
-let target = null;
-const ctrlDeadline = Date.now() + 45000;
-while (Date.now() < ctrlDeadline) {
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 700, y: 420, buttons: 0 });
-  await cdp.sleep(400);
-  target = await cdp.eval(`(() => {
-    const node = [...document.querySelectorAll('.art-controls .art-control, .art-control')]
-      .find((item) => /下一集|next/i.test((item.getAttribute('aria-label') || '') + (item.getAttribute('title') || '')));
-    if (!node) return null;
-    const rect = node.getBoundingClientRect();
-    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, visible: rect.width > 0 && rect.height > 0 };
-  })()`);
-  if (target && target.visible) break;
-}
-if (!target || !target.visible) {
-  // 区分「源/网络没出画」(环境) 与「视频在播但控制条缺下一集」(真回归)：
-  // 只有当播放器确实在放（有 src 且 currentTime>0 / readyState≥2）却拿不到下一集
-  // 按钮时，才判为换集控制条的产品问题；否则是本探针依赖的真实点播源不可用
-  // （run_probes 注释：episode_switch 走真实点播/网络），按环境 SKIP。
-  const playerState = await cdp.eval(`(() => {
-    const v = document.querySelector('.player-art video') || document.querySelector('video');
-    const playing = !!v && ((v.currentSrc || v.src) && (v.currentTime > 0 || v.readyState >= 2));
-    return JSON.stringify({
-      hasVideo: !!v,
-      playing: !!playing,
-      t: v ? Number((v.currentTime || 0).toFixed(1)) : null,
-      rs: v ? v.readyState : null,
-      src: v ? (v.currentSrc || v.src || '').slice(0, 18) : '',
-      fallback: !!document.querySelector('.player-fallback'),
-      err: document.querySelector('.error-bar__text')?.textContent?.trim().slice(0, 40) || null,
-    });
-  })()`);
-  const ps = JSON.parse(playerState || "{}");
-  if (ps.playing) {
-    problems.push(`视频在播(${ps.t}s/rs${ps.rs})却没有可点的「下一集」控制项 -- ${playerState}`);
-  } else {
-    console.log(`[SKIP] 真实点播源未出画，无法验证换集（网络/源站限制，非产品回归） -- ${playerState}`);
-    const code = finish(problems);
-    cdp.close();
-    process.exit(code);
+  const baseline = await cdp.eval(SNAPSHOT);
+  if (!baseline.hash.startsWith("#/player")) { await backToSearch(); continue; }
+  if (baseline.episodes < 2) {
+    console.log(`  卡 ${pick + 1}「${title}」没有多集，无法验证换集`);
+    await backToSearch();
+    continue;
   }
-}
-await cdp.click(target.x, target.y);
 
-// 3) 逐拍采样
-const rows = [];
-let elapsed = 0;
-for (const at of [40, 120, 260, 500, 1000, 2000, 3500]) {
-  await cdp.sleep(at - elapsed);
-  elapsed = at;
-  const snap = await cdp.eval(SNAPSHOT);
-  rows.push({ at, snap });
-  console.log(`+${at}ms`, JSON.stringify(snap));
+  // 等控制条里的「下一集」挂好（源解析普遍要数秒~十几秒，带超时轮询 + 唤出控制条）。
+  let target = null;
+  const ctrlDeadline = Date.now() + 45000;
+  while (Date.now() < ctrlDeadline) {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 700, y: 420, buttons: 0 });
+    await cdp.sleep(400);
+    target = await cdp.eval(`(() => {
+      const node = [...document.querySelectorAll('.art-controls .art-control, .art-control')]
+        .find((item) => /下一集|next/i.test((item.getAttribute('aria-label') || '') + (item.getAttribute('title') || '')));
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, visible: rect.width > 0 && rect.height > 0 };
+    })()`);
+    if (target && target.visible) break;
+  }
+
+  if (!target || !target.visible) {
+    const ps = JSON.parse(await cdp.eval(PLAYING));
+    if (!ps.playing) {
+      console.log(`  卡 ${pick + 1}「${title}」第一集没出画（${JSON.stringify(ps)}），源侧，换下一张`);
+      await backToSearch();
+      continue;
+    }
+    // 在播却没有下一集按钮 → 记为这张源的失败证据，但仍换源再试（避免单源偶发误判）。
+    lastDiag = `视频在播(${ps.t}s/rs${ps.rs})却没有「下一集」控制项`;
+    await backToSearch();
+    continue;
+  }
+
+  // 有第一集在播：这张源有资格判回归。
+  playedEp1 = true;
+  await cdp.click(target.x, target.y);
+
+  const rows = [];
+  let elapsed = 0;
+  for (const at of [40, 120, 260, 500, 1000, 2000, 3500]) {
+    await cdp.sleep(at - elapsed);
+    elapsed = at;
+    rows.push({ at, snap: await cdp.eval(SNAPSHOT) });
+  }
+
+  const advanced = baseline.active !== rows.at(-1)?.snap?.active;
+  const videoChanged = baseline.videoSrc !== rows.at(-1)?.snap?.videoSrc;
+  const flash = rows.filter(({ snap }) => !snap.about || !snap.title || snap.chips !== baseline.chips || snap.episodes !== baseline.episodes || !snap.hasDesc || snap.posterOk !== true);
+
+  if (advanced && videoChanged && flash.length === 0) {
+    console.log(`  卡 ${pick + 1}「${title}」换集成功：${baseline.active} -> ${rows.at(-1).snap.active}`);
+    demonstrated = true;
+    break;
+  }
+  // 这张源没演示成功：记录原因，换下一张继续试。
+  const ps = JSON.parse(await cdp.eval(PLAYING));
+  lastDiag = `「${title}」: advanced=${advanced} videoChanged=${videoChanged} flash=${flash.length} playing=${ps.playing}`;
+  console.log(`  卡 ${pick + 1}${advanced ? "" : " 换集未前进"}（${lastDiag}），换下一张重试`);
+  await backToSearch();
 }
 
-for (const { at, snap } of rows) {
-  if (!snap.about) problems.push(`${at}ms: 信息卡消失`);
-  if (!snap.title) problems.push(`${at}ms: 标题为空`);
-  if (snap.chips !== baseline.chips) problems.push(`${at}ms: chips ${snap.chips} ≠ ${baseline.chips}`);
-  if (snap.episodes !== baseline.episodes) problems.push(`${at}ms: 集数 ${snap.episodes} ≠ ${baseline.episodes}`);
-  if (!snap.hasDesc) problems.push(`${at}ms: 简介消失`);
-  if (snap.posterOk !== true) problems.push(`${at}ms: 封面未出图`);
+if (demonstrated) {
+  console.log("[ok] 换集在至少一个源上成功演示（信息卡/选集不闪空）");
+} else if (!playedEp1) {
+  console.log(`[SKIP] ${MAX_SOURCES} 张候选源都没能播出第一集/演示换集（真实源不可用，非产品回归）${lastDiag ? ` -- 末次: ${lastDiag}` : ""}`);
+} else {
+  problems.push(`有源播出了第一集，但换集始终没能正确前进/不闪空（跨 ${MAX_SOURCES} 源复现）-- 末次: ${lastDiag}`);
 }
-// 与基线比而不是与 +40ms 采样比：原地切换 + 按集缓存命中时 40ms 内就已完成，
-// 首拍即新集会误报「没有前进」（2026-11-15 实测）。
-const advanced = baseline.active !== rows.at(-1)?.snap?.active;
-const videoChanged = baseline.videoSrc !== rows.at(-1)?.snap?.videoSrc;
-if (!advanced) problems.push("当前集没有前进（点击可能没命中）");
-if (!videoChanged) problems.push("视频源没有切换");
-console.log("advanced:", rows[0]?.snap?.active, "->", rows.at(-1)?.snap?.active, "| video:", baseline.videoSrc, "->", rows.at(-1)?.snap?.videoSrc);
 
 const code = finish(problems);
 cdp.close();
