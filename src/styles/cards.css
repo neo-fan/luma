@@ -208,7 +208,10 @@
   display: flex;
   align-items: flex-end;
   min-height: var(--home-hero-h);
-  margin: 4px calc(var(--page-pad-x) * -1) 0;
+  /* 不做负 margin 全出血：`.page-body` 是竖向滚动容器（overflow-y:auto 会强制
+     overflow-x 变 auto），负 margin 撑出的 36px 会变成可横向滚动的溢出区，把
+     右缘「下一张」箭头推进裁剪区外（要右滑才看到）。hero 与推荐行同基线内缩即可。 */
+  margin: 4px 0 0;
   padding: 30px 34px 28px;
   overflow: hidden;
   isolation: isolate;
@@ -804,7 +807,7 @@
   align-items: flex-end;
   gap: 26px;
   min-height: var(--home-hero-h);
-  margin: 4px calc(var(--page-pad-x) * -1) 0;
+  margin: 4px 0 0;
   padding: 30px 34px 28px;
   overflow: hidden;
   /* 无封面图可模糊，用静态渐变垫底，色雾感与 backdrop 的 blur 底色接近 */

@@ -415,6 +415,10 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* 只允许纵向滚：overflow-y:auto 会把 overflow-x 强制成 auto，任何比内容框宽的
+     子元素（如曾经的 hero 负 margin）都会变成可横向滚动的溢出。显式 hidden 兜底，
+     杜绝「页面能左右滑」。 */
+  overflow-x: hidden;
   overscroll-behavior: contain;
   /* 底部留白放在滚动体内：放在 .page 上会把滚动区顶短，最后一行永远
      差一截才滚到底。 */
