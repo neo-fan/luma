@@ -331,7 +331,7 @@ pub async fn sniff_with_headers(
         Err(_) => eprintln!("[sniff] install timed out"),
     }
 
-    if let Err(err) = window.navigate(parsed) {
+    if let Err(err) = window.navigate(parsed.clone()) {
         eprintln!("[sniff] navigate failed: {err}");
         let _ = window.close();
         return Err(
@@ -340,31 +340,60 @@ pub async fn sniff_with_headers(
         );
     }
 
-    let found = tokio::time::timeout(timeout, async {
-        while let Some(candidate) = rx.recv().await {
-            if is_media(&candidate) {
-                return Some(candidate);
+    // 有界重试：一次导航常常因页面 JS 慢/时序抖动而 15s 内没吐媒体请求（实测同一
+    // 地址「有时秒出、有时整段超时」）。把总预算对半分成两次导航——第一次没抓到就
+    // 重新导航再等一次（首访常把 cookie/状态预热好，第二次更容易触发取址），最坏总
+    // 时长仍≈原来的 timeout，不额外拖慢用户。
+    const ATTEMPTS: u32 = 2;
+    let per_attempt = timeout / ATTEMPTS;
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let found = tokio::time::timeout(per_attempt, async {
+            while let Some(candidate) = rx.recv().await {
+                if is_media(&candidate) {
+                    return Some(candidate);
+                }
+            }
+            None
+        })
+        .await;
+
+        match found {
+            Ok(Some(url)) => {
+                let _ = window.close();
+                tracing::info!(page = %page_url, media = %url, attempt, "sniffer found media url");
+                return Ok(url);
+            }
+            // 通道关闭 = 隐藏窗已销毁，重试也不会再有请求进来，直接失败。
+            Ok(None) => {
+                let _ = window.close();
+                return Err(AppError::new(
+                    code::PLAY_RESOLVE_FAIL,
+                    "sniffer found no media url",
+                ));
+            }
+            Err(_) => {
+                if attempt < ATTEMPTS {
+                    tracing::info!(page = %page_url, attempt, "sniffer timed out, re-navigating");
+                    if let Err(err) = window.navigate(parsed.clone()) {
+                        eprintln!("[sniff] re-navigate failed: {err}");
+                        let _ = window.close();
+                        return Err(AppError::new(
+                            code::PLAY_RESOLVE_FAIL,
+                            "sniffer navigate failed",
+                        )
+                        .with_cause(err.to_string()));
+                    }
+                    continue;
+                }
+                let _ = window.close();
+                return Err(AppError::new(
+                    code::PLAY_RESOLVE_FAIL,
+                    format!("sniffer exceeded {}ms", timeout.as_millis()),
+                ));
             }
         }
-        None
-    })
-    .await;
-
-    let _ = window.close();
-
-    match found {
-        Ok(Some(url)) => {
-            tracing::info!(page = %page_url, media = %url, "sniffer found media url");
-            Ok(url)
-        }
-        Ok(None) => Err(AppError::new(
-            code::PLAY_RESOLVE_FAIL,
-            "sniffer found no media url",
-        )),
-        Err(_) => Err(AppError::new(
-            code::PLAY_RESOLVE_FAIL,
-            format!("sniffer exceeded {}ms", timeout.as_millis()),
-        )),
     }
 }
 
