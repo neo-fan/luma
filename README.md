@@ -186,11 +186,13 @@ docs/               架构 · 开发 · 维护 · 发布 · 目录约定 · JS �
 
 本仓库以 **GPL-3.0-or-later** 发布，完整文本见 [LICENSE](LICENSE)。
 
-选择 GPL-3.0 的直接原因：随包 JS 引擎运行时 `drpy2.min.js` 来自上游
-`hjdhnx/drpy-node` / `dr_py`，其许可为 (L)GPL-3.0。内置分发这份 copyleft
-运行时，就要求整体在 GPL-3.0 兼容条款下再分发；其余 Rust / npm 依赖
-（MIT / ISC / Apache-2.0）均与 GPL-3.0 兼容。各第三方组件的来源与许可见
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+本仓库随包的 JS 引擎运行时 `drpy2.min.js` 上游为 `hjdhnx/dr_py`，许可为 **LGPL-3.0**。
+LGPL 允许被非 copyleft 的更大作品使用——前提是该库可被替换、许可与署名保留；Luma 把它
+放在可独立替换的 `sidecars/qjs-assets/`（带 SHA256 清单与 `QJS_ASSETS_DIR` 覆盖），满足
+该条件，**因此 drpy2 并不强制本仓库整体 copyleft**。即便如此，本仓库仍**主动**选择
+GPL-3.0-or-later：与 TVBox / FongMi 生态一致，并对少数许可仍不明确的随包 JS（见
+`gbk.js` / `jinja.js`）取最稳妥立场。其余 Rust / npm 依赖（MIT / ISC / Apache-2.0）均与
+GPL-3.0 兼容。各第三方组件的来源与许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 ```
 Luma - A Windows TVBox-compatible desktop media player

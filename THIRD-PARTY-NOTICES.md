@@ -1,7 +1,8 @@
 # 第三方组件与许可（THIRD-PARTY-NOTICES）
 
 > 本仓库**自己的代码**以 **GPL-3.0-or-later** 发布，全文见 `LICENSE`。
-> 选此 copyleft 许可的直接原因见下文 §1：随包 JS 引擎运行时 `drpy2.min.js` 的上游是 (L)GPL-3.0。
+> 说明：随包 JS 引擎运行时 `drpy2.min.js` 是 **LGPL-3.0**（并非 GPL），且以可替换资源随包（见 §1）——
+> 它**并不强制**本仓库整体 copyleft。本仓库选 GPL-3.0 是与 TVBox/FongMi 生态一致、对个别许可不明组件取稳妥立场的**主动选择**。
 > 本文件只记录**随仓库分发的第三方内容**的来源、校验值与授权状态。
 
 ## 1. `sidecars/qjs-assets/`（随包 JS 运行库）
@@ -20,13 +21,15 @@
 | `jinja.js` | `lib/jinja.js` | 22,706 | **未声明**（上游未给出许可证与来源） |
 | `gbk.js` | `lib/gbk.js` | 56,313 | **未声明**（上游未给出许可证与来源） |
 | `template.js` | `js/template.js` | 15,217 | **未声明**，且上游仓库该路径已不可达（我们按固定提交留档） |
-| `drpy2.min.js` | `lib/drpy2.min.js` | 67,385 | **(L)GPL-3.0**——TVBox JS 蜘蛛引擎本体，上游 `hjdhnx/drpy-node`（GPL-3.0）/ `dr_py`（LGPL-3.0）；此即本仓库选 GPL-3.0 的原因 |
+| `drpy2.min.js` | `lib/drpy2.min.js` | 67,385 | **LGPL-3.0**——TVBox JS 蜘蛛引擎本体（`drpy2 3.9.51beta2 20240711`，源自 `hjdhnx/dr_py`，经 `cluntop/tvbox` 固定提交逐字节抓取）。以可替换资源随包，LGPL 不强制宿主整体 copyleft |
 
 ### 已知风险与处理
 
-1. **`drpy2.min.js` = (L)GPL-3.0，本仓库据此整体以 GPL-3.0 发布。** 该 JS 蜘蛛引擎
-   运行时上游为 `hjdhnx/drpy-node`（GPL-3.0）/ `dr_py`（LGPL-3.0）。随包内置分发这份
-   copyleft 运行时，要求 Luma 的整体再分发在 GPL-3.0 兼容条款下进行（见 `LICENSE`）。
+1. **`drpy2.min.js` = LGPL-3.0（不是 GPL）。** 上游 `hjdhnx/dr_py` 的 LICENSE 是 GNU
+   Lesser GPL v3。LGPL 允许被非 copyleft 的更大作品使用，前提是该库可替换、许可与署名
+   保留。Luma 把它与其它随包 JS 放在可独立替换的 `sidecars/qjs-assets/`（带 SHA256 清单、
+   支持 `QJS_ASSETS_DIR` 覆盖），满足这些条件，**因此它并不强制本仓库整体 copyleft**。
+   本仓库仍选 GPL-3.0 是主动的稳妥/生态一致选择，而非 LGPL 所迫。
 2. **`template.js` / `gbk.js` / `jinja.js` 授权仍不明。** 这三个文件在随包的上游仓库
    快照里没有独立许可证声明，法律上默认「保留所有权利」。当前保留只为兼容真实配置所需
    （离线兜底），**不代表我们对其再分发有明确授权**；如果权利方提出异议，会在下一个
@@ -35,8 +38,9 @@
    的压缩产物被上游去掉了许可证注释。按 MIT 要求，再分发应保留版权与许可声明，
    因此这里以「组件名 + 上游 URL + 许可证类型」的形式补充声明；正式发布前建议
    从各项目仓库取回 LICENSE 原文一并附上。
-4. 除已归入 GPL-3.0 的 `drpy2.min.js` 外，其余第三方文件均**不是本项目的代码**，
-   其使用与再分发风险由使用者自担。
+4. 上述第三方文件均**不是本项目的代码**、不适用本仓库的 `LICENSE`。其中 `drpy2.min.js`
+   按其自身 **LGPL-3.0** 分发（可替换、保留声明，见风险 1），MIT/Apache 各件按各自许可；
+   `template.js` / `gbk.js` / `jinja.js` 的再分发风险见风险 2。
 
 ## 2. Rust 依赖（`src-tauri/Cargo.lock`、`sidecars/qjs-runner/Cargo.lock`）
 

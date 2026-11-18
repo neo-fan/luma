@@ -20,7 +20,7 @@
 
 ### 变更
 
-- **选定开源许可证 GPL-3.0-or-later，并完成开源前合规与卫生清理**：`LICENSE` 由占位符替换为 verbatim GPL-3.0 全文；`README.md` 许可证段、`THIRD-PARTY-NOTICES.md`（`drpy2.min.js` 依上游 `hjdhnx/drpy-node` / `dr_py` 归为 (L)GPL-3.0——随包内置该 copyleft 运行时正是整体选 GPL-3.0 的直接原因；`template.js`/`gbk.js`/`jinja.js` 仍如实标为授权不明）、`package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json`（bundle `license`/`copyright`）同步。清理代码/测试/文档内部痕迹：去「用户要求/用户反馈+日期」式归属注释、个人机器路径、`js-support.md` 的会话式章节（「本轮交付改动清单 / 主 Agent / 本轮踩到」整节删除）、`qjs-runner` Cargo `description` 里的内部任务号；`docs/spec.md` 的 `spec X.Y` / `T-NN` 交叉引用因规格书随仓库发布而保留（可解析的正规引用）。
+- **选定开源许可证 GPL-3.0-or-later，并完成开源前合规与卫生清理**：`LICENSE` 由占位符替换为 verbatim GPL-3.0 全文；`README.md` 许可证段、`THIRD-PARTY-NOTICES.md`（`drpy2.min.js` 核实为 **LGPL-3.0**，源自 `hjdhnx/dr_py`、`drpy2 3.9.51beta2`，以可替换资源随包——故 LGPL **并不强制**整体 copyleft，本仓库选 GPL-3.0 是与生态一致、对个别许可不明组件取稳妥立场的主动选择；`template.js`/`gbk.js`/`jinja.js` 仍如实标为授权不明）、`package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json`（bundle `license`/`copyright`）同步。清理代码/测试/文档内部痕迹：去「用户要求/用户反馈+日期」式归属注释、个人机器路径、`js-support.md` 的会话式章节（「本轮交付改动清单 / 主 Agent / 本轮踩到」整节删除）、`qjs-runner` Cargo `description` 里的内部任务号；`docs/spec.md` 的 `spec X.Y` / `T-NN` 交叉引用因规格书随仓库发布而保留（可解析的正规引用）。
 
 - **页面宽度自适应铺满窗口（去掉居中封顶）**：`.page` 原 `max-width:1360 + margin:0 auto`、播放页 `max-width:1600`，宽窗下内容封顶居中、两侧留大片空白，hero 负 margin 只撑到居中的 `.page` 盒、到不了窗口边（表现为「宽度不对/右边像被裁/固定尺寸」），且普通页与播放页上限不一致。改为全宽自适应：`.page` 去掉 `max-width` 与居中 `margin`、`width:100%` 填满内容区（窗口−侧栏），各页共用同一套骨架不再各自封顶，hero 自然全出血贴窗口边；播放页去掉页级 1600 上限、保留按画面宽高比收口的 `--player-width`。CDP 实测 960/1280/1440/1920/2560 × 全页均 `scrollWidth==innerWidth` 无横滚、箭头右缘恒 `vw−4` 不裁。DOM 骨架（`.page`/`.page-head`/`.page-body`）本就全页统一，本次仅收口宽度模型。
 
