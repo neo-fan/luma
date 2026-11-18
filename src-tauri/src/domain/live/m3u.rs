@@ -40,6 +40,9 @@ struct Entry {
     /// 列表。空串表示该频道没声明，回落到播放源的 `lives[].ua`。
     ua: String,
     referer: String,
+    /// 频道级 Cookie：TVBox 用 `http-cookie` 或 `http-header="Cookie=…"`。
+    /// 咪咕系少数源要带 cookie 才出流。空串 = 没声明。
+    cookie: String,
 }
 
 /// TVBox `http-header="Key=Value;Key=Value"`：把通用请求头属性拆成键值对。
@@ -81,12 +84,14 @@ fn parse_extinf(line: &str) -> Entry {
         .unwrap_or_else(|| DEFAULT_GROUP.to_string());
     let mut ua = attrs.get("http-user-agent").cloned().unwrap_or_default();
     let mut referer = attrs.get("http-referer").cloned().unwrap_or_default();
+    let mut cookie = attrs.get("http-cookie").cloned().unwrap_or_default();
     // `http-header` 与专用属性表达同一件事，只是更通用；专用属性先声明则不被覆盖。
     if let Some(header) = attrs.get("http-header") {
         for (key, value) in split_http_header(header) {
             match key.as_str() {
                 "user-agent" if ua.is_empty() => ua = value,
                 "referer" | "referrer" if referer.is_empty() => referer = value,
+                "cookie" if cookie.is_empty() => cookie = value,
                 _ => {}
             }
         }
@@ -98,6 +103,7 @@ fn parse_extinf(line: &str) -> Entry {
         group,
         ua,
         referer,
+        cookie,
     }
 }
 
@@ -105,7 +111,7 @@ fn parse_extinf(line: &str) -> Entry {
 /// 当前频道还没声明时补上（先出现的那家说了算，避免同名台互相覆盖）。
 fn merge_channel(channel: &mut Value, streams: &[String], entry: &Entry) {
     merge_urls(channel, streams);
-    for (key, value) in [("ua", &entry.ua), ("referer", &entry.referer)] {
+    for (key, value) in [("ua", &entry.ua), ("referer", &entry.referer), ("cookie", &entry.cookie)] {
         if value.is_empty() {
             continue;
         }
@@ -128,6 +134,9 @@ fn channel_value(name: &str, streams: &[String], entry: &Entry) -> Value {
     }
     if !entry.referer.is_empty() {
         channel.insert("referer".to_string(), json!(entry.referer));
+    }
+    if !entry.cookie.is_empty() {
+        channel.insert("cookie".to_string(), json!(entry.cookie));
     }
     Value::Object(channel)
 }
@@ -232,6 +241,7 @@ pub(crate) fn parse(raw: &str, source: &str) -> Value {
                 group: DEFAULT_GROUP.to_string(),
                 ua: String::new(),
                 referer: String::new(),
+                cookie: String::new(),
             });
         }
         let Some(entry) = pending.take() else {
@@ -376,11 +386,29 @@ mod tests {
 
     #[test]
     fn http_header_supplies_referer_when_no_dedicated_attr() {
-        // 江苏卫视这类：UA 走行内，必需 Referer 只写在 http-header 里。
         let raw = "#EXTM3U\n#EXTINF:-1 tvg-name=\"江苏卫视\" http-user-agent=\"AptvPlayer-UA\" http-header=\"Referer=https://litchi-play-encrypted-site.jstv.com/\",江苏卫视\nhttp://a/jsws4k.m3u8\n";
         let channel = &parse(raw, "")["groups"][0]["channels"][0];
         assert_eq!(channel["ua"], "AptvPlayer-UA");
         assert_eq!(channel["referer"], "https://litchi-play-encrypted-site.jstv.com/");
+    }
+
+    #[test]
+    fn http_header_and_dedicated_cookie_are_kept() {
+        // http-header 里的 Cookie 与专用 http-cookie 都要落到 channel.cookie。
+        let via_header = "#EXTM3U\n#EXTINF:-1 http-header=\"Cookie=token=abc; Referer=http://r/\",X\nhttp://a/1.m3u8\n";
+        let c1 = &parse(via_header, "")["groups"][0]["channels"][0];
+        assert_eq!(c1["cookie"], "token=abc");
+        assert_eq!(c1["referer"], "http://r/");
+        let via_attr = "#EXTM3U\n#EXTINF:-1 http-cookie=\"sid=1\",Y\nhttp://a/1.m3u8\n";
+        let c2 = &parse(via_attr, "")["groups"][0]["channels"][0];
+        assert_eq!(c2["cookie"], "sid=1");
+    }
+
+    #[test]
+    fn channels_without_cookie_do_not_carry_empty_field() {
+        let raw = "#EXTM3U\n#EXTINF:-1,普通台\nhttp://a/1.m3u8\n";
+        let channel = &parse(raw, "")["groups"][0]["channels"][0];
+        assert!(channel.get("cookie").is_none());
     }
 
     #[test]

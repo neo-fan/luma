@@ -355,6 +355,8 @@ export interface LiveChannel {
    */
   ua?: string;
   referer?: string;
+  /** 频道级 Cookie（m3u 的 `http-cookie` / `http-header="Cookie=…"`）。 */
+  cookie?: string;
 }
 
 export interface LiveGroup {

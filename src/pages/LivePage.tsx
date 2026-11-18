@@ -252,6 +252,7 @@ export default function LivePage({
     // 咪咕系央视/卫视不带它直接 404，源级 `lives[].ua` 只是兜底。
     liveUa: channel?.ua || source?.ua,
     liveReferer: channel?.referer,
+    liveCookie: channel?.cookie,
     vodId: channel?.name ?? "",
     setSwitchTip,
     setVideoError: setEngineVideoError,
