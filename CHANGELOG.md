@@ -22,7 +22,9 @@
 
 ### 新增
 
-- **直播源头写法取证脚本**：`tools/diag/diag_live_headers_all.mjs`（遍历活跃配置所有直播源，按源统计 `#EXTVLCOPT` 独立行 vs `#EXTINF` 行内属性 vs `http-header`，并定位 jstv/litchi/migu 等高危频道落在哪个源、怎么声明头——正是据此发现上面的 `http-header` 缺口）与 `tools/diag/diag_live_resolved_stream.mjs`（对 `resolve_play` 返回的资源直链经反代 Range 实拉并用真实 `<video>` 观察解码出画）。实测修正了「加密 HLS 播放器解不开」的旧假设：`江苏卫视` 403 来自缺 Referer（头解析层，已修），master 清单里的相对变体 URI 经 `playlist.rs::absolutize`（`Url::join`）已能正确解析、非缺口；当前 `cluntop` 那路 `jsws4k.php` 实际映射到一个可正常解码的 1080p MP4。
+- **片头/片尾跳过（按剧配置）**：后端 `skip_json`（DB 列 + `history.rs` 跨源继承）早已就绪、Rust 注释指名前端 `lib/skipSegments.ts` 负责校验，但该模块从未创建、`skipJson` 在播放器里没被读取/应用、也无配置 UI。本次补齐整条前端链路：`skipSegments.ts`（`SkipSegment` 类型 + 安全解析/校验/序列化 + 片头/片尾判定纯函数，12 单测）；`usePlayerEngine` 在 `loadedmetadata` 续播之后做**片头自动跳**（仅当续播点未落进片头之后才跳，尊重「上次看到」；直播不跳），`timeupdate` 上报窗口态；`PlayerPage` 读/写 `HistoryItem.skipJson`；`SkipOverlay.tsx` portal 进播放器根，落片头/片尾窗口显「跳过片头/片尾」按钮 + 齿轮内联编辑本剧秒数即时落库。CDP 端到端实测：注入 intro=10s 重播，video ready=4、currentTime 自动跳到 10.7s。（倍速保存经核查早已完整实现——`HistoryItem.rate` 按剧记忆 + `playerPrefsWriter` + 引擎应用，本次未重造。）
+
+- **直播源头写法与播放链取证脚本**：`tools/diag/diag_live_headers_all.mjs`（遍历活跃配置所有直播源，按源统计 `#EXTVLCOPT` 独立行 vs `#EXTINF` 行内属性 vs `http-header`，并定位 jstv/litchi/migu 等高危频道落在哪个源、怎么声明头——正是据此发现上面的 `http-header` 缺口）与 `tools/diag/diag_live_resolved_stream.mjs`（对 `resolve_play` 返回的资源直链经反代 Range 实拉并用真实 `<video>` 观察解码出画）。实测修正了「加密 HLS 播放器解不开」的旧假设：`江苏卫视` 403 来自缺 Referer（头解析层，已修），master 清单里的相对变体 URI 经 `playlist.rs::absolutize`（`Url::join`）已能正确解析、非缺口；当前 `cluntop` 那路 `jsws4k.php` 实际映射到一个可正常解码的 1080p MP4。
 
 ---
 
