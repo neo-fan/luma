@@ -28,6 +28,8 @@
 
 ### 新增
 
+- **QuickJS 宿主补 ds 协议注入函数（针对性垫片，不换引擎）**：捆绑的 drpy2 `3.9.51beta2` 引擎不定义、而新版 ds 规则会引用的 drpy-NODE 服务端全局，此前一旦命中即 ReferenceError、整站中断。`HOST_JS`（`sidecars/qjs-runner/src/main.rs`）现补齐：真实现 `batchFetch`（数组逐项串行走 `req`、返回 `{code,content,headers}` 数组）、`reqs`（委托 `req`）、`toBeijingTime`、`jsonToCookie`、`cookieToJson`；对依赖 Node/Java 桥、无法忠实复刻的 `executeParse/rsaX/aesX/desX/js2Proxy/cachedRequest/JSProxyStream/JSFile/AIS/XMLHttpRequest/jsoup/pq/pj/pjfa/pjfh/pdfl` 给一次性 `console.warn` 空兜底（降级出空结果而非崩）。实测：`tools/check.py` 9/9 全绿无回归；`batchFetch` 对 `example.com` 返回 code 200、`toBeijingTime` 东八区换算正确、空兜底均不再中断。**限制**：真·ds 服务端规则的完整能力（并发代理/原生加解密桥）仍受 QuickJS 宿主所限，垫片只保证「不整站崩 + 可诊断」；引擎本体维持 LGPL-3.0 的 drpy2 不变。
+
 - **片头/片尾跳过（按剧配置）**：后端 `skip_json`（DB 列 + `history.rs` 跨源继承）早已就绪、Rust 注释指名前端 `lib/skipSegments.ts` 负责校验，但该模块从未创建、`skipJson` 在播放器里没被读取/应用、也无配置 UI。本次补齐整条前端链路：`skipSegments.ts`（`SkipSegment` 类型 + 安全解析/校验/序列化 + 片头/片尾判定纯函数，12 单测）；`usePlayerEngine` 在 `loadedmetadata` 续播之后做**片头自动跳**（仅当续播点未落进片头之后才跳，尊重「上次看到」；直播不跳），`timeupdate` 上报窗口态；`PlayerPage` 读/写 `HistoryItem.skipJson`；`SkipOverlay.tsx` portal 进播放器根，落片头/片尾窗口显「跳过片头/片尾」按钮 + 齿轮内联编辑本剧秒数即时落库。CDP 端到端实测：注入 intro=10s 重播，video ready=4、currentTime 自动跳到 10.7s。（倍速保存经核查早已完整实现——`HistoryItem.rate` 按剧记忆 + `playerPrefsWriter` + 引擎应用，本次未重造。）
 
 - **直播源头写法与播放链取证脚本**：`tools/diag/diag_live_headers_all.mjs`（遍历活跃配置所有直播源，按源统计 `#EXTVLCOPT` 独立行 vs `#EXTINF` 行内属性 vs `http-header`，并定位 jstv/litchi/migu 等高危频道落在哪个源、怎么声明头——正是据此发现上面的 `http-header` 缺口）与 `tools/diag/diag_live_resolved_stream.mjs`（对 `resolve_play` 返回的资源直链经反代 Range 实拉并用真实 `<video>` 观察解码出画）。实测修正了「加密 HLS 播放器解不开」的旧假设：`江苏卫视` 403 来自缺 Referer（头解析层，已修），master 清单里的相对变体 URI 经 `playlist.rs::absolutize`（`Url::join`）已能正确解析、非缺口；当前 `cluntop` 那路 `jsws4k.php` 实际映射到一个可正常解码的 1080p MP4。

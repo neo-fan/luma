@@ -364,6 +364,62 @@ const HOST_JS: &str = r#"(function () {
   // jsjiami-obfuscated sources (live2vod.js) assign/read this host global.
   if (!('__JS_SPIDER__' in globalThis)) globalThis.__JS_SPIDER__ = undefined;
 
+  // -- ds 协议注入函数（真实现：语义确定、可由 req 派生）--------------------
+  // drpy-NODE 服务端会向规则沙箱注入一批全局函数；捆绑的 drpy2 引擎本身不定义
+  // 它们，新版 ds 规则一旦引用即 ReferenceError、整站中断。这里对能忠实复刻的
+  // 给真实现，依赖 Node/Java 桥、无法复刻的见下方 STUBS 空兜底。
+  if (!('reqs' in globalThis)) {
+    // 服务端里 reqs 是第二个（证书宽容）axios 实例；规则最常见的调用形态等价于 req。
+    globalThis.reqs = function (url, options) { return globalThis.req(url, options); };
+  }
+  if (!('batchFetch' in globalThis)) {
+    // 约定：入参为 URL 字符串数组，或 [{ url, ...options }] 对象数组；返回与 req
+    // 同形的 { code, content, headers } 数组。宿主 req 是同步的，此处串行执行。
+    globalThis.batchFetch = function (list) {
+      var items = list || [], out = [], i, it, u, o;
+      for (i = 0; i < items.length; i++) {
+        it = items[i];
+        if (typeof it === 'string') { u = it; o = null; }
+        else if (it && typeof it === 'object') { u = it.url; o = it; }
+        else { u = it; o = null; }
+        try { out.push(globalThis.req(String(u), o)); }
+        catch (e) { out.push({ code: 0, content: '', headers: {}, error: String(e) }); }
+      }
+      return out;
+    };
+  }
+  if (!('toBeijingTime' in globalThis)) {
+    // 把入参（Date / 毫秒 / ISO 串 / 'yyyy-MM-dd HH:mm:ss'）固定渲染为东八区字符串。
+    globalThis.toBeijingTime = function (time) {
+      var d;
+      if (typeof time === 'undefined' || time === null) d = new Date();
+      else if (typeof time === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(time) && time.indexOf('Z') < 0) {
+        var mm = time.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+        d = new Date(Date.UTC(+mm[1], +mm[2] - 1, +mm[3], +mm[4] - 8, +mm[5], +mm[6]));
+      } else d = new Date(time);
+      if (isNaN(d.getTime())) d = new Date();
+      var t = new Date(d.getTime() + 8 * 3600 * 1000);
+      var p = function (n) { return (n < 10 ? '0' : '') + n; };
+      return t.getUTCFullYear() + '-' + p(t.getUTCMonth() + 1) + '-' + p(t.getUTCDate()) +
+        ' ' + p(t.getUTCHours()) + ':' + p(t.getUTCMinutes()) + ':' + p(t.getUTCSeconds());
+    };
+  }
+  if (!('jsonToCookie' in globalThis)) {
+    globalThis.jsonToCookie = function (obj) {
+      if (typeof obj === 'string') { try { obj = JSON.parse(obj); } catch (e) { return String(obj); } }
+      var s = [], k;
+      for (k in obj) { if (Object.prototype.hasOwnProperty.call(obj, k)) s.push(k + '=' + obj[k]); }
+      return s.join('; ');
+    };
+  }
+  if (!('cookieToJson' in globalThis)) {
+    globalThis.cookieToJson = function (str) {
+      var out = {}, parts = String(str || '').split(';'), i, kv;
+      for (i = 0; i < parts.length; i++) { kv = parts[i].split('='); if (kv[0]) out[kv[0].trim()] = (kv[1] || '').trim(); }
+      return out;
+    };
+  }
+
   // -- Web globals -----------------------------------------------------------
   // rquickjs ships the JS core (Uint8Array/DataView/Promise/Proxy) but none of
   // the Web layer. drpy2 rules call atob/btoa when signing requests,
@@ -560,6 +616,16 @@ const HOST_JS: &str = r#"(function () {
   // names before its own definitions are reachable in strict ESM scope. Provide
   // inert fallbacks so module evaluation can finish; real definitions in the
   // module shadow them. Never define require/process/fetch (sandbox contract).
+  // 依赖 Node/Java 桥、宿主无法忠实复刻的 ds 注入符号：给一次性告警的空兜底，
+  // 使新版 ds 规则降级出空结果（可诊断），而非 ReferenceError 整站中断。真实现见
+  // 上方「ds 协议注入函数」段（batchFetch/reqs/toBeijingTime/jsonToCookie/cookieToJson）。
+  var _inertWarned = {};
+  function _lumaInert(name, ret) {
+    return function () {
+      if (!_inertWarned[name]) { _inertWarned[name] = true; console.warn('[luma] ds 注入函数 ' + name + ' 暂无宿主实现，返回空'); }
+      return typeof ret === 'function' ? ret() : ret;
+    };
+  }
   var STUBS = {
     pdfh: function () { return ''; }, pdfa: function () { return []; },
     pd: function () { return ''; }, jsp: function () { return {}; },
@@ -576,7 +642,18 @@ const HOST_JS: &str = r#"(function () {
       return base;
     },
     rule: {}, os: {}, initEnv: function () {}, _ENV: {},
-    joinUrl: function (a, b) { return (a || '') + (b || ''); }
+    joinUrl: function (a, b) { return (a || '') + (b || ''); },
+    // ds 协议注入符号——空兜底（依赖 Node/Java 桥，未复刻）
+    executeParse: _lumaInert('executeParse', ''),
+    rsaX: _lumaInert('rsaX', ''), aesX: _lumaInert('aesX', ''), desX: _lumaInert('desX', ''),
+    js2Proxy: _lumaInert('js2Proxy', ''), cachedRequest: _lumaInert('cachedRequest', ''),
+    JSProxyStream: _lumaInert('JSProxyStream', function () { return {}; }),
+    JSFile: _lumaInert('JSFile', function () { return {}; }),
+    AIS: _lumaInert('AIS', function () { return {}; }),
+    XMLHttpRequest: _lumaInert('XMLHttpRequest', function () { return {}; }),
+    jsoup: _lumaInert('jsoup', function () { return {}; }),
+    pq: _lumaInert('pq', ''), pj: _lumaInert('pj', ''), pjfh: _lumaInert('pjfh', ''),
+    pjfa: _lumaInert('pjfa', function () { return []; }), pdfl: _lumaInert('pdfl', function () { return []; })
   };
   for (var sk in STUBS) if (!(sk in globalThis)) globalThis[sk] = STUBS[sk];
 })()"#;
