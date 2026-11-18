@@ -46,6 +46,13 @@ import {
   readPlayerPrefs,
   writePlayerPrefs,
 } from "../lib/playerPrefs";
+import {
+  introMs as introMsOf,
+  outroMs as outroMsOf,
+  shouldSkipIntro,
+  shouldSkipOutro,
+  type SkipSegment,
+} from "../lib/skipSegments";
 import { createActor } from "xstate";
 import { vodSessionMachine } from "../lib/vodSessionMachine";
 import { liveSessionMachine } from "../lib/liveSessionMachine";
@@ -133,6 +140,18 @@ export interface EpisodeNavControl {
   switching?: boolean;
 }
 
+/** 片头/片尾跳过窗口态：供调用方渲染浮层按钮。 */
+export interface SkipWindowState {
+  /** 片头时长 ms（0 = 未设）。 */
+  introMs: number;
+  /** 片尾时长 ms（0 = 未设）。 */
+  outroMs: number;
+  /** 当前是否落在片头窗口内（可「跳过片头」）。 */
+  inIntro: boolean;
+  /** 当前是否落在片尾窗口内（可「跳过片尾」）。 */
+  inOutro: boolean;
+}
+
 export interface UsePlayerEngineArgs {
   /** ArtPlayer 挂载点；实例会在这个容器里生成真正的 <video>。 */
   containerRef: RefObject<HTMLDivElement>;
@@ -178,6 +197,17 @@ export interface UsePlayerEngineArgs {
   rememberedRate?: () => number;
   /** 用户改了倍速：调用方把它写回这部剧的 history 行。 */
   onRememberedRate?: (rate: number) => void;
+  /**
+    * 这部剧的片头/片尾跳过配置（来自 `HistoryItem.skipJson`，经
+    * `parseSkipConfig` 解析）。同 `rememberedRate`：用**取值函数**，异步落地
+    * 绝不能进内核 effect 依赖，否则重建正在播的实例。
+    */
+  rememberedSkip?: () => SkipSegment[];
+  /**
+    * 跳过窗口态变化上报（片头/片尾是否正在、各自时长），供调用方渲染
+    * 「跳过片头/片尾」浮层按钮。只在窗口态翻转时回调，不每帧刷。
+    */
+  onSkipState?: (state: SkipWindowState) => void;
   resolved: PlayResolved | null;
   /** 新一轮地址解析中：此时旧 `resolved` 属于上一个源，不能再建播放实例。 */
   resolving: boolean;
@@ -243,6 +273,8 @@ export function usePlayerEngine({
   resumeMsRef,
   rememberedRate,
   onRememberedRate,
+  rememberedSkip,
+  onSkipState,
   resolved,
   resolving,
   siteKey,
@@ -818,7 +850,41 @@ export function usePlayerEngine({
     video.addEventListener("loadedmetadata", () => {
       video.playbackRate = wantedRate();
       applyResume();
+      // 片头自动跳：仅当续播点没落在片头之后（resumeMs <= intro）才跳，避免
+      // 覆盖用户「上次看到」的位置。直播没有片头概念，跳过。
+      const intro = introMsOf(rememberedSkip?.() ?? []);
+      if (siteKey !== "live" && intro > 0 && resumeMs <= intro) {
+        try {
+          video.currentTime = intro / 1000;
+        } catch {
+          // 首分片未到时 seek 会抛 InvalidStateError，忽略；下一次 timeupdate 会重报窗口态。
+        }
+      }
     }, { once: true });
+
+    // 片头/片尾窗口态上报：驱动调用方的「跳过片头/片尾」浮层按钮。只在窗口态
+    // 翻转时回调，不每帧刷；配置用取值器懒读（同倍速，绝不进本 effect 依赖）。
+    let lastInIntro = false;
+    let lastInOutro = false;
+    const reportSkipState = () => {
+      if (siteKey === "live") {
+        return;
+      }
+      const segs = rememberedSkip?.() ?? [];
+      const intro = introMsOf(segs);
+      const outro = outroMsOf(segs);
+      const curMs = video.currentTime * 1000;
+      const durMs = Number.isFinite(video.duration) ? video.duration * 1000 : 0;
+      const inIntro = shouldSkipIntro(curMs, intro);
+      const inOutro = shouldSkipOutro(curMs, durMs, outro);
+      if (inIntro !== lastInIntro || inOutro !== lastInOutro) {
+        lastInIntro = inIntro;
+        lastInOutro = inOutro;
+        onSkipState?.({ introMs: intro, outroMs: outro, inIntro, inOutro });
+      }
+    };
+    video.addEventListener("loadedmetadata", reportSkipState);
+    video.addEventListener("timeupdate", reportSkipState);
 
     // 全屏元素是 `.art-video-player` 本身（ArtPlayer 的 `$player`），所以角标
     // 这类要跟着画面走的浮层由调用方 portal 进这个节点，而不是排在 stage 里。

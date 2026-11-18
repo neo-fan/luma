@@ -176,6 +176,118 @@
   font-size: var(--fs-h3);
 }
 
+/* ---------- 片头/片尾跳过浮层（portal 进 ArtPlayer 根，跟画面走、全屏留在画面里） ---------- */
+.skip-overlay__btn {
+  position: absolute;
+  bottom: 84px;
+  right: 20px;
+  z-index: 36;
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: var(--r-pill);
+  background: rgba(10, 12, 18, 0.66);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.skip-overlay__btn:hover {
+  background: rgba(20, 24, 34, 0.85);
+  border-color: var(--accent);
+}
+
+.art-fullscreen .skip-overlay__btn,
+.art-fullscreen-web .skip-overlay__btn {
+  bottom: 104px;
+  right: 28px;
+}
+
+.skip-overlay__gear {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 36;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(10, 12, 18, 0.5);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition:
+    opacity var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+
+.skip-overlay__gear:hover {
+  opacity: 1;
+  background: rgba(10, 12, 18, 0.75);
+}
+
+.skip-overlay__panel {
+  position: absolute;
+  top: 52px;
+  right: 16px;
+  z-index: 37;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 220px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgba(14, 16, 22, 0.92);
+  backdrop-filter: blur(10px);
+  color: var(--text);
+}
+
+.skip-overlay__field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--fs-sm);
+}
+
+.skip-overlay__field input {
+  width: 72px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel-sunken);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.skip-overlay__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  line-height: 1.5;
+}
+
+.skip-overlay__close {
+  align-self: flex-end;
+  padding: 5px 14px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
 /* 视频加载 / 缓冲一律用 ArtPlayer 内建的 loading 与 state 样式，不再另画转圈。
    这里只保留「还没有播放实例」时的解析 / 错误提示层。 */
 /* 解析中 / 不可播放时的提示层：绝对定位盖在常驻容器之上，不改动它的 DOM。 */

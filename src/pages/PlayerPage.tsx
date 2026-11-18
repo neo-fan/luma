@@ -9,6 +9,7 @@ import EpisodePanel from "../components/player/EpisodePanel";
 import { createSwitchQueue } from "../lib/switchQueue";
 import type { SwitchQueue } from "../lib/switchQueue";
 import PlayerResolution from "../components/player/PlayerResolution";
+import { SkipOverlay } from "../components/player/SkipOverlay";
 import { parsePlayLines, sameEpisodeName, sameTitle, toVodRef } from "../lib/format";
 import type { PlayLine } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
@@ -56,6 +57,13 @@ import { usePlaybackIndicator } from "../hooks/usePlaybackIndicator";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
 import type { EpisodeNavControl } from "../hooks/usePlayerEngine";
+import type { SkipWindowState } from "../hooks/usePlayerEngine";
+import {
+  parseSkipConfig,
+  serializeSkipConfig,
+  introMs,
+  type SkipSegment,
+} from "../lib/skipSegments";
 
 interface PlayerPageProps {
   siteKey: string;
@@ -314,6 +322,16 @@ export default function PlayerPage({
    */
   const rememberedRateRef = useRef(0);
   const readRememberedRate = useCallback(() => rememberedRateRef.current, []);
+  /**
+   * 这部剧的片头/片尾跳过配置。同倍速：ref 承载（不触发重渲染、不进内核依赖），
+   * 由 history 查询异步填、由配置 UI 更新。
+   */
+  const rememberedSkipRef = useRef<SkipSegment[]>([]);
+  const readRememberedSkip = useCallback(() => rememberedSkipRef.current, []);
+  /** 跳过窗口态：驱动「跳过片头/片尾」浮层按钮的显隐。 */
+  const [skipState, setSkipState] = useState<SkipWindowState | null>(null);
+  /** 配置镜像 state：ref 供引擎懒读不触发重渲染，state 供浮层编辑器受控显示。 */
+  const [skipConfig, setSkipConfig] = useState<SkipSegment[]>([]);
   const flushHistoryRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     let alive = true;
@@ -331,6 +349,12 @@ export default function PlayerPage({
         // 顺手丢掉这部剧的倍速，所以要在续播那些提前返回之前先摘出来。
         if (hit?.rate) {
           rememberedRateRef.current = hit.rate;
+        }
+        // 片头/片尾配置与倍速同性质：按剧记忆，续播那些提前返回之前先摘出来。
+        if (hit?.skipJson) {
+          const segs = parseSkipConfig(hit.skipJson);
+          rememberedSkipRef.current = segs;
+          setSkipConfig(segs);
         }
         const sameEpisode =
           hit?.playUrl === playUrl ||
@@ -1145,6 +1169,8 @@ export default function PlayerPage({
       // 倍速是低频动作，改完立刻写一次：只靠 5 秒节流会让「调完就关窗」丢掉。
       flushHistoryRef.current?.();
     },
+    rememberedSkip: readRememberedSkip,
+    onSkipState: setSkipState,
     resolved,
     resolving,
     siteKey,
@@ -1206,6 +1232,8 @@ export default function PlayerPage({
         resolution: knownResolution,
         // 0 = 这次写入没带倍速，宿主侧不会覆盖库里已有的值。
         rate: rememberedRateRef.current,
+        // 片头/片尾配置随这部剧写回（后端跨源继承，见 db/history.rs）。
+        skipJson: serializeSkipConfig(rememberedSkipRef.current),
         positionMs:
           snapshot?.positionMs ?? Math.round(video.currentTime * 1000),
         durationMs:
@@ -1740,6 +1768,38 @@ export default function PlayerPage({
         detail={resolutionDetail(videoMeta.width, videoMeta.height)}
         episode={activeEpisodeName}
         bitrate={videoMeta.bitrateKbps}
+      />
+      <SkipOverlay
+        host={playerRoot}
+        state={skipState}
+        config={skipConfig}
+        onSkipIntro={() => {
+          const v = videoRef.current;
+          const intro = introMs(skipConfig);
+          if (v && intro > 0) {
+            try {
+              v.currentTime = intro / 1000;
+            } catch {
+              /* seek 未就绪时忽略 */
+            }
+          }
+        }}
+        onSkipOutro={() => {
+          const v = videoRef.current;
+          if (v && Number.isFinite(v.duration) && v.duration > 0) {
+            try {
+              // 跳到结尾前 0.5s，触发既有 ended → 自动下一集。
+              v.currentTime = Math.max(0, v.duration - 0.5);
+            } catch {
+              /* seek 未就绪时忽略 */
+            }
+          }
+        }}
+        onConfigChange={(segs) => {
+          rememberedSkipRef.current = segs;
+          setSkipConfig(segs);
+          flushHistoryRef.current?.();
+        }}
       />
     </>
   );
