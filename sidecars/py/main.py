@@ -15,9 +15,12 @@ meant two places to fix for one contract — the 1.0.1 "import timeout" bug was 
 symptom of the old design.
 
 One JSON frame per line on stdin/stdout. stdout carries protocol frames only;
-logs go to stderr. Requests run on a thread pool of 8; `spider.py` hands each
-script to a short-lived child process (`pyspider.run` → `pyrun.py`), so a broken
-third-party script cannot take down this bridge.
+logs go to stderr. Requests run on a thread pool of 8; `spider.py` dispatches
+against a persistent, in-process Spider instance cached per source fingerprint
+(`pyspider.run`), so stateful spiders (live_mode=proxy rolling windows) survive
+across calls and there is no per-call interpreter/import cost. A hard crash or
+un-killable hang inside a spider is bounded by the host's wall-clock timeout and
+the bridge's dead-connection respawn.
 """
 
 from __future__ import annotations

@@ -166,8 +166,11 @@ def main() -> int:
           "embed", "pyrun fixes sys.path before local imports")
     check("except ImportError:" in pyrun and "def log_crash(**_kwargs" in pyrun,
           "embed", "missing adapterlog degrades to no-op")
-    check('env["PYTHONPATH"]' in (PY / "pyspider.py").read_text(encoding="utf-8"),
-          "embed", "child inherits adapter dir via PYTHONPATH")
+    # 持久实例契约（取代旧的「子进程 PYTHONPATH」）：pyspider 按源码指纹缓存常驻
+    # Spider 实例，让 live_mode=proxy 这类有状态爬虫的滚动窗口跨调用存活。
+    _ps = (PY / "pyspider.py").read_text(encoding="utf-8")
+    check("_fingerprint(source)" in _ps and "_pool" in _ps and "entry.lock" in _ps,
+          "embed", "persistent spider instance pool keyed by fingerprint")
     if embed.is_file():
         child = subprocess.run(
             [str(embed), str(PY / "pyrun.py")],

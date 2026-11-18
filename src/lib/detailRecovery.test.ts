@@ -131,10 +131,14 @@ describe("py adapter: diagnostics must not break the protocol", () => {
     expect(pyrun).toContain("def log_crash(**_kwargs: object)");
   });
 
-  it("passes the adapter dir to the child via PYTHONPATH", () => {
+  it("keeps a persistent spider instance keyed by source fingerprint", () => {
+    // 旧模型每次起子进程（靠 PYTHONPATH 让子进程 import 本地模块）；改为桥进程内
+    // 常驻实例后，有状态爬虫（live_mode=proxy）的滚动窗口才能跨调用存活。
+    // 断言随之从「子进程 PYTHONPATH」改钉「按指纹缓存实例 + 按实例加锁」。
     const pyspider = read("sidecars/py/pyspider.py");
-    expect(pyspider).toContain('env["PYTHONPATH"]');
-    expect(pyspider).toContain("env=env,");
+    expect(pyspider).toContain("_fingerprint(source)");
+    expect(pyspider).toContain("_pool");
+    expect(pyspider).toContain("entry.lock");
     expect(pyspider).toContain("except ImportError:");
   });
 
