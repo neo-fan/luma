@@ -291,10 +291,17 @@ pub async fn resolve_play(
     if matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost"))
         && parsed.path() == "/proxy"
     {
+        // 代理回调要靠 URL 认是哪个爬虫：注入 `site=<站点 key>`，多站并发时
+        // `handle_spider_proxy` 才能精确命中（不带 site 的老 URL 退回 last_play_site）。
+        // 直播（site_key="live"）没有爬虫，不注入。
+        if request.site_key != "live" && !parsed.query_pairs().any(|(k, _)| k == "site") {
+            parsed.query_pairs_mut().append_pair("site", &request.site_key);
+        }
+        let proxied = parsed.as_str().to_string();
         return Ok(PlayResolved {
-            url: effective_url.clone(),
-            proxy_url: effective_url.clone(),
-            kind: kind_of(&effective_url),
+            kind: kind_of(&proxied),
+            url: proxied.clone(),
+            proxy_url: proxied,
             headers: explicit,
         });
     }

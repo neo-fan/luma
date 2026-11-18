@@ -563,3 +563,41 @@ fn error_chain_flattens_source_chain() {
     let dup = ChainLink("same", Some(Box::new(ChainLink("same", None))));
     assert_eq!(error_chain(&dup), "same");
 }
+
+#[test]
+fn propagate_site_appends_to_bare_proxy_urls() {
+    let text = "#EXTM3U\nhttp://127.0.0.1:9979/proxy?url=&slug=cctv2&seq=39\n";
+    let out = handlers::propagate_site_to_playlist(text, "py_yangshipin");
+    assert!(out.contains("seq=39&site=py_yangshipin"), "{out}");
+}
+
+#[test]
+fn propagate_site_skips_urls_already_carrying_site() {
+    let text = "http://127.0.0.1:9979/proxy?do=py&site=x\n";
+    let out = handlers::propagate_site_to_playlist(text, "y");
+    assert_eq!(out, text);
+}
+
+#[test]
+fn propagate_site_inserts_inside_uri_quotes() {
+    let text = "#EXT-X-KEY:METHOD=AES-128,URI=\"http://127.0.0.1:9979/proxy?url=&slug=k\"\n";
+    let out = handlers::propagate_site_to_playlist(text, "py_x");
+    assert!(
+        out.contains("slug=k&site=py_x\""),
+        "should insert before the closing quote: {out}"
+    );
+}
+
+#[test]
+fn propagate_site_leaves_non_proxy_lines_untouched() {
+    let text = "#EXTINF:7,\nhttps://real.cdn/seg.ts\n";
+    let out = handlers::propagate_site_to_playlist(text, "py_x");
+    assert_eq!(out, text);
+}
+
+#[test]
+fn propagate_site_urlencodes_non_ascii_key() {
+    let text = "http://127.0.0.1:9979/proxy?url=&slug=a\n";
+    let out = handlers::propagate_site_to_playlist(text, "央视频源1");
+    assert!(out.contains("slug=a&site=%E5%A4%AE"), "site key should be percent-encoded: {out}");
+}

@@ -142,23 +142,57 @@ pub struct ProxyPayload {
     pub body: Vec<u8>,
 }
 
-static LAST_PLAY: OnceLock<StdMutex<Option<Value>>> = OnceLock::new();
+/// 记住「哪些站点正在/最近产生过播放会话」，供 TVBox 本地代理回调定位爬虫。
+///
+/// 早期只存「最后一次 playerContent 的站点」：单播放窗口够用，但多站并发（如
+/// 后台预取另一站、或爬虫代理 URL 不带站点标识）会错配到最近一次点播的源。
+/// 现在按 `site.key` 存一张有界小表，代理回调优先用 URL 里带的 `site` 精确命中，
+/// 查不到再退回「最近一次」，兼容不带 `site` 的老代理 URL 与直播模式。
+static PLAY_SITES: OnceLock<StdMutex<PlaySites>> = OnceLock::new();
 
-fn last_play_cell() -> &'static StdMutex<Option<Value>> {
-    LAST_PLAY.get_or_init(|| StdMutex::new(None))
+const PLAY_SITES_MAX: usize = 8;
+
+#[derive(Default)]
+struct PlaySites {
+    /// 最近使用在末尾；插入重复 key 时移到末尾。
+    order: Vec<String>,
+    sites: HashMap<String, Value>,
 }
 
-/// Remember which site produced the current play session. TVBox's local proxy
-/// carries only `do=py|jar`, not a site key, so the host tracks the last
-/// `playerContent` caller (one player window).
+fn play_sites() -> &'static StdMutex<PlaySites> {
+    PLAY_SITES.get_or_init(|| StdMutex::new(PlaySites::default()))
+}
+
+/// 记住产生本次播放会话的站点（按 `key` 归档，同时更新「最近」）。
 pub fn note_play_site(site: &Value) {
-    if let Ok(mut guard) = last_play_cell().lock() {
-        *guard = Some(site.clone());
+    let Some(key) = site.get("key").and_then(Value::as_str).map(str::to_string) else {
+        return;
+    };
+    if let Ok(mut guard) = play_sites().lock() {
+        guard.order.retain(|k| *k != key);
+        guard.order.push(key.clone());
+        guard.sites.insert(key, site.clone());
+        while guard.order.len() > PLAY_SITES_MAX {
+            let old = guard.order.remove(0);
+            guard.sites.remove(&old);
+        }
     }
 }
 
+/// 按站点 key 精确取回播放会话站点（代理回调首选）。
+pub fn play_site_by_key(site_key: &str) -> Option<Value> {
+    play_sites()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.sites.get(site_key).cloned())
+}
+
+/// 最近一次点播的站点——不带 `site` 的代理 URL 与直播的兜底。
 pub fn last_play_site() -> Option<Value> {
-    last_play_cell().lock().ok().and_then(|guard| guard.clone())
+    play_sites()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.order.last().and_then(|k| guard.sites.get(k).cloned()))
 }
 
 pub fn decode_proxy_payload(value: &Value) -> Result<ProxyPayload, AppError> {

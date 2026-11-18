@@ -893,12 +893,33 @@ pub(super) async fn handle_image(
 /// route; the query map is handed to the spider and its
 /// `[contentType, headers, bytes]` answer becomes the HTTP response.
 pub(super) async fn handle_spider_proxy(kind: &str, pairs: &[(String, String)]) -> Response {
-    let Some(site) = crate::spider::last_play_site() else {
+    // 优先用代理 URL 自带的 `site=<key>` 精确命中产生本次会话的爬虫；不带 site
+    // 的老 URL / 直播退回「最近一次点播」。多站并发下这才不会错配到别的源。
+    let site_key = pairs
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "site")
+        .map(|(_, value)| value.clone());
+    let site = site_key
+        .as_deref()
+        .and_then(crate::spider::play_site_by_key)
+        .or_else(crate::spider::last_play_site)
+        .or_else(|| {
+            // 兜底：从注册表里按 site_key 再取一次（site_key 有但注册表刚被并发覆盖时）。
+            site_key.as_deref().and_then(crate::spider::play_site_by_key)
+        });
+    let Some(site) = site else {
         return deny(
             StatusCode::SERVICE_UNAVAILABLE,
             "no active play source; open a title before using the spider proxy",
         );
     };
+    // 往爬虫返回的清单里传播 site，使后续分片回调也带对源（site_key 缺则从站点取）。
+    let propagate_key = site_key.or_else(|| {
+        site.get("key")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    });
 
     let mut params: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for (name, value) in pairs {
@@ -933,18 +954,29 @@ pub(super) async fn handle_spider_proxy(kind: &str, pairs: &[(String, String)]) 
             // playlists; hls.js sniffs the body, but a correct type keeps
             // browsers/proxies from treating it as a download.
             let mut content_type = payload.content_type.clone();
+            let trimmed = payload.body.strip_prefix(&[0xef, 0xbb, 0xbf][..]).unwrap_or(&payload.body);
+            let is_playlist = trimmed.starts_with(b"#EXTM3U");
             if content_type.is_empty() || content_type == "application/octet-stream" {
-                if payload.body.starts_with(b"#EXTM3U") {
+                if is_playlist {
                     content_type = "application/vnd.apple.mpegurl".to_string();
                 }
             }
+            // 把 site 传播进爬虫清单里的本地代理 URL（分片/密钥回调也带对源），
+            // 只对 playlist、且该 URL 尚不含 site= 时追加。
+            let body = match (&propagate_key, is_playlist) {
+                (Some(key), true) => {
+                    let text = String::from_utf8_lossy(&payload.body).into_owned();
+                    Body::from(propagate_site_to_playlist(&text, key).into_bytes())
+                }
+                _ => Body::from(payload.body),
+            };
             builder
                 .header("content-type", content_type)
                 .header("cache-control", "no-store")
                 .header("access-control-allow-origin", "*")
                 .header("access-control-expose-headers", "*")
                 .header("x-luma-proxy", format!("spider-{kind}"))
-                .body(Body::from(payload.body))
+                .body(body)
                 .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "proxy response build failed"))
         }
         Err(err) => deny(
@@ -952,6 +984,36 @@ pub(super) async fn handle_spider_proxy(kind: &str, pairs: &[(String, String)]) 
             &format!("spider proxy failed: {} {}", err.code, err.message),
         ),
     }
+}
+
+/// 把 `site=<key>` 追加进爬虫清单里的本地代理 URL（分片/密钥回调也带对源）。
+/// 只处理 `http://127.0.0.1/...` 且含 `/proxy?` 又不含 `site=` 的 URL token；
+/// token 以 `"`、空白、换行为界，故裸 URL 行与 `URI="…"` 内都能正确插入。
+pub(super) fn propagate_site_to_playlist(text: &str, key: &str) -> String {
+    let suffix = format!("&site={}", super::urlencode(key));
+    let mut out = String::with_capacity(text.len() + 64);
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if text[i..].starts_with("http://127.0.0.1") || text[i..].starts_with("http://localhost") {
+            let start = i;
+            let mut j = i;
+            while j < bytes.len() && !matches!(bytes[j], b'"' | b' ' | b'\n' | b'\r' | b'\t') {
+                j += 1;
+            }
+            let url = &text[start..j];
+            out.push_str(url);
+            if url.contains("/proxy?") && !url.contains("site=") {
+                out.push_str(&suffix);
+            }
+            i = j;
+        } else {
+            let ch = text[i..].chars().next().unwrap_or('\u{0}');
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
 }
 
 pub(super) fn extra_headers(payload: Option<&str>) -> Vec<(HeaderName, String)> {
