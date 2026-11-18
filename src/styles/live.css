@@ -224,6 +224,11 @@
   font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
+  /* 直播频道可达上千条：跳过屏外渲染（与首页/搜索 .vod-grid>* 同口径）。
+     固定 34px 高，contain-intrinsic-size 给准值 → 不引起滚动条跳动，
+     scroll-into-view / 折叠 / 搜索过滤都不受影响（只省渲染成本，不改布局存在性）。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 
