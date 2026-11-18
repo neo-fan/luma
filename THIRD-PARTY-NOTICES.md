@@ -8,7 +8,8 @@
 ## 1. `sidecars/qjs-assets/`（随包 JS 运行库）
 
 这些文件是 **TVBox 生态的 JS 引擎与其依赖**，从上游仓库 `cluntop/tvbox`
-固定提交 `a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8` 逐字节抓取，**未做任何修改**。
+固定提交 `a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8` 逐字节抓取，**除 `gbk.js` 外均未做任何修改**
+（`gbk.js` 已被替换为 Luma 自研薄封装，委托 `encoding_rs`，见下表与 §2）。
 字节数与 SHA256 见 `sidecars/qjs-assets/manifest.json`，`python tools/prepare_runtime.py --check` 会校验。
 
 | 文件 | 上游路径 | 字节 | 授权状态 |
@@ -19,7 +20,7 @@
 | `pako.min.js` | `lib/pako.min.js` | 46,859 | MIT（pako） |
 | `json5.js` | `lib/json5.js` | 60,431 | MIT（JSON5） |
 | `jinja.js` | `lib/jinja.js` | 22,706 | **BSD-3-Clause** — `sstur/jinja-js` v0.1.8（作者 Simon Sturmer，<https://github.com/sstur/jinja-js>），Jinja2 风格 JS 模板引擎 |
-| `gbk.js` | `lib/gbk.js` | 56,313 | **未声明**（上游未给出许可证与来源） |
+| `gbk.js` | （已替换，非上游逐字节文件）| 1,122 | **Luma 自研薄封装**：原无出处、自带压缩码表的 `gbkTool` 已移除，现委托宿主 `__luma_gbk_encode/decode` → `encoding_rs::GBK`（MPL-2.0，见 §2）；属本项目代码 |
 | `template.js` | `js/template.js` | 15,217 | **未声明**，且上游仓库该路径已不可达（我们按固定提交留档） |
 | `drpy2.min.js` | `lib/drpy2.min.js` | 67,385 | **LGPL-3.0**——TVBox JS 蜘蛛引擎本体（`drpy2 3.9.51beta2 20240711`，源自 `hjdhnx/dr_py`，经 `cluntop/tvbox` 固定提交逐字节抓取）。以可替换资源随包，LGPL 不强制宿主整体 copyleft |
 
@@ -30,17 +31,18 @@
    保留。Luma 把它与其它随包 JS 放在可独立替换的 `sidecars/qjs-assets/`（带 SHA256 清单、
    支持 `QJS_ASSETS_DIR` 覆盖），满足这些条件，**因此它并不强制本仓库整体 copyleft**。
    本仓库仍选 GPL-3.0 是主动的稳妥/生态一致选择，而非 LGPL 所迫。
-2. **`template.js` / `gbk.js` 授权仍不明。** 这两个文件在随包的上游仓库
-   快照里没有独立许可证声明，法律上默认「保留所有权利」。当前保留只为兼容真实配置所需
-   （离线兜底），**不代表我们对其再分发有明确授权**；如果权利方提出异议，会在下一个
-   版本移除，改为「首次使用时由用户自行下载」。
+2. **`template.js` 授权仍不明。** 该文件在随包的上游仓库快照里没有独立许可证声明，
+   法律上默认「保留所有权利」。当前保留只为兼容真实配置所需（模板继承类源离线兜底），
+   **不代表我们对其再分发有明确授权**；如果权利方提出异议，会在下一个版本移除，改为
+   「首次使用时由用户自行下载」。（`gbk.js` 已用 Luma 自研 `encoding_rs` 封装替换，不再属此类。）
 3. **MIT 组件缺少版权头。** `cheerio` / `crypto-js` / `node-rsa` / `pako` / `json5`
    的压缩产物被上游去掉了许可证注释。按 MIT 要求，再分发应保留版权与许可声明，
    因此这里以「组件名 + 上游 URL + 许可证类型」的形式补充声明；正式发布前建议
    从各项目仓库取回 LICENSE 原文一并附上。
-4. 上述第三方文件均**不是本项目的代码**、不适用本仓库的 `LICENSE`。其中 `drpy2.min.js`
-   按其自身 **LGPL-3.0** 分发（可替换、保留声明，见风险 1），MIT/Apache 各件按各自许可；
-   `template.js` / `gbk.js` / `jinja.js` 的再分发风险见风险 2。
+4. 上表中除 `gbk.js`（现为 Luma 自研封装、属本项目代码）外的第三方文件均**不是本项目的
+   代码**、不适用本仓库的 `LICENSE`。其中 `drpy2.min.js` 按其自身 **LGPL-3.0** 分发（可替换、
+   保留声明，见风险 1），`jinja.js` 按 **BSD-3-Clause** 分发，其余 MIT/Apache 各件按各自许可；
+   仍授权不明的只有 `template.js`，见风险 2。
 
 ## 2. Rust 依赖（`src-tauri/Cargo.lock`、`sidecars/qjs-runner/Cargo.lock`）
 

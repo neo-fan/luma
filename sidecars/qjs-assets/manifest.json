@@ -28,11 +28,11 @@
     "usage": "drpy2 ./pako.min.js，inflate/deflate"
   },
   {
-    "upstream": "lib/gbk.js",
+    "upstream": "lib/gbk.js (已替换：Luma 自研薄封装)",
     "local": "gbk.js",
-    "bytes": 56313,
-    "sha256": "28097cea4538c34653cd1e2c39aef3ad5bc892caa54b0761105f26fa4a3a339a",
-    "usage": "drpy2 ./gbk.js，export gbkTool"
+    "bytes": 1122,
+    "sha256": "a8b52a474b7099aaf2cfd22c52e6c8db651276893fbe18efedc7d8023d356977",
+    "usage": "drpy2 ./gbk.js，export gbkTool；现委托宿主 __luma_gbk_encode/decode → encoding_rs::GBK（MPL-2.0）"
   },
   {
     "upstream": "lib/json5.js",

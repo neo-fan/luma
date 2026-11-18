@@ -737,6 +737,35 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
         })?,
     )?;
 
+    // GBK 编解码——委托 encoding_rs（MPL-2.0，已是本 sidecar 依赖），替代上游无出处、
+    // 自带压缩码表的 gbk.js。契约与旧 gbkTool 一致：
+    //   encode(str)：字符串 -> GBK 百分号串（ASCII 原样、高位 %XX 大写）；
+    //   decode(pct)：GBK 百分号串 -> 字符串。
+    globals.set(
+        "__luma_gbk_encode",
+        Function::new(ctx.clone(), |text: String| -> String {
+            let (bytes, _, _) = encoding_rs::GBK.encode(&text);
+            let mut out = String::with_capacity(bytes.len() + 3 * bytes.len() / 2);
+            for &b in bytes.iter() {
+                if b < 0x80 {
+                    out.push(b as char);
+                } else {
+                    out.push('%');
+                    out.push_str(&format!("{b:02X}"));
+                }
+            }
+            out
+        })?,
+    )?;
+    globals.set(
+        "__luma_gbk_decode",
+        Function::new(ctx.clone(), |input: String| -> String {
+            let bytes = percent_decode_str(&input).collect::<Vec<u8>>();
+            let (cow, _, _) = encoding_rs::GBK.decode(&bytes);
+            cow.into_owned()
+        })?,
+    )?;
+
     let headers = serde_json::to_string(&request.headers).unwrap_or_else(|_| "{}".to_string());
     let site = js_literal(&if request.site_key.is_empty() {
         "default".to_string()
