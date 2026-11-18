@@ -1,6 +1,6 @@
 /* ---------- 焦点可访问性 ---------- */
 
-/* 焦点态不做 outline/发光（用户明确要求，仅输入框例外）：
+/* 焦点态不做 outline/发光（仅输入框例外）：
    控件的聚焦状态靠边框/背景变化表达（.app-select__trigger[data-state=open]、
    .input:focus 等）。.input/.textarea 保留柔光环。 */
 :focus-visible {

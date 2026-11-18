@@ -23,8 +23,8 @@ export const ICON_PROPS: SVGProps<SVGSVGElement> = {
  * ArtPlayer 原生控件专用：它的 `controls[].html` 只接受 HTML 字符串 / DOM 元素，
  * 没有 React 渲染入口，所以这里导出一份 SVG 字符串。
  *
- * ⚠️ 这两个**不能**复用上面的 Lucide 描边风格（2026-11-14 用户反馈「我们加的
- * 按钮和原生的不搭」）。ArtPlayer 内置图标是 22px、纯填充、path 不写 fill，
+ * ⚠️ 这两个**不能**复用上面的 Lucide 描边风格（与 ArtPlayer 内置图标并排会
+ * 明显「轻一档」、多一圈外描边，一眼看出是后加的）。ArtPlayer 内置图标是 22px、纯填充、path 不写 fill，
  * 由 `.art-video-player svg{fill:var(--art-font-color)}` 统一上色；旁边放一个
  * 1.75 描边 + 透明填充的线框图标，视觉上轻一档，还多一圈外描边，一眼就能看出
  * 是后加的。因此这里按内置几何自绘填充路径，尺寸也跟内置的 22 对齐。

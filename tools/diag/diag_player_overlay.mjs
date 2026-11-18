@@ -2,7 +2,7 @@
 /**
  * 播放页「自绘提示层」与「ArtPlayer 内置 loading」重叠验收。
  *
- * 背景（2026-11-14 用户反馈）：解析/缓冲时画面正中有两个转圈——我们自己的
+ * 背景：解析/缓冲时画面正中有两个转圈——我们自己的
  * 呼吸光环（.player-status__pulse）和 ArtPlayer 内置的 50px 旋转 loading
  * （.art-loading 里的 svg），几何完全重合。
  *

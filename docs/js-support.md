@@ -2,7 +2,6 @@
 
 > 适用对象：Luma 的 QuickJS ESM 模块加载链路（兼容 TVBox / FongMi JS 源）。
 > 资源基线：上游仓库 `cluntop/tvbox` 固定提交 `a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8`。
-> 文档状态：本轮按约定**停在 debug 联调、不打包**；交付包实机验证尚未执行，详见第 6 节。
 > 编码约定：本文件 UTF-8 无 BOM、LF 换行。
 
 ---
@@ -183,8 +182,7 @@ KTV 站点把 `ext` 指向 `./js/drpy2.js`，但该规则文件在上游仓库�
 
 ### 4.2 Rust 侧传参字段
 
-`src-tauri/src/domain/spider/quickjs.rs` 向 qjs-runner 写一行 JSON 帧，**主 Agent 本轮正在实现**
-的字段口径固定为：
+`src-tauri/src/domain/spider/quickjs.rs` 向 qjs-runner 写一行 JSON 帧，字段口径固定为：
 
 | 字段 | 含义 |
 |------|------|
@@ -264,7 +262,7 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 | `probe_settings_health.mjs` | PASS：JS 源显示可达、jar 屏蔽源仍锁「启用」 |
 | `cargo test --lib` / `pnpm test` / `p1.py --adapter` | 81 / 145 / 18 全通过 |
 
-### 5.3 本轮踩到并修掉的两个真 bug
+### 5.3 已修复的两个真实缺陷
 
 1. **双重 JSON 编码**：FongMi JS0 脚本 `return JSON.stringify({...})`，sidecar 又
    `JSON.stringify` 一次 → Rust 收到的是 JSON **字符串**而不是页面对象，表现为「调用成功但
@@ -397,7 +395,7 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
    边界**不硬编码规则**，报告里如实标注即可。
 3. **当前 FongMi class-based `Spider` 规范**：现只做 `new Spider(ext)` 的粗粒度兼容，新版
    class-based 规范（构造参数、`init` 时机、方法签名）尚未逐条对齐。
-4. **交付包实机验证**：本轮按约定**停在 debug、不打包**；随包资源（`qjs-assets` 整目录 + `qjs-runner.exe` 经 `bundle.resources` / `bundle.externalBin` 落地）只做了脚本级检查，需下一轮实际 `tauri build` 安装并在干净机器上跑一遍 JS 源。
+4. **交付包实机验证**：随包资源（`qjs-assets` 整目录 + `qjs-runner.exe` 经 `bundle.resources` / `bundle.externalBin` 落地）目前只有脚本级检查（`prepare_runtime.py --check`），仍需在干净机器上实际 `tauri build` 安装并跑一遍 JS 源。
 
 ---
 
@@ -411,13 +409,3 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 | DeepWiki · Execution Engines | <https://deepwiki.com/hjdhnx/drpy-node/3-source-management> | 五种引擎的统一接口（home / homeVod / category / detail / search / play / proxy / action / init）与 `catvod` 动态 `import()` 口径 |
 | jieray/TVBOX · drpy2 源格式说明 | <https://github.com/jieray/TVBOX/blob/main/drpy2%E6%BA%90%E6%A0%BC%E5%BC%8F%E8%AF%B4%E6%98%8E.md> | drpy2 规则格式、`getProxyUrl` 本地代理约定、`export` 写法 |
 
----
-
-## 8. 本轮交付改动清单
-
-| 文件 | 改动 |
-|------|------|
-| `src-tauri/tauri.conf.json` | `bundle.resources` 打包 `sidecars/qjs-assets` 整目录；`bundle.externalBin` 登记 `binaries/qjs-runner`（构建期落 `qjs-runner-<triple>.exe` 到安装根）；落点说明见 §4.4 |
-| `tools/prepare_runtime.py` | 新增 `step_qjs_assets()`（校验 8 文件齐全 + 可选按 `manifest.json` 校验字节数/SHA256，缺文件给「重新运行资源下载脚本」提示，纯离线）；挂进 `main()` 的 `--check` 与全量调用链、体积汇总；新增 `--skip-qjs-sha`；步骤编号 3→4 |
-| `.gitignore` | 新增「随包 JS 依赖资源（入库源码资源）」段落，与「随包运行时产物」段落明确区分，并显式声明 `sidecars/qjs-assets/` 不得排除（已用 `git check-ignore` 复核未被忽略） |
-| `docs/js-support.md` | 本文件 |

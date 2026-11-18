@@ -155,7 +155,7 @@ describe("LivePage 接入分类文案", () => {
   });
 
   it("换线/换台提示进播放器 notice，ErrorBar 保留主文案 / 归因 / 详情结构", () => {
-    // 2026-11-15 用户要求「播放相关的尽量放在播放器里面」：提示不再挂在页顶 .tip。
+    // 播放相关提示统一进播放器 notice，不再挂在页顶 .tip。
     expect(page).not.toContain('<p className="tip">');
     expect(page).toContain("engine.notice(text)");
     expect(page).toContain("const text = switchTip || slowNotice;");

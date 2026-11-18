@@ -454,7 +454,7 @@ async fn aggregate(
     let mut ok = 0usize;
     let mut failed = 0usize;
     // 非流式（首页聚合）：按调用方墙钟截断慢尾巴，clamp 防极值。
-    // 流式搜索（用户要求）：不限墙钟——结果在陆续上屏，等所有站点跑完
+    // 流式搜索：不限总墙钟——结果在陆续上屏，等所有站点跑完
     // 再收尾；每站仍受自身 per-site timeout 约束，不会有无限挂起的源。
     // 上限 600s 只是防御性兜底（per-site timeout × 波次远小于它）。
     let streaming_unbounded = streaming.is_some();

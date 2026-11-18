@@ -86,7 +86,7 @@ export default function PlayerStage({
 
   // 只有「还没有播放实例」时才有自定义提示：拿地址、重建实例。
   // 视频本身的加载与缓冲一律交给 ArtPlayer 内建的 loading 样式，这里不再画
-  // 第二套转圈（11-14 用户反馈过两坨加载动画叠在画面中心）。
+    // 第二套转圈（两坨加载动画叠在画面中心会很乱）。
   const status = resolving
     ? // 解析分两个阶段给不同文案：问源拿直链 vs 交给反代建连，避免「一直转」被误判卡死。
       stage === "connecting"

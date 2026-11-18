@@ -64,7 +64,7 @@ export default function LiveEpgPanel({
 }: LiveEpgPanelProps) {
   const [data, setData] = useState<EpgResult | null>(null);
   /**
-   * 默认展开（2026-11-15 用户要求「节目单就可以上移了」）。
+   * 默认展开（折叠会把节目单挤到画面下方，展开时视线直接落在上面）。
    *
    * 旧版默认收起，是因为展开时节目单高度能顶到 400px，把 16:9 的画面挤成一条
    * （当时右列是自滚容器、画面可被 flex 压缩）。现在画面锁死 16:9、节目单跟着
