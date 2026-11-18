@@ -8,6 +8,8 @@
 
 ### 修复
 
+- **首页横向可滑动 / hero「下一张」箭头被右缘裁切**：`.page-body` 是竖向滚动容器（`overflow-y:auto` 按 CSS 规范把 `overflow-x` 强制成 `auto`），而 hero 用负 margin 全出血撑宽内容框 → 那 36px 溢出变成可横向滚动区，箭头落进裁剪区外（表现为「页面能往右滑、按钮只露一半」）。hero（含骨架屏）去掉负 margin、与推荐行同基线内缩；`.page-body` 显式 `overflow-x:hidden` 兜底。CDP 实测 page-body `scrollWidth==clientWidth`、canScrollX=0、箭头 right=1400 完整可见。（推荐行最右半露一张是横向轮播正常表现，非页面溢出。）
+
 - **python 爬虫实例常驻复用：修复有状态直播「直播[py]」并提速**：`pyspider.run` 原每次调用起一个新 pyrun 子进程，既让每次付解释器/import/源码重编译/`new Spider` 冷启动（py 源卡顿主因），又无法承载有状态爬虫——`live_mode=proxy` 的央视频 yangshipin 把滚动 `seq→真URL` 窗口存在实例内存（其 `getCache/setCache` 是返回 None/"fail" 的桩，不落盘），清单调用建的窗口在分片那次新进程里是空的 → 分片恒回 503「切片已过期」，当前进程模型下结构性不可能播通。改为在常驻桥进程内维护 `{fingerprint(className,source,ext) → Spider 实例}` 池、逐帧派发到常驻实例（对齐 FongMi 单例）。收口：按实例加锁串行化同源调用（跨源仍并发）、空闲 TTL 驱逐 + 数量上限、源码/ext 变更换 key 重建、崩溃/挂死靠宿主超时 + `bridge.rs` respawn 兜底、补回 `json_safe` dropped 的 `unsafe_result` 日志。离线实测同源连续两次 proxy 命中同一实例、窗口 segs 跨调用单调增长（旧模型每次空窗口立刻过期），机制确证；`check.py` 9/9 全绿。实时 UI 端到端出画待 cctv 对本机 IP 限流冷却后复测。
 
 - **直播「爬虫自带代理」(localProxy) 回调对齐 TVBox/FongMi**：央视频 yangshipin（`py_yangshipin`，首页选择器里的「直播[py]」）这类 `live_mode=proxy` 的 python 爬虫，`play()` 不给直链，而是返回 `proxy?url=&type=m3u8&slug=cctv2` 让播放器回打宿主反代、再由爬虫自己的 `localProxy()` 现拉滚动直播列表。Luma 此前有两处不兼容：① `handle_proxy` 只在 URL 带 `do=` 时才回调爬虫，而这种爬虫的基址来自 `getProxyUrl()`（Luma 返回 `?url=` 而非 FongMi 的 `?do=py`），拼出的 URL 没有 `do=`、`url=` 又空 → 被当普通直连 `Url::parse("")` → 400；② 基类 `spider.py::proxy()` 是返回 404 的桩、不委派 `localProxy()`，而社区爬虫只实现 `localProxy`。修复：`handle_proxy` 对「`url=` 为空且带其它参数」的请求路由到爬虫 proxy 回调（正常分片/清单恒带非空 `url=`，不受影响）；基类 `proxy(params)` 委派 `self.localProxy(params)`（直接覆写 `proxy` 的爬虫不受影响，两者都不实现的仍回 404 桩）。实测该频道经反代首拉从 400 变为 `200 #EXTM3U` 滚动直播列表。`tests/offline/py_base_spider_check.py` 加「proxy 委派 localProxy」回归。
