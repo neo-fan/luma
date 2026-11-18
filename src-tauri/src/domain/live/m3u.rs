@@ -161,6 +161,10 @@ pub(crate) fn parse(raw: &str, source: &str) -> Value {
 
     let mut pending: Option<Entry> = None;
     let mut current_group = DEFAULT_GROUP.to_string();
+    // TVBox `ParseM3u8` 认 `#EXTGRP:<组名>` 独立行（gambiarras 等源用它给整段
+    // 频道分组，298 处）：它给「下一条频道」定组，可能出现在 `#EXTINF` 之前或之后。
+    // 记住最近一条 EXTGRP，EXTINF 没写 `group-title` 时用它兜底。
+    let mut extgrp: Option<String> = None;
     // 连续多条 URL 共用上一条 `#EXTINF`：TVBox 的 txt/m3u 列表几乎都是这个写法
     // （一个台名后面跟 N 条线路），必须并进同一个频道，否则会变成 N 个同名频道。
     let mut last_key: Option<(String, String)> = None;
@@ -171,9 +175,29 @@ pub(crate) fn parse(raw: &str, source: &str) -> Value {
             continue;
         }
         if text.starts_with("#EXTINF") {
-            let entry = parse_extinf(text);
+            let mut entry = parse_extinf(text);
+            // EXTINF 没写 group-title 时，用最近一条 `#EXTGRP` 兜底（EXTGRP 在前的写法）。
+            if entry.group == DEFAULT_GROUP {
+                if let Some(g) = &extgrp {
+                    entry.group = g.clone();
+                }
+            }
             current_group = entry.group.clone();
             pending = Some(entry);
+            continue;
+        }
+        if let Some(rest) = text.strip_prefix("#EXTGRP") {
+            let g = rest.trim_start_matches(':').trim();
+            if !g.is_empty() {
+                extgrp = Some(g.to_string());
+                // EXTGRP 出现在 EXTINF 之后、URL 之前：给已挂起的频道补上分组。
+                if let Some(entry) = pending.as_mut() {
+                    if entry.group == DEFAULT_GROUP {
+                        entry.group = g.to_string();
+                        current_group = g.to_string();
+                    }
+                }
+            }
             continue;
         }
         if text.starts_with('#') {
@@ -290,6 +314,38 @@ mod tests {
         let raw = "#EXTINF:-1,无分组\nhttp://a/1.m3u8\n";
         let parsed = parse(raw, "");
         assert_eq!(parsed["groups"][0]["name"], "未分组");
+    }
+
+    #[test]
+    fn extgrp_after_extinf_groups_the_channel() {
+        // gambiarras 常见写法：#EXTINF 不带 group-title，#EXTGRP 紧跟其后。
+        let raw = "#EXTINF:-1,CCTV1\n#EXTGRP:央视\nhttp://a/1.m3u8\n";
+        let parsed = parse(raw, "");
+        assert_eq!(parsed["groups"][0]["name"], "央视");
+        assert_eq!(parsed["groups"][0]["channels"][0]["name"], "CCTV1");
+    }
+
+    #[test]
+    fn extgrp_before_extinf_applies_to_next_channel() {
+        let raw = "#EXTGRP:卫视\n#EXTINF:-1,江苏卫视\nhttp://a/1.m3u8\n";
+        let parsed = parse(raw, "");
+        assert_eq!(parsed["groups"][0]["name"], "卫视");
+    }
+
+    #[test]
+    fn extinf_group_title_wins_over_extgrp() {
+        let raw = "#EXTGRP:旧组\n#EXTINF:-1 group-title=\"新组\",CCTV1\n#EXTGRP:被忽略\nhttp://a/1.m3u8\n";
+        let parsed = parse(raw, "");
+        assert_eq!(parsed["groups"][0]["name"], "新组");
+    }
+
+    #[test]
+    fn extgrp_persists_until_next_marker() {
+        // 一条 #EXTGRP 覆盖随后多条无 group-title 的频道。
+        let raw = "#EXTINF:-1,台1\n#EXTGRP:组A\nhttp://a/1.m3u8\n#EXTINF:-1,台2\nhttp://a/2.m3u8\n";
+        let parsed = parse(raw, "");
+        assert_eq!(parsed["groups"][0]["name"], "组A");
+        assert_eq!(parsed["groups"][0]["channels"].as_array().unwrap().len(), 2);
     }
 
     #[test]
