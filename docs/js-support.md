@@ -98,8 +98,8 @@ TVBox 标准方法名（长名）与 JS0 / drpy2 源里常用的短名并存。�
 ## 2. 随包 JS 依赖资源清单
 
 数据源：`sidecars/qjs-assets/manifest.json`（入库源码资源，`tools/prepare_runtime.py`
-的 `step_qjs_assets()` 只做只读校验，不联网下载、不可由脚本重建）。8 个文件合计
-**929,905 B（约 0.89 MB）**。
+的 `step_qjs_assets()` 只做只读校验，不联网下载、不可由脚本重建）。下表 8 个 lib 文件合计
+**874,714 B（约 0.83 MB）**（不含引擎本体 `drpy2.min.js` 67,385 B）。
 
 | 本地文件名（js/lib/） | 上游路径 | 字节数 | SHA256（前 16 位） | 用途 |
 |------------------------|----------|-------:|--------------------|------|
@@ -107,7 +107,7 @@ TVBox 标准方法名（长名）与 JS0 / drpy2 源里常用的短名并存。�
 | `crypto-js.js` | `lib/crypto-js.js` | 204310 | `731c9606953ddedd` | drpy2 与聚合短剧的 CryptoJS 副作用导入 |
 | `node-rsa.js` | `lib/node-rsa.js` | 167481 | `b2e1d9c402ce06c1` | drpy2 `./node-rsa.js`，RSA / JSEncrypt 全局 |
 | `pako.min.js` | `lib/pako.min.js` | 46859 | `7b7a3b8db4d7b658` | drpy2 `./pako.min.js`，inflate / deflate |
-| `gbk.js` | `lib/gbk.js` | 56313 | `28097cea4538c346` | drpy2 `./gbk.js`，`export gbkTool` |
+| `gbk.js` | （Luma 自研封装，非上游抓取）| 1122 | `a8b52a474b7099aa` | drpy2 `./gbk.js`，`export gbkTool`；委托宿主 `encoding_rs::GBK` |
 | `json5.js` | `lib/json5.js` | 60431 | `1b3d54f76b910664` | drpy2 `./json5.js` 副作用导入 |
 | `jinja.js` | `lib/jinja.js` | 22706 | `6cf1781f0c322062` | drpy2 `./jinja.js` 副作用导入 |
 | `template.js` | `js/template.js` | 15217 | `60bc13ee04302db0` | drpy2 `./template.js`（仓库 `lib/` 下无此文件，需重写） |
@@ -140,8 +140,9 @@ https://raw.githubusercontent.com/cluntop/tvbox/a08e4fe8f3e6c74ad8185f2ba3eef1a0
 https://codeload.github.com/cluntop/tvbox/zip/a08e4fe8f3e6c74ad8185f2ba3eef1a0c3d48bf8
 ```
 
-资源缺失时请**重新运行资源下载脚本**，按上面固定 commit 把 8 个文件抓回
-`sidecars/qjs-assets/js/lib/`，并核对 `sidecars/qjs-assets/manifest.json` 的字节数与 SHA256；
+资源缺失时请**重新运行资源下载脚本**，按上面固定 commit 把 7 个上游 lib 文件抓回
+`sidecars/qjs-assets/js/lib/`（`gbk.js` 除外——它是 Luma 自研 `encoding_rs` 封装、不来自上游），
+并核对 `sidecars/qjs-assets/manifest.json` 的字节数与 SHA256；
 `python tools/prepare_runtime.py --check` 会做同样的只读体检。
 
 ---
