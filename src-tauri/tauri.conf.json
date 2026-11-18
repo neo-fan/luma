@@ -42,6 +42,8 @@
     "shortDescription": "TVBox 配置兼容桌面客户端",
     "longDescription": "Luma 是 TVBox 配置的桌面播放客户端，支持 CMS / Python / JS 源、直播与本地 ArtPlayer 播放。",
     "publisher": "Luma",
+    "license": "GPL-3.0-or-later",
+    "copyright": "Copyright © 2026 Luma contributors",
     "category": "Utility",
     "windows": {
       "nsis": {

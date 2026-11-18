@@ -38,7 +38,7 @@ luma/
 ├── AGENTS.md                              # 给 AI 协作者/维护者的当前规范（≤ 20 KB）
 ├── README.md                              # 对外说明（免责声明/功能/构建/使用/已知限制）
 ├── CHANGELOG.md                           # 版本变更日志（每次发版更新）
-├── LICENSE                                # 许可证（当前为占位符，见文件内说明）
+├── LICENSE                                # 许可证（GPL-3.0-or-later 全文）
 ├── CONTRIBUTING.md                        # 贡献流程与代码约定
 ├── SECURITY.md                            # 安全模型与漏洞报告
 ├── THIRD-PARTY-NOTICES.md                 # 随仓库分发的第三方组件与许可

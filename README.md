@@ -184,6 +184,29 @@ docs/               架构 · 开发 · 维护 · 发布 · 目录约定 · JS �
 
 ## 许可证
 
-**尚未选定**（当前 All rights reserved）。详见 [LICENSE](LICENSE)。
-在正式许可证写入前，本仓库不授予复制、分发、修改或再许可的权利。
-仓库内第三方组件的授权见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)，其中 `drpy2.min.js` / `template.js` 的上游未声明许可证，仍在确认中。
+本仓库以 **GPL-3.0-or-later** 发布，完整文本见 [LICENSE](LICENSE)。
+
+选择 GPL-3.0 的直接原因：随包 JS 引擎运行时 `drpy2.min.js` 来自上游
+`hjdhnx/drpy-node` / `dr_py`，其许可为 (L)GPL-3.0。内置分发这份 copyleft
+运行时，就要求整体在 GPL-3.0 兼容条款下再分发；其余 Rust / npm 依赖
+（MIT / ISC / Apache-2.0）均与 GPL-3.0 兼容。各第三方组件的来源与许可见
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+
+```
+Luma - A Windows TVBox-compatible desktop media player
+Copyright (C) 2026 Luma contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+```
+
+本工具只是播放器外壳，**不内置任何片源或影视内容**；你在「源设置」里填写的
+地址与由这些源播放出的内容均由使用者自行负责，请仅接入你有权访问的接口，并
+遵守当地法律法规与源站服务条款。

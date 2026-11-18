@@ -1,6 +1,7 @@
 # 第三方组件与许可（THIRD-PARTY-NOTICES）
 
-> 本仓库**自己的代码**的许可见 `LICENSE`（当前为占位符，All rights reserved）。
+> 本仓库**自己的代码**以 **GPL-3.0-or-later** 发布，全文见 `LICENSE`。
+> 选此 copyleft 许可的直接原因见下文 §1：随包 JS 引擎运行时 `drpy2.min.js` 的上游是 (L)GPL-3.0。
 > 本文件只记录**随仓库分发的第三方内容**的来源、校验值与授权状态。
 
 ## 1. `sidecars/qjs-assets/`（随包 JS 运行库）
@@ -19,19 +20,23 @@
 | `jinja.js` | `lib/jinja.js` | 22,706 | **未声明**（上游未给出许可证与来源） |
 | `gbk.js` | `lib/gbk.js` | 56,313 | **未声明**（上游未给出许可证与来源） |
 | `template.js` | `js/template.js` | 15,217 | **未声明**，且上游仓库该路径已不可达（我们按固定提交留档） |
-| `drpy2.min.js` | `lib/drpy2.min.js` | 67,385 | **未声明**；这是第三方 TVBox JS 引擎本体 |
+| `drpy2.min.js` | `lib/drpy2.min.js` | 67,385 | **(L)GPL-3.0**——TVBox JS 蜘蛛引擎本体，上游 `hjdhnx/drpy-node`（GPL-3.0）/ `dr_py`（LGPL-3.0）；此即本仓库选 GPL-3.0 的原因 |
 
 ### 已知风险与处理
 
-1. **`drpy2.min.js` / `template.js` / `gbk.js` / `jinja.js` 授权不明。** 这四个文件
-   在上游仓库中没有许可证声明，法律上默认「保留所有权利」。当前保留它们只为
-   兼容真实配置所需（离线兜底），**不代表我们对其再分发有授权**。
-   如果权利方提出异议，会在下一个版本移除，改为「首次使用时由用户自行下载」。
-2. **MIT 组件缺少版权头。** `cheerio` / `crypto-js` / `node-rsa` / `pako` / `json5`
+1. **`drpy2.min.js` = (L)GPL-3.0，本仓库据此整体以 GPL-3.0 发布。** 该 JS 蜘蛛引擎
+   运行时上游为 `hjdhnx/drpy-node`（GPL-3.0）/ `dr_py`（LGPL-3.0）。随包内置分发这份
+   copyleft 运行时，要求 Luma 的整体再分发在 GPL-3.0 兼容条款下进行（见 `LICENSE`）。
+2. **`template.js` / `gbk.js` / `jinja.js` 授权仍不明。** 这三个文件在随包的上游仓库
+   快照里没有独立许可证声明，法律上默认「保留所有权利」。当前保留只为兼容真实配置所需
+   （离线兜底），**不代表我们对其再分发有明确授权**；如果权利方提出异议，会在下一个
+   版本移除，改为「首次使用时由用户自行下载」。
+3. **MIT 组件缺少版权头。** `cheerio` / `crypto-js` / `node-rsa` / `pako` / `json5`
    的压缩产物被上游去掉了许可证注释。按 MIT 要求，再分发应保留版权与许可声明，
    因此这里以「组件名 + 上游 URL + 许可证类型」的形式补充声明；正式发布前建议
    从各项目仓库取回 LICENSE 原文一并附上。
-3. **这些文件不是本项目的代码**，不适用 `LICENSE`；对它们的使用风险由使用者承担。
+4. 除已归入 GPL-3.0 的 `drpy2.min.js` 外，其余第三方文件均**不是本项目的代码**，
+   其使用与再分发风险由使用者自担。
 
 ## 2. Rust 依赖（`src-tauri/Cargo.lock`、`sidecars/qjs-runner/Cargo.lock`）
 

@@ -1,7 +1,8 @@
 [package]
 name = "qjs-runner"
 version = "0.1.0"
-description = "QuickJS sidecar for TVBox desktop JS spiders (spec 7.3 / T-16)"
+license = "GPL-3.0-or-later"
+description = "QuickJS sidecar runner for TVBox-compatible desktop JS spiders"
 edition = "2021"
 
 [[bin]]
