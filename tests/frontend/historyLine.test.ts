@@ -63,10 +63,13 @@ describe("player favourites & history line contract", () => {
   });
 
   it("carries the cover and site name into history and favourites", () => {
+    // 历史条目装配（封面/备注/站点名/倍速/片头片尾）在 usePlaybackHistory；
+    // 收藏补封面仍在播放页。
+    const historyHook = read("src/hooks/usePlaybackHistory.ts");
+    expect(historyHook).toContain("pic: historyMetaRef.current.pic");
+    expect(historyHook).toContain("remarks: historyMetaRef.current.remarks");
+    expect(historyHook).toContain("siteName: historyMetaRef.current.siteName");
     const page = read("src/pages/PlayerPage.tsx");
-    expect(page).toContain("pic: historyMetaRef.current.pic");
-    expect(page).toContain("remarks: historyMetaRef.current.remarks");
-    expect(page).toContain("siteName: historyMetaRef.current.siteName");
     // 详情没到就点收藏时，等详情回来补一次元数据。
     expect(page).toContain("api.favoritesPatchMeta(toVodRef(activeSiteKey, activeSiteName, vod))");
   });
@@ -80,9 +83,12 @@ describe("player favourites & history line contract", () => {
   });
 
   it("writes the current line and episode into history", () => {
+    // 写回装配在 usePlaybackHistory；「当前线路/集名」的取值仍在播放页
+    // （historyLabelRef 的赋值处）。
+    const historyHook = read("src/hooks/usePlaybackHistory.ts");
+    expect(historyHook).toContain("episodeName: historyLabelRef.current.episodeName");
+    expect(historyHook).toContain("playFrom: historyLabelRef.current.playFrom");
     const page = read("src/pages/PlayerPage.tsx");
-    expect(page).toContain("episodeName: historyLabelRef.current.episodeName");
-    expect(page).toContain("playFrom: historyLabelRef.current.playFrom");
     // 自动换线路时 navigate 不带 playFrom，必须优先取当前线路名。
     expect(page).toContain("activeLine?.name || playFrom");
     expect(page).toContain("activeEpisodeName");

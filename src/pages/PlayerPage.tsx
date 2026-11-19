@@ -35,13 +35,11 @@ import {
   ledgerMarkUrl,
   ledgerReset,
   ledgerSiteSeen,
-  ledgerSuccess,
   markAutoNav,
 } from "../lib/failoverLedger";
 import {
   resolutionBadge,
   resolutionDetail,
-  resolutionFromVideo,
 } from "../lib/resolution";
 import type { VideoMeta } from "../lib/resolution";
 
@@ -52,16 +50,15 @@ import type { SourceOption } from "../lib/sources";
 import { api, errorMessage } from "../lib/invoke";
 import { fetchDoubanMeta } from "../lib/douban";
 import type { DoubanMeta } from "../lib/douban";
-import type { HistoryItem, PlayResolved, ResultPage, Site, VodInfo } from "../types/luma";
+import type { PlayResolved, ResultPage, Site, VodInfo } from "../types/luma";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { usePlaybackIndicator } from "../hooks/usePlaybackIndicator";
+import { usePlaybackHistory } from "../hooks/usePlaybackHistory";
 import { useEpisodeList } from "../hooks/useEpisodeList";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
 import type { EpisodeNavControl } from "../hooks/usePlayerEngine";
 import type { SkipWindowState } from "../hooks/usePlayerEngine";
 import {
-  parseSkipConfig,
-  serializeSkipConfig,
   formatSkipSummary,
   introMs,
   type SkipSegment,
@@ -241,85 +238,10 @@ export default function PlayerPage({
    * 参数是旧的，播放 fatal 要按这份身份作废解析缓存，否则作废的是上一集。
    */
   const playingEpisodeRef = useRef({ siteKey, playFrom, url: playUrl });
-  /**
-   * 立即写一次历史的通道。切集 / 换源会用 navigate 重建本页，若只靠 5 秒
-   * 节流，切换瞬间的进度可能丢；history effect 把 write 挂到这里，
-   * goToEpisode / pickSource / 自动换线跳转前先 flush 一次。
-   */
-  /**
-   * 这部剧记忆的倍速（0 = 从没设过，播放侧按 1.0 起播）。
-   *
-   * 由 history 查询异步填、由内核的倍速变更回调更新。用 ref 不用 state：
-   * 它不该触发整页重渲染，更不能进播放内核 effect 的依赖（会重建实例）。
-   */
-  const rememberedRateRef = useRef(0);
-  const readRememberedRate = useCallback(() => rememberedRateRef.current, []);
-  /**
-   * 这部剧的片头/片尾跳过配置。同倍速：ref 承载（不触发重渲染、不进内核依赖），
-   * 由 history 查询异步填、由配置 UI 更新。
-   */
-  const rememberedSkipRef = useRef<SkipSegment[]>([]);
-  const readRememberedSkip = useCallback(() => rememberedSkipRef.current, []);
   /** 跳过窗口态：驱动「跳过片头/片尾」浮层按钮的显隐。 */
   const [skipState, setSkipState] = useState<SkipWindowState | null>(null);
-  /** 配置镜像 state：ref 供引擎懒读不触发重渲染，state 供浮层编辑器受控显示。 */
-  const [skipConfig, setSkipConfig] = useState<SkipSegment[]>([]);
   /** 自定义「片头/片尾」配置弹窗开关（入口在 ArtPlayer 原生齿轮那一行）。 */
   const [skipSettingsOpen, setSkipSettingsOpen] = useState(false);
-  const flushHistoryRef = useRef<(() => void) | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const history = await api.historyList();
-        // 历史按「剧名完全匹配」去重，一部剧只留一条（换源后 siteKey/vodId
-        // 会变）。因此续播先按剧名定位，再确认记录的仍是同一集：同集才跳进度，
-        // 换集时不该把上一集的进度套到新集上。
-        const title = vodName.trim();
-        const hit = title
-          ? history.find((item) => item.name?.trim() === title)
-          : undefined;
-        // 倍速与续播互不牵连：进度太靠前、已经看完、换到别的集，都不该让人
-        // 顺手丢掉这部剧的倍速，所以要在续播那些提前返回之前先摘出来。
-        if (hit?.rate) {
-          rememberedRateRef.current = hit.rate;
-        }
-        // 片头/片尾配置与倍速同性质：按剧记忆，续播那些提前返回之前先摘出来。
-        if (hit?.skipJson) {
-          const segs = parseSkipConfig(hit.skipJson);
-          rememberedSkipRef.current = segs;
-          setSkipConfig(segs);
-        }
-        const sameEpisode =
-          hit?.playUrl === playUrl ||
-          Boolean(hit?.episodeName && hit.episodeName === episodeName);
-        if (
-          !alive ||
-          !hit?.positionMs ||
-          hit.positionMs <= 3000 ||
-          !sameEpisode
-        ) {
-          return;
-        }
-        // 刷新路径已写入更准确的当前进度，别被异步到达的历史覆盖。
-        if (resumeMsRef.current !== 0) {
-          return;
-        }
-        const video = videoRef.current;
-        if (video && video.readyState >= 1 && video.currentTime < 1) {
-          // 历史比 loadedmetadata 晚到：内核已消费过 ref，这里直接补跳。
-          video.currentTime = hit.positionMs / 1000;
-        } else {
-          resumeMsRef.current = hit.positionMs;
-        }
-      } catch {
-        // 历史读不到就从头播，不打断播放。
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [siteKey, vodId, playUrl, vodName, episodeName]);
 
   /** 控制栏「刷新」回调：ref 转发，避免它进播放内核的依赖导致实例重建。 */
   const reloadRef = useRef<(() => void) | null>(null);
@@ -524,6 +446,32 @@ export default function PlayerPage({
     remarks: vod?.vod_remarks?.trim() || "",
     siteName: activeSiteName || "",
   };
+  // 历史数据层（续播/倍速/片头片尾记忆 + 5 秒节流写回）：搬至 usePlaybackHistory。
+  const {
+    readRememberedRate,
+    readRememberedSkip,
+    rememberedRateRef,
+    rememberedSkipRef,
+    flushHistoryRef,
+    skipConfig,
+    setSkipConfig,
+  } = usePlaybackHistory({
+    siteKey,
+    vodId,
+    vodName,
+    episodeName,
+    playUrl,
+    ledgerKey,
+    videoRef,
+    resolved,
+    activeSiteKey,
+    activeVodId,
+    activeVodName,
+    resumeMsRef,
+    lastMediaRef,
+    historyMetaRef,
+    historyLabelRef,
+  });
 
   /**
    * 详情没到就点了收藏 → 当时只能存空封面。等详情到达后补一次元数据，
@@ -1149,105 +1097,6 @@ export default function PlayerPage({
     setVideoMeta({ width: 0, height: 0 });
   }, [resolved]);
 
-  // 播放进度 → 历史记录（5 秒节流，播放/暂停立即写）。
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !resolved) {
-      return;
-    }
-
-    let lastWrite = 0;
-    /**
-     * 本次播放已确认的分辨率。
-     *
-     * 直接从当前 `<video>` 读解码尺寸：切集瞬间 `videoWidth` 会变回 0，这一
-     * 帧写入的历史若带上空串就会把上一条记录的分辨率抹掉（后端也做了同样的
-     * 空值保护），所以再留一份最近值兜底。
-     */
-    let knownResolution = resolutionFromVideo(video);
-    /** 卸载时 ArtPlayer 已清掉 src，最后一次写入用快照，不重读 currentTime。 */
-    const write = async (
-      force: boolean,
-      snapshot?: { positionMs: number; durationMs?: number },
-    ) => {
-      const now = Date.now();
-      if (!force && now - lastWrite < 5000) {
-        return;
-      }
-      lastWrite = now;
-      knownResolution = resolutionFromVideo(video) || knownResolution;
-      const item: HistoryItem = {
-        siteKey: activeSiteKey,
-        vodId: activeVodId,
-        name: activeVodName,
-        pic: historyMetaRef.current.pic,
-        remarks: historyMetaRef.current.remarks,
-        siteName: historyMetaRef.current.siteName,
-        playUrl,
-        episodeName: historyLabelRef.current.episodeName,
-        playFrom: historyLabelRef.current.playFrom,
-        resolution: knownResolution,
-        // 0 = 这次写入没带倍速，宿主侧不会覆盖库里已有的值。
-        rate: rememberedRateRef.current,
-        // 片头/片尾配置随这部剧写回（后端跨源继承，见 db/history.rs）。
-        skipJson: serializeSkipConfig(rememberedSkipRef.current),
-        positionMs:
-          snapshot?.positionMs ?? Math.round(video.currentTime * 1000),
-        durationMs:
-          snapshot?.durationMs ??
-          (Number.isFinite(video.duration)
-            ? Math.round(video.duration * 1000)
-            : undefined),
-        updatedAt: now,
-      };
-      try {
-        await api.historyUpsert(item);
-      } catch {
-        // 历史写入失败不应打断播放。
-      }
-    };
-
-    flushHistoryRef.current = () => {
-      void write(true);
-    };
-
-    const onPlay = () => {
-      void write(true);
-    };
-    const onPause = () => {
-      void write(true);
-    };
-    const onTimeUpdate = () => {
-      // 顶部时间标签已移除（播放器控制栏自带进度），这里只维护卸载用的
-      // 进度快照并节流写历史，不再触发每秒一次的整页重渲染。
-      lastMediaRef.current.positionMs = Math.round(video.currentTime * 1000);
-      if (Number.isFinite(video.duration)) {
-        lastMediaRef.current.durationMs = Math.round(video.duration * 1000);
-      }
-      void write(false);
-    };
-    const onMeta = () => {
-      // loadedmetadata = 媒体真正可解码，本线路确认可播：连续失败链中断，
-      // 自动换线跳转预算恢复满额（failoverLedger 的「连续失败」语义）。
-      ledgerSuccess(ledgerKey);
-      if (Number.isFinite(video.duration)) {
-        lastMediaRef.current.durationMs = Math.round(video.duration * 1000);
-      }
-    };
-
-    video.addEventListener("play", onPlay);
-    video.addEventListener("pause", onPause);
-    video.addEventListener("timeupdate", onTimeUpdate);
-    video.addEventListener("loadedmetadata", onMeta);
-
-    return () => {
-      video.removeEventListener("play", onPlay);
-      video.removeEventListener("pause", onPause);
-      video.removeEventListener("timeupdate", onTimeUpdate);
-      video.removeEventListener("loadedmetadata", onMeta);
-      void write(true, lastMediaRef.current);
-    };
-  }, [resolved, activeSiteKey, activeVodId, activeVodName, playUrl, ledgerKey]);
 
   /**
    * 看完一集自动接下一集：连看时不必每集回来点按钮。
