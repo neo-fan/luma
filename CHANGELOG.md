@@ -8,6 +8,8 @@
 
 ### 修复
 
+- **收藏 / 历史播放数据统一（单源解析 `lib/playbackTarget.ts`）**：历史按剧名跨源合并、记「最后看的源」，收藏只记当初收藏那个源的 siteKey/vodId——同一部剧从收藏进落在收藏时的旧源、从历史进落在最后看的源，线路与进度对不上。现在两个入口的导航都经 `detailTargetFor`（按剧名、用与收藏同一套 `sameTitle` 规则）解析到那条历史记录：**某剧的播放数据以历史为准**，从没看过才用条目自身。端到端实测：同名剧历史记在 A 源、收藏记在 B 源，从收藏页点播放实际导航到 A 源详情（`#/detail/金鹰/999999`），清场后无残留。
+
 - **直播 m3u 解析 `#EXTGRP` 独立行分组（对齐 TVBox `ParseM3u8`）**：此前只认 `#EXTINF group-title`、把其它 `#` 行一律跳过，gambiarras 等源（现网实测 298 处 `#EXTGRP`）用 `#EXTGRP:<组名>` 独立行分组 → 频道全落「未分组」。加 `#EXTGRP` 处理：记住最近 EXTGRP 组名，EXTINF 没写 group-title 时兜底，兼容 EXTGRP 在 EXTINF 前/后两种写法（显式 group-title 仍优先）。实测 gambiarras 从「全落未分组」变 26 个具名分组（299 频道），`live::m3u` 15 测全过。
 
 - **首页横向可滑动 / hero「下一张」箭头被右缘裁切**：`.page-body` 是竖向滚动容器（`overflow-y:auto` 按 CSS 规范把 `overflow-x` 强制成 `auto`），而 hero 用负 margin 全出血撑宽内容框 → 那 36px 溢出变成可横向滚动区，箭头落进裁剪区外（表现为「页面能往右滑、按钮只露一半」）。hero（含骨架屏）去掉负 margin、与推荐行同基线内缩；`.page-body` 显式 `overflow-x:hidden` 兜底。CDP 实测 page-body `scrollWidth==clientWidth`、canScrollX=0、箭头 right=1400 完整可见。（推荐行最右半露一张是横向轮播正常表现，非页面溢出。）

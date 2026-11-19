@@ -10,6 +10,7 @@ import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { historyCoverMeta, historySubtitle } from "../lib/history";
+import { detailTargetFor } from "../lib/playbackTarget";
 import { log } from "../lib/logger";
 import { usePageState } from "../lib/usePageState";
 import type { HistoryItem } from "../types/luma";
@@ -193,14 +194,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
                     label={
                       watched > 0 ? `继续播放（已看 ${watched}%）` : "播放"
                     }
-                    onPlay={() =>
-                      navigate({
-                        name: "detail",
-                        siteKey: item.siteKey,
-                        vodId: item.vodId,
-                        title: item.name,
-                      })
-                    }
+                    onPlay={() => navigate(detailTargetFor(item, items))}
                   />
                   <VodCard
                     title={item.name}
@@ -210,14 +204,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
                     coverMeta={meta}
                     hint={historySubtitle(item)}
                     doubanTitle={item.name}
-                    onOpen={() =>
-                      navigate({
-                        name: "detail",
-                        siteKey: item.siteKey,
-                        vodId: item.vodId,
-                        title: item.name,
-                      })
-                    }
+                    onOpen={() => navigate(detailTargetFor(item, items))}
                   />
                   <button
                     type="button"

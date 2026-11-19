@@ -7,6 +7,7 @@ import PlayButton from "../components/PlayButton";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
+import { detailTargetFor } from "../lib/playbackTarget";
 import { usePageState } from "../lib/usePageState";
 import { sameTitle } from "../lib/format";
 import { notify } from "../lib/notify";
@@ -28,6 +29,11 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
    * 才拿得到的事实。历史里既然存了，就在这里联查一次，收藏条目才显示角标。
    */
   const [resolutions, setResolutions] = useState<Record<string, string>>({});
+  /**
+   * 历史行列表：收藏只是书签，进哪条源 / 看到哪集要以**历史**为准。两入口共用
+   * `detailTargetFor` 解析，收藏落后于历史时也跟着最后看的源走，进度才一致。
+   */
+  const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
@@ -48,6 +54,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
         ]);
         if (alive) {
           setItems(list);
+          setHistoryRows(history);
           setResolutions(
             history.reduce<Record<string, string>>((acc, one) => {
               if (one.resolution) {
@@ -165,14 +172,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
               <div className="fav-item" key={`${item.siteKey}-${item.vodId}`}>
                 <PlayButton
                   label="播放"
-                  onPlay={() =>
-                    navigate({
-                      name: "detail",
-                      siteKey: item.siteKey,
-                      vodId: item.vodId,
-                      title: item.name,
-                    })
-                  }
+                  onPlay={() => navigate(detailTargetFor(item, historyRows))}
                 />
                 <VodCard
                   title={item.name}
@@ -181,14 +181,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
                   resolution={resolutions[`${item.siteKey}:${item.vodId}`]}
                   sub={item.siteName}
                   doubanTitle={item.name}
-                  onOpen={() =>
-                    navigate({
-                      name: "detail",
-                      siteKey: item.siteKey,
-                      vodId: item.vodId,
-                      title: item.name,
-                    })
-                  }
+                  onOpen={() => navigate(detailTargetFor(item, historyRows))}
                 />
                 {/* 已收藏用实心金星表示，点它即取消——和详情页那颗星是同一套语言，
                   比一个「×」更能说明「这条已经在收藏里」。 */}
