@@ -18,7 +18,7 @@ Luma 是 Windows 11 x64 的配置兼容播放框架（空壳框架，兼容 TVBo
 |---|---|
 | 版本 | `2.0.0`（`package.json` 唯一来源；`tauri.conf.json` 直接指向它，`build.rs` 断言 Cargo 版本，`python tools/version_check.py` 一键核对） |
 | 交付物 | `src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe` |
-| 回归基线 | `python tools/check.py` 9/9；`pnpm test` 621（74 个文件）；`cargo test --lib` 256 passed / 2 ignored |
+| 回归基线 | `python tools/check.py` 11/11；`pnpm test` 621（74 个文件）；`cargo test --lib` 256 passed / 2 ignored；`qjs-runner` cargo test 7 passed |
 | 窗口探针 | `node tools/run_probes.mjs --list`（需要 debug 窗口 + CDP 9222） |
 | 发布状态 | `LICENSE` 已定 **GPL-3.0-or-later**；仓库仍**无 remote、未 push**，是否正式发布由用户决定 |
 
@@ -82,7 +82,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 
 ```powershell
 # 离线回归（无窗口、无外网；改动的最低门槛）
-python tools/check.py                 # 9 项：契约 / 版本一致性 / py 兼容 / py 框架 / 适配层健壮性 / py 语法 / 前端单测 / cargo test / 运行时候检
+python tools/check.py                 # 11 项：契约 / 版本一致性 / py 兼容 / py 框架 / 适配层健壮性 / py 语法 / 前端单测 / cargo test / 运行时候检 / qjs-runner 单测 / qjs 引擎(GBK+ds)
 python tools/check.py --quick         # 跳过 cargo test
 python tools/check.py --full          # 追加 pnpm build
 python tools/check.py --ci            # 干净机器可跑的便携子集（CI job "checks"）

@@ -116,6 +116,11 @@
 - **从 `usePlayerEngine` 切出三块纯计算**（1480 → 1469 行，另加 8 条单测）：`lib/hlsBudget.ts`（hls.js 加载预算：清单/层级 20s、分片直播 20s / 点播 45s，以及为什么宁大不小）、`lib/mediaMeasure.ts` 的 `smoothBitrate`（实测码率 0.7/0.3 平滑 + 10% 抖动阈值）与 `hasMediaStopped`（直播 FLV EOF 后「画面到底停没停」的 0.2s 容差判据）。三块原先都埋在异步回调里，只能靠窗口探针间接验证；现在是可直接单测的纯函数，`hasMediaStopped` 的暂停/播放两条分支各钉了边界值。窗口复跑 `artplayer` / `flv` / `session_machine` / `live_audio` 全绿。
 - **清掉前端死代码与多余导出**：`navResetTo`、`pageStateSize`、`clearProxyBaseUrl`、`doubanProxyLabel`、`clearLiveGroups`、`version.BUILD_HASH` 六处无任何调用点（诊断数据里的 buildHash 来自 Rust 的 `env!("BUILD_HASH")`，前端那份是重复注入）；`STALL_TICK_MS` / `STALL_PROBE_TIMEOUT_MS` / `normalizeEpisodeName` / `readLiveSource` 收为模块私有。
 
+- **qjs 引擎回归固化为永久门禁（两层）**：本轮 gbk/ds 改动此前只有临时验证，开源后他人易静默回退，现落两层测试并入 `check.py`：
+  - **Layer 1（Rust 纯函数单测）**：`sidecars/qjs-runner/src/main.rs` 抽出 `gbk_encode` / `gbk_decode` 为可测函数（委托 `encoding_rs::GBK`），`#[cfg(test)] mod gbk_tests` 7 条钉死已知 GBK 字节（你=C4E3、好=BAC3、中文=D6D0CEEC）、ASCII/全角/字面 `%` 混合往返、畸形 `%` 容错不 panic。注册为 `check.py` 的 `qjs-runner unit tests`。
+  - **Layer 2（驱动 sidecar 二进制的离线校验）**：新增 `tests/offline/qjs_engine_check.py`（13 断言）跑 JSON 帧，锁 `gbkTool()` 模块往返、ds 真实现（`batchFetch` 等长数组 / `reqs` / `toBeijingTime` 东八区 / `jsonToCookie`↔`cookieToJson`）、16 个 ds STUBS 空兜底不 ReferenceError 中断整站。注册为 `check.py` 的 `qjs engine`（无网络：批 fetch 只断结构、真网络失败降级 N/A）。
+  - `check.py` 由 9 项升为 **11 项 ALL GREEN**；文档（AGENTS / CONTRIBUTING / DEVELOPMENT / TESTING / RELEASING / spec / project-layout）的「9 项 / 9/9」与回归计数一并刷新。
+
 ### 修复
 
 - **豆瓣缓存跨季串数据**：无年份时「庆余年 第一季 / 第二季」曾归一到同一缓存键，第二季会命中第一季的条目（缓存早于 `pick_candidate` 打分）。缓存键保留季标记后消除。

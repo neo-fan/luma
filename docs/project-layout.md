@@ -127,7 +127,7 @@ luma/
     ├── prepare_runtime.py                 # 重建 python-embed 等产物；含 Python 依赖安装 + .pth 修正
     ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
     ├── inspect_config.py                  # 离线解码配置（图种 / 方言），只读不发网络
-    ├── check.py                           # 离线一键回归（9 项门禁）
+    ├── check.py                           # 离线一键回归（11 项门禁）
     ├── run_probes.mjs                     # 窗口探针一键回归（唯一入口）
     ├── bundle_report.mjs                  # 前端体积对比
     ├── probes/                            # 窗口探针：probe_*.mjs（50 个，按功能命名）

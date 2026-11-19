@@ -34,7 +34,7 @@ corepack pnpm tauri build    # release：嵌前端 + 打包 NSIS（发版才用�
 ## 3. 提交前必须跑
 
 ```powershell
-python tools/check.py        # 9 项离线门禁：契约 / 版本一致性 / py 兼容 / py 框架 / py 语法 / 前端单测 / Rust 单测 / 运行时候检
+python tools/check.py        # 11 项离线门禁：契约 / 版本一致性 / py 兼容 / py 框架 / py 语法 / 前端单测 / Rust 单测 / 运行时候检 / qjs-runner 单测 / qjs 引擎(GBK+ds)
 ```
 
 `--quick` 跳过 Rust 单测、`--full` 追加 `pnpm build`、`--ci` 只跑干净机器能跑的便携子集。

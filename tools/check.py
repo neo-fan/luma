@@ -85,6 +85,8 @@ def checks(full: bool, quick: bool, ci: bool = False) -> list[tuple[str, list[st
             ("py base spider", [py, "tests/offline/py_base_spider_check.py"]),
             ("adapter robustness", [py, "tests/offline/adapter_isolation.py"]),
             ("runtime artifacts", [py, "tools/prepare_runtime.py", "--check"]),
+            ("qjs-runner unit tests", [CARGO, "test", "--manifest-path", "sidecars/qjs-runner/Cargo.toml"]),
+            ("qjs engine", [py, "tests/offline/qjs_engine_check.py"]),
         ]
     items += [
         ("python syntax", [py, "-c", SYNTAX_SNIPPET]),

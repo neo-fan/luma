@@ -738,32 +738,17 @@ fn install_host(ctx: &Ctx<'_>, request: &Request) -> Result<(), JsError> {
     )?;
 
     // GBK 编解码——委托 encoding_rs（MPL-2.0，已是本 sidecar 依赖），替代上游无出处、
-    // 自带压缩码表的 gbk.js。契约与旧 gbkTool 一致：
-    //   encode(str)：字符串 -> GBK 百分号串（ASCII 原样、高位 %XX 大写）；
-    //   decode(pct)：GBK 百分号串 -> 字符串。
+    // 自带压缩码表的 gbk.js。契约与旧 gbkTool 一致（见模块级 `gbk_encode` /
+    // `gbk_decode`，二者带单元测试，回归由 check.py 的 "qjs-runner unit tests" 锁定）：
+    //   encode：字符串 -> GBK 百分号串（ASCII 原样、高位 %XX 大写）；
+    //   decode：GBK 百分号串 -> 字符串。
     globals.set(
         "__luma_gbk_encode",
-        Function::new(ctx.clone(), |text: String| -> String {
-            let (bytes, _, _) = encoding_rs::GBK.encode(&text);
-            let mut out = String::with_capacity(bytes.len() + 3 * bytes.len() / 2);
-            for &b in bytes.iter() {
-                if b < 0x80 {
-                    out.push(b as char);
-                } else {
-                    out.push('%');
-                    out.push_str(&format!("{b:02X}"));
-                }
-            }
-            out
-        })?,
+        Function::new(ctx.clone(), |text: String| -> String { gbk_encode(&text) })?,
     )?;
     globals.set(
         "__luma_gbk_decode",
-        Function::new(ctx.clone(), |input: String| -> String {
-            let bytes = percent_decode_str(&input).collect::<Vec<u8>>();
-            let (cow, _, _) = encoding_rs::GBK.decode(&bytes);
-            cow.into_owned()
-        })?,
+        Function::new(ctx.clone(), |pct: String| -> String { gbk_decode(&pct) })?,
     )?;
 
     let headers = serde_json::to_string(&request.headers).unwrap_or_else(|_| "{}".to_string());
@@ -1164,5 +1149,94 @@ fn main() {
             let _ = writeln!(stdout, "{encoded}");
             let _ = stdout.flush();
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GBK 编解码（委托 encoding_rs::GBK，替代上游无出处的 gbk.js 压缩码表）
+// ---------------------------------------------------------------------------
+
+/// 字符串 -> GBK 百分号串：ASCII 字节原样，高位字节转 `%XX`（大写十六进制）。
+/// 与旧 `gbkTool().encode` 契约一致。
+fn gbk_encode(text: &str) -> String {
+    let (bytes, _, _) = encoding_rs::GBK.encode(text);
+    let mut out = String::with_capacity(bytes.len() + bytes.len() / 2);
+    for &b in bytes.iter() {
+        if b < 0x80 {
+            out.push(b as char);
+        } else {
+            out.push('%');
+            out.push_str(&format!("{b:02X}"));
+        }
+    }
+    out
+}
+
+/// GBK 百分号串 -> 字符串：先 percent-decode 成字节，再交 `encoding_rs::GBK` 解码。
+/// 与旧 `gbkTool().decode` 契约一致，对畸形 `%` 容忍（percent-encoding 原样保留）。
+fn gbk_decode(pct: &str) -> String {
+    let bytes = percent_decode_str(pct).collect::<Vec<u8>>();
+    let (cow, _, _) = encoding_rs::GBK.decode(&bytes);
+    cow.into_owned()
+}
+
+#[cfg(test)]
+mod gbk_tests {
+    use super::{gbk_decode, gbk_encode};
+
+    #[test]
+    fn ascii_passes_through_encode() {
+        // 纯 ASCII 不转义
+        assert_eq!(gbk_encode("abc123"), "abc123");
+    }
+
+    #[test]
+    fn encodes_known_gbk_multibyte() {
+        // GBK：你 = C4E3，好 = BAC3，中 = D6D0，文 = CEEC
+        assert_eq!(gbk_encode("你"), "%C4%E3");
+        assert_eq!(gbk_encode("你好"), "%C4%E3%BA%C3");
+        assert_eq!(gbk_encode("中文"), "%D6%D0%CE%C4");
+    }
+
+    #[test]
+    fn mixed_ascii_and_cjk_keeps_ascii_literal() {
+        assert_eq!(gbk_encode("A你B"), "A%C4%E3B");
+    }
+
+    #[test]
+    fn full_width_punctuation_roundtrips() {
+        let src = "【】《》";
+        let enc = gbk_encode(src);
+        assert!(enc.contains('%'), "全角应转义");
+        assert_eq!(gbk_decode(&enc), src);
+    }
+
+    #[test]
+    fn roundtrip_recovered() {
+        for src in [
+            "中文测试",
+            "50%数据",
+            "你每",
+            "全角【】和ASCII abc-123",
+            "GBK编码解码函数strTool",
+        ] {
+            assert_eq!(gbk_decode(&gbk_encode(src)), src, "往返应一致: {src}");
+        }
+    }
+
+    #[test]
+    fn decode_of_known_bytes() {
+        // 已知 GBK 字节串反查
+        assert_eq!(gbk_decode("%C4%E3"), "你");
+        assert_eq!(gbk_decode("%D6%D0%CE%C4"), "中文");
+        // 混合串：ASCII 原样 + 高位转义
+        assert_eq!(gbk_decode("abc%D6%D0"), "abc中");
+    }
+
+    #[test]
+    fn decode_tolerates_stray_percent() {
+        // 非法 % 序列（非两位十六进制）应原样保留，不应 panic
+        let out = std::panic::catch_unwind(|| gbk_decode("50%off"));
+        assert!(!out.is_err(), "畸形 % 不应 panic");
     }
 }
