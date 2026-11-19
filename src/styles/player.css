@@ -207,61 +207,101 @@
   right: 28px;
 }
 
-.skip-overlay__gear {
-  position: absolute;
-  top: 14px;
-  right: 16px;
-  z-index: 36;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(10, 12, 18, 0.5);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 16px;
+/* 「取当前播放时间」快捷按钮（自定义配置弹窗内，与秒数输入同一行）。 */
+.skip-overlay__capture {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel-sunken);
+  color: var(--text);
+  font-size: var(--fs-xs);
   cursor: pointer;
-  opacity: 0.7;
+  white-space: nowrap;
   transition:
-    opacity var(--dur) var(--ease),
-    background var(--dur) var(--ease);
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
 }
 
-.skip-overlay__gear:hover {
-  opacity: 1;
-  background: rgba(10, 12, 18, 0.75);
+.skip-overlay__capture:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.skip-overlay__capture:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .skip-overlay__panel {
   position: absolute;
-  top: 52px;
+  bottom: 96px;
   right: 16px;
   z-index: 37;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 220px;
-  padding: 14px;
+  width: 264px;
+  padding: 12px 14px 14px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: rgba(14, 16, 22, 0.92);
+  background: rgba(14, 16, 22, 0.94);
   backdrop-filter: blur(10px);
   color: var(--text);
+  /* 自定义弹窗是独立浮层（点齿轮行时原生面板已收起），入场与设置面板同一套语言。 */
+  animation: overlay-in var(--dur) var(--ease);
 }
 
-.skip-overlay__field {
+.skip-overlay__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+}
+
+.skip-overlay__title {
+  color: var(--text);
   font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.skip-overlay__dismiss {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.skip-overlay__dismiss:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* 标签 / 输入 / 取点按钮三列定宽网格：列宽固定后按钮文案再短也不横向溢出。 */
+.skip-overlay__field {
+  display: grid;
+  grid-template-columns: auto 64px auto;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-xs);
+}
+
+.skip-overlay__field label {
+  white-space: nowrap;
+  color: var(--text-soft);
 }
 
 .skip-overlay__field input {
-  width: 72px;
+  width: 64px;
   padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
@@ -548,36 +588,16 @@
   transition-delay: 0s !important;
 }
 
-/* 「下一集」按钮的进行中态：切换时用转环取代箭头（隐藏 .player-next-glyph、显示
-   居中的 .player-next-spin），两者同框会糊成一团。刻意不用 opacity 压暗整颗按钮——
-   那与 .is-disabled（已到最后一集）撞相，会被读成「到最后一集了」而不是「正在切」。
-   光标形状保持不变：切换中的按钮只是还没响应，不是不可用，改成 not-allowed 会让
-   用户以为出了错。重复点击由切换锁拦下，不靠光标表达。 */
+/* 切换在途：画面转圈交给 ArtPlayer 原生 loading（上层用 engine.setLoading 驱动），
+   这里不再压暗、也不再抑制 .art-loading。控制栏钉住见上面的 is-switching 规则。 */
+
+/* 「下一集」按钮不再显示进行中态：换集/换源/换线的加载已由 ArtPlayer 原生 loading
+   + notice 接管表达，按钮再转一圈既重复、又与「已到最后一集」置灰撞相。spin 元素保留
+   常态隐藏（图标 markup 仍带 .player-next-spin，绝不让它常态显示）。 */
 .art-control-next-episode .player-next-spin {
   display: none;
   transform-box: fill-box;
   transform-origin: center;
-}
-
-.art-control-next-episode.is-switching .player-next-glyph {
-  display: none;
-}
-
-.art-control-next-episode.is-switching .player-next-spin {
-  display: block;
-  animation: player-next-spin 0.9s linear infinite;
-}
-
-/* 切换中转环上不复现 ArtPlayer 给 .art-icon 的悬停缩放。 */
-.art-control-next-episode.is-switching .art-icon,
-.art-control-next-episode.is-switching .art-icon:hover {
-  transform: none;
-}
-
-@keyframes player-next-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* ---- 解析期海报背景 --------------------------------------------------------

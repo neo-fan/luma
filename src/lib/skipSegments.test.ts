@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_SKIP_MS,
   clampSkipMs,
+  formatSkipMs,
   introMs,
   outroMs,
   outroStartMs,
@@ -9,6 +10,7 @@ import {
   serializeSkipConfig,
   shouldSkipIntro,
   shouldSkipOutro,
+  withSkipMs,
 } from "./skipSegments";
 
 describe("parseSkipConfig", () => {
@@ -103,5 +105,48 @@ describe("accessors + decisions", () => {
     expect(shouldSkipOutro(540000, 600000, 60000)).toBe(true);
     expect(shouldSkipOutro(539999, 600000, 60000)).toBe(false);
     expect(shouldSkipOutro(1000, 600000, 0)).toBe(false); // 未设片尾
+  });
+});
+
+describe("formatSkipMs", () => {
+  it("turns ms into menu-friendly labels", () => {
+    expect(formatSkipMs(0)).toBe("关闭");
+    expect(formatSkipMs(30_000)).toBe("30秒");
+    expect(formatSkipMs(60_000)).toBe("1分钟");
+    expect(formatSkipMs(90_000)).toBe("1分30秒");
+    expect(formatSkipMs(180_000)).toBe("3分钟");
+    // 越界夹取到上限，仍出可读文案
+    expect(formatSkipMs(MAX_SKIP_MS)).toBe("30分钟");
+  });
+});
+
+describe("withSkipMs", () => {
+  const base = [
+    { kind: "intro" as const, ms: 60_000 },
+    { kind: "outro" as const, ms: 30_000 },
+  ];
+
+  it("sets a kind while keeping the other", () => {
+    expect(withSkipMs(base, "intro", 90_000)).toEqual([
+      { kind: "intro", ms: 90_000 },
+      { kind: "outro", ms: 30_000 },
+    ]);
+  });
+
+  it("0 removes that kind (关闭)", () => {
+    expect(withSkipMs(base, "outro", 0)).toEqual([{ kind: "intro", ms: 60_000 }]);
+  });
+
+  it("keeps stable intro-before-outro order", () => {
+    expect(withSkipMs([], "outro", 45_000).map((s) => s.kind)).toEqual(["outro"]);
+    expect(withSkipMs([{ kind: "outro", ms: 45_000 }], "intro", 90_000).map((s) => s.kind)).toEqual([
+      "intro",
+      "outro",
+    ]);
+  });
+
+  it("result round-trips through serialize/parse unchanged", () => {
+    const next = withSkipMs(base, "intro", 120_000);
+    expect(parseSkipConfig(serializeSkipConfig(next))).toEqual(next);
   });
 });

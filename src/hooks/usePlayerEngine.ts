@@ -49,6 +49,7 @@ import {
 import {
   introMs as introMsOf,
   outroMs as outroMsOf,
+  formatSkipSummary,
   shouldSkipIntro,
   shouldSkipOutro,
   type SkipSegment,
@@ -94,15 +95,16 @@ type SessionEffects = {
  * 控件由 ArtPlayer 在实例创建时一次性生成，之后剧集列表异步到达、切到最后一集
  * 都不会重建实例，所以禁用状态不能写死在 `controls[].disable` 里，只能改 DOM。
  * click 里仍会再读一次 ref，双保险（DOM 状态与真实 canNext 万一有一帧不同步）。
+ *
+ * 切换进行中不再给这颗按钮上 loading 态：换集/换源已由画面正中的「加载中」
+ * 接管，按钮再转一圈是重复表达，还会与「已到最后一集」的置灰撞相。
  */
-function syncNextButton(el: HTMLElement | null, enabled: boolean, switching = false): void {
+function syncNextButton(el: HTMLElement | null, enabled: boolean): void {
   if (!el) {
     return;
   }
   el.classList.toggle("is-disabled", !enabled);
   el.setAttribute("aria-disabled", String(!enabled));
-  el.classList.toggle("is-switching", switching);
-  el.setAttribute("aria-busy", String(switching));
 }
 
 /**
@@ -208,6 +210,11 @@ export interface UsePlayerEngineArgs {
     * 「跳过片头/片尾」浮层按钮。只在窗口态翻转时回调，不每帧刷。
     */
   onSkipState?: (state: SkipWindowState) => void;
+  /**
+   * 点击原生齿轮里「片头/片尾」行：打开调用方提供的自定义配置弹窗。
+   * 入口进 ArtPlayer 设置面板，但弹窗是我们自己的（含「取当前播放时间」快捷）。
+   */
+  onOpenSkipSettings?: () => void;
   resolved: PlayResolved | null;
   /** 新一轮地址解析中：此时旧 `resolved` 属于上一个源，不能再建播放实例。 */
   resolving: boolean;
@@ -256,6 +263,16 @@ export interface UsePlayerEngineHandle {
    * 钉住控制栏；与按钮转环同源，避免 prop/lock 与机器两处来源不一致。
    */
   switching: boolean;
+  /**
+   * 直接驱动 ArtPlayer 原生 loading 组件（`art.loading.show/hide`）。切换在途时
+   * 用它显示画面转圈，比自绘加载动画更与播放器一致；实例未就绪 / 销毁后静默。
+   */
+  setLoading: (show: boolean) => void;
+  /**
+   * 更新原生齿轮「片头/片尾」行的 tooltip（汇总当前配置），在调用方改动配置后
+   * 调用；播放器未就绪 / 直播（无该行）时静默忽略。
+   */
+  setSkipSettingTooltip: (text: string) => void;
 }
 
 /** 挂载 / 销毁播放内核。纯 effect hook，无返回值。 */
@@ -275,6 +292,7 @@ export function usePlayerEngine({
   onRememberedRate,
   rememberedSkip,
   onSkipState,
+  onOpenSkipSettings,
   resolved,
   resolving,
   siteKey,
@@ -296,6 +314,13 @@ export function usePlayerEngine({
   /** 海报同理：封面晚于实例创建到达时不重建实例，只在下次建实例时生效。 */
   const posterRef = useRef(poster);
   posterRef.current = poster;
+  /** 「打开自定义片头片尾弹窗」回调放 ref：身份每帧都变，绝不进内核 effect 依赖。 */
+  const openSkipSettingsRef = useRef(onOpenSkipSettings);
+  openSkipSettingsRef.current = onOpenSkipSettings;
+  /** 更新齿轮行 tooltip 的句柄：实例创建时挂上，销毁时清空。 */
+  const skipSettingTooltipRef = useRef<((text: string) => void) | null>(null);
+  /** 驱动 ArtPlayer 原生 loading 的句柄：实例创建时挂上，销毁时清空。 */
+  const loadingRef = useRef<((show: boolean) => void) | null>(null);
   /** 原地换集的命令句柄：实例在 effect 里创建，ref 负责把命令送到它手上。 */
   const switchRef = useRef<((url: string) => Promise<void>) | null>(null);
   /** 播放器内提示通道：同样由 effect 里创建实例时挂上。 */
@@ -395,8 +420,8 @@ export function usePlayerEngine({
    * cleanup 顺序是回归探针的固定契约，不能被状态同步污染。
    */
   useEffect(() => {
-    syncNextButton(nextButtonRef.current, Boolean(canNext), machineSwitching);
-  }, [canNext, resolved, machineSwitching]);
+    syncNextButton(nextButtonRef.current, Boolean(canNext));
+  }, [canNext, resolved]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -521,7 +546,7 @@ export function usePlayerEngine({
           // tooltip 在桌面端会顺手写上 aria-label，移动端不会；显式补一次，
           // 让读屏与窗口探针在两种环境下都有稳定定位点。
           el.setAttribute("aria-label", "下一集");
-          syncNextButton(el, episodeNavRef.current?.canNext ?? false, episodeNavRef.current?.switching ?? false);
+          syncNextButton(el, episodeNavRef.current?.canNext ?? false);
         },
       });
     }
@@ -706,6 +731,28 @@ export function usePlayerEngine({
       playbackRate: true,
       aspectRatio: true,
       setting: true,
+      // 片头/片尾配置入口进原生设置齿轮；点这行打开我们自己的自定义弹窗。
+      // 直播没有片头/片尾概念，不注入这行。
+      ...(siteKey === "live"
+        ? {}
+        : {
+            settings: [
+              {
+                name: "skip-settings",
+                html: "片头/片尾",
+                tooltip: formatSkipSummary(rememberedSkip?.() ?? []),
+                onClick: () => {
+                  openSkipSettingsRef.current?.();
+                  // 打开自定义弹窗前先收起原生面板：两个浮层同占右下角会叠成一坨。
+                  // Setting 运行时带 Component 基类的 show 开关（类型未声明，守卫式写）。
+                  const panel = art.setting as unknown as { show?: boolean };
+                  if (panel && "show" in panel) {
+                    panel.show = false;
+                  }
+                },
+              },
+            ],
+          }),
       pip: true,
       fullscreen: true,
       fullscreenWeb: true,
@@ -734,6 +781,16 @@ export function usePlayerEngine({
 
     const video = art.video;
     videoRef.current = video;
+    loadingRef.current = (show: boolean) => {
+      if (art.loading) {
+        art.loading.show = show;
+      }
+    };
+    if (siteKey !== "live") {
+      skipSettingTooltipRef.current = (text: string) => {
+        art.setting?.update({ name: "skip-settings", tooltip: text });
+      };
+    }
 
     /**
      * 首帧前海报保持（poster hold）。
@@ -1299,6 +1356,8 @@ export function usePlayerEngine({
       window.clearInterval(hintTimer);
       switchRef.current = null;
       noticeRef.current = null;
+      skipSettingTooltipRef.current = null;
+      loadingRef.current = null;
       // 切换类 timer/listener 全部显式回收（身份校验仍在，这里是第二道闸）：
       // 卸载/HMR 后不允许有任何活着的切换句柄继续摸 <video>。
       disposeSwitchCycle();
@@ -1353,5 +1412,7 @@ export function usePlayerEngine({
       Promise.reject(new Error("播放器尚未就绪，暂时不能原地换集")),
     notice: (text: string | null) => noticeRef.current?.(text),
     switching: machineSwitching,
+    setSkipSettingTooltip: (text: string) => skipSettingTooltipRef.current?.(text),
+    setLoading: (show: boolean) => loadingRef.current?.(show),
   };
 }

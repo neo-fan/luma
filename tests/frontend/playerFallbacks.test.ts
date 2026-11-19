@@ -27,7 +27,7 @@ describe("player stage fallback action", () => {
   it("offers a next-line button on failure and after five seconds of waiting", () => {
     expect(stage).toContain("onNextLine?: () => void;");
     expect(stage).toContain("nextLineBusy?: boolean;");
-    expect(stage).toContain("onNextLine && (!active.busy || waited >= 5)");
+    expect(stage).toContain("onNextLine && (overlay.kind === \"error\" || waited >= 5)");
     expect(stage).toContain("换下一条线路");
     expect(stage).toContain("正在切换线路…");
     expect(stage).toContain("player-status__action");

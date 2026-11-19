@@ -8,6 +8,8 @@ interface EpisodeButtonProps {
   active?: boolean;
   /** 已请求但还没切换成功：排队态，与 active 互斥优先由调用方保证。 */
   pending?: boolean;
+  /** 其它线路里与「正在播那一集」对应的集：右上角灰色点（非当前、非排队时）。 */
+  corresponding?: boolean;
   onClick: () => void;
 }
 
@@ -23,6 +25,7 @@ export default function EpisodeButton({
   seen = false,
   active = false,
   pending = false,
+  corresponding = false,
   onClick,
 }: EpisodeButtonProps) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -74,7 +77,7 @@ export default function EpisodeButton({
       onPointerLeave={reset}
       onFocus={scrollToEnd}
       onBlur={reset}
-      title={pending ? `${name}（排队中）` : seen ? `${name}（上次看到）` : name}
+      title={pending ? `${name}（排队中）` : active ? `${name}（正在播放）` : seen ? `${name}（上次看到）` : corresponding ? `${name}（对应集）` : name}
     >
       {name}
       {pending ? (
@@ -83,7 +86,11 @@ export default function EpisodeButton({
         </span>
       ) : active ? (
         <span className="episode__now">
-          <span className="sr-only">当前集</span>
+          <span className="sr-only">正在播放</span>
+        </span>
+      ) : corresponding ? (
+        <span className="episode__corr">
+          <span className="sr-only">对应集</span>
         </span>
       ) : null}
     </button>

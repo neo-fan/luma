@@ -183,6 +183,7 @@
   position: relative;
 }
 
+/* 正在播放的集：右上角实心绿点（同款效果，不呼吸）。 */
 .episode__now {
   position: absolute;
   top: 7px;
@@ -192,6 +193,18 @@
   border-radius: 50%;
   background: var(--ok);
   box-shadow: 0 0 0 3px rgba(74, 222, 155, 0.14);
+}
+
+/* 其它线路里与正在播那一集「对应」的集：右上角灰色点，同款尺寸、仅颜色不同
+   （该线路集数不够时夹到最后一集）。灰点只是「同一序号」的参照，不代表在播。 */
+.episode__corr {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
 }
 
 /* 只给读屏的文本：视觉上 1px 隐藏，不进布局 */

@@ -10,6 +10,7 @@ import { createSwitchQueue } from "../lib/switchQueue";
 import type { SwitchQueue } from "../lib/switchQueue";
 import PlayerResolution from "../components/player/PlayerResolution";
 import { SkipOverlay } from "../components/player/SkipOverlay";
+import { SkipSettingsDialog } from "../components/player/SkipSettingsDialog";
 import { parsePlayLines, sameEpisodeName, sameTitle, toVodRef } from "../lib/format";
 import type { PlayLine } from "../lib/format";
 import { pickMatchingEpisode } from "../lib/sources";
@@ -61,9 +62,14 @@ import type { SkipWindowState } from "../hooks/usePlayerEngine";
 import {
   parseSkipConfig,
   serializeSkipConfig,
+  formatSkipSummary,
   introMs,
   type SkipSegment,
 } from "../lib/skipSegments";
+import { createSwitchToken } from "../lib/switchToken";
+import type { SwitchToken } from "../lib/switchToken";
+import { createCommitGate } from "../lib/switchToken";
+import type { CommitGate } from "../lib/switchToken";
 
 interface PlayerPageProps {
   siteKey: string;
@@ -216,8 +222,19 @@ export default function PlayerPage({
    * 否则锁与视图会分叉。
    */
   const switchingRef = useRef(false);
-  /** 切换代次：只有最新一次切换的收尾才允许解除「切换中」，防在途旧协程误清。 */
-  const episodeSwitchGenRef = useRef(0);
+  /**
+   * 统一切换代次令牌：原地换集、手动换源、手动/自动换线、自动跨站换源都共用。
+   * 每次切换执行体开头 `begin()` 抢占（中止更早的在途、推进代次），任何落地
+   * 副作用前比对 `isCurrent(gen)`，过期整段丢弃 —— 这是并发竞争的唯一收口处，
+   * 不再各处 `+= 1` 各挡一段。
+   */
+  const switchToken = useRef<SwitchToken>(createSwitchToken());
+  /**
+   * 串行提交门：解析可并发，但真正改画面的 `engine.switchSource` 经此排队，
+   * 只放行最新代次 —— 杜绝双路切画面（后完成者赢、画面跳回旧集），且保证
+   * 「最终落到画面的一定是当前选中的」。
+   */
+  const commitGate = useRef<CommitGate>(createCommitGate(switchToken.current));
   /** 统一改「切换中」：ref 当场生效（挡重复点击），state 负责渲染，ref 镜像喂控制栏守卫。 */
   const markSwitching = useCallback((value: boolean) => {
     switchingRef.current = value;
@@ -238,12 +255,34 @@ export default function PlayerPage({
       return;
     }
     const timer = window.setTimeout(() => {
+      // 推进代次：让这条挂死超 30s 又迟到的协程结果落地前被判过期丢弃。
+      switchToken.current.begin();
       switchQueueRef.current?.cancelPending();
       setPendingPick(null);
       markSwitching(false);
       setSwitchTip("");
     }, 30000);
     return () => window.clearTimeout(timer);
+  }, [episodeSwitching, markSwitching]);
+  /**
+   * 切换「加载中」到新源真正出帧才撤：`switchSource` 换 src 后，新媒体的
+   * `loadedmetadata` 才到（旧媒体的早已触发过、不会再触发），据此判定接管画面
+   * 完成。拿不到地址 / 播不了时不在此撤，留在当前画面并交错误态。漏事件由上面
+   * 的 30s 兜底、playUrl 接管、navigate 重建各自复位。
+   */
+  useEffect(() => {
+    if (!episodeSwitching) {
+      return;
+    }
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+    const onMeta = () => {
+      markSwitching(false);
+    };
+    video.addEventListener("loadedmetadata", onMeta);
+    return () => video.removeEventListener("loadedmetadata", onMeta);
   }, [episodeSwitching, markSwitching]);
   /**
    * 冷路径「下一集」走 `fallback()` → navigate 重建整页：路由 `playUrl` 一变就
@@ -256,6 +295,8 @@ export default function PlayerPage({
       markSwitching(false);
     }
     // 新页面接管加载态：排队中的意图作废，否则旧集会在重建后又被打回去。
+    // 同时中止在途探活：本组件即将交给新路由身份，孤儿解析不该继续。
+    switchToken.current.abortCurrent();
     switchQueueRef.current?.cancelPending();
     setPendingPick(null);
     // 仅跟随路由集身份变化触发；markSwitching 恒定，不需要进依赖。
@@ -332,6 +373,8 @@ export default function PlayerPage({
   const [skipState, setSkipState] = useState<SkipWindowState | null>(null);
   /** 配置镜像 state：ref 供引擎懒读不触发重渲染，state 供浮层编辑器受控显示。 */
   const [skipConfig, setSkipConfig] = useState<SkipSegment[]>([]);
+  /** 自定义「片头/片尾」配置弹窗开关（入口在 ArtPlayer 原生齿轮那一行）。 */
+  const [skipSettingsOpen, setSkipSettingsOpen] = useState(false);
   const flushHistoryRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     let alive = true;
@@ -466,15 +509,26 @@ export default function PlayerPage({
   const activeVodId = switchedSource?.vodId ?? vodId;
   const activeVodName = switchedSource?.vodName || vodName;
   const activeLines = switchedSource?.lines ?? lines;
+  // 「正在播/选中」的显示真源：先认点击即设的乐观意图 pendingPick（点一下立刻
+  // 移动标题与高亮，不等后台解析），其次已成功落地的 manualPick，再跨源覆盖值，
+  // 最后路由。过期异步绝不再把这些写回旧集（见 fallback 不再 null manualPick）。
   const activeLineIndex =
-    manualPick?.lineIndex ?? switchedSource?.lineIndex ?? lineIndex;
+    pendingPick?.lineIndex ?? manualPick?.lineIndex ?? switchedSource?.lineIndex ?? lineIndex;
   const activeEpisodeIndex =
-    manualPick?.episodeIndex ?? switchedSource?.episodeIndex ?? episodeIndex;
+    pendingPick?.episodeIndex ?? manualPick?.episodeIndex ?? switchedSource?.episodeIndex ?? episodeIndex;
   const activeLine = activeLines[activeLineIndex] ?? currentLine;
   const activeEpisode = activeLine?.episodes[activeEpisodeIndex];
   const activeEpisodeName = activeEpisode?.name || episodeName;
+  // 「实时已落地」基线：只认成功后的 manualPick / 跨源覆盖值 / 路由，不含乐观
+  // pendingPick。相对导航（下一集、看完自动接）以它为准 —— 连点时目标恒等于
+  // committed+1、被去重忽略 → 净 +1、绝不跳多集；最后一集越界即停。显示走乐观，
+  // 导航走实时，正是「播放控制 / 相对跳」与「后台换流」解耦的落点。
+  const committedLineIndex = manualPick?.lineIndex ?? switchedSource?.lineIndex ?? lineIndex;
+  const committedEpisodeIndex =
+    manualPick?.episodeIndex ?? switchedSource?.episodeIndex ?? episodeIndex;
+  const committedLine = activeLines[committedLineIndex] ?? activeLine;
   const canPlayNext = Boolean(
-    activeLine && activeEpisodeIndex + 1 < activeLine.episodes.length,
+    committedLine && committedEpisodeIndex + 1 < committedLine.episodes.length,
   );
 
   /**
@@ -768,8 +822,9 @@ export default function PlayerPage({
       return;
     }
     failoverStarted.current = true;
-    // 换源接管：收回可能挂着的「换集进行中」，否则控制栏会被钉住到兜底超时。
-    episodeSwitchGenRef.current += 1;
+    // 换源接管：begin 抢占更早的在途切换（中止其探活、令其 isCurrent 失效），
+    // 并收回可能挂着的「换集进行中」，否则控制栏会被钉住到兜底超时。
+    const { gen, signal: foSignal } = switchToken.current.begin();
     markSwitching(false);
     // `changeable: 0`：配置明确不允许换源，别再对其它站点发搜索。
     if (!allowFailover) {
@@ -853,10 +908,14 @@ export default function PlayerPage({
           const picked = await firstPlayable(
             candidatesOfSite,
             (item, signal) => probeCandidate(candidate.siteKey, item, signal),
-            { concurrency: 4 },
+            { concurrency: 4, signal: foSignal },
           );
           if (!picked) {
             continue;
+          }
+          // 落地前确认仍是最新意图：探活期间被新的换集/换源/换线抢占过就停手。
+          if (!switchToken.current.isCurrent(gen)) {
+            return;
           }
           const tip = `已自动切换到「${candidate.siteKey}」`;
           log.info("auto failover", {
@@ -914,6 +973,8 @@ export default function PlayerPage({
     }
     lineSwitchStarted.current = true;
     const attempt = (async (): Promise<boolean> => {
+      // 抢占：开始一次换线即中止更早的在途切换；signal 透传给探活让其真早停。
+      const { gen, signal: lineSignal } = switchToken.current.begin();
       ledgerMarkUrl(ledgerKey, playUrl);
 
       // 线路名必须跟着每条剧集一起走：`PAN1-…` / `zijianm3u8-…` 这类地址只有
@@ -977,13 +1038,17 @@ export default function PlayerPage({
       // 16 秒才出画，用户以为坏了；现在是最快那条线路的耗时。
       setSwitchTip("正在尝试同源的其它线路…");
       let picked = sameEpisode.length
-        ? await firstPlayable(sameEpisode, probe, { concurrency: 4 })
+        ? await firstPlayable(sameEpisode, probe, { concurrency: 4, signal: lineSignal })
         : null;
       if (!picked && otherEpisodes.length) {
         setSwitchTip("当前源没有同集可播线路，正在尝试其它集…");
-        picked = await firstPlayable(otherEpisodes, probe, { concurrency: 4 });
+        picked = await firstPlayable(otherEpisodes, probe, { concurrency: 4, signal: lineSignal });
       }
       if (!picked) {
+        return false;
+      }
+      // 落地前确认仍是最新意图：被新的换集/换源抢占过就停手，不拽路由。
+      if (!switchToken.current.isCurrent(gen)) {
         return false;
       }
       ledgerMarkUrl(ledgerKey, picked.url);
@@ -1059,8 +1124,8 @@ export default function PlayerPage({
       return;
     }
     setNextLineBusy(true);
-    // 手动换线接管：同 tryFailover，收回挂起的「换集进行中」。
-    episodeSwitchGenRef.current += 1;
+    // 手动换线接管：收回挂起的「换集进行中」。抢占更早的在途切换交给 tryNextLine
+    // 执行体开头的 begin（与自动换线同一通道，这里不重复推进代次）。
     markSwitching(false);
     setSwitchTip("正在切换到下一条线路…");
     void tryNextLine()
@@ -1171,6 +1236,7 @@ export default function PlayerPage({
     },
     rememberedSkip: readRememberedSkip,
     onSkipState: setSkipState,
+    onOpenSkipSettings: () => setSkipSettingsOpen(true),
     resolved,
     resolving,
     siteKey,
@@ -1337,6 +1403,19 @@ export default function PlayerPage({
     if (!target || index < 0 || index >= target.episodes.length) {
       return;
     }
+    // 防抖：同一目标已在途就忽略。否则这里的 begin() 会把自己正在跑的切换判成
+    // 过期，而重复目标又被队列去重不再执行 → 最终没有任何一次落地。
+    if (
+      switchingRef.current &&
+      pendingPick?.lineIndex === targetLine &&
+      pendingPick?.episodeIndex === index
+    ) {
+      return;
+    }
+    // 点击即接管：begin 抢占任何在途解析（旧的那份落地前会被判过期丢弃），
+    // 同步把乐观高亮 / 标题移到选中集，并进入「加载中」——后台再解析，不挡 UI。
+    switchToken.current.begin();
+    markSwitching(true);
     setPendingPick({ lineIndex: targetLine, episodeIndex: index });
     setSwitchTip(`正在切换到「${target.episodes[index].name}」…`);
     switchQueueRef.current?.request({ lineIndex: targetLine, episodeIndex: index });
@@ -1362,8 +1441,8 @@ export default function PlayerPage({
     };
 
     const fallback = () => {
-      settlePick();
-      setManualPick(null);
+      // 不回收乐观显示：pendingPick 已指向目标集，清掉会让画面瞬间回落旧路由
+      // （第一集）。交给 navigate 重建后的新页面接管，这里只清转场锁与提示。
       setSwitchTip("");
       videoRef.current = null;
       navigate(
@@ -1385,8 +1464,8 @@ export default function PlayerPage({
       return Promise.resolve();
     }
     const previousKind = resolved.kind;
-    const gen = episodeSwitchGenRef.current + 1;
-    episodeSwitchGenRef.current = gen;
+    // 抢占：本次换集执行开始即中止更早的在途切换，落地副作用前据此判过期。
+    const { gen } = switchToken.current.begin();
     return (async () => {
       try {
         // 按集缓存：预解析 / 探活 / 上次访问可能已解析过这一集。命中且类型
@@ -1413,22 +1492,26 @@ export default function PlayerPage({
           setEpisodePlayCache(activeSiteKey, target.name, episode.url, play);
         }
         resumeMsRef.current = 0;
-        await engine.switchSource(play.proxyUrl);
-        switchedUrlRef.current = play.proxyUrl;
-        playingEpisodeRef.current = {
-          siteKey: activeSiteKey,
-          playFrom: target.name,
-          url: episode.url,
-        };
-        // 「当前集」的高亮只在这里移动：切换真落地了才算数。
-        setManualPick({ lineIndex: targetLine, episodeIndex: index });
-        // 切换前是暂停态就不抢控制权自动播（机器据此不发 resumePlayback），
-        // 但画面会停在 0:00 不动 —— 必须说清楚在等什么，否则看着像卡住。
-        setSwitchTip(
-          !wasPlayingBefore
-            ? `已切到「${episode.name}」，点播放继续`
-            : "",
-        );
+        // 串行提交、只最新上屏：解析在锁外并发；进锁后再校验代次，被更新的
+        // 换源/换线/换集抢占过就根本不碰画面。锁内一气呵成切画面 + 写集身份。
+        await commitGate.current.commit(gen, async () => {
+          await engine.switchSource(play.proxyUrl);
+          switchedUrlRef.current = play.proxyUrl;
+          playingEpisodeRef.current = {
+            siteKey: activeSiteKey,
+            playFrom: target.name,
+            url: episode.url,
+          };
+          // 「当前集」高亮落地（乐观态本就是它，这里确认并让 pendingPick 交棒）。
+          setManualPick({ lineIndex: targetLine, episodeIndex: index });
+          settlePick();
+          // 切换前是暂停态就不抢控制权自动播；画面停在 0:00 要说明在等什么。
+          setSwitchTip(
+            !wasPlayingBefore
+              ? `已切到「${episode.name}」，点播放继续`
+              : "",
+          );
+        });
       } catch (err) {
         // 原地切换失败要退回整页重建：这份解析结论（可能来自缓存）已不可信，
         // 作废掉，免得新页面首次解析又命中同一个坏地址。
@@ -1436,25 +1519,30 @@ export default function PlayerPage({
         log.warn("in-place episode switch failed", {
           message: errorMessage(err),
         });
-        fallback();
-      } finally {
-        settlePick();
-        // 出画 / 退回整页重建 / 15s 封顶：三条路都要收回「切换中」态；
-        // 被更新的切换（或换线/换源接管）顶掉代次时不清——那是别人的状态。
-        if (episodeSwitchGenRef.current === gen) {
-          markSwitching(false);
+        // 已被更新的切换抢占：这份失败不作废页面，交给最新意图处理。
+        if (switchToken.current.isCurrent(gen)) {
+          fallback();
         }
       }
+      // 「切换中」不在此处清：画面已交给新的 <video>，改由 media-alive effect
+      // 等新源真正出帧再撤加载动画（拿不到地址 / 播不了则留在当前乐观画面）。
+      // 冷路径 navigate 重建、30s 兜底、playUrl 接管各自复位（见相关 effect）。
     })();
   };
   // 渲染期把最新执行器交给队列：与 episodeNavRef 同一套路数。
   switchRunRef.current = runEpisodeSwitch;
 
   const goEpisode = (delta: number) => {
-    if (!activeLine) {
+    if (!committedLine) {
       return;
     }
-    goToEpisode(activeLineIndex, activeEpisodeIndex + delta);
+    // 以实时已落地集为基线：连点下一集目标恒为 committed+1（被去重），最后一集
+    // 越界直接返回——既「正常 +1」又不跳多集、不过界。
+    const target = committedEpisodeIndex + delta;
+    if (target < 0 || target >= committedLine.episodes.length) {
+      return;
+    }
+    goToEpisode(committedLineIndex, target);
   };
 
   /**
@@ -1462,7 +1550,12 @@ export default function PlayerPage({
    * 同序号），不探活也不抢答——选哪个源由用户决定，失败仍走原有兜底链路。
    */
   const pickSource = async (option: SourceOption) => {
+    // 抢占：手动换源是最强用户意图，begin 立即作废在途的换集/换线/自动恢复。
+    const { gen } = switchToken.current.begin();
     setShowSources(false);
+    // 换源接管：立即进入「切换中」，后台再取详情 + 解析 + 切流；画面转圈走
+    // ArtPlayer 原生 loading（由 setLoading effect 驱动），新媒体出帧才收。
+    markSwitching(true);
     // 换源要先取新站详情，可能几秒：只在页面上留一行提示，不盖全屏、
     // 不压暗播放器 —— 视频加载交给播放器自己显示。
     setSwitchTip(`正在切换到「${option.siteName}」…`);
@@ -1486,6 +1579,10 @@ export default function PlayerPage({
     if (!match) {
       setSwitchTip("");
       notify.error("该源没有可播放剧集，请换一个片源");
+      return;
+    }
+    // 取详情期间被更新的切换抢占过 → 停手，不继续换源。
+    if (!switchToken.current.isCurrent(gen)) {
       return;
     }
     log.info("manual source switch", {
@@ -1549,29 +1646,35 @@ export default function PlayerPage({
         setEpisodePlayCache(nextSiteKey, match.line.name, match.episode.url, play);
       }
       resumeMsRef.current = 0;
-      await engine.switchSource(play.proxyUrl);
-      switchedUrlRef.current = play.proxyUrl;
-      playingEpisodeRef.current = {
-        siteKey: nextSiteKey,
-        playFrom: match.line.name,
-        url: match.episode.url,
-      };
-      setSwitchedSource({
-        siteKey: nextSiteKey,
-        siteName: option.siteName,
-        vodId: option.vodId,
-        vodName: nextVodName,
-        lines: nextLines,
-        lineIndex: Math.max(0, nextLines.indexOf(match.line)),
-        episodeIndex: nextLines.indexOf(match.line) >= 0 ? match.index : 0,
+      // 串行提交、只最新上屏：解析在锁外并发，进锁后再校验代次，被更新的换源/
+      // 换集抢占过就不碰画面；锁内写画面 + 集身份/信息卡一气呵成。
+      await commitGate.current.commit(gen, async () => {
+        await engine.switchSource(play.proxyUrl);
+        switchedUrlRef.current = play.proxyUrl;
+        playingEpisodeRef.current = {
+          siteKey: nextSiteKey,
+          playFrom: match.line.name,
+          url: match.episode.url,
+        };
+        setSwitchedSource({
+          siteKey: nextSiteKey,
+          siteName: option.siteName,
+          vodId: option.vodId,
+          vodName: nextVodName,
+          lines: nextLines,
+          lineIndex: Math.max(0, nextLines.indexOf(match.line)),
+          episodeIndex: nextLines.indexOf(match.line) >= 0 ? match.index : 0,
+        });
+        setManualPick(null);
+        setSwitchTip("");
       });
-      setManualPick(null);
-      setSwitchTip("");
     } catch (err) {
       // 同换集：失败的解析结论（可能来自缓存）作废，重建后的页面重新解析。
       invalidateEpisodePlayCache(nextSiteKey, match.line.name, match.episode.url);
       log.warn("in-place source switch failed", { message: errorMessage(err) });
-      fallback();
+      if (switchToken.current.isCurrent(gen)) {
+        fallback();
+      }
     }
   };
 
@@ -1736,6 +1839,34 @@ export default function PlayerPage({
   /** 当前集名：剧集列表到达后用列表里的名字，否则用路由参数。 */
   const nowEpisode = activeEpisode?.name || episodeName;
 
+  /** 片头/片尾配置改动统一入口：写 ref + 镜像 state + 齿轮行 tooltip + 即时落库。 */
+  const applySkipConfig = (segs: SkipSegment[]) => {
+    rememberedSkipRef.current = segs;
+    setSkipConfig(segs);
+    engine.setSkipSettingTooltip(formatSkipSummary(segs));
+    flushHistoryRef.current?.();
+  };
+  /** 自定义弹窗「取当前播放时间」读实时播放头 / 时长。 */
+  const getPlayhead = () => {
+    const v = videoRef.current;
+    if (!v) {
+      return null;
+    }
+    return {
+      currentMs: (v.currentTime || 0) * 1000,
+      durationMs: Number.isFinite(v.duration) ? v.duration * 1000 : Number.NaN,
+    };
+  };
+  // 齿轮行 tooltip 跟随当前配置（历史载入 / 弹窗改动都覆盖到）。
+  useEffect(() => {
+    engine.setSkipSettingTooltip(formatSkipSummary(skipConfig));
+  }, [skipConfig, engine]);
+  // 切换在途（乐观 episodeSwitching 或机器 switching 任一为真）→ 用 ArtPlayer 原生
+  // loading 画画面转圈；收口即隐藏。实例还没建时无从调用（上层自绘解析卡片接管）。
+  useEffect(() => {
+    engine.setLoading(episodeSwitching || engine.switching);
+  }, [episodeSwitching, engine]);
+
   // 「下一集」按钮：详情未到时 lines 为空，按钮先以禁用态存在——控件由内核
   // 实例创建时一次性生成，不能等剧集列表到了再「补一个」，否则永远不会出现。
   episodeNavRef.current = {
@@ -1751,7 +1882,7 @@ export default function PlayerPage({
         resolving={resolving}
         stage={stage}
         reloading={reloading}
-        switching={engine.switching}
+        switching={episodeSwitching || engine.switching}
         playable={playable}
         recovering={recovering}
         pending={resolved === null}
@@ -1772,7 +1903,6 @@ export default function PlayerPage({
       <SkipOverlay
         host={playerRoot}
         state={skipState}
-        config={skipConfig}
         onSkipIntro={() => {
           const v = videoRef.current;
           const intro = introMs(skipConfig);
@@ -1795,11 +1925,14 @@ export default function PlayerPage({
             }
           }
         }}
-        onConfigChange={(segs) => {
-          rememberedSkipRef.current = segs;
-          setSkipConfig(segs);
-          flushHistoryRef.current?.();
-        }}
+      />
+      <SkipSettingsDialog
+        host={playerRoot}
+        open={skipSettingsOpen}
+        config={skipConfig}
+        getPlayhead={getPlayhead}
+        onConfigChange={applySkipConfig}
+        onClose={() => setSkipSettingsOpen(false)}
       />
     </>
   );

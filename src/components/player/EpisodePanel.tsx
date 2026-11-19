@@ -34,8 +34,6 @@ export default function EpisodePanel({
   const [reverse, setReverse] = useState(false);
 
   const episodes = lines[panelLine]?.episodes ?? [];
-  // 当前**正在播放**的集名：切线路时用它在新线路里找同名集。
-  const episodeName = lines[lineIndex]?.episodes[episodeIndex]?.name ?? "";
   const visible = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     const indexed = episodes
@@ -61,20 +59,17 @@ export default function EpisodePanel({
             key={`${item.name}-${index}`}
             type="button"
             className={index === panelLine ? "chip is-active" : "chip"}
-            // 点线路 = 真的切线路（不是只切下方的集数面板）：视频卡住 / 没出画
-            // 时用户最需要换线路，而控制栏里的 selector 要等播放器实例建好才有。
-            // 目标集优先取同名集，源换了集名就退回该线路第 1 集。
+            // 点线路 = 只切换下方的剧集列表（浏览哪条线路），不换播放源。
+            // 真正换流只发生在点某条线路下的「某一集」时——切线却刷新播放会打断
+            // 当前画面，且线路与集数两件事被混成一次操作。要换这条线的流，
+            // 就在列出的集里点一集。
             onClick={() => {
-              if (index === panelLine && index === lineIndex) {
+              if (index === panelLine) {
                 return;
               }
               setPanelLine(index);
-              const sameName = episodeName
-                ? item.episodes.findIndex((episode) => episode.name === episodeName)
-                : -1;
-              goToEpisode(index, sameName >= 0 ? sameName : 0);
             }}
-            title={`切换到 ${item.name}（${item.episodes.length} 集）`}
+            title={`查看 ${item.name}（${item.episodes.length} 集）`}
           >
             {item.name}（{item.episodes.length}）
           </button>
@@ -110,12 +105,19 @@ export default function EpisodePanel({
             pendingPick !== null &&
             pendingPick.lineIndex === panelLine &&
             pendingPick.episodeIndex === index;
+          // 对应集按**索引位置**判定（不靠集名，源之间集名常对不齐）：其它线路里
+          // 同序号那一集标灰点；该线路集数不够（索引越界）时夹到它的最后一集。
+          // 倒序只换展示顺序，`index` 仍是原索引，对应关系不变。
+          const corrIndex = Math.min(episodeIndex, episodes.length - 1);
+          const corresponding =
+            !active && !pending && panelLine !== lineIndex && index === corrIndex;
           return (
             <EpisodeButton
               key={`${episode.url}-${index}`}
               name={episode.name}
               active={active}
               pending={pending}
+              corresponding={corresponding}
               onClick={() => goToEpisode(panelLine, index)}
             />
           );

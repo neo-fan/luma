@@ -22,8 +22,8 @@ describe("episode button", () => {
     expect(source).toContain("onPointerLeave={reset}");
     expect(source).toContain("onFocus={scrollToEnd}");
     expect(source).toContain("onBlur={reset}");
-    // 完整集名仍要能给到原生 tooltip。
-    expect(source).toContain("title={pending ? `${name}（排队中）` : seen ? `${name}（上次看到）` : name}");
+    // 完整集名仍要能给到原生 tooltip；排队 / 在播 / 上次 / 对应集各有说法。
+    expect(source).toContain("title={pending ? `${name}（排队中）` : active ? `${name}（正在播放）` : seen ? `${name}（上次看到）` : corresponding ? `${name}（对应集）` : name}");
   });
 
   it("distinguishes queued from playing", () => {

@@ -98,6 +98,51 @@ export function outroMs(segments: SkipSegment[]): number {
 }
 
 /**
+ * 原生设置面板里的可选时长（含 0=关闭）。片头给到 3 分钟、片尾到 90 秒一档，
+ * 覆盖常见片头/片尾长度；比自由输入秒数更快、也不会填出荒谬值。
+ */
+export const INTRO_PRESET_MS = [0, 15_000, 30_000, 45_000, 60_000, 90_000, 120_000, 180_000];
+export const OUTRO_PRESET_MS = [0, 10_000, 15_000, 30_000, 45_000, 60_000, 90_000];
+
+/** 把毫秒数说成人话：0 → 「关闭」，其余「X秒 / X分Y秒 / X分钟」。用于菜单文案。 */
+export function formatSkipMs(ms: number): string {
+  const sec = Math.round(clampSkipMs(ms) / 1000);
+  if (sec <= 0) {
+    return "关闭";
+  }
+  if (sec < 60) {
+    return `${sec}秒`;
+  }
+  const min = Math.floor(sec / 60);
+  const rest = sec % 60;
+  return rest === 0 ? `${min}分钟` : `${min}分${rest}秒`;
+}
+
+/**
+ * 把某 kind 的时长设为 `ms`（0 = 关闭即删除该类），其余保持不变，返回稳定顺序
+ * （intro 在前、outro 在后）。设置面板 onSelect 与未来「进度取点」都走这里，
+ * 保证写出的结构与 `serializeSkipConfig` 一致。
+ */
+export function withSkipMs(segments: SkipSegment[], kind: SkipKind, ms: number): SkipSegment[] {
+  const kept = segments.filter((s) => s.kind !== kind);
+  const clamped = clampSkipMs(ms);
+  if (clamped > 0) {
+    kept.push({ kind, ms: clamped });
+  }
+  return KINDS.flatMap((k) => kept.filter((s) => s.kind === k));
+}
+
+/** 齿轮行 tooltip 用的汇总：「片头1分钟 · 片尾30秒」，都没设则「未设置」。 */
+export function formatSkipSummary(segments: SkipSegment[]): string {
+  const parts: string[] = [];
+  const intro = introMs(segments);
+  const outro = outroMs(segments);
+  if (intro > 0) parts.push(`片头${formatSkipMs(intro)}`);
+  if (outro > 0) parts.push(`片尾${formatSkipMs(outro)}`);
+  return parts.length ? parts.join(" · ") : "未设置";
+}
+
+/**
  * 片头跳过判定：从头播（或进度仍在片头内）时跳到 `introMs`。
  * 调用方负责先排除「续播点已晚于片头」的情况——这里只回答「当前点是否落在片头里」。
  */

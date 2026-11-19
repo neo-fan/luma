@@ -66,9 +66,9 @@ export default function PlayerStage({
   nextLineBusy = false,
   switching = false,
 }: PlayerStageProps) {
-  // 慢源冷启动实测能到 18s：光转圈会被当成卡死，超过 4s 就把已等待秒数报出来，
-  // 让用户知道「在动，只是慢」，而不是「点坏了」。解析结束自动归零。
-  const busy = resolving || reloading || recovering;
+  // 统一的「忙」（仅无实例的解析类状态走自绘卡片）：解析 / 重新获取 / 无结果但已请求。
+  const pendingBusy = pending && !resolveError;
+  const busy = resolving || reloading || recovering || pendingBusy;
   const [waited, setWaited] = useState(0);
   const startedAt = useRef(0);
   useEffect(() => {
@@ -84,51 +84,51 @@ export default function PlayerStage({
     return () => clearInterval(timer);
   }, [busy]);
 
-  // 只有「还没有播放实例」时才有自定义提示：拿地址、重建实例。
-  // 视频本身的加载与缓冲一律交给 ArtPlayer 内建的 loading 样式，这里不再画
-    // 第二套转圈（两坨加载动画叠在画面中心会很乱）。
-  const status = resolving
-    ? // 解析分两个阶段给不同文案：问源拿直链 vs 交给反代建连，避免「一直转」被误判卡死。
-      stage === "connecting"
-      ? { busy: true, title: "正在连接播放地址…", desc: "" }
-      : { busy: true, title: "正在解析播放源…", desc: "" }
-    : reloading
-      ? { busy: true, title: "正在重新获取播放地址…", desc: "" }
-      : !playable
-        ? pending && !resolveError
-          ? { busy: true, title: "正在解析播放源…", desc: "" }
-          : {
-              busy: false,
-              title: resolveError
-                ? retryable
-                  ? "源响应较慢，暂未拿到播放地址"
-                  : "无法解析播放地址"
-                : EXTERNAL_PLAY_FALLBACK.title,
-              desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
-            }
-        : null;
+  /**
+   * 自绘覆盖层只服务「还没有播放实例」的解析态（拿直链 / 建连 / 重新获取 / 无结果
+   * pending）——这时 ArtPlayer 还没有 loading 可画。实例已存在的换集/换源/换线缓冲，
+   * 一律交给 ArtPlayer 原生 loading（上层用 `engine.setLoading` 驱动），这里不再画
+   * 第二套转圈。拿不到可播地址才出暗色错误卡片。
+   */
+  let overlay:
+    | { kind: "busy"; title: string; hint?: string }
+    | { kind: "error"; title: string; desc: string }
+    | null = null;
 
-  const active = status;
+  if (resolving) {
+    // 解析分两阶段：问源拿直链 vs 交给反代建连，避免「一直转」被误判卡死。
+    overlay = {
+      kind: "busy",
+      title: stage === "connecting" ? "正在连接播放地址…" : "正在解析播放源…",
+    };
+  } else if (reloading) {
+    overlay = { kind: "busy", title: "正在重新获取播放地址…" };
+  } else if (!playable) {
+    overlay = pendingBusy
+      ? { kind: "busy", title: "正在解析播放源…" }
+      : {
+          kind: "error",
+          title: resolveError
+            ? retryable
+              ? "源响应较慢，暂未拿到播放地址"
+              : "无法解析播放地址"
+            : EXTERNAL_PLAY_FALLBACK.title,
+          desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
+        };
+  }
 
-  // 等待提示只挂在「正在等源」的三种忙态上，错误面板不显示。
+  const waiting = overlay?.kind === "busy" && (resolving || reloading || pendingBusy);
   const slowHint =
-    status?.busy && waited >= 4
+    waiting && waited >= 4
       ? waited >= 12
         ? `已等待 ${waited}s，源侧较慢，仍在重试…`
         : `已等待 ${waited}s…`
       : "";
 
-  /**
-   * 提示层在场时给舞台打状态标：ArtPlayer 自带的 loading（`.art-loading`）里是
-   * 50×50 的方点阵 svg，同样居中，会和我们 72×72 的光环叠成一坨（11-14 用户
-   * 反馈「加载提示和播放器加载 icon 重合」）。用类名而不是 CSS `:has()`，与项目
-   * 其他状态修饰保持一致，也避免依赖选择器支持度。
-   */
-  const stageClass = active
-    ? `player-stage ${active.busy ? "is-busy" : "is-error"}`
-    : switching
-      ? "player-stage is-switching"
-      : "player-stage";
+  // 切换在途（实例还在）：只打 is-switching 钉住控制栏，画面转圈交给 ArtPlayer。
+  const stageClass = ["player-stage", overlay ? (overlay.kind === "busy" ? "is-busy" : "is-error") : "", switching ? "is-switching" : ""]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div className={stageClass}>
@@ -146,25 +146,33 @@ export default function PlayerStage({
         />
       ) : null}
 
-      {active ? (
+      {overlay ? (
         <div className="player-overlay" aria-live="polite">
-          {/* 等待态用「呼吸光环 + 旋转弧」占据画面正中，文字压在下方：纯转圈
-              在小窗口里太轻，用户会以为没在动；错误态才用卡片承载长文案。 */}
-          <div className={active.busy ? "player-status is-busy" : "player-status is-error"}>
-            <p className="player-status__title">{active.title}</p>
-            {active.desc ? <p className="player-status__desc">{active.desc}</p> : null}
-            {slowHint ? <p className="player-status__desc">{slowHint}</p> : null}
-            {onNextLine && (!active.busy || waited >= 5) ? (
-              <button
-                type="button"
-                className="player-status__action"
-                onClick={onNextLine}
-                disabled={nextLineBusy}
-              >
-                {nextLineBusy ? "正在切换线路…" : "换下一条线路"}
-              </button>
-            ) : null}
-          </div>
+          {/* busy：居中「呼吸光环 + 旋转弧」承载即时反馈，文字压下方（纯转圈在
+              小窗口里太轻会被读成没动）；error：暗色卡片承载长文案 + 「换下一条
+              线路」出口。切换期画面由 `.is-switching` 统一压暗一档（见 CSS），
+              覆盖层本身不挡点击、控制栏钉住可点。 */}
+          {overlay.kind === "busy" ? (
+            <div className="player-status is-busy">
+              <p className="player-status__title">{overlay.title}</p>
+              {slowHint ? <p className="player-status__desc">{slowHint}</p> : null}
+            </div>
+          ) : (
+            <div className="player-status is-error">
+              <p className="player-status__title">{overlay.title}</p>
+              <p className="player-status__desc">{overlay.desc}</p>
+              {onNextLine && (overlay.kind === "error" || waited >= 5) ? (
+                <button
+                  type="button"
+                  className="player-status__action"
+                  onClick={onNextLine}
+                  disabled={nextLineBusy}
+                >
+                  {nextLineBusy ? "正在切换线路…" : "换下一条线路"}
+                </button>
+              ) : null}
+            </div>
+          )}
         </div>
       ) : null}
     </div>
