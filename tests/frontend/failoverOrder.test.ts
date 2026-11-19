@@ -13,35 +13,36 @@ const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("auto line switch order", () => {
-  const player = read("src/pages/PlayerPage.tsx");
+  // 换线/换源编排已搬至 usePlaybackSwitchCore（第 3 期解耦）。
+  const orchestration = read("src/hooks/usePlaybackSwitchCore.ts");
 
   it("tries the current source's lines before crossing sources", () => {
-    const lineCall = player.indexOf("const switched = await tryNextLine();");
-    const sourceCall = player.indexOf("await tryFailover();");
+    const lineCall = orchestration.indexOf("const switched = await tryNextLine();");
+    const sourceCall = orchestration.indexOf("await tryFailover();");
     expect(lineCall).toBeGreaterThan(0);
     expect(sourceCall).toBeGreaterThan(lineCall);
   });
 
   it("splits the candidates into same episode first,其它集 second", () => {
-    expect(player).toContain("sameEpisodeName(episode.name, episodeName)");
-    expect(player).toContain("const sameEpisode = usable");
-    expect(player).toContain("const otherEpisodes = usable");
-    const first = player.indexOf("await firstPlayable(sameEpisode");
-    const second = player.indexOf("await firstPlayable(otherEpisodes");
+    expect(orchestration).toContain("sameEpisodeName(episode.name, d.episodeName)");
+    expect(orchestration).toContain("const sameEpisodeList = usable");
+    expect(orchestration).toContain("const otherEpisodes = usable");
+    const first = orchestration.indexOf("await firstPlayable(sameEpisodeList");
+    const second = orchestration.indexOf("await firstPlayable(otherEpisodes");
     expect(first).toBeGreaterThan(0);
     expect(second).toBeGreaterThan(first);
   });
 
   it("dedupes concurrent failures by awaiting the in-flight attempt", () => {
-    expect(player).toContain("const inflight = lineAttempt.current;");
-    expect(player).toContain("return inflight;");
+    expect(orchestration).toContain("const inflight = lineAttempt.current;");
+    expect(orchestration).toContain("return inflight;");
     // 不能再用「已开始就当失败」的布尔早退。
-    expect(player).not.toContain("if (lineSwitchStarted.current) {");
+    expect(orchestration).not.toContain("if (lineSwitchStarted.current) {");
   });
 
   it("tells the user which stage it is in", () => {
-    expect(player).toContain("正在尝试同源的其它线路");
-    expect(player).toContain("当前源没有可播线路，正在尝试其它源");
+    expect(orchestration).toContain("正在尝试同源的其它线路");
+    expect(orchestration).toContain("当前源没有可播线路，正在尝试其它源");
   });
 
   it("does not claim a source switch while switching lines", () => {

@@ -64,9 +64,10 @@ describe("player stage fallback action", () => {
   });
 
   it("wires the button to the line switcher on both pages", () => {
+    // 「换下一条线路」的执行体在编排 hook；播放页只负责把回调递给 PlayerStage。
     const page = source("pages/PlayerPage.tsx");
-    expect(page).toContain("const pickNextLine = useCallback(() => {");
-    expect(page).toContain("void tryNextLine()");
+    expect(source("hooks/usePlaybackSwitchCore.ts")).toContain("const pickNextLine = useCallback(() => {");
+    expect(source("hooks/usePlaybackSwitchCore.ts")).toContain("void tryNextLine()");
     expect(page).toContain("onNextLine={pickNextLine}");
     const live = source("pages/LivePage.tsx");
     expect(live).toContain("onNextLine={() => {");
