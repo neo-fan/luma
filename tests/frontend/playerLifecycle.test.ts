@@ -34,7 +34,10 @@ describe("player lifecycle contract", () => {
     expect(engine).toContain("!BUILTIN_KINDS.includes(resolved.kind)");
     // resolving must participate in the effect deps, otherwise the engine is
     // recreated from the *previous* source's resolved value.
-    expect(engine).toMatch(/\}, \[resolved, resolving, siteKey, vodName\]\)/);
+    // `vodName` 曾被列进依赖却从未被 effect 使用：一旦有人让原地换源同步片名，
+    // 这条死依赖就会把换源变成整实例销毁 + 黑屏数秒，已移除。
+    expect(engine).toMatch(/\}, \[resolved, resolving, siteKey\]\);/);
+    expect(engine).not.toMatch(/\[resolved, resolving, siteKey, vodName\]/);
   });
 
   it("hard-stops media and decoders before destroying ArtPlayer", () => {
@@ -53,9 +56,10 @@ describe("player lifecycle contract", () => {
     expect(hardStop.slice(0, 700)).toContain("art.destroy()");
     // 解码器自己同时做两件事：把 teardown 交给内核（硬停路径直接调），
     // 并订阅 ArtPlayer 的 destroy 事件。少任一条都会留一个还在灌数据的 MSE 源。
+    // 订阅必须用 `once`：原地换集/换台复用同一实例，`on` 会在实例上累积处理器。
     const decoders = read("src/hooks/playerDecoders.ts");
     expect(decoders).toContain("host.lifecycle.setTeardown(destroy);");
-    expect(decoders).toContain('instance.on("destroy", destroy);');
+    expect(decoders).toContain('instance.once("destroy", destroy);');
   });
 
   it("status overlay never blocks the controls", () => {

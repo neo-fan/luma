@@ -96,14 +96,19 @@ fn parse_rules(parses: &[Value]) -> Vec<Rule> {
         if url.is_empty() {
             continue;
         }
-        let kind = item
-            .get("type")
-            .and_then(|value| {
-                value
-                    .as_u64()
-                    .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
-            })
-            .unwrap_or(0) as u8;
+        // 用 saturating 转换而非 `as u8`：外部配置若给 type=256+，`as` 会回绕成
+        // 0/1/4 等合法值，把未知类型误判成 webview/json/super。钳到 u8::MAX(255)
+        // 这个「谁都不匹配」的哨兵，交给下面的默认分支处理。
+        let kind = u8::try_from(
+            item.get("type")
+                .and_then(|value| {
+                    value
+                        .as_u64()
+                        .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
+                })
+                .unwrap_or(0),
+        )
+        .unwrap_or(u8::MAX);
         let ext = item.get("ext").cloned().unwrap_or(Value::Null);
         let header = ext
             .get("header")

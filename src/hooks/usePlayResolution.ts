@@ -17,6 +17,7 @@ import {
 } from "../lib/episodePlayCache";
 import { api, errorMessage } from "../lib/invoke";
 import { log } from "../lib/logger";
+import { startTrace } from "../lib/switchTrace";
 import type { PlayResolved } from "../types/luma";
 
 export interface UsePlayResolutionArgs {
@@ -34,6 +35,19 @@ export interface UsePlayResolutionArgs {
   setSwitchTip: Dispatch<SetStateAction<string>>;
   /** 播放/解码错误由播放页统一展示。 */
   setVideoError: Dispatch<SetStateAction<string>>;
+  /**
+   * 换地址时**保留当前播放实例**（直播：换台 / 换线路）。
+   *
+   * 点播的硬解析会把 `resolved` 清成 null 让内核卸载旧实例——那是刻意的
+   * （换集必须掐掉旧流的音频）。但直播的换线按钮就长在播放器控制栏里：
+   * 一旦实例被销毁，控制栏、线路 selector、全屏全部消失，用户面对的是一块
+   * 只剩「正在连接播放地址…」的黑面板，连换线这个出口都没有了（实测截图）。
+   *
+   * 传 true 时改为「后台解析 + 落地才换」：解析期间旧实例继续渲染、控制栏
+   * 照常可用（调用方用 `switching` 驱动 loading 与按钮态），新地址拿到之后
+   * 才替换 `resolved`，内核在这一刻重建。解析失败则保留旧实例与旧 `resolved`。
+   */
+  keepInstanceWhileSwitching?: boolean;
 }
 
 export interface PlayResolution {
@@ -48,6 +62,11 @@ export interface PlayResolution {
   stage: "parsing" | "connecting" | null;
   /** 刷新中：与首次解析不同，旧播放器实例与控件必须保持可见可用。 */
   reloading: boolean;
+  /**
+   * 换地址在途但**保留了旧实例**（`keepInstanceWhileSwitching`，直播换台/换线）。
+   * 与 `resolving` 互斥：此刻画面上还有播放器与控制栏，调用方只加「换流中」态。
+   */
+  switching: boolean;
   resolveError: string;
   /**
    * 解析失败的**原因属于「没定论」**（源侧冷启动 / 忙时超过预算还没答）。
@@ -73,6 +92,16 @@ export interface PlayResolution {
 const RESOLVE_HARD_CAP_MS = 50_000;
 
 /**
+ * 直播的解析硬上限。
+ *
+ * 直播没有 playerContent 那一步（地址就是直链），`resolve_play` 只是交给本机
+ * 反代建连 + 嗅探，正常 1s 内返回。用 50s 的通用上限会让一条死线路把界面按在
+ * 「正在连接播放地址…」近一分钟——直播频道 20 条线路，用户早该换台了。
+ * 15s 足够覆盖临时抖动，又能在死地址上尽快给出结论。
+ */
+const LIVE_RESOLVE_CAP_MS = 15_000;
+
+/**
  * 用户主动点播时给 playerContent 的预算。
  *
  * 2026-11-14 实测 py_bubuzhuiju 的 zijianm3u8：进程内**首次**调用 18.3 s
@@ -92,6 +121,7 @@ export function usePlayResolution({
   vodId,
   setSwitchTip,
   setVideoError,
+  keepInstanceWhileSwitching = false,
 }: UsePlayResolutionArgs): PlayResolution {
   const [resolved, setResolved] = useState<PlayResolved | null>(null);
   // Entering the player always starts a resolve; defaulting to true avoids a
@@ -103,6 +133,8 @@ export function usePlayResolution({
   const [resolveError, setResolveError] = useState("");
   const [resolveRetryable, setResolveRetryable] = useState(false);
   const [reloading, setReloading] = useState(false);
+  /** 保留实例的换地址在途（直播换台/换线）：解析期间控制栏照常可用。 */
+  const [switching, setSwitching] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   /**
    * 刷新必须绕过按集缓存：用户点刷新就是「这个地址可能坏了，重新要一个」，
@@ -131,7 +163,21 @@ export function usePlayResolution({
     // 不建实例，界面永远卡在「正在连接播放地址…」（2026-11-14 实测：
     // resolve_play 97 秒前就返回了，播放器还是空的）。
     const soft = lastSource.current === source && resolvedRef.current !== null;
+    /**
+     * 保留实例的换地址（直播换台/换线）：已有实例时不清 resolved、不置
+     * resolving，等于「控制栏原地不动，后台换流」。首次进入（还没有实例）
+     * 仍走硬解析，否则连第一帧都建不出来。
+     */
+    const keepInstance = keepInstanceWhileSwitching && !soft && resolvedRef.current !== null;
     lastSource.current = source;
+    // 埋点：一次解析 = 一个 trace（阶段见各 mark）。日志里搜 "trace" 就能把
+    // 「点下去 → 直链 → 反代建连 → 出画/失败」的耗时与结局一次拉出来。
+    const trace = startTrace("resolve", {
+      site: siteKey,
+      live: siteKey === "live",
+      soft,
+      keepInstance,
+    });
 
     // 恢复出来的播放页（路由只有 siteKey+vodId，没有 playUrl）根本无法解析：
     // 直接给明确错误并结束 resolving，避免一直转「正在解析播放地址…」。
@@ -148,6 +194,10 @@ export function usePlayResolution({
       }
       setStage(null);
       setResolving(false);
+      // 换台/切源会把地址清空：这一轮没有「换流中」可言，否则控制栏会被
+      // 永久钉在 loading 态（switching 只在解析 finally 里复位）。
+      setSwitching(false);
+      trace.end("aborted", { reason: "no-url" });
       return;
     }
 
@@ -174,6 +224,7 @@ export function usePlayResolution({
           setResolved(cached);
           setResolving(false);
           setStage(null);
+          trace.end("ok", { cached: true, kind: cached.kind });
           return;
         }
       }
@@ -182,6 +233,13 @@ export function usePlayResolution({
         // 软刷新意味着已有 resolved，绝不该停在「解析中」——多这一行是给
         // 上面的 StrictMode 场景兜底，避免再出现「永远转圈」。
         setResolving(false);
+      } else if (keepInstance) {
+        // 直播换台/换线：实例、控制栏、全屏状态全部原地保留，只进「换流中」。
+        // 解析落地后才替换 resolved（内核在那一刻重建，换台耗时落在后台），
+        // 失败则旧实例照旧可用——用户随时还能点线路 selector 换一条。
+        setSwitching(true);
+        setResolving(false);
+        setStage("connecting");
       } else {
         setResolving(true);
         setStage("parsing");
@@ -203,7 +261,7 @@ export function usePlayResolution({
             capReject?.(
               new Error("播放地址解析超时（源可能不可用或网络异常），可点刷新按钮重试"),
             ),
-          RESOLVE_HARD_CAP_MS,
+          siteKey === "live" ? LIVE_RESOLVE_CAP_MS : RESOLVE_HARD_CAP_MS,
         );
         // TVBox 链路：详情里的 playUrl 常常只是线路 id 或自定义 scheme
         // （weiguan://、PAN1-…、6105_0_1），必须让 spider 的 playerContent
@@ -223,9 +281,17 @@ export function usePlayResolution({
         if (!alive) {
           // 这一轮已被新地址取代（换台 / 换集 / 刷新）：旧结果一个字段都不许再写，
           // 否则会把新一轮的「解析中」覆盖成「连接中」，界面就此卡住。
+          trace.end("aborted", { at: "target" });
           return;
         }
         // 直链已拿到，进入「交给反代 + 播放内核建连」阶段。
+        trace.mark("target", {
+          parser: target.parser ?? "",
+          // 直播没有 playerContent，这一段的耗时应当接近 0；明显高就说明
+          // 「源侧解析」被误用到了直播链路上。
+          timedOut: Boolean(target.timedOut),
+          privateUrl: Boolean(target.unresolvable),
+        });
         setStage("connecting");
         if (target.timedOut) {
           // 慢失败必须先说清楚：这不是「网盘 token」，重试就能好。
@@ -268,6 +334,9 @@ export function usePlayResolution({
           if (siteKey !== "live") {
             setEpisodePlayCache(siteKey, playFrom, playUrl, result);
           }
+          trace.end("ok", { kind: result.kind });
+        } else {
+          trace.end("aborted", { at: "proxy" });
         }
       } catch (err) {
         if (alive) {
@@ -278,6 +347,12 @@ export function usePlayResolution({
             vodId,
             message: errorMessage(err),
           });
+          trace.end("fail", {
+            slow: slowTimeout,
+            reason: errorMessage(err).slice(0, 120),
+          });
+        } else {
+          trace.end("aborted", { at: "error" });
         }
       } finally {
         if (capTimer) {
@@ -287,6 +362,9 @@ export function usePlayResolution({
         if (alive) {
           if (soft) {
             setReloading(false);
+          } else if (keepInstance) {
+            setSwitching(false);
+            setStage(null);
           } else {
             setResolving(false);
             setStage(null);
@@ -297,6 +375,9 @@ export function usePlayResolution({
     void run();
     return () => {
       alive = false;
+      // 被新一轮取代：trace 收口成 aborted，日志里才看得出「这一轮没跑完
+      // 是因为又点了别的」。end 幂等，正常收口过的不会再写一条。
+      trace.end("aborted", { reason: "superseded" });
       // 硬上限定时器必须一起收掉：只置 alive 的话，旧一轮的 50s 计时器会在
       // 下一轮解析途中触发，把一条过期错误塞进 Promise.race（表现为「刚换台
       // 就报超时」）。
@@ -315,6 +396,7 @@ export function usePlayResolution({
     resolving,
     stage,
     reloading,
+    switching,
     resolveError,
     resolveRetryable,
     setResolved,

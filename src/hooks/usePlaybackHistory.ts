@@ -29,6 +29,12 @@ export interface UsePlaybackHistoryOptions {
   historyMetaRef: MutableRefObject<{ pic: string; remarks: string; siteName: string }>;
   /** 当前集名 / 线路名（随剧集列表异步确定，用 ref 不进 effect 依赖）。 */
   historyLabelRef: MutableRefObject<{ episodeName: string; playFrom: string }>;
+  /**
+   * 立即写一次历史的通道：由页面创建并同时交给切换编排（换集/换源前 flush），
+   * 这里在进度 effect 里挂上实现。外部持有是为了解开「编排要 flush、历史要
+   * display」的顺序环。
+   */
+  flushHistoryRef: MutableRefObject<(() => void) | null>;
 }
 
 export interface PlaybackHistory {
@@ -70,6 +76,7 @@ export function usePlaybackHistory({
   lastMediaRef,
   historyMetaRef,
   historyLabelRef,
+  flushHistoryRef,
 }: UsePlaybackHistoryOptions): PlaybackHistory {
   /**
    * 这部剧记忆的倍速（0 = 从没设过，播放侧按 1.0 起播）。
@@ -87,7 +94,6 @@ export function usePlaybackHistory({
   const readRememberedSkip = useCallback(() => rememberedSkipRef.current, []);
   /** 配置镜像 state：ref 供引擎懒读不触发重渲染，state 供浮层编辑器受控显示。 */
   const [skipConfig, setSkipConfig] = useState<SkipSegment[]>([]);
-  const flushHistoryRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -183,7 +189,7 @@ export function usePlaybackHistory({
         resolution: knownResolution,
         // 0 = 这次写入没带倍速，宿主侧不会覆盖库里已有的值。
         rate: rememberedRateRef.current,
-        // 片头/片尾配置随这部剧写回（后端跨源继承，见 db/history.rs）。
+        // 片头/片尾配置随这部剧写回（后端跨源继承，见 db/playback.rs）。
         skipJson: serializeSkipConfig(rememberedSkipRef.current),
         positionMs:
           snapshot?.positionMs ?? Math.round(video.currentTime * 1000),

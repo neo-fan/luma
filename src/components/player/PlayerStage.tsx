@@ -156,12 +156,25 @@ export default function PlayerStage({
             <div className="player-status is-busy">
               <p className="player-status__title">{overlay.title}</p>
               {slowHint ? <p className="player-status__desc">{slowHint}</p> : null}
+              {/* 等待也要有出口：直播换线按钮长在播放器控制栏里，而这一层正是
+                  「还没有播放实例」的状态——控制栏根本不存在。等到 4s 仍没结果
+                  就把「换下一条线路」摆出来，用户不必干等 50s 的解析上限。 */}
+              {onNextLine && waited >= 4 ? (
+                <button
+                  type="button"
+                  className="player-status__action"
+                  onClick={onNextLine}
+                  disabled={nextLineBusy}
+                >
+                  {nextLineBusy ? "正在切换线路…" : "换下一条线路"}
+                </button>
+              ) : null}
             </div>
           ) : (
             <div className="player-status is-error">
               <p className="player-status__title">{overlay.title}</p>
               <p className="player-status__desc">{overlay.desc}</p>
-              {onNextLine && (overlay.kind === "error" || waited >= 5) ? (
+              {onNextLine ? (
                 <button
                   type="button"
                   className="player-status__action"

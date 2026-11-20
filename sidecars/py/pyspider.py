@@ -18,9 +18,12 @@ singleton. Trade-offs, all deliberate:
 * **thread-safety** — a shared instance is serialized by a per-entry lock (calls
   to the same source queue; different sources still run on the pool's 8 threads).
 * **crash/hang isolation** — an in-process hard crash or an un-killable hang can
-  wedge a thread; the host's wall-clock timeout + `bridge.rs` dead-connection
-  respawn bound the blast radius (worst case: lose the warm instances, recover on
-  the next call).
+  wedge a thread; the host's wall-clock timeout bounds the caller, and module
+  *loading* is done outside the global pool lock so a bad spider's top-level
+  hang cannot freeze other sources. Note: an un-killable hang *inside a handler*
+  still occupies one pool worker until the host times out (Python cannot kill a
+  thread); `__cancel__` is checked at request boundaries, not mid-handler. A
+  truly wedged worker needs a sidecar restart, which is a host-level concern.
 * **memory** — entries are evicted after `IDLE_TTL_S` and capped at `MAX_ENTRIES`.
 
 `run(params)` keeps the exact old contract (returns the JSON-safe result, raises
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import threading
 import time
+import traceback
 from typing import Any
 
 try:
@@ -91,12 +95,22 @@ def _build_instance(source: str, class_name: str, ext: str, api: str) -> Any:
 
 
 def _get_entry(key: tuple[str, str, str], source: str, class_name: str, ext: str, api: str) -> _Entry:
+    # Double-checked locking: exec(compile(source)) runs the spider module top
+    # level, which may do slow/blocking work. Building it while holding the
+    # global pool lock froze EVERY source (incl. ping) on one bad module. Build
+    # outside the lock; re-check under the lock so concurrent misses don't all
+    # insert (a rare duplicate build is harmless — each instance has its own lock).
+    entry = _pool.get(key)
+    if entry is not None:
+        entry.last_used = time.monotonic()
+        return entry
+    fresh = _Entry(_build_instance(source, class_name, ext, api))
     with _pool_lock:
         entry = _pool.get(key)
         if entry is None:
             _evict_locked()
-            entry = _Entry(_build_instance(source, class_name, ext, api))
-            _pool[key] = entry
+            _pool[key] = fresh
+            entry = fresh
         entry.last_used = time.monotonic()
         return entry
 
@@ -140,6 +154,7 @@ def run(params: dict[str, Any]) -> Any:
             fingerprint=key[0],
             source_api=api,
             message=f"py spider load failed: {exc}",
+            trace=traceback.format_exc(limit=6),
         )
         raise
 
@@ -179,12 +194,18 @@ def run(params: dict[str, Any]) -> Any:
             )
 
     if (time.perf_counter() - started) > 15.0:
-        log_crash(
-            stage="bridge",
-            method=method,
-            spider_class=class_name,
-            fingerprint=key[0],
-            source_api=api,
-            message="py spider call exceeded 15s (thread kept; host will cancel)",
+        # Slow, not crashed: the call returned. Recorded as a warn so it never
+        # lands in the crash ledger, and logged without touching the result.
+        log_event(
+            {
+                "level": "WARN",
+                "kind": "slow_call",
+                "method": method,
+                "spiderClass": class_name,
+                "sourceFingerprint": key[0],
+                "sourceApi": api,
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "message": "py spider call exceeded 15s (thread kept; host may cancel)",
+            }
         )
     return result

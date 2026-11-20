@@ -45,47 +45,37 @@ pub struct ConfigWrite<'a> {
     pub source_json: &'a str,
 }
 
+/// 播放记录单表的一行（收藏只是 `favorite` flag）。
+///
+/// 按 `title_key`（归一化剧名）合并：同一部剧换源/换线路都只保留一行。
+/// `episode_number` 存**语义集号**（从集名解析），不是数组下标——倒序线路
+/// 用下标会取到相反的一集。
 #[derive(Debug, Clone)]
-pub struct FavoriteRow {
+pub struct PlaybackRow {
+    pub id: i64,
+    pub title_key: String,
+    pub title: String,
+    pub subscription_address: String,
+    pub subscription_id: String,
     pub site_key: String,
-    pub vod_id: String,
-    pub name: String,
-    pub pic: String,
-    pub remarks: String,
     pub site_name: String,
-    pub added_at: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct HistoryRow {
-    pub site_key: String,
     pub vod_id: String,
-    pub name: String,
-    pub pic: String,
-    pub remarks: String,
-    pub site_name: String,
-    pub play_url: String,
-    /// 最近观看的集数名（源自己给的剧集标题）。
+    pub line_name: String,
     pub episode_name: String,
-    /// 线路名，即 TVBox `vod_play_from` 里的一段。
-    pub play_from: String,
+    pub episode_number: Option<i64>,
+    pub play_url: String,
+    pub pic: String,
+    pub remarks: String,
+    pub douban_id: String,
     pub position_ms: u64,
     pub duration_ms: u64,
-    /// 播放时解码出来的画面尺寸标签（`1080P` / `2K` / `4K`）。
-    ///
-    /// 站点不提供分辨率字段，只有真正播出画面才知道；写入时是空的（还没解码）
-    /// 就不覆盖库里已有值。
     pub resolution: String,
-    /// 这部剧的倍速（0 = 从没设过，读取方按 1.0 处理）。
-    ///
-    /// 记在行上而不是全局偏好里：倍速是「看这部剧的习惯」，换源、换线路都不该
-    /// 把它重置，而这张表按剧名合并同一部剧，行会跟着走。
     pub rate: f64,
-    /// 这部剧的跳过片头/片尾配置（JSON 数组文本，`SkipSegment[]`）。
-    ///
-    /// 空串 = 这次写入没带；`[]` = 用户确实把片段全删了。宿主侧不理解片段语义，
-    /// 结构校验在写入方（前端 `lib/skipSegments.ts`）做，这里只保证不丢。
     pub skip_json: String,
+    pub prefs_json: String,
+    pub favorite: bool,
+    pub favorite_at: Option<u64>,
+    pub created_at: u64,
     pub updated_at: u64,
 }
 
@@ -151,12 +141,12 @@ impl Db {
 }
 
 // ---- 子模块 ---------------------------------------------------------------
-// `Db` 是唯一入口；schema / meta / configs / favourites / history 各占一个
+// `Db` 是唯一入口；schema / meta / configs / playback 各占一个
 // `impl Db` 文件，行结构体留在本文件，避免子模块互相 import。
+// 2.0 收藏与历史合并为单表：原 favourites / history 的读写都在 playback.rs。
 mod configs;
-mod favorites;
-mod history;
 mod meta;
+mod playback;
 mod schema;
 
 #[cfg(test)]

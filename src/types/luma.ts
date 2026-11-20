@@ -104,7 +104,9 @@ export type SpiderMethod =
   | "detailContent"
   | "searchContent"
   | "playerContent"
-  | "liveContent";
+  | "liveContent"
+  /** TVBox 本地代理方法（`Spider.proxy(Map)`）：Rust/py 适配层都实现了，前端不直接调。 */
+  | "proxy";
 
 /** 播放目标（6.2） */
 export interface PlayTarget {
@@ -301,6 +303,16 @@ export interface HistoryItem extends VodRef {
    * 结构由 `src/lib/skipSegments.ts` 解释与校验。
    */
   skipJson?: string;
+  /** 剧个性配置扩展位（JSON 文本）。 */
+  prefsJson?: string;
+  /** 收藏标记：收藏只是播放记录上的一个 flag（历史页据此显示收藏 icon）。 */
+  favorite?: boolean;
+  /** 订阅裸地址快照（弱引用：订阅删了，记录仍可展示）。 */
+  subscriptionAddress?: string;
+  /** 豆瓣 id（可选）：有就记，不参与剧名合并。 */
+  doubanId?: string;
+  /** 语义集号（从集名解析）；不是数组下标，倒序线路也正确。 */
+  episodeNumber?: number | null;
   updatedAt: number;
 }
 

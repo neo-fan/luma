@@ -23,6 +23,8 @@ export interface SwitchQueue<T> {
   request: (target: T) => void;
   /** 是否有一次执行正在进行。 */
   isBusy: () => boolean;
+  /** 正在执行的目标（同步可见：request 里先置 running 再起协程）。 */
+  peekRunning: () => T | null;
   /** 已请求但尚未开始执行的目标（UI 用它表达「排队中」）。 */
   peekPending: () => T | null;
   /** 丢弃未执行的意图（换源、路由变化、卸载）。正在跑的那次不受影响。 */
@@ -65,6 +67,7 @@ export function createSwitchQueue<T>(options: QueueItem<T>): SwitchQueue<T> {
       drain();
     },
     isBusy: () => running !== null,
+    peekRunning: () => running,
     peekPending: () => pending,
     cancelPending: () => {
       pending = null;

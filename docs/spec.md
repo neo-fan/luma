@@ -38,11 +38,12 @@ Rust 宿主（Tauri v2）
 sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner（只执行第三方 JS 源）
 ```
 
-- **第三方代码一律子进程**：Python 脚本经 `pyspider.py` 拉起 `pyrun.py`，JS 脚本进
-  `qjs-runner`；主进程不执行第三方代码。子进程超时按进程级强杀（Job Object），
-  不依赖 future 取消。
+- **第三方代码一律在宿主进程之外**：Python 脚本由适配层进程内的 `pyspider.py` 执行
+  （每源一个常驻实例池，逐实例加锁串行），JS 脚本进独立的 `qjs-runner`；Rust 主进程
+  不执行第三方代码。Python 侧超时由宿主墙钟判定并发 `cancel` 帧，连接判死则重启适配层
+  （`bridge.rs`）；`qjs-runner` 按进程级强杀，不依赖 future 取消。
 - Rust 进程内只跑自研逻辑：配置链、CMS 采集与解析、直播解析、parse 池、反代、豆瓣。
-- `infra/` 与 `domain/` 是物理分层（`#[path]` 映射），37 个 command 的路径因此零改动；
+- `infra/` 与 `domain/` 是物理分层（`#[path]` 映射），40 个 command 的路径因此零改动；
   `db↔store`、`proxy↔spider` 各自同层以规避环。
 
 ## 4. 源类型：执行与解析位置
@@ -50,7 +51,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 | 源 | 脚本在哪执行 | 响应在哪解析 | 状态 |
 | --- | --- | --- | --- |
 | CMS 采集 | —（宿主 `reqwest`） | `domain/spider/cms_parse.rs`（JSON/XML → 契约） | ✅ 承诺（直链 m3u8） |
-| Python（`base.spider`） | `sidecars/py/main.py` → `pyspider.py` → `pyrun.py` 子进程 | 脚本结果原样交回，宿主 `cms_parse.rs::normalize_spider_result` 归一化 | ✅ 承诺（返回自有本地服务的源除外） |
+| Python（`base.spider`） | `sidecars/py/main.py` → `pyspider.py`（进程内常驻实例池） | 脚本结果原样交回，宿主 `cms_parse.rs::normalize_spider_result` 归一化 | ✅ 承诺（返回自有本地服务的源除外） |
 | JS（drpy2 / 经典 `var spider`） | `qjs-runner`（独立进程，每请求独立 rquickjs context） | 宿主 `spider/quickjs.rs` 直接收帧：qjs-runner 自己产出契约形状，不再过 `cms_parse` | ✅ 支持 |
 | jar（`csp_*` / jvm） | 不执行 | — | ⛔ 运行时已移除，导入即 `enabled: false`，原因「jar 源为 Android dex，Windows 端暂不支持」 |
 
@@ -64,17 +65,18 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 - **帧格式**：一行一个 JSON。请求 `{ id, method, params }`；响应
   `{ id, ok: true, result }` 或 `{ id, ok: false, error: { code, message } }`。
-  stdout 只允许协议帧，日志一律走 stderr / 文件。
-- **并发**：单车道 `ThreadPoolExecutor(max_workers=8)`；`spider.py` 在车道里等
-  `pyrun.py` 子进程（一次调用占满一条 worker 直到脚本返回或宿主强杀），`ping`
-  与其共享队列，宿主侧看到的是排队而不是丢失。
+  stdout 只允许协议帧，日志一律走 stderr / 文件；启动后 `sys.stdout` 被换成「一律
+  投 stderr」的门卫，第三方脚本的 `print` 不会插进帧里。
+- **并发**：单车道 `ThreadPoolExecutor(max_workers=8)`；`spider.py` 在车道里同步等待
+  脚本返回（同源调用被实例锁串行，跨源仍并发），`ping` 与其共享队列，宿主侧看到的是
+  排队而不是丢失。
 - **帧健壮性**：坏帧能捞出 id 就回 `malformed frame` 错误帧，捞不到就记日志并继续
   服务（静默丢帧会让宿主干等满墙钟）。
 - **编码**：stdio 恒 UTF-8，`force_utf8_stdio()` 在启动时重建 stdin/stdout；宿主给
   子进程注入 `PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8` / `PYTHONPATH`。
-- **可观测性**：慢调用（≥ 3000ms）写 `adapter_latency`，脚本崩溃写 `spider_crash`
-  （含 traceback 与来源 api），能力缺口写 `missing_method`，越界返回值写
-  `unsafe_result`。
+- **可观测性**：慢调用（≥ 3000ms）写 `adapter_latency`，单次脚本执行超 15s 另记
+  `slow_call`（调用已返回，不当崩溃），脚本崩溃写 `spider_crash`（含 traceback 与
+  来源 api），能力缺口写 `missing_method`，越界返回值写 `unsafe_result`。
 - **已删除方法**（调用返回 `unknown method`）：`config.decrypt` /
   `config.normalize` / `config.mergeRepos` / `site.route` /
   `site.parseHome|parseCategory|parseDetail|parseSearch` / `live.parseM3u` /
@@ -82,14 +84,16 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 ## 6. 宿主 IPC 与前端路由
 
-- **39 个 command 闭集**（`src-tauri/src/lib.rs` 注册）：config 12
+- **40 个 command 闭集**（`src-tauri/src/lib.rs` 注册）：config 13
   （`config_import` / `config_list` / `config_active` / `config_activate` /
   `config_rename` / `config_remove` / `config_refresh` / `config_refresh_settings` /
-  `config_set_refresh_interval`、`gh_proxy_state` / `gh_proxy_set` / `gh_proxy_test`）、
+  `config_set_refresh_interval`、`gh_proxy_state` / `gh_proxy_set` / `gh_proxy_test`、
+  `site_set_enabled`）、
   http 1、spider 2（`spider_invoke` / `site_health`）、live 3（`live_parse` /
   `live_epg` / `live_epg_warm`）、proxy 1、play 2（`resolve_play` / `open_external`）、
-  parse 1（`parse_resolve`）、douban 1、store 8（收藏 3 + 历史 5）、logging 4、
-  storage 2（`storage_usage` / `storage_clear`）、clipboard 1、`site_set_enabled`。
+  parse 1（`parse_resolve`）、douban 2（`douban_meta` / `douban_request`）、
+  store 8（收藏 3 + 播放记录 5，单表实现）、logging 4、
+  storage 2（`storage_usage` / `storage_clear`）、clipboard 1。
 - 前端不得绕过 `src/lib/invoke.ts`；detail / player 的大字段走 `history.state`，
   不进 URL。
 - **8 条路由**（`src/routes.tsx`，`createHashRouter`）：首页、收藏、历史、搜索、
@@ -99,13 +103,18 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 ## 7. 配置与数据
 
-- `<data>/luma.db` 单库，WAL + 事务写，先提交再刷内存缓存；无迁移逻辑。
+- `<data>/luma.db` 单库，WAL + 事务写，先提交再刷内存缓存；2.0 起 `PRAGMA user_version`
+  闸门，**不迁移旧播放数据**（`favorites`/`history` 分表丢弃，订阅地址保留并重新解析）。
   便携模式 = exe 同级存在 `data/`。
-- **history 行 = 这部剧的状态**：除进度/集/线路外，还带 `rate`（倍速，0 = 没设过
-  → 播放侧按 1.0）与 `skip_json`（跳过片头/片尾配置的 JSON 文本，空串 = 这次没带、
-  `[]` = 用户清空过）。表按剧名合并同一部剧，所以这两项天然跨源共享；写入沿用
-  「空值不覆盖已有值」这条既有规矩（与封面/备注/分辨率同构）。收藏不放这张表：
-  收藏能发生在从没看过的片上，而这张表有 `MAX_HISTORY` 的 LRU 裁剪。
+- **playback 行 = 这部剧的状态**：除进度/集/线路外，还带 `rate`（倍速，0 = 没设过
+  → 播放侧按 1.0）、`skip_json`（跳过片头/片尾配置的 JSON 文本，空串 = 这次没带、
+  `[]` = 用户清空过）与 `prefs_json`（剧个性配置扩展位）。表按 `title_key`（剧名
+  归一化：去空白 + 小写）合并同一部剧，所以这些偏好天然跨源共享；写入沿用
+  「空值不覆盖已有值」。**收藏只是行上的 `favorite` flag**：收藏没看过的片会新建
+  一条无进度记录；取消收藏只置 0（行保留）；清空播放记录只删 `favorite=0`，收藏
+  连同进度一起保留。容量裁剪（`MAX_HISTORY`）只裁非收藏行。
+- **集用语义集号**：`episode_number` 从集名解析（`第04集` / `第4集` / `EP01` → 4），
+  不是数组下标——倒序线路也能正确定位续播与换源同集。
 - **双快照**：`imported_json` 是导入原件，永不被运行策略改写；`runtime_json` 由
   `derive_runtime()` 单向派生（含 `enabled` / `disabledReason`）。fan-out / 播放 /
   前端缓存只读 runtime；`find_site` 查 imported 以兼容旧收藏；`spider_invoke` 单点

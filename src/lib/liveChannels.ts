@@ -76,6 +76,15 @@ interface SourceMemo {
 const groups = new Map<string, LiveGroup[]>();
 const inflight = new Map<string, Promise<LiveGroup[]>>();
 
+/** 内存里最多留几份源的频道表：一份 m3u 常有上千频道（0.2–0.6 MB），换源不封顶就是漏。 */
+const MAX_GROUP_SETS = 4;
+
+/** 换配置 / 重新导入时清场：旧 sourceKey 的频道表再也不会被访问，留着只是占内存。 */
+export function clearLiveGroups(): void {
+  groups.clear();
+  inflight.clear();
+}
+
 function readMemos(): Record<string, SourceMemo> {
   try {
     const raw = window.localStorage.getItem(SOURCES_KEY);
@@ -110,6 +119,11 @@ export function primeLiveGroups(sourceKey: string, next: LiveGroup[]): void {
     return;
   }
   groups.set(sourceKey, next);
+  while (groups.size > MAX_GROUP_SETS) {
+    const oldest = groups.keys().next();
+    if (oldest.done || oldest.value === sourceKey) break;
+    groups.delete(oldest.value);
+  }
 }
 
 export function peekLiveGroups(sourceKey: string): LiveGroup[] | null {

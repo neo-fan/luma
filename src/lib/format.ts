@@ -252,11 +252,15 @@ export function sameEpisodeName(
 /**
  * 按片名相关度稳定排序，返回新数组（不修改入参）。同分保持后端返回顺序，
  * 因此同一站点内部的结果次序不会被打乱。
+ *
+ * `scoreOf` 供调用方复用已经算好的分数（搜索流式回包每条都已算过
+ * `matchScore`）：不传时仍然现算，兼容既有调用点。
  */
 export function rankByTitle<T>(
   items: T[],
   keyword: string,
   titleOf: (item: T) => string | null | undefined,
+  scoreOf?: (item: T) => number,
 ): T[] {
   if (!keyword.trim() || items.length < 2) {
     return items.slice();
@@ -265,7 +269,7 @@ export function rankByTitle<T>(
     .map((item, index) => ({
       item,
       index,
-      score: titleMatchScore(titleOf(item), keyword),
+      score: scoreOf ? scoreOf(item) : titleMatchScore(titleOf(item), keyword),
     }))
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .map(({ item }) => item);

@@ -27,15 +27,20 @@ fn digest(snapshot: Option<ConfigSnapshot>) -> Option<logging::ConfigDigest> {
 }
 
 /// 试运行反馈用的一键诊断：版本 / 目录 / 当前配置规模 / 日志文件。
+///
+/// async：`active_snapshot()` 是整份快照深拷贝 + 逐日志文件统计，同步命令会跑在
+/// 主线程上。改 async 后由 Tauri 调度到 runtime（返回 Result 是借用 State 的要求）。
 #[tauri::command]
-pub fn diagnostics(configs: tauri::State<'_, crate::config::ConfigStore>) -> Diagnostics {
-    logging::diagnostics::collect(digest(configs.active_snapshot()))
+pub async fn diagnostics(
+    configs: tauri::State<'_, crate::config::ConfigStore>,
+) -> Result<Diagnostics, AppError> {
+    Ok(logging::diagnostics::collect(digest(configs.active_snapshot())))
 }
 
 /// 把诊断 + 日志尾部写成一个纯文本反馈文件，并在资源管理器里选中。
 /// `write_report` 已经给出带 code 的 `AppError`，这里不再二次包装。
 #[tauri::command]
-pub fn export_report(
+pub async fn export_report(
     configs: tauri::State<'_, crate::config::ConfigStore>,
 ) -> Result<String, AppError> {
     logging::report::write_report(digest(configs.active_snapshot()))

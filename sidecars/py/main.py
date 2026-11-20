@@ -14,8 +14,10 @@ plain Rust in the host process. Keeping a second implementation in the sidecar
 meant two places to fix for one contract — the 1.0.1 "import timeout" bug was a
 symptom of the old design.
 
-One JSON frame per line on stdin/stdout. stdout carries protocol frames only;
-logs go to stderr. Requests run on a thread pool of 8; `spider.py` dispatches
+One JSON frame per line on stdin/stdout. stdout carries protocol frames only and
+is written solely through `write_raw`; at startup `sys.stdout` is replaced by a
+forwarder to stderr so a spider's stray `print` cannot interleave with (or split)
+a frame. Logs go to stderr. Requests run on a thread pool of 8; `spider.py` dispatches
 against a persistent, in-process Spider instance cached per source fingerprint
 (`pyspider.run`), so stateful spiders (live_mode=proxy rolling windows) survive
 across calls and there is no per-call interpreter/import cost. A hard crash or
@@ -67,6 +69,46 @@ def force_utf8_stdio() -> None:
 
 force_utf8_stdio()
 
+# 协议通道：帧只走这里，且只有 `write_raw` 会碰它。
+# 第三方 spider 里一句 `print(...)`（TVBox 生态里非常普遍）或某个库的 stdout
+# 输出，会直接插进 JSON 帧中间：宿主侧表现为 `sidecar emitted a non-json frame`，
+# 运气差时一帧被劈成两半，整次调用白等墙钟预算。与其逐站点要求「不要 print」，
+# 不如在进程边界上不让它写出去 —— 启动后 `sys.stdout` 一律改投 stderr。
+PROTOCOL_OUT = sys.stdout
+
+
+class _StderrStdout:
+    """`sys.stdout` 的替身：所有写操作落到 stderr。"""
+
+    encoding = "utf-8"
+    errors = "replace"
+
+    def __init__(self, sink) -> None:
+        self._sink = sink
+
+    def write(self, text):
+        return self._sink.write(text)
+
+    def writelines(self, lines):
+        return self._sink.writelines(lines)
+
+    def flush(self):
+        self._sink.flush()
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        return self._sink.fileno()
+
+    def close(self):
+        # 不能真关掉 stderr：后面的诊断日志还要用。
+        return None
+
+
+sys.stdout = _StderrStdout(sys.stderr)
+
+
 def _read_version() -> str:
     """版本号只有一处：仓库根 `package.json`。
 
@@ -107,11 +149,15 @@ def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-def write_frame(frame: dict) -> None:
-    line = json.dumps(frame, ensure_ascii=False)
+def write_raw(text: str) -> None:
+    """协议通道的唯一写入口（帧与故意的垃圾帧都走这里）。"""
     with _write_lock:
-        sys.stdout.write(line + "\n")
-        sys.stdout.flush()
+        PROTOCOL_OUT.write(text)
+        PROTOCOL_OUT.flush()
+
+
+def write_frame(frame: dict) -> None:
+    write_raw(json.dumps(frame, ensure_ascii=False) + "\n")
 
 
 def is_cancelled(request_id: object) -> bool:
@@ -191,8 +237,7 @@ def debug_handler(method: str, params: dict) -> dict:
     if method == "debug.junk":
         # Write a deliberately malformed frame before the real one; the Rust
         # reader must ignore it instead of breaking the connection.
-        sys.stdout.write("this is not json\n")
-        sys.stdout.flush()
+        write_raw("this is not json\n")
         return {"junk": True}
 
     if method == "debug.crash":

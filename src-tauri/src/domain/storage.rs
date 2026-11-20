@@ -155,12 +155,16 @@ fn purge(root: &Path, keep: &dyn Fn(&Path) -> bool) -> (u64, u32) {
 }
 
 #[tauri::command]
-pub fn storage_usage() -> StorageUsage {
-    StorageUsage {
+pub async fn storage_usage() -> Result<StorageUsage, AppError> {
+    // 递归 read_dir + 逐文件 metadata 是阻塞 IO（封面缓存上千文件），同步命令会
+    // 直接跑在主线程上，窗口要卡几十毫秒。扔到阻塞池。
+    tauri::async_runtime::spawn_blocking(|| StorageUsage {
         logs: measure(&logs_root()),
         reports: measure(&reports_dir()),
         image_cache: measure(&image_cache_dir()),
-    }
+    })
+    .await
+    .map_err(|err| AppError::new(code::INTERNAL, format!("测量存储用量失败：{err}")))
 }
 
 /// `target`：`logs` / `reports` / `imageCache`。
@@ -168,8 +172,15 @@ pub fn storage_usage() -> StorageUsage {
 /// 日志只清各通道的历史文件与今天的旧滚动件，当天正在写的那份走清空内容；
 /// 封面缓存整目录删除（cacache 按内容寻址、无常驻索引，删掉只会导致回源重取）。
 #[tauri::command]
-pub fn storage_clear(target: String) -> Result<ClearOutcome, AppError> {
-    let (root, keep_current_log) = match target.as_str() {
+pub async fn storage_clear(target: String) -> Result<ClearOutcome, AppError> {
+    // 整目录递归删除 + 删完再 measure 一遍，同样是阻塞 IO，不能占主线程。
+    tauri::async_runtime::spawn_blocking(move || clear_storage(&target))
+        .await
+        .map_err(|err| AppError::new(code::INTERNAL, format!("清理存储失败：{err}")))?
+}
+
+fn clear_storage(target: &str) -> Result<ClearOutcome, AppError> {
+    let (root, keep_current_log) = match target {
         "logs" => (logs_root(), true),
         "reports" => (reports_dir(), false),
         "imageCache" => (image_cache_dir(), false),
@@ -288,7 +299,9 @@ mod tests {
 
     #[test]
     fn clear_rejects_unknown_target() {
-        let err = storage_clear("database".to_owned())
+        // 命令本体已改成 async + 阻塞池，校验逻辑留在同步的 `clear_storage` 里，
+        // 测试直接打它，避免为一个参数校验搭 tokio 运行时。
+        let err = clear_storage("database")
             .err()
             .expect("未知目标必须报错，不能静默什么都不做");
         assert_eq!(err.code, code::INVALID_ARGUMENT);

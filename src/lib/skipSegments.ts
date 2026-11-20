@@ -2,7 +2,7 @@
  * 片头 / 片尾跳过配置（per-剧，落在 `HistoryItem.skipJson`）。
  *
  * 后端只把 `skip_json` 当不透明 JSON 文本透传并跨源继承（见
- * `src-tauri/src/infra/db/history.rs`），结构与校验在这里单点负责——Rust 侧注释
+ * `src-tauri/src/infra/db/playback.rs`），结构与校验在这里单点负责——Rust 侧注释
  * 也指名本文件是校验方。设计成「按剧」而非全局：一部悬疑剧片头 90s、一部综艺
  * 片头 0s 是常态，跟倍速一样属于「看这部剧的习惯」。
  *

@@ -436,7 +436,10 @@ describe("douban push contract (source invariants)", () => {
   it("routes pushes by an opaque key and treats cover as non-terminal", () => {
     // 事件按 key 路由；cover 不结算 Promise，full/none 才终态。
     expect(source).toContain('evt.phase === "full" || evt.phase === "none"');
-    expect(source).toContain('store.set(key, { meta, phase: evt.phase })');
+    // 写入统一走 setStore：它在写入处给 store 封顶（键含代理维度，换代理会
+    // 换一整套键空间，不封顶就是常驻内存泄漏）。
+    expect(source).toContain('setStore(key, { meta, phase: evt.phase })');
+    expect(source).toContain("MAX_STORE_ENTRIES");
     // 四种阶段齐全。
     expect(source).toContain('"cover" | "full" | "none" | "error"');
   });

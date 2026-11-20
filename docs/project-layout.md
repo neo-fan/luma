@@ -1,7 +1,7 @@
 # 项目目录结构与编码约定
 
 > 本文只约定「文件放哪、怎么写、产物归哪」。架构见 `docs/ARCHITECTURE.md`，调试见 `docs/DEVELOPMENT.md`，发布见 `docs/RELEASING.md`。
-> 当前状态（2026-11-14）：P0~P3 完成，真实配置「导入 → 搜索 → 详情 → 播放」跑通；前端 React + react-router + zustand，Rust 后端已按 `infra/` + `domain/` 物理分层。
+> 当前状态（2026-11-20）：2.0.0 收尾——播放切换编排收成单一真源、收藏/历史合并为 `playback` 单表，真实配置「导入 → 搜索 → 详情 → 播放」跑通；前端 React + react-router + zustand，Rust 后端按 `infra/` + `domain/` 物理分层。
 
 ## 1. 标准 Tauri v2 结构与本项目对齐
 
@@ -55,6 +55,7 @@ luma/
 │   ├── project-layout.md                  # 本文档（目录/产物/编码权威）
 │   ├── ARCHITECTURE.md                    # 架构说明 + ADR（进程/四类源/数据流/分层）
 │   ├── DEVELOPMENT.md                     # 开发调试指南（环境/四端调试/日志/回归/常见坑）
+│   ├── TESTING.md                         # 测试分层（用例该放哪、各层命令、门禁边界）
 │   ├── MAINTENANCE.md                     # 维护与升级（契约/依赖/回归分层/工程债）
 │   ├── RELEASING.md                       # 发布流程（版本同步清单/检查/打包/验收）
 │   ├── js-support.md                      # JS 源机制、ESM 加载与随包资源清单（含 SHA256）
@@ -77,10 +78,10 @@ luma/
 │   │   └── pages.css  polish.css          # polish 是后置覆盖层，必须排最后
 │   ├── pages/                             # Home/Search/Detail/Player/Live/Favorites/History/Settings
 │   ├── components/                        # 通用控件；player/ 播放页组件；settings/ 设置分区
-│   ├── hooks/                             # usePlayerEngine / usePlayResolution / useEpisodeList /
-│   │                                      #   useLiveCatalog / useProxiedImage
+│   ├── hooks/                             # usePlayerEngine / usePlayResolution /
+│   │                                      #   playback/（单一播放目标 + 切换编排）/ useLiveCatalog / useProxiedImage
 │   ├── stores/appStore.ts                 # zustand：跨页共享态（cache/preferredSite/sidebarCollapsed）
-│   ├── lib/                               # invoke（唯一 IPC）、pageCache、usePageState、playerPrefs、
+│   ├── lib/                               # invoke（唯一 IPC）、queryClient、usePageState、playerPrefs、
 │   │                                      #   sources、sourceCache、format、logger…（纯逻辑为主，
 │   │                                      #   与被测模块同目录的 *.test.ts 也放这里）
 │   └── types/luma.ts                     # 归一化契约 TS 侧
@@ -93,15 +94,16 @@ luma/
 │   ├── binaries/                          # [产物] externalBin 暂存（qjs-runner-<triple>.exe），gitignore
 │   └── src/
 │       ├── main.rs                        # 只调 luma_lib::run()
-│       ├── lib.rs                         # #[path] 分层映射 + run() + 37 个 command 注册
-│       ├── infra/                         # 底座：error/env/paths/process/netrules/http/
-│       │                                  #   db/{mod,schema,meta,configs,favorites,history}
+│       ├── lib.rs                         # #[path] 分层映射 + run() + 40 个 command 注册
+│       ├── infra/                         # 底座：error/env/paths/process/netrules/http/pct/
+│       │                                  #   textio/started/db/{mod,schema,meta,configs,playback}/
 │       │                                  #   bridge/store/window
-│       │                                  #   logging/{mod,writer,redact,ui,diagnostics,report}
+│       │                                  #   logging/{mod,redact,ui,diagnostics,report}
 │       └── domain/                        # 业务：config/play/parse/proxy/live/sniff/
-│                                          #   config/{mod,derive,naming,import,github,refresh}
-│                                          #   proxy/{mod,handlers,guard,playlist,tests}
-│                                          #   clipboard/ghproxy/spider/{mod,cms,python,quickjs}
+│                                          #   config/{mod,decrypt,derive,naming,import,github,normalize,refresh}
+│                                          #   proxy/{mod,handlers,guard,playlist,speed,tests}
+│                                          #   live/{m3u,epg} · spider/{mod,cms,cms_parse,python,quickjs}
+│                                          #   clipboard/ghproxy
 │
 ├── sidecars/                              # 随包分发的 sidecar
 │   ├── py/  qjs-runner/                   # 源码（入库）；py/ 只执行第三方脚本：
@@ -130,7 +132,7 @@ luma/
     ├── check.py                           # 离线一键回归（11 项门禁）
     ├── run_probes.mjs                     # 窗口探针一键回归（唯一入口）
     ├── bundle_report.mjs                  # 前端体积对比
-    ├── probes/                            # 窗口探针：probe_*.mjs（50 个，按功能命名）
+    ├── probes/                            # 窗口探针：probe_*.mjs（56 个，按功能命名）
     ├── diag/                              # 一次性排障：diag_*.mjs + dump_state.mjs
     ├── verify/                            # 严格验收：verify_*.mjs（带断言与截图）
     └── audit/                             # DOM/布局取证与全站扫描：audit_*.mjs、scan_*.mjs、scan_sources.py
@@ -140,7 +142,7 @@ luma/
 
 27 个 `.rs` 原先 21 个平铺在 `src-tauri/src/` 根，`lib.rs` 一屏 `pub mod`。现按技术层归入两目录，用 `#[path = "…"]` 映射：
 
-- **逻辑模块名不变**：仍是 `crate::error`、`crate::config`……所有 `use crate::foo` 与 `generate_handler!` 的 37 个 command 路径零改动 → 不会引发运行时 "command not found"（这是 Rust 分层最大的隐性雷区，编译期抓不到）。
+- **逻辑模块名不变**：仍是 `crate::error`、`crate::config`……所有 `use crate::foo` 与 `generate_handler!` 的 40 个 command 路径零改动 → 不会引发运行时 "command not found"（这是 Rust 分层最大的隐性雷区，编译期抓不到）。
 - **分层规避双向依赖环**：`db ↔ store` 同放 `infra/`，`proxy ↔ spider` 同放 `domain/`，两组真实双向引用都不跨层。
 - **这是物理分层，非依赖方向硬约束**。后续阶段再把 `crate::` 路径前缀化为 `crate::infra::*` / `crate::domain::*`，并把 command 与私有 helper 分离到 `commands/`（需逐个提升 helper 为 `pub(crate)`）。详见 `docs/ARCHITECTURE.md` 与 git history。
 

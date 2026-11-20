@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createSwitchToken, createCommitGate } from "./switchToken";
+import { describe, expect, it, vi } from "vitest";
+import { createSwitchToken, createCommitGate, createManualHold } from "./switchToken";
 import { firstPlayable } from "./probeRace";
 
 describe("switch token", () => {
@@ -136,5 +136,50 @@ describe("commit gate", () => {
     await Promise.all([p1, p2]);
     // 串行：1 完整结束后才轮到 2，绝不交叠（避免双 switchSource 竞态）。
     expect(calls).toEqual(["1:start", "1:end", "2:start", "2:end"]);
+  });
+});
+
+describe("manual hold", () => {
+  it("持有期内 active；到期自动放行", () => {
+    vi.useFakeTimers();
+    try {
+      const hold = createManualHold();
+      expect(hold.active()).toBe(false);
+      hold.engage(40);
+      expect(hold.active()).toBe(true);
+      vi.advanceTimersByTime(41);
+      expect(hold.active()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("再次 engage 续期（手动动作刷新持有，自愈持续让位）", () => {
+    vi.useFakeTimers();
+    try {
+      const hold = createManualHold();
+      hold.engage(30);
+      vi.advanceTimersByTime(20);
+      hold.engage(30); // 续期：从现在再起 30ms
+      vi.advanceTimersByTime(20);
+      expect(hold.active()).toBe(true);
+      vi.advanceTimersByTime(11);
+      expect(hold.active()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("release 立即放行：手动动作失败收口后自愈无需等满 ttl", () => {
+    vi.useFakeTimers();
+    try {
+      const hold = createManualHold();
+      hold.engage(60_000);
+      expect(hold.active()).toBe(true);
+      hold.release(); // 换源失败但没 navigate：立即放弃手动持有
+      expect(hold.active()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

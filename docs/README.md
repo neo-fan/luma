@@ -11,11 +11,15 @@
 | [`../THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md) | 使用者 / 法务 | 随仓库分发的第三方组件来源与许可 | 增删第三方资源时 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 二次开发者 | 进程模型、四类源路由、数据流、分层与 ADR | 结构变化时 |
 | [`DEVELOPMENT.md`](DEVELOPMENT.md) | 贡献者 | 环境准备、四端调试、日志、常见坑 | 调试手段变化时 |
+| [`TESTING.md`](TESTING.md) | 贡献者 | 测试分层、用例该放哪、各层命令、门禁边界 | 新增层 / 加门禁时 |
 | [`MAINTENANCE.md`](MAINTENANCE.md) | 维护者 | 契约变更流程、依赖升级、回归分层、已知工程债 | 每次还债或新增债务时 |
 | [`RELEASING.md`](RELEASING.md) | 发布者 | 版本同步清单、发版检查、打包与验收 | 发版流程变化时 |
 | [`project-layout.md`](project-layout.md) | 所有人 | 文件放哪、产物归哪、编码与命名约定 | 新增目录 / 产物类型时 |
+| [`spec.md`](spec.md) | 二次开发者 | 实现规格（现状唯一基线，不按版本切分） | 规格变化时 |
 | [`js-support.md`](js-support.md) | JS 源相关开发者 | qjs-runner 的机制、ESM 加载、随包资源清单 | 引擎或资源变化时 |
 | [`size-report.md`](size-report.md) | 发布者 | 安装器与安装后各部分的实测体积 | 每次发版 |
+
+> `verification-config.md` 是**本地抓取记录**（含真实地址，gitignore、不随仓库分发），只在本人机器上有意义。
 
 ## 约定
 

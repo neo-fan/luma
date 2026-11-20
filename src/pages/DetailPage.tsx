@@ -270,50 +270,39 @@ export default function DetailPage({
     let alive = true;
     setResumeReady(false);
     void (async () => {
-      try {
-        const list = await api.favoritesList();
-        if (alive) {
-          // 收藏按片名记录：换源后 siteKey/vodId 全变，但星标仍应是「已收藏」。
-          setFavorite(
-            list.some(
-              (item) =>
-                sameTitle(item.name, vod?.vod_name || title) ||
-                (item.siteKey === siteKey && item.vodId === vodId),
-            ),
-          );
-        }
-      } catch {
-        if (alive) {
-          setFavorite(false);
-        }
-      }
-      try {
-        const history = await api.historyList();
-        if (alive) {
-          // 历史按剧名去重：换源后 siteKey / vodId 会变，只有剧名完全匹配
-          // 才能把上一次（可能来自别的源）的进度接上。
-          const byTitle = (title ?? "").trim();
-          setResume(
-            (byTitle
+      // 两个旁路请求相互独立：串行会把「进详情页」的等待时间叠成两段 IPC。
+      // 各自 catch 成 null，语义与原来「分别 try/catch 后落默认值」等价。
+      const [favorites, history] = await Promise.all([
+        api.favoritesList().catch(() => null),
+        api.historyList().catch(() => null),
+      ]);
+      if (!alive) return;
+      // 收藏按片名记录：换源后 siteKey/vodId 全变，但星标仍应是「已收藏」。
+      setFavorite(
+        favorites !== null &&
+          favorites.some(
+            (item) =>
+              sameTitle(item.name, vod?.vod_name || title) ||
+              (item.siteKey === siteKey && item.vodId === vodId),
+          ),
+      );
+      // 历史按剧名去重：换源后 siteKey / vodId 会变，只有剧名完全匹配
+      // 才能把上一次（可能来自别的源）的进度接上。
+      const byTitle = (title ?? "").trim();
+      setResume(
+        history === null
+          ? null
+          : ((byTitle
               ? history.find((item) => item.name?.trim() === byTitle)
               : null) ??
               history.find(
                 (item) => item.siteKey === siteKey && item.vodId === vodId,
               ) ??
-              null,
-          );
-        }
-      } catch {
-        if (alive) {
-          setResume(null);
-        }
-      } finally {
-        if (alive) {
-          // resume 的加载完成时间必须显式上报：自动定位线路要看这个信号，
-          // 否则「lines 先到、历史后到」时定位会被只跑一次的守卫吞掉。
-          setResumeReady(true);
-        }
-      }
+              null),
+      );
+      // resume 的加载完成时间必须显式上报：自动定位线路要看这个信号，
+      // 否则「lines 先到、历史后到」时定位会被只跑一次的守卫吞掉。
+      setResumeReady(true);
     })();
     return () => {
       alive = false;

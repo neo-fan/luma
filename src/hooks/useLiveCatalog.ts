@@ -7,7 +7,7 @@
  *   - **列表缓存**：`lib/liveChannels` 的进程内缓存优先，刷新按钮才穿透重拉；
  *   - **容器型源**（只有 channels 没有 url）本地展开，不发网络请求。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { classifyFailure, type FailureReason } from "../lib/failureReason";
 import { api, toAppError } from "../lib/invoke";
 import {
@@ -209,6 +209,19 @@ export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
     [groups],
   );
 
+  // 两个动作都要给 memo 化的频道栏用：身份每次渲染都变会让 memo 完全失效。
+  const switchSource = useCallback(
+    (index: number) => {
+      if (index === sourceIndex || !lives[index]) {
+        return;
+      }
+      setSourceIndex(index);
+      setReloadToken(0);
+    },
+    [sourceIndex, lives],
+  );
+  const refresh = useCallback(() => setReloadToken((value) => value + 1), []);
+
   return {
     lives,
     listable,
@@ -219,13 +232,7 @@ export function useLiveCatalog(lives: LiveSource[]): LiveCatalog {
     flat,
     loading,
     error,
-    switchSource: (index: number) => {
-      if (index === sourceIndex || !lives[index]) {
-        return;
-      }
-      setSourceIndex(index);
-      setReloadToken(0);
-    },
-    refresh: () => setReloadToken((value) => value + 1),
+    switchSource,
+    refresh,
   };
 }

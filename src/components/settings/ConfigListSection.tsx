@@ -103,7 +103,7 @@ export default function ConfigListSection({
     try {
       await api.configRemove(meta.id);
       onConfigRemoved(meta.id);
-      onNotice(`已删除配置「${meta.name}」`);
+      onNotice(`已删除订阅「${meta.name}」`);
       log.info("config removed", { id: meta.id, name: meta.name });
       onReload();
     } catch (err) {
@@ -151,7 +151,7 @@ export default function ConfigListSection({
   const saveRename = async (meta: ConfigMeta) => {
     const next = cleanConfigName(editingName);
     if (!next) {
-      onError("配置名称不能为空");
+      onError("订阅名称不能为空");
       return;
     }
     if (next === meta.name) {
@@ -242,7 +242,7 @@ export default function ConfigListSection({
 
   return (
     <div className="settings-block">
-      <h2 className="section-title">已导入配置</h2>
+      <h2 className="section-title">已导入订阅</h2>
       <div className="refresh-bar">
         <div className="refresh-bar__text">
           <span className="refresh-bar__title">订阅自动刷新</span>
@@ -265,12 +265,12 @@ export default function ConfigListSection({
             与它完全重复（active 配置就是其中一行）。 */}
       </div>
 
-      {listError ? <ErrorBar message={`配置列表读取失败：${listError}`} /> : null}
-      {loadingConfigs && configs.length === 0 ? <Spinner label="正在读取配置列表…" /> : null}
+      {listError ? <ErrorBar message={`订阅列表读取失败：${listError}`} /> : null}
+      {loadingConfigs && configs.length === 0 ? <Spinner label="正在读取订阅列表…" /> : null}
       {!loadingConfigs && configs.length === 0 ? (
         <Empty
-          title="暂无已导入的配置"
-          description="在上方填写地址或粘贴文本导入；可以保存多份配置，随时切换。"
+          title="暂无已导入的订阅"
+          description="在上方填写地址或粘贴文本导入；可以保存多份订阅，随时切换。"
         />
       ) : null}
       {configs.length > 0 ? (
@@ -371,8 +371,8 @@ export default function ConfigListSection({
 
       <ConfirmDialog
         open={removingConfig !== null}
-        title="删除配置"
-        message={`确定删除配置「${removingConfig?.name ?? ""}」吗？删除后需重新导入才能使用。`}
+        title="删除订阅"
+        message={`确定删除订阅「${removingConfig?.name ?? ""}」吗？删除后需重新导入才能使用。`}
         confirmText="删除"
         danger
         onConfirm={() => void doRemoveConfig()}

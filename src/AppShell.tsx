@@ -26,6 +26,8 @@ import { noDetailSources } from "./lib/noDetailSource";
 import { forgetCards } from "./lib/cardIndex";
 import { clearPageStates } from "./lib/usePageState";
 import { clearCoverAttempts } from "./lib/coverBackfill";
+import { clearDoubanMetaCache } from "./lib/douban";
+import { clearLiveGroups } from "./lib/liveChannels";
 import { log } from "./lib/logger";
 import {
   APP_VERSION,
@@ -93,6 +95,10 @@ function resetSessionCaches(
   clearCoverAttempts();
   // 卡片索引按 siteKey 存，换配置后旧的 siteKey 再也不会被访问，留着只是漏内存。
   forgetCards();
+  // 豆瓣富化键含标题/年代/代理，直播分组键含 sourceKey：换配置后同样读不到，
+  // 且都是「每条几百字节~几 KB、条目数千」的集合，必须显式清。
+  clearDoubanMetaCache();
+  clearLiveGroups();
   scrollPositions.current.clear();
 }
 

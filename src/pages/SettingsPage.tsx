@@ -29,9 +29,9 @@ interface SettingsPageProps {
 
 /** 左侧目录项：id 同时是滚动锚点。 */
 const SECTIONS: { id: string; label: string }[] = [
-  { id: "s-import", label: "导入配置" },
+  { id: "s-import", label: "导入订阅" },
   { id: "s-ghproxy", label: "GitHub 加速" },
-  { id: "s-configs", label: "配置管理" },
+  { id: "s-configs", label: "订阅管理" },
   { id: "s-epgs", label: "直播节目单" },
   { id: "s-douban", label: "豆瓣信息" },
   { id: "s-proxy", label: "本地反代" },

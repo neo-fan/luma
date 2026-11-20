@@ -21,6 +21,7 @@ import {
   Play,
   RotateCw,
   Search,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
@@ -43,6 +44,7 @@ export type IconName =
   | "search"
   | "globe"
   | "pencil"
+  | "star"
   | "alert";
 
 const ICONS: Record<IconName, LucideIcon> = {
@@ -64,6 +66,8 @@ const ICONS: Record<IconName, LucideIcon> = {
   /** 搜索页「全部站点」：globe 比文字更贴合图标语言，且避免原生 select 风格突兀。 */
   globe: Globe,
   pencil: Pencil,
+  /** 收藏标记：历史页里给已收藏的行加星标。 */
+  star: Star,
   /** 错误提示的引导图标：圆底感叹号比三角警告更"提示"、更少惊吓感。 */
   alert: CircleAlert,
 };

@@ -4,6 +4,23 @@
   position: relative;
 }
 
+/* 历史页：已收藏的剧在封面左上角加星标（收藏只是播放记录上的 flag）。 */
+.fav-item__star {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #f5c542;
+  pointer-events: none;
+}
+
 .fav-remove {
   position: absolute;
   top: 8px;

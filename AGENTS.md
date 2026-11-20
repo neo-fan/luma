@@ -18,7 +18,7 @@ Luma 是 Windows 11 x64 的配置兼容播放框架（空壳框架，兼容 TVBo
 |---|---|
 | 版本 | `2.0.0`（`package.json` 唯一来源；`tauri.conf.json` 直接指向它，`build.rs` 断言 Cargo 版本，`python tools/version_check.py` 一键核对） |
 | 交付物 | `src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe` |
-| 回归基线 | `python tools/check.py` 11/11；`pnpm test` 621（74 个文件）；`cargo test --lib` 256 passed / 2 ignored；`qjs-runner` cargo test 7 passed |
+| 回归基线 | `python tools/check.py` 11/11；`pnpm test` 652（79 个文件）；`cargo test --lib` 257 passed / 2 ignored；`qjs-runner` cargo test 7 passed |
 | 窗口探针 | `node tools/run_probes.mjs --list`（需要 debug 窗口 + CDP 9222） |
 | 发布状态 | `LICENSE` 已定 **GPL-3.0-or-later**；仓库仍**无 remote、未 push**，是否正式发布由用户决定 |
 
@@ -37,12 +37,13 @@ Luma 是 Windows 11 x64 的配置兼容播放框架（空壳框架，兼容 TVBo
   → sidecar：Python 适配层 / qjs-runner（stdio JSON-RPC）
 ```
 
-- **37 个 command 闭集**，注册在 `src-tauri/src/lib.rs`；新增 command 或错误码需先改文档与契约。
+- **40 个 command 闭集**，注册在 `src-tauri/src/lib.rs`；新增 command 或错误码需先改文档与契约。
 - **路由**：`src/routes.tsx` 8 条（`createHashRouter`，detail/player 大字段走 `history.state`，不进 URL）；布局壳 `src/AppShell.tsx`；`View` 联合类型是导航词汇表（`src/lib/nav.ts`）；zustand 只收跨页共享态。
-- **Rust 分层是物理分层**：`infra/`、`domain/` 用 `#[path]` 映射，逻辑模块名仍是 `crate::config` 等，因此 37 个 command 路径零改动；`db↔store`、`proxy↔spider` 各自同层以规避环。
+- **Rust 分层是物理分层**：`infra/`、`domain/` 用 `#[path]` 映射，逻辑模块名仍是 `crate::config` 等，因此 40 个 command 路径零改动；`db↔store`、`proxy↔spider` 各自同层以规避环。
 - **配置双快照**：`imported_json` 是导入原件，**永不被运行策略改写**；`runtime_json` 由 `derive_runtime()` 单向派生（含 `enabled`/`disabledReason`）。fan-out / 播放 / 前端缓存只读 runtime；`find_site` 查 imported 以兼容旧收藏，`spider_invoke` 单点补策略检查防绕过。
 - **数据层**：`<data>/luma.db` 单库，WAL + 事务写，先提交再刷内存缓存；无迁移逻辑。便携模式 = exe 同级有 `data/`。
 - **播放链路**：`playerContent` 取 playUrl + header → 反代重写 m3u8 → ArtPlayer/hls.js/mpegts.js → 失败依次：同片换线 → 跨站换源 → 第 4 级嗅探（隐藏 WebView2）；没有外部播放兜底。
+- **切换编排只有一份真源**：`src/hooks/playback/`（`intent ?? committed` + 代次令牌 + 串行提交门 + 手动持有）。换集 / 换源 / 换线的落地都必须经 controller 的同一个提交口；**禁止再引入第二套「当前播放目标」状态**（历史上四套状态互相覆盖，是切换错乱的结构性原因）。
 
 ## 支持范围
 
@@ -69,6 +70,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 8. **真实配置 / 密钥不入库**：fixture 必须脱敏且只指向 `127.0.0.1`。
 9. **生产路径禁 `unwrap()`**（Rust 一律 `Result<T, AppError>`）；子进程超时必须进程级可强杀，退出用 Job Object 收尸。
 10. **不替工具链管中间产物**：cargo 管 `target/`、Vite 管 `.vite`；不要手删锁文件、不要设 `CARGO_INCREMENTAL=0`。人工只补环境变量。
+11. **清理与构建只走官方命令，禁止绕过、禁止手搓**：清理编译产物一律 `cargo clean`（可用 `--release` / `--dry-run` / `-p` 等官方选项），**严禁 `rm -rf` / `del` 手删 `target/`**；构建、启动、打包一律 `tauri dev` / `tauri build` / `tauri icon`，**严禁用裸 `cargo build` 绕过**，也**禁止用 `CARGO_TARGET_DIR` 指向新目录、复制预编译产物、关调试信息（D8050 之类）等手搓命令绕开构建锁或环境限制**。遇到构建锁被 dev 会话占用，就等它释放或用官方命令，不手工造命令绕行。
 
 ## 编码与 Git 约定
 

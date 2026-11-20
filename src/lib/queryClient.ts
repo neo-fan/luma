@@ -79,7 +79,7 @@ export function loadCached<T>(
 /**
  * 同步读未过期的值，只用于首屏直出 / 首帧种子；超过 TTL 返回 undefined。
  *
- * 必须自带 TTL 判断（不能直接 `getQueryData`）：`useEpisodeList` 靠「没命中种子才发
+ * 必须自带 TTL 判断（不能直接 `getQueryData`）：播放页「首帧种子」靠「没命中种子才发
  * 请求」决定要不要回源——若把已过期数据当命中返回，会错误地跳过一次必要请求。
  */
 export function peekFresh<T>(key: string, ttlMs: number): T | undefined {

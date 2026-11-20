@@ -68,3 +68,6 @@ Thumbs.db
 # CodeGraph 本地索引：`.codegraph/`（SQLite 库 + 日志）由 `codegraph init/index`
 # 按当前工作树重建，本机实测 25.7 MB，属可重建产物，绝不入库。
 .codegraph/
+
+# WorkBuddy 会话/记忆数据：`.workbuddy/` 由工具本地维护，非项目内容，不入库。
+.workbuddy/

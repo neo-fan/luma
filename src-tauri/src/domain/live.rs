@@ -23,7 +23,7 @@ use moka::future::Cache;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 #[tauri::command]
@@ -59,16 +59,18 @@ pub async fn live_parse(url: String, ua: Option<String>) -> Result<Value, AppErr
 /// 同 key 的并发首次访问由 moka `try_get_with` 合并成一次下载：`e.xml` 实测约
 /// 7.6 MB，重复拉取是最贵的一种浪费。求值失败不进缓存（`Err` 不写回），下一次
 /// 仍然回源——保留原「未命中即重取」的行为。
-static EPG_RAW_CACHE: OnceLock<Cache<String, String>> = OnceLock::new();
+/// 值用 `Arc<String>`：7.6 MB 的表每次命中都克隆一份，几十次换台就是数百 MB 的
+/// 分配/释放压力；Arc 只加一次引用计数。
+static EPG_RAW_CACHE: OnceLock<Cache<String, Arc<String>>> = OnceLock::new();
 
-fn epg_raw_cache() -> &'static Cache<String, String> {
+fn epg_raw_cache() -> &'static Cache<String, Arc<String>> {
     EPG_RAW_CACHE.get_or_init(|| {
         Cache::builder()
             // 按字节加权而不是条数：一条 e.xml 就有 ~7.6 MB，用条数封顶等于
             // 无界吃内存。给一个明确的总字节预算（约 6 条满量的节目单），超出
             // 由 moka 按策略淘汰最久未用的条目。
             .max_capacity(MAX_EPG_RAW_BYTES)
-            .weigher(|_key: &String, value: &String| -> u32 {
+            .weigher(|_key: &String, value: &Arc<String>| -> u32 {
                 value.len().try_into().unwrap_or(u32::MAX)
             })
             .time_to_live(EPG_TTL)
@@ -133,7 +135,7 @@ fn write_epg_disk(url: &str, raw: &str) {
 }
 
 /// 取 XMLTV 原始表：内存 → 磁盘 → 网络（GitHub 地址走加速前缀）。
-async fn load_epg_raw(state: &ConfigStore, epg_url: &str) -> Result<String, AppError> {
+async fn load_epg_raw(state: &ConfigStore, epg_url: &str) -> Result<Arc<String>, AppError> {
     // 先查内存：命中就直接返回，不去读加速前缀（`github_proxy` 是一次
     // sqlite meta 读，旧实现也只在网络分支才读它）。未命中才用 `try_get_with`
     // 合并并发首次访问成一次回源，求值失败不进缓存（下一次仍回源）。求值体
@@ -156,9 +158,9 @@ async fn load_epg_raw(state: &ConfigStore, epg_url: &str) -> Result<String, AppE
 
 /// `load_epg_raw` 的实际取数链（磁盘快照 → 网络）。只在 moka 里没有有效条目
 /// 时才会被跑到。
-async fn cold_epg_raw(epg_url: String, prefix: String) -> Result<String, AppError> {
+async fn cold_epg_raw(epg_url: String, prefix: String) -> Result<Arc<String>, AppError> {
     if let Some(raw) = read_epg_disk(&epg_url) {
-        return Ok(raw);
+        return Ok(Arc::new(raw));
     }
     let url = ghproxy::apply(&epg_url, &prefix).into_owned();
     let response = http::fetch(http::FetchRequest {
@@ -169,9 +171,19 @@ async fn cold_epg_raw(epg_url: String, prefix: String) -> Result<String, AppErro
         timeout_ms: Some(30_000),
     })
     .await?;
+    // http::fetch 对 HTTP 错误状态仍返回 Ok(body)，由调用方自行判断。这里若把
+    // 5xx/限流页当成功：错误体会被写盘并被内存缓存（求值失败才不缓存），
+    // parse 出空节目单后再缓存 30 分钟——一次瞬态故障变成半小时「今天没节目」。
+    // 非成功状态直接 Err：try_get_with 不缓存失败，下一轮仍会回源重试。
+    if response.status >= 400 {
+        return Err(AppError::new(
+            code::CONFIG_FETCH_FAIL,
+            format!("epg fetch {epg_url} -> HTTP {}", response.status),
+        ));
+    }
     let body = response.body;
     write_epg_disk(&epg_url, &body);
-    Ok(body)
+    Ok(Arc::new(body))
 }
 
 /// Parsed programmes for one channel/day.
@@ -247,7 +259,16 @@ pub async fn live_epg(
     if let Some(cached) = cache.get(key.as_str()).await {
         return Ok(cached);
     }
-    let parsed = epg::parse(&raw, &channel, date.as_deref());
+    // 解析是纯 CPU：7.6 MB 两遍扫描（collect + match + programmes）要数百毫秒，
+    // 直接在 async worker 上跑会占住线程，连切几个频道就把 worker 串满。
+    let parsed = {
+        let raw = Arc::clone(&raw);
+        let channel = channel.clone();
+        let date = date.clone();
+        tauri::async_runtime::spawn_blocking(move || epg::parse(&raw, &channel, date.as_deref()))
+            .await
+            .map_err(|err| AppError::new(code::INTERNAL, format!("解析节目单失败：{err}")))?
+    };
     cache.insert(key, parsed.clone()).await;
     Ok(parsed)
 }
@@ -339,10 +360,10 @@ mod tests {
     }
 
     /// 与生产同构的本地缓存（同 weigher/TTL），测试用它避免污染全局 static。
-    fn raw_cache(ttl: Duration) -> Cache<String, String> {
+    fn raw_cache(ttl: Duration) -> Cache<String, Arc<String>> {
         Cache::builder()
             .max_capacity(MAX_EPG_RAW_BYTES)
-            .weigher(|_key: &String, value: &String| -> u32 {
+            .weigher(|_key: &String, value: &Arc<String>| -> u32 {
                 value.len().try_into().unwrap_or(u32::MAX)
             })
             .time_to_live(ttl)

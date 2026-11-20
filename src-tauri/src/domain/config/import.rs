@@ -39,6 +39,61 @@ async fn fetch_text(url: &str) -> Result<String, AppError> {
     ))
 }
 
+/// 三内置代理 + 直连并发竞速：谁先成功返回用谁。
+async fn fetch_fastest(bare: &str) -> Result<String, AppError> {
+    let mut set = tokio::task::JoinSet::new();
+    for prefix in ghproxy::BUILTIN_PREFIXES {
+        let url = format!("{prefix}{bare}");
+        set.spawn(async move { fetch_text(url.as_str()).await });
+    }
+    let direct = bare.to_string();
+    set.spawn(async move { fetch_text(direct.as_str()).await });
+
+    let mut last_error: Option<AppError> = None;
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(Ok(text)) => {
+                set.abort_all();
+                return Ok(text);
+            }
+            Ok(Err(err)) => last_error = Some(err),
+            Err(_) => {}
+        }
+    }
+    Err(last_error
+        .unwrap_or_else(|| AppError::new(code::CONFIG_FETCH_FAIL, "all GitHub mirrors failed")))
+}
+
+/// 按地址类型决定怎么拉：
+/// - 用户自带加速前缀（非 app 内置）→ 原样直取，不再叠加、不替换；
+/// - 裸 GitHub / app 内置前缀 → 三代理并发竞速；
+/// - 其它 → 直连。
+async fn fetch_config_text(url: &str) -> Result<String, AppError> {
+    if let Some((prefix, _)) = ghproxy::split_proxy(url) {
+        if !ghproxy::is_builtin_prefix(prefix) {
+            return fetch_text(url).await;
+        }
+    }
+    let bare = ghproxy::strip_proxy(url);
+    if ghproxy::is_github_url(bare) {
+        return fetch_fastest(bare).await;
+    }
+    fetch_text(bare).await
+}
+
+/// 订阅地址入库前归一化：app 内置加速前缀剥掉存**裸地址**（唯一性稳定）；
+/// 用户自带前缀保留原样（那是用户明确选择的加速）。
+fn normalize_source(mut source: ConfigSource) -> ConfigSource {
+    if source.kind == "url" {
+        if let Some((prefix, bare)) = ghproxy::split_proxy(&source.value) {
+            if ghproxy::is_builtin_prefix(prefix) {
+                source.value = bare.to_string();
+            }
+        }
+    }
+    source
+}
+
 /// 读一份配置（url / file / text），归一化后**统一套上 GitHub 加速前缀**。
 ///
 /// 前缀在这里一次性生效，而不是散落在各个调用点：`config_import`、订阅
@@ -52,10 +107,7 @@ pub async fn import_from_source(
     let (raw, origin) = match source.kind.as_str() {
         // 配置地址本身常常就是 raw.githubusercontent.com，同样要加速，
         // 否则「配置都拉不下来」这一步就先失败了。
-        "url" => (
-            fetch_text(ghproxy::apply(&source.value, prefix).as_ref()).await?,
-            source.value.clone(),
-        ),
+        "url" => (fetch_config_text(&source.value).await?, source.value.clone()),
         "file" => (
             crate::textio::read_file(std::path::Path::new(&source.value)).map_err(|err| {
                 AppError::new(code::CONFIG_FETCH_FAIL, "read config file failed")
@@ -71,16 +123,12 @@ pub async fn import_from_source(
             ))
         }
     };
-    let mut snapshot = import_from_raw(&raw, &origin, prefix).await?;
+    let mut snapshot = import_from_raw(&raw, &origin).await?;
     ghproxy::rewrite_snapshot(&mut snapshot, prefix);
     Ok(snapshot)
 }
 
-pub async fn import_from_raw(
-    raw: &str,
-    origin: &str,
-    prefix: &str,
-) -> Result<ConfigSnapshot, AppError> {
+pub async fn import_from_raw(raw: &str, origin: &str) -> Result<ConfigSnapshot, AppError> {
     let plain = decrypt_plain(raw)?;
 
     let parsed: Value = serde_json::from_str(&plain).map_err(|err| {
@@ -89,7 +137,7 @@ pub async fn import_from_raw(
     })?;
 
     if let Some(items) = parsed.get("urls").and_then(Value::as_array) {
-        return import_repos(items, prefix).await;
+        return import_repos(items).await;
     }
     normalize_plain(&plain, origin)
 }
@@ -112,7 +160,7 @@ fn decrypt_plain(raw: &str) -> Result<String, AppError> {
     Ok(outcome?.plain)
 }
 
-async fn import_repos(items: &[Value], prefix: &str) -> Result<ConfigSnapshot, AppError> {
+async fn import_repos(items: &[Value]) -> Result<ConfigSnapshot, AppError> {
     let mut set = tokio::task::JoinSet::new();
     for item in items.iter().take(MAX_REPOS) {
         let url = item
@@ -120,8 +168,7 @@ async fn import_repos(items: &[Value], prefix: &str) -> Result<ConfigSnapshot, A
             .map(str::to_string)
             .or_else(|| item.get("url").and_then(Value::as_str).map(str::to_string));
         let Some(url) = url else { continue };
-        let prefix = prefix.to_string();
-        set.spawn(async move { import_url_snapshot(url, prefix).await });
+        set.spawn(async move { import_url_snapshot(url).await });
     }
 
     let mut snapshots = Vec::new();
@@ -141,10 +188,10 @@ async fn import_repos(items: &[Value], prefix: &str) -> Result<ConfigSnapshot, A
     })
 }
 
-async fn import_url_snapshot(url: String, prefix: String) -> Result<Value, AppError> {
+async fn import_url_snapshot(url: String) -> Result<Value, AppError> {
     // 取用加速地址，但 origin 记原始 URL：配置 id 由 origin 派生，跟着代理
     // 走会让「换个代理再导一次」变成两份配置。
-    let raw = fetch_text(ghproxy::apply(&url, &prefix).as_ref()).await?;
+    let raw = fetch_config_text(&url).await?;
     let plain = decrypt_plain(&raw)?;
     normalize_value(&plain, &url)
 }
@@ -168,6 +215,8 @@ pub(crate) async fn import_config(
     state: tauri::State<'_, ConfigStore>,
     source: ConfigSource,
 ) -> Result<ConfigSnapshot, AppError> {
+    // 订阅地址归一化：app 内置加速前缀剥掉存裸地址，订阅唯一性才稳定。
+    let source = normalize_source(source);
     // `insert` owns the imported snapshot and returns its runtime derivation.
     // Never hand the imported one back to the UI: its sites still contain the
     // blocked jar/JS sources and would silently repopulate the frontend cache.

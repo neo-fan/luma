@@ -113,7 +113,7 @@ $env:PATH    = "$vc\bin\Hostx64\x64;$sdk\bin\10.0.26100.0\x64;$env:PATH"   # 必
 
 ### 3.3 Python 采集适配层
 
-- 适配层只做协议与子进程执行：协议面就是 `ping` + `spider.py`（外加 `LUMA_ADAPTER_DEBUG=1` 时的 `debug.*`），`spider.py` 交给 `pyspider.py` → `pyrun.py` 跑第三方脚本，脚本返回值**原样交回**，归一化在宿主 `src-tauri/src/domain/spider/cms_parse.rs::normalize_spider_result`。
+- 适配层只做协议与脚本执行：协议面就是 `ping` + `spider.py`（外加 `LUMA_ADAPTER_DEBUG=1` 时的 `debug.*`），`spider.py` 交给 `pyspider.py` 在适配层进程内跑第三方脚本（每源一个常驻实例，逐实例加锁串行），脚本返回值**原样交回**，归一化在宿主 `src-tauri/src/domain/spider/cms_parse.rs::normalize_spider_result`。`pyrun.py` 现在是共享的契约助手（`to_args` / `json_safe` / `proxy_result`）与独立自测入口，不再是每次调用的子进程。
 - 配置解密 / 归一化 / CMS 解析 / M3U / XMLTV 的参考实现全在 Rust（`domain/config/{decrypt,normalize}.rs`、`domain/spider/cms_parse.rs`、`domain/live/{m3u,epg}.rs`）；`sidecars/py/` 里没有这些模块的副本。开发工具要复用旧 Python 实现时去 `tools/audit/`（`cms.py` / `decrypt.py` / `normalize.py`），不要从适配层 import。
 - 调用任何已删方法（`config.decrypt`、`config.normalize`、`config.mergeRepos`、`site.route`、`live.parseM3u`、`live.parseEpg`、`parse.resolve`、`site.parse*`）会明确回 `{"code":"INTERNAL","message":"unknown method: …"}`，不会静默成功。
 - 空详情（脚本返回 `{"list": []}`）由宿主记 `spider detailContent returned no video`（app 通道，带 `source_api` / `vod_id`），spider 通道只留脚本内的异常与 traceback。

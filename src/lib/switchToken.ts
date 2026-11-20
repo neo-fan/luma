@@ -10,7 +10,7 @@
  *    attempt 的 signal（让还在 `await` 的并发探活能真早停；底层 IPC 不接 signal
  *    的解析靠 `isCurrent` 在落地前丢弃）；
  *  - `isCurrent(gen)` 比对，非最新代次的结果整段丢弃，绝不 `navigate` / 写缓存 /
- *    改 `switchedSource` / 收口提示。
+ *    改播放目标 / 收口提示。
  *
  * 「立即结束上一个、只认最新一次」= 新意图 `begin()` 即抢占，旧 attempt 的
  * `isCurrent` 从此恒为 `false`。
@@ -91,6 +91,41 @@ export function createCommitGate(token: SwitchToken): CommitGate {
       // 不让一次失败卡死后续提交；调用方各自的 promise 仍能 await 到真实结果/异常。
       tail = next.catch(() => undefined);
       return next;
+    },
+  };
+}
+
+/**
+ * 手动意图持有器：**用户显式选择必须压过自动恢复**。
+ *
+ * 当前源已死时，watchdog / hls fatal 会反复触发 `switchOrFailover`，每次 `begin()`
+ * 都把用户刚发起的手动换源/换集/换线判成过期、静默丢弃（实测：手动切换日志在打，
+ * 画面却永远不动）。所以任何手动动作起一个持有期，持有期内自动恢复直接让位；
+ * 手动落地或持有到期后，自愈自动恢复。
+ */
+export interface ManualHold {
+  /** 手动动作发起时调用，续期到 now + ttlMs。 */
+  engage(ttlMs: number): void;
+  /** 自动恢复入口检查：true = 让位，本轮不 begin、不抢占。 */
+  active(): boolean;
+  /**
+   * 手动动作已明确收口（失败 / 取消 / 提前返回）时立即释放，让自愈无需等满
+   * ttlMs 就恢复。成功落地不必调：持有到期本就会放行。
+   */
+  release(): void;
+}
+
+export function createManualHold(): ManualHold {
+  let until = 0;
+  return {
+    engage(ttlMs: number): void {
+      until = Date.now() + Math.max(0, ttlMs);
+    },
+    active(): boolean {
+      return Date.now() < until;
+    },
+    release(): void {
+      until = 0;
     },
   };
 }

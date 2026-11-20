@@ -1,12 +1,16 @@
 //! Favourites and playback history (spec T-12).
 //!
-//! SQLite (`db.rs`) is the single source of truth. The `Vec` fields are read
+//! SQLite (`infra/db/`) is the single source of truth. The `Vec` fields are read
 //! caches only: every mutation commits a transaction first, then refreshes the
 //! cache, so a failed write can never leave the UI showing data that is not on
 //! disk. Portable mode (`data/` next to the executable) still wins over
 //! `%APPDATA%` — the database simply lives in that directory.
+//!
+//! **2.0 数据模型**：收藏与历史合并为**一张 `playback` 表**，收藏只是行上的
+//! `favorite` 标记。收藏页 = `favorite=1`，历史页 = 全部；清除播放记录只删
+//! `favorite=0`，收藏行连进度一起保留；取消收藏只把标记置 0，行不删。
 
-use crate::db::{Db, FavoriteRow, HistoryRow};
+use crate::db::{Db, PlaybackRow};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -48,10 +52,10 @@ pub struct HistoryItem {
     /// 线路名（TVBox `vod_play_from` 的一段）；换源后线路名会变，必须记录。
     #[serde(default)]
     pub play_from: String,
+    /// 语义集号（从集名解析）；不是数组下标，倒序线路也正确。
+    #[serde(default)]
+    pub episode_number: Option<i64>,
     /// 播放时解码出的画面分辨率标签（`720P` / `1080P` / `2K` / `4K`）。
-    ///
-    /// 站点侧没有这个字段，只有真出画后才拿得到；没播过就一直是空串，
-    /// 历史页据此决定要不要显示角标。
     #[serde(default)]
     pub resolution: String,
     #[serde(default)]
@@ -64,13 +68,25 @@ pub struct HistoryItem {
     /// 这部剧的跳过片段配置（JSON 文本）。空串 = 没带；`[]` = 用户清空过。
     #[serde(default)]
     pub skip_json: String,
+    /// 剧个性配置扩展位（JSON 文本）。
+    #[serde(default)]
+    pub prefs_json: String,
+    /// 收藏标记：收藏只是这条播放记录上的一个 flag。
+    #[serde(default)]
+    pub favorite: bool,
+    /// 订阅裸地址快照（弱引用：订阅删了，记录仍可展示）。
+    #[serde(default)]
+    pub subscription_address: String,
+    /// 豆瓣 id（可选）：有就记，不参与剧名合并。
+    #[serde(default)]
+    pub douban_id: String,
     pub updated_at: u64,
 }
 
 pub struct LibraryStore {
     db: Arc<Db>,
-    favorites: RwLock<Vec<FavoriteItem>>,
-    history: RwLock<Vec<HistoryItem>>,
+    /// 单表全量缓存（含收藏与历史）；`list_*` 只做过滤视图。
+    playback: RwLock<Vec<PlaybackRow>>,
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -78,22 +94,6 @@ pub(crate) fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
-}
-
-/// 只合并非空字段：补元数据不能把已知道的封面 / 备注 / 站点名抹成空串。
-fn merge_meta(dst: &mut VodRef, src: &VodRef) {
-    if !src.name.is_empty() {
-        dst.name = src.name.clone();
-    }
-    if !src.pic.is_empty() {
-        dst.pic = src.pic.clone();
-    }
-    if !src.remarks.is_empty() {
-        dst.remarks = src.remarks.clone();
-    }
-    if !src.site_name.is_empty() {
-        dst.site_name = src.site_name.clone();
-    }
 }
 
 pub fn data_dir() -> PathBuf {
@@ -111,10 +111,7 @@ pub fn data_dir() -> PathBuf {
     }
     if let Ok(appdata) = std::env::var("APPDATA") {
         if !appdata.trim().is_empty() {
-            // debug 构建（dev / 直跑 debug exe）与正式版数据完全隔离：配置、
-            // 收藏、历史、日志都落到 `Luma-debug`，测试再怎么折腾也不会碰
-            // 用户真实数据。release（含便携版）不受影响。显式 override
-            // （LUMA_DATA_DIR）与便携模式优先级更高，测试依赖这一点。
+            // debug 构建（dev / 直跑 debug exe）与正式版数据完全隔离。
             if cfg!(debug_assertions) {
                 return PathBuf::from(appdata).join("Luma-debug");
             }
@@ -124,68 +121,69 @@ pub fn data_dir() -> PathBuf {
     PathBuf::from("data")
 }
 
-fn favorite_from_row(row: FavoriteRow) -> FavoriteItem {
-    FavoriteItem {
-        vod: VodRef {
-            site_key: row.site_key,
-            vod_id: row.vod_id,
-            name: row.name,
-            pic: row.pic,
-            remarks: row.remarks,
-            site_name: row.site_name,
-        },
-        added_at: row.added_at,
+/// 剧名归一化：去掉所有空白 + 转小写。这是收藏 / 历史唯一使用的剧名判等口径。
+fn normalize_title(name: &str) -> String {
+    name.trim()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// 播放记录的业务主键：剧名归一化；空片名退回 `site:vod`，绝不让空名互相吞并。
+fn title_key_of(vod: &VodRef) -> String {
+    let key = normalize_title(&vod.name);
+    if key.is_empty() {
+        format!("{}:{}", vod.site_key, vod.vod_id)
+    } else {
+        key
     }
 }
 
-fn history_from_row(row: HistoryRow) -> HistoryItem {
+fn vod_ref(row: &PlaybackRow) -> VodRef {
+    VodRef {
+        site_key: row.site_key.clone(),
+        vod_id: row.vod_id.clone(),
+        name: row.title.clone(),
+        pic: row.pic.clone(),
+        remarks: row.remarks.clone(),
+        site_name: row.site_name.clone(),
+    }
+}
+
+fn favorite_from_row(row: PlaybackRow) -> FavoriteItem {
+    FavoriteItem {
+        vod: vod_ref(&row),
+        added_at: row.favorite_at.unwrap_or(row.updated_at),
+    }
+}
+
+fn history_from_row(row: PlaybackRow) -> HistoryItem {
     HistoryItem {
-        vod: VodRef {
-            site_key: row.site_key,
-            vod_id: row.vod_id,
-            name: row.name,
-            pic: row.pic,
-            remarks: row.remarks,
-            site_name: row.site_name,
-        },
+        vod: vod_ref(&row),
         play_url: row.play_url,
         episode_name: row.episode_name,
-        play_from: row.play_from,
+        play_from: row.line_name,
+        episode_number: row.episode_number,
         resolution: row.resolution,
         position_ms: row.position_ms,
         duration_ms: row.duration_ms,
         rate: row.rate,
         skip_json: row.skip_json,
+        prefs_json: row.prefs_json,
+        favorite: row.favorite,
+        subscription_address: row.subscription_address,
+        douban_id: row.douban_id,
         updated_at: row.updated_at,
     }
 }
 
-fn same_vod(a: &VodRef, b: &VodRef) -> bool {
-    a.site_key == b.site_key && a.vod_id == b.vod_id
-}
-
-/** 片名归一化：全半角空格、大小写差异都算同一部片。空名不参与合并。 */
-pub fn same_title(a: &str, b: &str) -> bool {
-    let norm = |s: &str| {
-        s.trim()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-            .to_lowercase()
-    };
-    let left = norm(a);
-    let right = norm(b);
-    !left.is_empty() && left == right
-}
-
 impl LibraryStore {
     pub fn load(db: Arc<Db>) -> Result<Self, AppError> {
-        let favorites = db.favorites()?.into_iter().map(favorite_from_row).collect();
-        let history = db.history()?.into_iter().map(history_from_row).collect();
+        let playback = db.playback()?;
         Ok(Self {
             db,
-            favorites: RwLock::new(favorites),
-            history: RwLock::new(history),
+            playback: RwLock::new(playback),
         })
     }
 
@@ -195,181 +193,201 @@ impl LibraryStore {
         Self::load(db).expect("load library store")
     }
 
+    /// 低频操作后重读全表，保证缓存与库严格一致。
+    fn reload(&self) -> Result<(), AppError> {
+        let rows = self.db.playback()?;
+        *self
+            .playback
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = rows;
+        Ok(())
+    }
+
     pub fn list_favorites(&self) -> Vec<FavoriteItem> {
-        // Clone under the lock, sort outside it: a long read lock here would
-        // needlessly block `toggle_favorite` while the list is sorted.
         let mut items = self
-            .favorites
+            .playback
             .read()
             .unwrap_or_else(|p| p.into_inner())
-            .clone();
+            .iter()
+            .filter(|row| row.favorite)
+            .map(|row| favorite_from_row(row.clone()))
+            .collect::<Vec<_>>();
         items.sort_by(|a, b| b.added_at.cmp(&a.added_at));
         items
     }
 
     /// Returns `true` when the entry ended up favourited.
+    ///
+    /// 收藏 = 在播放记录上置 `favorite=1`（行不存在则新建一条无进度记录）；
+    /// 取消 = 置 0，**行保留**。按剧名（`title_key`）判重，换源后仍是一部片。
     pub fn toggle_favorite(&self, vod: VodRef) -> Result<bool, AppError> {
-        let row = FavoriteRow {
+        let now = now_ms();
+        let seed = PlaybackRow {
+            id: 0,
+            title_key: title_key_of(&vod),
+            title: vod.name.clone(),
+            subscription_address: String::new(),
+            subscription_id: String::new(),
             site_key: vod.site_key.clone(),
+            site_name: vod.site_name.clone(),
             vod_id: vod.vod_id.clone(),
-            name: vod.name.clone(),
+            line_name: String::new(),
+            episode_name: String::new(),
+            episode_number: None,
+            play_url: String::new(),
             pic: vod.pic.clone(),
             remarks: vod.remarks.clone(),
-            site_name: vod.site_name.clone(),
-            added_at: now_ms(),
+            douban_id: String::new(),
+            position_ms: 0,
+            duration_ms: 0,
+            resolution: String::new(),
+            rate: 0.0,
+            skip_json: String::new(),
+            prefs_json: "{}".into(),
+            favorite: true,
+            favorite_at: Some(now),
+            created_at: now,
+            updated_at: now,
         };
-        // Commit first: the DB owns the state, the Vec mirrors it.
-        let added = self.db.toggle_favorite(&row)?;
-        let mut guard = self.favorites.write().unwrap_or_else(|p| p.into_inner());
-        // 与 db 层同口径：按片名剔除，换源后的旧条目不能留在缓存里。
-        guard.retain(|item| !(same_title(&item.vod.name, &vod.name) || same_vod(&item.vod, &vod)));
-        if added {
-            guard.push(FavoriteItem {
-                vod,
-                added_at: row.added_at,
-            });
-        }
+        let added = self.db.toggle_playback_favorite(&seed)?;
+        self.reload()?;
         Ok(added)
     }
 
     pub fn is_favorite(&self, site_key: &str, vod_id: &str) -> bool {
-        let guard = self.favorites.read().unwrap_or_else(|p| p.into_inner());
-        guard
+        self.playback
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
             .iter()
-            .any(|item| item.vod.site_key == site_key && item.vod.vod_id == vod_id)
+            .any(|row| row.favorite && row.site_key == site_key && row.vod_id == vod_id)
     }
 
     /// 按片名判断（换源后仍能认出同一部片），供前端星标状态对齐。
     pub fn is_favorite_by_title(&self, name: &str) -> bool {
-        let guard = self.favorites.read().unwrap_or_else(|p| p.into_inner());
-        guard.iter().any(|item| same_title(&item.vod.name, name))
+        let key = normalize_title(name);
+        if key.is_empty() {
+            return false;
+        }
+        self.playback
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .any(|row| row.favorite && row.title_key == key)
     }
 
-    /// 补收藏条目的元数据（老记录没有封面）。返回是否命中一行。
-    pub fn patch_favorite_meta(&self, vod: VodRef) -> Result<bool, AppError> {
-        let hit = self.db.patch_favorite_meta(
-            &vod.site_key,
-            &vod.vod_id,
+    /// 补元数据（封面 / 备注 / 站点名 / 豆瓣 id）。空值不覆盖，不动 `updated_at`。
+    fn patch_meta(&self, vod: VodRef) -> Result<bool, AppError> {
+        let hit = self.db.patch_playback_meta(
+            &title_key_of(&vod),
             &vod.name,
             &vod.pic,
             &vod.remarks,
             &vod.site_name,
+            "",
         )?;
         if hit {
-            let mut guard = self.favorites.write().unwrap_or_else(|p| p.into_inner());
-            if let Some(item) = guard
-                .iter_mut()
-                .find(|item| item.vod.site_key == vod.site_key && item.vod.vod_id == vod.vod_id)
-            {
-                merge_meta(&mut item.vod, &vod);
-            }
+            self.reload()?;
         }
         Ok(hit)
     }
 
+    pub fn patch_favorite_meta(&self, vod: VodRef) -> Result<bool, AppError> {
+        self.patch_meta(vod)
+    }
+
     pub fn list_history(&self) -> Vec<HistoryItem> {
-        // Same as `list_favorites`: sort the copy outside the read lock.
         let mut items = self
-            .history
+            .playback
             .read()
             .unwrap_or_else(|p| p.into_inner())
-            .clone();
+            .iter()
+            .cloned()
+            .map(history_from_row)
+            .collect::<Vec<_>>();
         items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        // 写入侧已按剧名合并，但老库里可能还留着换源前的重复行；读取时按
-        // 「剧名完全匹配」再兜一层，保证一部剧在历史页 / 续播里只出现一次。
-        // 已按 updated_at 降序，保留第一条即最新的一条。
-        let mut seen = std::collections::HashSet::new();
-        items.retain(|item| {
-            let name = item.vod.name.trim();
-            name.is_empty() || seen.insert(name.to_string())
-        });
         items
     }
 
     pub fn upsert_history(&self, item: HistoryItem) -> Result<(), AppError> {
-        let row = HistoryRow {
+        let now = now_ms();
+        let row = PlaybackRow {
+            id: 0,
+            title_key: title_key_of(&item.vod),
+            title: item.vod.name.clone(),
+            subscription_address: item.subscription_address.clone(),
+            subscription_id: String::new(),
             site_key: item.vod.site_key.clone(),
+            site_name: item.vod.site_name.clone(),
             vod_id: item.vod.vod_id.clone(),
-            name: item.vod.name.clone(),
+            line_name: item.play_from.clone(),
+            episode_name: item.episode_name.clone(),
+            episode_number: item.episode_number,
+            play_url: item.play_url.clone(),
             pic: item.vod.pic.clone(),
             remarks: item.vod.remarks.clone(),
-            site_name: item.vod.site_name.clone(),
-            play_url: item.play_url.clone(),
-            episode_name: item.episode_name.clone(),
-            play_from: item.play_from.clone(),
-            resolution: item.resolution.clone(),
+            douban_id: item.douban_id.clone(),
             position_ms: item.position_ms,
             duration_ms: item.duration_ms,
+            resolution: item.resolution.clone(),
             rate: item.rate,
             skip_json: item.skip_json.clone(),
-            // Always use a fresh timestamp: the caller's value may be stale
-            // (e.g. a restored player session), and the cap relies on ordering.
-            updated_at: now_ms(),
+            prefs_json: item.prefs_json.clone(),
+            favorite: item.favorite,
+            // 首播即收藏时同步写入收藏时间，避免退化为 updated_at 导致排序不准。
+            // 后续 upsert 的 ON CONFLICT 分支不改 favorite/favorite_at，故此值稳定。
+            favorite_at: if item.favorite { Some(now) } else { None },
+            created_at: now,
+            updated_at: now,
         };
-        let outcome = self.db.upsert_history(&row)?;
-        // 增量更新缓存：把 DB 报告「这次删掉的行」施加到内存列表，再把最终行
-        // 顶到最前。以前是写完重读全表（每条历史写入 O(MAX_HISTORY=500)）。
-        let fresh = history_from_row(outcome.merged);
-        let mut guard = self.history.write().unwrap_or_else(|p| p.into_inner());
-        if !outcome.removed.is_empty() {
-            guard.retain(|item| {
-                !outcome
-                    .removed
-                    .iter()
-                    .any(|(site, id)| *site == item.vod.site_key && *id == item.vod.vod_id)
+        let outcome = self.db.upsert_playback(&row)?;
+        // 增量更新缓存：删掉被容量裁剪的 + 同 key 旧行，再把最终行置顶。
+        let mut guard = self
+            .playback
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        guard.retain(|row| {
+            row.title_key != outcome.merged.title_key
+                && !outcome.removed.iter().any(|key| key == &row.title_key)
+        });
+        guard.insert(0, outcome.merged);
+        // 内存也按「收藏永不裁剪 + 非收藏最多 MAX_HISTORY」收口。
+        if guard.len() > crate::db::MAX_HISTORY {
+            guard.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            let mut kept = 0usize;
+            guard.retain(|row| {
+                if row.favorite {
+                    true
+                } else {
+                    kept += 1;
+                    kept <= crate::db::MAX_HISTORY
+                }
             });
         }
-        guard.retain(|item| {
-            !(item.vod.site_key == fresh.vod.site_key && item.vod.vod_id == fresh.vod.vod_id)
-        });
-        guard.insert(0, fresh);
-        if guard.len() > crate::db::MAX_HISTORY {
-            // 溢出是罕见分支（要攒满 500 条），这里排一次序保证裁掉的是最旧的：
-            // 缓存的默认顺序是「新在前」，但重启装载的顺序不保证，不能靠它。
-            guard.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            guard.truncate(crate::db::MAX_HISTORY);
-        }
         Ok(())
     }
 
-    /// 补历史条目的元数据（老记录没有封面）。不改 `updated_at`，顺序不变。
+    /// 补历史条目元数据（老记录没有封面）。不改 `updated_at`，顺序不变。
     pub fn patch_history_meta(&self, vod: VodRef) -> Result<bool, AppError> {
-        let hit = self.db.patch_history_meta(
-            &vod.site_key,
-            &vod.vod_id,
-            &vod.name,
-            &vod.pic,
-            &vod.remarks,
-            &vod.site_name,
-        )?;
-        if hit {
-            let mut guard = self.history.write().unwrap_or_else(|p| p.into_inner());
-            if let Some(item) = guard
-                .iter_mut()
-                .find(|item| item.vod.site_key == vod.site_key && item.vod.vod_id == vod.vod_id)
-            {
-                merge_meta(&mut item.vod, &vod);
-            }
-        }
-        Ok(hit)
+        self.patch_meta(vod)
     }
 
+    /// 清除播放记录：**只删非收藏**，收藏行连进度一起保留。
     pub fn clear_history(&self) -> Result<(), AppError> {
-        self.db.clear_history()?;
-        self.history
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .clear();
+        self.db.clear_playback()?;
+        self.reload()?;
         Ok(())
     }
 
-    /// 删除单条历史；内存缓存同步摘掉，界面无需重新拉全量。
+    /// 删除单条播放记录；显式删除时收藏行也会被删掉。
+    ///
+    /// 直接查库按 (site_key, vod_id) 定位，不再依赖读缓存：缓存可能因写后
+    /// reload 的窗口期尚未包含该行，旧实现会「查不到 → 静默成功」让 DB 行残留。
+    /// 只有真正删到行才刷新缓存，避免无谓的整表重读。
     pub fn remove_history(&self, site_key: &str, vod_id: &str) -> Result<(), AppError> {
-        self.db.remove_history(site_key, vod_id)?;
-        self.history
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain(|item| !(item.vod.site_key == site_key && item.vod.vod_id == vod_id));
+        let removed = self.db.remove_playback_ref(site_key, vod_id)?;
+        if removed > 0 {
+            self.reload()?;
+        }
         Ok(())
     }
 }
@@ -379,8 +397,10 @@ pub fn favorites_list(state: tauri::State<'_, LibraryStore>) -> Vec<FavoriteItem
     state.list_favorites()
 }
 
+/// 同步命令会落在主线程：播放中每 5s 一次的历史上行若带一次事务 + 全表回读，
+/// 会在滚动/进度条上表现为周期性微卡。改成 async 即由 Tauri 调度到 runtime。
 #[tauri::command]
-pub fn favorites_toggle(
+pub async fn favorites_toggle(
     state: tauri::State<'_, LibraryStore>,
     vod: VodRef,
 ) -> Result<bool, AppError> {
@@ -389,7 +409,7 @@ pub fn favorites_toggle(
 
 /// 老收藏没存封面时由列表页回填；不改收藏时间。
 #[tauri::command]
-pub fn favorites_patch_meta(
+pub async fn favorites_patch_meta(
     state: tauri::State<'_, LibraryStore>,
     vod: VodRef,
 ) -> Result<bool, AppError> {
@@ -402,7 +422,7 @@ pub fn history_list(state: tauri::State<'_, LibraryStore>) -> Vec<HistoryItem> {
 }
 
 #[tauri::command]
-pub fn history_upsert(
+pub async fn history_upsert(
     state: tauri::State<'_, LibraryStore>,
     item: HistoryItem,
 ) -> Result<(), AppError> {
@@ -411,7 +431,7 @@ pub fn history_upsert(
 
 /// 老历史缺封面时由历史页回填；不改 `updatedAt`，列表顺序保持。
 #[tauri::command]
-pub fn history_patch_meta(
+pub async fn history_patch_meta(
     state: tauri::State<'_, LibraryStore>,
     vod: VodRef,
 ) -> Result<bool, AppError> {
@@ -419,7 +439,7 @@ pub fn history_patch_meta(
 }
 
 #[tauri::command]
-pub fn history_clear(state: tauri::State<'_, LibraryStore>) -> Result<(), AppError> {
+pub async fn history_clear(state: tauri::State<'_, LibraryStore>) -> Result<(), AppError> {
     state.clear_history()
 }
 
@@ -453,6 +473,26 @@ mod tests {
         dir
     }
 
+    fn empty_item(vod: VodRef) -> HistoryItem {
+        HistoryItem {
+            vod,
+            play_url: String::new(),
+            episode_name: String::new(),
+            play_from: String::new(),
+            episode_number: None,
+            resolution: String::new(),
+            position_ms: 0,
+            duration_ms: 0,
+            rate: 0.0,
+            skip_json: String::new(),
+            prefs_json: "{}".into(),
+            favorite: false,
+            subscription_address: String::new(),
+            douban_id: String::new(),
+            updated_at: 0,
+        }
+    }
+
     #[test]
     fn favorite_toggle_and_persist() {
         let dir = temp_dir("fav");
@@ -466,7 +506,6 @@ mod tests {
             "data lives in sqlite, not json"
         );
 
-        // A fresh store (i.e. an app restart) sees the committed state.
         assert!(store.toggle_favorite(sample("2")).unwrap());
         let reopened = LibraryStore::at(dir.clone());
         assert!(reopened.is_favorite("stub_json", "2"));
@@ -511,20 +550,13 @@ mod tests {
         let dir = temp_dir("hist");
         let store = LibraryStore::at(dir.clone());
         for position in [1000u64, 2000] {
-            store
-                .upsert_history(HistoryItem {
-                    vod: sample("9"),
-                    play_url: "http://127.0.0.1/x".into(),
-                    episode_name: "第 2 集".into(),
-                    play_from: "线路A".into(),
-                    resolution: "1080P".into(),
-                    rate: 0.0,
-                    skip_json: String::new(),
-                    position_ms: position,
-                    duration_ms: 60000,
-                    updated_at: 0,
-                })
-                .unwrap();
+            let mut item = empty_item(sample("9"));
+            item.episode_name = "第 2 集".into();
+            item.play_from = "线路A".into();
+            item.resolution = "1080P".into();
+            item.position_ms = position;
+            item.duration_ms = 60000;
+            store.upsert_history(item).unwrap();
         }
         let items = store.list_history();
         assert_eq!(items.len(), 1);
@@ -539,22 +571,11 @@ mod tests {
     }
 
     fn titled(name: &str, id: &str) -> HistoryItem {
-        HistoryItem {
-            vod: VodRef {
-                name: name.into(),
-                vod_id: id.into(),
-                ..sample(id)
-            },
-            play_url: "http://127.0.0.1/x".into(),
-            episode_name: String::new(),
-            play_from: String::new(),
-            resolution: String::new(),
-            rate: 0.0,
-            skip_json: String::new(),
-            position_ms: 0,
-            duration_ms: 0,
-            updated_at: 0,
-        }
+        empty_item(VodRef {
+            name: name.into(),
+            vod_id: id.into(),
+            ..sample(id)
+        })
     }
 
     fn keys(items: &[HistoryItem]) -> Vec<(String, String)> {
@@ -567,10 +588,6 @@ mod tests {
     }
 
     /// 跨上限写入后，内存缓存必须与库里一致（增量更新的正确性守卫）。
-    ///
-    /// 参照物是「重开一份 store」——它只能从 SQLite 读，等价于旧实现
-    /// 每次写完重读全表的结果；不一致就说明 `upsert_history` 的删除报告
-    /// 与 SQL 实际删的行对不上。`updated_at` 可能并列，所以比按键集合。
     #[test]
     fn history_cache_matches_database_across_the_cap() {
         let dir = temp_dir("hist-cap");
@@ -591,8 +608,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 同名换源时 DB 会删掉旧站那行，缓存必须跟着丢——否则历史页会显示
-    /// 一条库里已经不存在的记录。
+    /// 同名换源时 DB 按 title_key 覆盖同一行，缓存必须只剩一行。
     #[test]
     fn history_cache_drops_the_row_the_database_deduped() {
         let dir = temp_dir("hist-dedupe");

@@ -71,7 +71,7 @@ schema → `src/types/luma.ts` → Rust 序列化（`src-tauri/src/domain/spider
 
 **前端**
 
-- 状态：跨页共享态放 `src/stores/appStore.ts`（zustand），页面局部态与 pageCache 不进 store。
+- 状态：跨页共享态放 `src/stores/appStore.ts`（zustand），页面局部态与查询缓存（`lib/queryClient.ts`）不进 store。
 - 样式：全站一套设计 token（`src/styles.css` 顶部），不要在组件里写字面量颜色 / 圆角。
 - 提示分层：事件 → toast；需要用户决策的错误 → `ErrorBar`；长期说明 → `.tip`。
 

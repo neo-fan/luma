@@ -113,8 +113,14 @@ export default function SearchPage({
   const [searched, setSearched] = usePageState<boolean>(`${K}searched`, false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  /** 等待期已耗时（秒），驱动进度条文案；loading 结束即重置。 */
+  /** 等待期已耗时（秒），驱动进度条文案；每次搜索/取消都重新起表。 */
   const [elapsed, setElapsed] = useState(0);
+  /**
+   * 计时纪元：每次真正开始一次搜索就递增，计时 effect 依赖它（而不是 loading）。
+   * 只依赖 loading 时，「搜索中改词重搜」loading 保持 true → effect 不重跑 →
+   * 计时器沿用上次的 startedAt 继续累加，表现为「重新搜索了却还显示已等待 54 秒」。
+   */
+  const [timerEpoch, setTimerEpoch] = useState(0);
   /**
    * 搜索代次。后端没有中断通道（一次 IPC 扇出到底），所以「取消」和
    * 「搜索中改词重搜」都是纯前端语义：递增代次 → 旧请求的迟到结果（含
@@ -127,16 +133,22 @@ export default function SearchPage({
   /** 用户实际搜过的词，跨重启保留；与页面快照分开存。 */
   const [recent, setRecent] = useState<string[]>(() => readSearchHistory());
 
-  // 等待期计时：500ms 粒度足够，结束/取消即停。
+  // 等待期计时：每次搜索（timerEpoch 递增）都从 0 重新起表，500ms 粒度足够。
+  // 依赖 timerEpoch 而非 loading：改词重搜时 loading 不变，只有纪元能感知新搜索。
   useEffect(() => {
-    if (!loading) return;
+    if (!loading) {
+      setElapsed(0);
+      return;
+    }
     setElapsed(0);
     const startedAt = Date.now();
     const timer = window.setInterval(() => {
       setElapsed(Math.round((Date.now() - startedAt) / 1000));
     }, 500);
     return () => window.clearInterval(timer);
-  }, [loading]);
+    // loading 进依赖仅为「结束即停 / 取消即停」；重搜由 timerEpoch 触发重起。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timerEpoch, loading]);
 
   const runSearch = async (wordOverride?: string) => {
     const word = (wordOverride ?? keyword).trim();
@@ -146,6 +158,8 @@ export default function SearchPage({
     }
     const gen = searchGenRef.current + 1;
     searchGenRef.current = gen;
+    // 每次新搜索都推进计时纪元：无论上一次 loading 是否结束，计时从 0 重来。
+    setTimerEpoch(gen);
     const alive = () => searchGenRef.current === gen;
     // 提交一次就记一次（即使这次失败，用户意图也值得保留）。
     setRecent(pushSearchHistory(word));
@@ -174,6 +188,8 @@ export default function SearchPage({
       const merged: SearchHit[] = [];
       /** 原始失败详情：只进日志，界面用归类后的标签。 */
       const rawFailures: Array<{ code?: string; message?: string }> = [];
+      /** 掐掉未触发的流式合批（收尾/取消时必须调，避免旧数组回退最终结果）。 */
+      let cancelStreamFlush: (() => void) | null = null;
 
       if (target !== ALL_SITES) {
         const site = selectableSites.find((item) => item.key === target);
@@ -207,7 +223,7 @@ export default function SearchPage({
         };
       } else {
         if (selectableSites.length === 0) {
-          setError("请先导入一份配置");
+          setError("请先导入一份订阅");
           return;
         }
         setProgress(
@@ -223,6 +239,38 @@ export default function SearchPage({
         const streamedRows: FailureRow[] = [];
         let streamOk = 0;
         let streamFailed = 0;
+        /**
+         * 流式刷新节流：100+ 站每站一个 chunk，逐站全量重排 + setHits 会在几秒内
+         * 触发上百次全列表调和（几千条元素）。80ms 合批对观感无影响，主线程省一个量级。
+         */
+        let flushTimer: number | null = null;
+        const flushHits = () => {
+          flushTimer = null;
+          if (!alive()) return;
+          // 每条在入列时已算过 matchScore，传 scoreOf 复用，省掉上百次正则重算。
+          const ranked = favoriteFirst(
+            rankByTitle(
+              streamed,
+              word,
+              (hit) => hit.vod.vod_name,
+              (hit) => hit.matchScore,
+            ),
+            (hit) => hit.siteKey,
+          );
+          setHits(ranked);
+          setMatchCount(ranked.reduce((n, hit) => n + (hit.matchScore >= 2 ? 1 : 0), 0));
+          setSearched(true);
+        };
+        const scheduleHits = () => {
+          if (flushTimer !== null) return;
+          flushTimer = window.setTimeout(flushHits, 80);
+        };
+        cancelStreamFlush = () => {
+          if (flushTimer !== null) {
+            window.clearTimeout(flushTimer);
+            flushTimer = null;
+          }
+        };
         /** 把一批成功/失败结果并入界面（去重 + 相关度重排 + 失败明细）。 */
         const absorbChunk = (row: AggregateRow) => {
           if (row.ok) {
@@ -245,13 +293,7 @@ export default function SearchPage({
               // 后到的按分数插队（陆续出来、始终有序）。
               // 收藏源优先：同一部片在多个站都有时，先把用户收藏过的站排上来；
               // 站内仍按片名相关度（favoriteFirst 稳定排序，不动同组顺序）。
-              const ranked = favoriteFirst(
-                rankByTitle(streamed, word, (hit) => hit.vod.vod_name),
-                (hit) => hit.siteKey,
-              );
-              setHits(ranked);
-              setMatchCount(ranked.filter((hit) => hit.matchScore >= 2).length);
-              setSearched(true);
+              scheduleHits();
             }
           } else {
             streamFailed += 1;
@@ -310,6 +352,10 @@ export default function SearchPage({
           await finalizeAggregate(agg, names);
         } finally {
           unlisten();
+          if (flushTimer !== null) {
+            window.clearTimeout(flushTimer);
+            flushTimer = null;
+          }
         }
 
         async function finalizeAggregate(
@@ -367,7 +413,7 @@ export default function SearchPage({
           // 后端可能一个站点都没跑（active 配置为空 / 站点全被过滤）。
           // 静默显示空结果会让人以为是片源没搜到，明确提示去重新导入。
           if (agg.total === 0) {
-            setError("当前配置没有可搜索的站点，请到「设置」重新导入配置");
+            setError("当前订阅没有可搜索的站点，请到「设置」重新导入订阅");
           }
           // 失败原因归类：原始报错（完整 URL、协议名、解析器行列号）**不进界面**，
           // 只归类成「源站超时 / 需要验证码 / 内容无法解析」这类人能懂的说法；
@@ -421,6 +467,10 @@ export default function SearchPage({
       }
       // 源站回退推荐列表 / 单字模糊匹配会把精确命中冲到几十条之后。
       // 先按片名相关度稳定置顶，再交给 UI；不丢弃任何结果。
+      // 收尾用对账后的 merged 全量结果，需先掐掉未触发的流式合批，
+      // 否则它会在最终 setHits 之后用旧数组把结果回退。
+      cancelStreamFlush?.();
+      cancelStreamFlush = null;
       const ranked = rankByTitle(merged, word, (hit) => hit.vod.vod_name);
       setHits(ranked);
       setMatchCount(ranked.filter((hit) => hit.matchScore >= 2).length);
@@ -710,7 +760,7 @@ export default function SearchPage({
             <Empty
               icon={FolderOpen}
               title="还没有可搜索的站点"
-              description="导入一份配置后，这里会跨站点检索片名与剧集。"
+              description="导入一份订阅后，这里会跨站点检索片名与剧集。"
               action={
                 <button
                   type="button"

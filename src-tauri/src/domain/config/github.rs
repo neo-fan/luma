@@ -67,6 +67,17 @@ impl ConfigStore {
         let configs = planned.len();
         let mut active_headers = None;
         if configs > 0 {
+            // 锁序固定为 active → entries（与 all_sites / refresh / due_config_id 一致）。
+            // 旧代码先拿 entries 写锁、再在里面读 active，形成「E.W → A.R」的反向嵌套：
+            // 目前没有 A.W → E.* 的路径所以不死锁，但这正是下一次改动就能激活的环
+            // （本文件曾因同类重入把自己锁死：日志停在 netrules loaded、窗口不出来）。
+            // 另外绝不能在写锁内调 `active_snapshot()`——它要 entries 读锁，std RwLock
+            // 不可重入，会直接锁死自己。
+            let active_id = self
+                .active
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
             let mut guard = self
                 .entries
                 .write()
@@ -78,14 +89,6 @@ impl ConfigStore {
                     entry.source = source;
                 }
             }
-            // 别在这里调 `active_snapshot()`：它内部要 entries 读锁，而本线程
-            // 正握着写锁 —— std RwLock 不可重入，会直接把自己锁死（踩过：
-            // 进程启动后日志停在 netrules loaded，窗口永远不出来）。
-            let active_id = self
-                .active
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone();
             active_headers = guard
                 .iter()
                 .find(|entry| active_id.as_deref() == Some(entry.imported.id.as_str()))

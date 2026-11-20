@@ -35,6 +35,11 @@ export const SOURCE_CACHE_TTL = 10 * 60_000;
 const MAX_BUNDLES = 8;
 const PREFETCH_TIMEOUT_MS = 20_000;
 const WARM_LIMIT = 4;
+/**
+ * 「已预热过」标记的上限。它只是避免重复预热的提示，清空只会让下次重热一遍，
+ * 代价可忽略；没有上限时跨片浏览会单调增长（每部片一条）。
+ */
+const MAX_WARMED = 512;
 
 export type SourceOrigin = "search" | "prefetch" | "manual";
 
@@ -467,6 +472,9 @@ class MemorySourceCache implements SourceCache {
       while (cursor < targets.length) {
         const option = targets[cursor++];
         this.warmed.add(`${option.siteKey}:${option.vodId}`);
+        if (this.warmed.size > MAX_WARMED) {
+          this.warmed.clear();
+        }
         try {
           await this.fetchDetail(option.siteKey, option.vodId);
         } catch {

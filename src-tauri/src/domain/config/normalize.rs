@@ -311,11 +311,30 @@ pub fn normalize_config(raw: &Value, origin: &str) -> Result<Value, AppError> {
 }
 
 /// 合并多仓快照：站点 key 先到先得，直播与解析直接拼接。
+///
+/// 配置级字段（headers/spider/wallpaper/flags/_raw）同样来自每个仓库，不能丢：
+/// 尤其 `headers`（反盗链 host → UA/Referer）是功能性数据，丢了会让依赖 Referer
+/// 的封面/播放 403。策略与 sites 一致——可去重的按「先到先得」，列表型拼接，
+/// 标量型取第一个有值的。
 pub fn merge_repos(snapshots: &[Value]) -> Value {
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut sites: Vec<Value> = Vec::new();
     let mut lives: Vec<Value> = Vec::new();
     let mut parses: Vec<Value> = Vec::new();
+    let mut headers: Vec<Value> = Vec::new();
+    let mut seen_host: BTreeSet<String> = BTreeSet::new();
+    let mut flags: Vec<Value> = Vec::new();
+    let mut spider: Option<Value> = None;
+    let mut wallpaper: Option<Value> = None;
+    let mut raw: Option<Value> = None;
+    // MSRV 1.77.2：不用 Option::is_none_or（1.82+），match 手写等价判断。
+    let present = |v: &Value| match v {
+        Value::Null => false,
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+        _ => true,
+    };
     for snapshot in snapshots {
         if let Some(items) = snapshot.get("sites").and_then(Value::as_array) {
             for site in items {
@@ -333,6 +352,34 @@ pub fn merge_repos(snapshots: &[Value]) -> Value {
         if let Some(items) = snapshot.get("parses").and_then(Value::as_array) {
             parses.extend(items.iter().cloned());
         }
+        if let Some(items) = snapshot.get("headers").and_then(Value::as_array) {
+            for header in items {
+                let host = text_of(header.get("host"));
+                if !host.is_empty() && seen_host.contains(&host) {
+                    continue;
+                }
+                seen_host.insert(host);
+                headers.push(header.clone());
+            }
+        }
+        if let Some(items) = snapshot.get("flags").and_then(Value::as_array) {
+            flags.extend(items.iter().cloned());
+        }
+        if spider.is_none() {
+            if let Some(v) = snapshot.get("spider").filter(|v| present(v)) {
+                spider = Some(v.clone());
+            }
+        }
+        if wallpaper.is_none() {
+            if let Some(v) = snapshot.get("wallpaper").filter(|v| present(v)) {
+                wallpaper = Some(v.clone());
+            }
+        }
+        if raw.is_none() {
+            if let Some(v) = snapshot.get("_raw").filter(|v| present(v)) {
+                raw = Some(v.clone());
+            }
+        }
     }
     let ids: Vec<String> = snapshots
         .iter()
@@ -345,6 +392,11 @@ pub fn merge_repos(snapshots: &[Value]) -> Value {
         "sites": sites,
         "lives": lives,
         "parses": parses,
+        "headers": headers,
+        "spider": spider.unwrap_or(Value::Null),
+        "wallpaper": wallpaper.unwrap_or(Value::Null),
+        "flags": flags,
+        "_raw": raw.unwrap_or(Value::Null),
     })
 }
 
@@ -734,5 +786,41 @@ mod tests {
         assert_eq!(merged["lives"].as_array().unwrap().len(), 1);
         assert_eq!(merged["parses"].as_array().unwrap().len(), 1);
         assert_eq!(merged["id"], short_hash("a|b"));
+    }
+
+    #[test]
+    fn merge_keeps_config_level_fields() {
+        let first = json!({
+            "id": "a",
+            "sites": [{"key": "x"}],
+            "headers": [
+                {"host": "cdn.one", "header": {"Referer": "https://one/"}},
+                {"host": "shared", "header": {"UA": "first"}}
+            ],
+            "spider": "spider.js",
+            "wallpaper": "wall.jpg",
+            "flags": [{"n": 1}],
+            "_raw": {"k": "v"}
+        });
+        let second = json!({
+            "id": "b",
+            "sites": [],
+            "headers": [
+                {"host": "cdn.two", "header": {"Referer": "https://two/"}},
+                {"host": "shared", "header": {"UA": "second"}}
+            ],
+            "flags": [{"n": 2}]
+        });
+        let merged = merge_repos(&[first, second]);
+        let headers = merged["headers"].as_array().unwrap();
+        assert_eq!(headers.len(), 3, "两个仓库的 headers 都保留，同 host 先到先得");
+        assert_eq!(headers[0]["host"], "cdn.one");
+        assert_eq!(headers[1]["host"], "shared");
+        assert_eq!(headers[1]["header"]["UA"], "first");
+        assert_eq!(headers[2]["host"], "cdn.two");
+        assert_eq!(merged["spider"], "spider.js");
+        assert_eq!(merged["wallpaper"], "wall.jpg");
+        assert_eq!(merged["flags"].as_array().unwrap().len(), 2);
+        assert_eq!(merged["_raw"]["k"], "v");
     }
 }

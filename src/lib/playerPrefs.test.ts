@@ -39,6 +39,15 @@ describe("clampVolume / clampRate", () => {
     expect(clampRate(Number.POSITIVE_INFINITY)).toBe(DEFAULT_RATE);
   });
 
+  it("0 是「没设过倍速」，不是 0.5x", () => {
+    // playback.rate 默认 0 = 这部剧没设过；数值钳制会把它抬到下限 0.5，
+    // 那会让每一部新剧都以半速起播（实测回归）。
+    expect(clampRate(0)).toBe(DEFAULT_RATE);
+    expect(clampRate(-1)).toBe(DEFAULT_RATE);
+    // 真正设过下限的用户选择仍然要保住。
+    expect(clampRate(0.5)).toBe(0.5);
+  });
+
   it("静音（volume=0）能被记住，不被当成缺省值", () => {
     const storage = fakeStorage();
     writePlayerPrefs({ volume: 0 }, storage);

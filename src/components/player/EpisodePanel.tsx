@@ -10,8 +10,15 @@ interface EpisodePanelProps {
   episodeIndex: number;
   /** 已请求、还没落地的集：那一格显示排队态，不代表正在播放。 */
   pendingPick?: { lineIndex: number; episodeIndex: number } | null;
+  /**
+   * 换源/换集在途：整个选集区进入加载态（网格罩一层 spinner + aria-busy）。
+   * 与播放器画面的「加载中」同时出现——用户在哪都能看出「这一下已生效，在后台换流」。
+   */
+  loading?: boolean;
   setPanelLine: (value: number) => void;
   goToEpisode: (targetLine: number, index: number) => void;
+  /** 换源入口：线路 panel 统一管理「线路 + 剧集 + 换源」。 */
+  onSwitchSource?: () => void;
 }
 
 /** 长剧集才值得给筛选框，短剧多一个输入框纯属噪音。 */
@@ -27,8 +34,10 @@ export default function EpisodePanel({
   lineIndex,
   episodeIndex,
   pendingPick = null,
+  loading = false,
   setPanelLine,
   goToEpisode,
+  onSwitchSource,
 }: EpisodePanelProps) {
   const [query, setQuery] = useState("");
   const [reverse, setReverse] = useState(false);
@@ -43,14 +52,19 @@ export default function EpisodePanel({
   }, [episodes, query, reverse]);
 
   return (
-    <section className="player-episodes">
+    <section className={loading ? "player-episodes is-loading" : "player-episodes"}>
       <div className="section-head">
         <h2 className="section-title">选集</h2>
-        <span className="page-meta">
+        <div className="player-episodes__head-actions">
           {/* 集数只按当前线路统计：各线路是独立剧集表，跨线路累加（160 集）
               没有意义，用户要的是「这条线路有多少集」。 */}
-          {lines.length} 条线路 · 当前线路 {episodes.length} 集
-        </span>
+          <span className="page-meta">
+            {lines.length} 条线路 · 当前线路 {episodes.length} 集
+          </span>
+          {onSwitchSource ? (
+            <IconButton name="swap" label="换源" onClick={onSwitchSource} />
+          ) : null}
+        </div>
       </div>
 
       <div className="chip-row">
@@ -97,8 +111,9 @@ export default function EpisodePanel({
         </div>
       ) : null}
 
-      <div className="episode-grid">
-        {visible.map(({ episode, index }) => {
+      <div className="player-episodes__gridwrap">
+        <div className="episode-grid" aria-busy={loading || undefined}>
+          {visible.map(({ episode, index }) => {
           const active = panelLine === lineIndex && index === episodeIndex;
           const pending = 
             !active &&
@@ -121,7 +136,13 @@ export default function EpisodePanel({
               onClick={() => goToEpisode(panelLine, index)}
             />
           );
-        })}
+          })}
+        </div>
+        {loading ? (
+          <div className="player-episodes__loading" aria-hidden="true">
+            <span className="player-episodes__loading-spin" />
+          </div>
+        ) : null}
       </div>
 
       {visible.length === 0 ? (

@@ -93,6 +93,7 @@ class Adapter:
         )
         self.lock = threading.Lock()
         self.frames: dict[int, dict] = {}
+        self.stray: list[str] = []
         self.next_id = 0
         threading.Thread(target=self._read, daemon=True).start()
 
@@ -105,6 +106,8 @@ class Adapter:
             try:
                 frame = json.loads(text)
             except json.JSONDecodeError:
+                with self.lock:
+                    self.stray.append(text)
                 continue
             with self.lock:
                 self.frames[frame.get("id")] = frame
@@ -261,6 +264,29 @@ def main() -> int:
             "malformed frame is recorded in the adapter log",
             str(records[-3:]),
         )
+
+        # 8) 第三方脚本往 stdout 打印不能污染协议通道。历史表现：宿主侧刷
+        #    `sidecar emitted a non-json frame`，并发时还会把一帧劈成两半，让整次
+        #    调用白等墙钟预算。stdout 只允许出现帧。
+        noisy = spider_source(
+            "print('site online')\n"
+            "import sys\n"
+            "sys.stdout.write('noise-without-newline')\n"
+            "return {'list': []}"
+        )
+        frame, _ = adapter.timed(
+            "spider.py",
+            {"source": noisy, "method": "homeContent", "args": []},
+            timeout=25.0,
+        )
+        check(
+            frame is not None and frame.get("ok") is True,
+            "noisy spider.py still answers",
+            str(frame)[:200],
+        )
+        with adapter.lock:
+            stray = list(adapter.stray)
+        check(not stray, "spider stdout never reaches the protocol channel", str(stray[:3]))
     finally:
         adapter.close()
 

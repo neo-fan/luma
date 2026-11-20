@@ -24,10 +24,14 @@ const styles = (path: string) =>
 describe("player stage fallback action", () => {
   const stage = source("components/player/PlayerStage.tsx");
 
-  it("offers a next-line button on failure and after five seconds of waiting", () => {
+  it("offers a next-line button on failure and after a short wait", () => {
     expect(stage).toContain("onNextLine?: () => void;");
     expect(stage).toContain("nextLineBusy?: boolean;");
-    expect(stage).toContain("onNextLine && (overlay.kind === \"error\" || waited >= 5)");
+    // busy / error 两条出路缺一不可：转圈等待超过阈值给出口、失败立即给出口。
+    // 之前是一条 `overlay.kind === "error" || waited >= 5` 的合并条件，重构后
+    // 拆进两个分支（busy 用 waited >= 4、error 无条件），两处都要钉住。
+    expect(stage).toContain("{onNextLine && waited >= 4 ? (");
+    expect(stage).toContain("{onNextLine ? (");
     expect(stage).toContain("换下一条线路");
     expect(stage).toContain("正在切换线路…");
     expect(stage).toContain("player-status__action");
@@ -64,11 +68,11 @@ describe("player stage fallback action", () => {
   });
 
   it("wires the button to the line switcher on both pages", () => {
-    // 「换下一条线路」的执行体在编排 hook；播放页只负责把回调递给 PlayerStage。
+    // 「换下一条线路」的执行体在编排 controller；播放页只负责把回调递给 PlayerStage。
     const page = source("pages/PlayerPage.tsx");
-    expect(source("hooks/usePlaybackSwitchCore.ts")).toContain("const pickNextLine = useCallback(() => {");
-    expect(source("hooks/usePlaybackSwitchCore.ts")).toContain("void tryNextLine()");
-    expect(page).toContain("onNextLine={pickNextLine}");
+    expect(source("hooks/playback/usePlaybackController.ts")).toContain("const nextLine = useCallback(() => {");
+    expect(source("hooks/playback/usePlaybackController.ts")).toContain("void tryNextLine()");
+    expect(page).toContain("onNextLine={nextLine}");
     const live = source("pages/LivePage.tsx");
     expect(live).toContain("onNextLine={() => {");
   });

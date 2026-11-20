@@ -12,6 +12,13 @@
   margin: 0;
 }
 
+/* 线路 panel 头部右侧：线路统计 + 换源入口（换源从简介卡移到这里）。 */
+.player-episodes__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .detail-source {
   display: inline-flex;
   align-items: center;
@@ -168,6 +175,38 @@
 
 .player-episodes__empty {
   margin: 10px 0 0;
+}
+
+/* 换源/换集在途：选集区整体罩一层轻加载（半透明 + 小 spinner），与播放器画面的
+   「加载中」同时出现——两处都能看到「这一下已生效」。pointer-events:none：面板
+   保持可点，再点一次就是新意图（令牌会抢占旧解析）。 */
+.player-episodes__gridwrap {
+  position: relative;
+}
+
+.player-episodes__loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 12, 18, 0.35);
+  border-radius: var(--r-sm);
+  pointer-events: none;
+}
+
+.player-episodes__loading-spin {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--accent);
+  animation: ep-panel-spin 0.8s linear infinite;
+}
+
+@keyframes ep-panel-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .player-episodes .episode-grid {
@@ -592,7 +631,11 @@
   font-weight: var(--fw-medium);
 }
 
-.source-item:hover .source-item__pick:not(:disabled) {
+/* 特异性必须压过 polish.css 的 `.btn:not(.btn--primary):hover:not(:disabled)`
+   （同为 0,4,0，但 polish 在 index.css 里后加载）。加上 .source-list 提到 0,5,0，
+   否则整行 hover 时这个「主操作」按钮只会得到通用次级按钮的 --panel-hover，
+   与行底色几乎同色，看起来「没有 hover」。行内任一处 hover 都点亮它。 */
+.source-list .source-item:hover .source-item__pick:not(:disabled) {
   background: var(--solid);
   border-color: transparent;
   color: var(--solid-ink);

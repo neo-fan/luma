@@ -4,9 +4,9 @@ Every community py config ships spiders that start with
 
     from base.spider import Spider
 
-and the host app normally injects that module. Our adapter runs spiders in a
-child process, so the package lives here and is picked up through `sys.path`
-(sidecars/py is the script directory of pyrun.py).
+and the host app normally injects that module. Our adapter keeps spiders in the
+adapter process, so the package lives here and is picked up through `sys.path`
+(sidecars/py is on the adapter's import path).
 
 Alignment contract (see AGENTS.md "py 框架对齐 TVBox 原生"):
   * `box-src/Box-main` + `avbox` (pyramid) are the reference for the HTTP layer:

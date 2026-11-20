@@ -1,8 +1,8 @@
 /**
  * 覆盖 queryClient 手搓的那部分语义——不是测 TanStack Query 本体，而是测
  * 我们赖以替代 pageCache 的适配层：`force` 绕过新鲜度、并发同 key 去重、TTL
- * 过期回源，以及 `peekFresh` 的 TTL 闸门（useEpisodeList 靠它决定「命中种子就
- * 不发请求」，把过期当命中会漏掉一次必要请求）和 `resetCacheForScope` 的幂等。
+ * 过期回源，以及 `peekFresh` 的 TTL 闸门（播放页首帧种子靠它决定「命中就不
+ * 再回源」，把过期当命中会漏掉一次必要请求）和 `resetCacheForScope` 的幂等。
  *
  * 用假时钟让「新鲜 / 过期 / 存活时长」判断确定化：react-query 内部的
  * dataUpdatedAt / staleTime 都走 Date.now，被 vi.useFakeTimers 一并接管。

@@ -111,7 +111,7 @@ export default function DiagnosticSection({ reload }: DiagnosticSectionProps) {
         <code>
           {diag ? `${diag.logFiles.length} 个 · ${formatBytes(diag.logBytes)}` : "读取中…"}
         </code>
-        <span>当前配置</span>
+        <span>当前订阅</span>
         <code>
           {diag?.config
             ? `${diag.config.name} · ${diag.config.enabled}/${diag.config.sites} 站点`
@@ -146,7 +146,7 @@ export default function DiagnosticSection({ reload }: DiagnosticSectionProps) {
         />
       ) : null}
       <p className="settings-line">
-        配置、收藏与观看历史都保存在本机应用数据目录，不会上传到云端。日志同样只写本机，
+        订阅、收藏与观看记录都保存在本机应用数据目录，不会上传到云端。日志同样只写本机，
         保留最近 7 天，URL 会去掉查询参数后记录；反馈问题时请附上日志目录里的文件。
       </p>
     </div>

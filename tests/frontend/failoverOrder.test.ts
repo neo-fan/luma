@@ -13,8 +13,8 @@ const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("auto line switch order", () => {
-  // 换线/换源编排已搬至 usePlaybackSwitchCore（第 3 期解耦）。
-  const orchestration = read("src/hooks/usePlaybackSwitchCore.ts");
+  // 换线/换源编排已收敛到单一 controller。
+  const orchestration = read("src/hooks/playback/usePlaybackController.ts");
 
   it("tries the current source's lines before crossing sources", () => {
     const lineCall = orchestration.indexOf("const switched = await tryNextLine();");
@@ -24,7 +24,7 @@ describe("auto line switch order", () => {
   });
 
   it("splits the candidates into same episode first,其它集 second", () => {
-    expect(orchestration).toContain("sameEpisodeName(episode.name, d.episodeName)");
+    expect(orchestration).toContain("sameEpisodeName(episode.name, currentEpisodeName)");
     expect(orchestration).toContain("const sameEpisodeList = usable");
     expect(orchestration).toContain("const otherEpisodes = usable");
     const first = orchestration.indexOf("await firstPlayable(sameEpisodeList");
@@ -34,7 +34,7 @@ describe("auto line switch order", () => {
   });
 
   it("dedupes concurrent failures by awaiting the in-flight attempt", () => {
-    expect(orchestration).toContain("const inflight = lineAttempt.current;");
+    expect(orchestration).toContain("const inflight = depsRef.current.lineAttempt.current;");
     expect(orchestration).toContain("return inflight;");
     // 不能再用「已开始就当失败」的布尔早退。
     expect(orchestration).not.toContain("if (lineSwitchStarted.current) {");

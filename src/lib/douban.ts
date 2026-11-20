@@ -60,6 +60,22 @@ interface Entry {
 }
 
 const store = new Map<string, Entry>();
+/**
+ * store 上限：键含代理模式与 subject id，换一次代理就换一整套键空间。没有上限时
+ * 旧键永远读不到、也永不释放（简介/演员表每条约 1–4 KB，翻完 3000 部即常驻十几 MB）。
+ * 淘汰用「删除后重插」维持插入序，取最旧一条。
+ */
+const MAX_STORE_ENTRIES = 600;
+
+function setStore(key: string, entry: Entry): void {
+  store.delete(key);
+  store.set(key, entry);
+  while (store.size > MAX_STORE_ENTRIES) {
+    const oldest = store.keys().next();
+    if (oldest.done) break;
+    store.delete(oldest.value);
+  }
+}
 const listeners = new Map<string, Set<() => void>>();
 const waiters = new Map<string, Set<(meta: DoubanMeta | null) => void>>();
 // 已发出、尚未收到终态的 key：避免同一部片重复发请求。
@@ -109,13 +125,13 @@ function handleEvent(evt: DoubanMetaEvent): void {
   if (evt.phase === "error") {
     // 传输失败：保留已有封面（若有），phase 维持非终态，允许下次重新请求。
     requested.delete(key);
-    store.set(key, { meta: prev?.meta ?? null, phase: prev?.phase ?? null });
+    setStore(key, { meta: prev?.meta ?? null, phase: prev?.phase ?? null });
     dispatch(key);
     settleWaiters(key, prev?.meta ?? null);
     return;
   }
   const terminal = evt.phase === "full" || evt.phase === "none";
-  store.set(key, { meta, phase: evt.phase });
+  setStore(key, { meta, phase: evt.phase });
   if (terminal) requested.delete(key);
   dispatch(key);
   if (terminal) settleWaiters(key, meta);

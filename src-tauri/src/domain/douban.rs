@@ -1131,7 +1131,39 @@ async fn search_candidates(
         percent_encode(title)
     );
     match get_json(kind, prefix, &target).await {
-        Ok(body) => SearchOutcome::Conclusive(parse_search_subjects(&body)),
+        Ok(body) => {
+            // 2xx 不等于「确认无此片」：限流 / 未登录时接口照样回 200，body 是
+            // `{"msg":"need_login"}` 之类的错误体。当成 Conclusive 会写 5 分钟负缓存，
+            // 把一部明明存在的片判死（与 `cold_epg_raw` 的「非成功状态不缓存」同口径）。
+            let error = body
+                .get("msg")
+                .or_else(|| body.get("error_info"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if !error.is_empty() {
+                tracing::warn!(title, error, "douban mobile search rejected, cooling down");
+                cool_down_douban();
+                return SearchOutcome::Inconclusive;
+            }
+            // 形状：`{ "subjects": { "items": [...] } }`（也有返回数组的变体）。
+            // 缺 `subjects`（`{}` / `{"msg":"need_login"}` / 代理注入的 HTML）一律
+            // 不算「确认无结果」——否则会写 5 分钟负缓存，把存在的片判死。
+            let shaped = body
+                .get("subjects")
+                .map(|subjects| subjects.is_object() || subjects.is_array())
+                .unwrap_or(false);
+            if !shaped {
+                tracing::warn!(title, shape = %body, "douban mobile search had no subjects");
+                return if responded {
+                    SearchOutcome::Conclusive(Vec::new())
+                } else {
+                    SearchOutcome::Inconclusive
+                };
+            }
+            SearchOutcome::Conclusive(parse_search_subjects(&body))
+        }
         Err(err) => {
             tracing::warn!(code = %err.code, error = %err.message, "douban mobile search failed");
             if responded {
@@ -1281,13 +1313,18 @@ async fn fetch_detail(
     }
 }
 
+/// 返回 `(meta, detail_ok)`：`detail_ok` = 是否真的取到并应用了详情。
+///
+/// `subject_id` 直取分支依赖这个标志：详情失败时 `build_meta` 的种子标题就是
+/// 源标题本身，弱校验会「源标题 vs 源标题」满分通过，把无评分/简介/海报的空壳
+/// 当完整结果推送并写正缓存。调用方必须据 `detail_ok` 判断是否可当 full 落地。
 async fn build_meta(
     kind: ProxyKind,
     prefix: &str,
     item: &SuggestItem,
     year: Option<&str>,
     now: fn() -> Instant,
-) -> DoubanMeta {
+) -> (DoubanMeta, bool) {
     let mut meta = DoubanMeta {
         id: item.id.trim().to_string(),
         title: item.display_title().to_string(),
@@ -1301,9 +1338,13 @@ async fn build_meta(
         pic: String::new(),
         url: format!("https://movie.douban.com/subject/{}/", item.id.trim()),
     };
-    if let Some(detail) = fetch_detail(kind, prefix, &item.id, now).await {
-        apply_detail(&mut meta, &detail);
-    }
+    let detail_ok = match fetch_detail(kind, prefix, &item.id, now).await {
+        Some(detail) => {
+            apply_detail(&mut meta, &detail);
+            true
+        }
+        None => false,
+    };
     if meta.year.is_empty() {
         // 详情和 suggest 都没给年份时，退回调用方给的那一年（至少入口一致）。
         if let Some(year) = year {
@@ -1316,7 +1357,7 @@ async fn build_meta(
         meta.pic.as_str()
     };
     meta.pic = with_pic_referer(pic);
-    meta
+    (meta, detail_ok)
 }
 
 /// 一次补全：suggest 选优 → rexxar/abstract 补详情。
@@ -1350,7 +1391,7 @@ async fn fetch_with(
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_string);
-    let key = cache_key(&title, year.as_deref());
+    let key = cache_key(&title, year.as_deref(), &prefix);
     // 负缓存命中：查过、确认没有，TTL 内不再跑搜索链（轮播每圈都会重问）。
     // 用 `get` 而不是 `contains_key`：前者确定会按 TTL 过滤过期条目。
     if negative_cache().get(&key).await.is_some() {
@@ -1420,7 +1461,18 @@ async fn cold_fetch(
     now: fn() -> Instant,
 ) -> Result<DoubanMeta, ColdFail> {
     let item = resolve_candidate(kind, &prefix, &title, year.as_deref(), now).await?;
-    Ok(build_meta(kind, &prefix, &item, year.as_deref(), now).await)
+    let (meta, detail_ok) = build_meta(kind, &prefix, &item, year.as_deref(), now).await;
+    if !detail_ok {
+        // 详情没取到（限流 / 验证页 / 缺字段）时 meta 只是「搜索页字段 + 源标题」的
+        // 空壳：评分 0、简介与类型为空。`try_get_with` 只有 Err 才不缓存，所以这里
+        // 必须走 Transient —— 否则这个空壳会在正缓存里活 10 分钟，期间所有调用方
+        // 都拿不到真数据。不抛给前端（`fetch_with` 仍把它翻成 Ok(None)）。
+        return Err(ColdFail::Transient(AppError::new(
+            code::INTERNAL,
+            format!("douban detail unavailable for {title}"),
+        )));
+    }
+    Ok(meta)
 }
 
 /// 搜索 + 选优，按 title+year 合并并发并缓存结果（粗/细两路共用）。
@@ -1433,7 +1485,7 @@ async fn resolve_candidate(
     year: Option<&str>,
     now: fn() -> Instant,
 ) -> Result<SuggestItem, ColdFail> {
-    let key = cache_key(title, year);
+    let key = cache_key(title, year, prefix);
     let prefix = prefix.to_string();
     let title_owned = title.to_string();
     let year_owned = year.map(str::to_string);
@@ -1736,12 +1788,15 @@ async fn run_enrichment(
             img: String::new(),
             url: format!("https://movie.douban.com/subject/{}/", id),
         };
-        let meta = build_meta(kind, prefix, &item, year, Instant::now).await;
-        let matched = id_matches_source(&meta, title, year);
+        let (meta, detail_ok) = build_meta(kind, prefix, &item, year, Instant::now).await;
+        // 详情没取到时 meta 的种子标题=源标题，弱校验会满分通过；必须要求
+        // detail_ok，否则空壳被当 full 推送并写正缓存 10 分钟，污染后续请求。
+        let matched = detail_ok && id_matches_source(&meta, title, year);
         tracing::info!(
             id,
             title,
             matched,
+            detail_ok,
             douban_title = %meta.title,
             douban_year = %meta.year,
             "douban: subject_id 直取校验结果"
@@ -1765,11 +1820,19 @@ async fn run_enrichment(
         Ok(item) => {
             let coarse = coarse_meta(&item);
             emit_douban(app, key, "cover", Some(&coarse));
-            let full = build_meta(kind, prefix, &item, year, Instant::now).await;
-            positive_cache()
-                .insert(ckey.to_string(), full.clone())
-                .await;
-            emit_douban(app, key, "full", Some(&full));
+            let (full, detail_ok) = build_meta(kind, prefix, &item, year, Instant::now).await;
+            if detail_ok {
+                positive_cache()
+                    .insert(ckey.to_string(), full.clone())
+                    .await;
+                emit_douban(app, key, "full", Some(&full));
+            } else {
+                // 详情未取到的空壳不能当 full 落地：前端把 full 视为终态，写进正缓存
+                // 后 10 分钟内不会再重试，用户看到的是「评分/简介全空」。发 error
+                // 保留已推送的封面，并允许下次重新请求（与 id 直取分支同一契约）。
+                tracing::warn!(title, "douban: 详情未取到，保留封面并允许重试");
+                emit_douban(app, key, "error", None);
+            }
         }
         Err(ColdFail::NotFound) => emit_douban(app, key, "none", None),
         Err(ColdFail::Transient(err)) => {
@@ -1815,7 +1878,7 @@ pub async fn douban_request(
     // 「无匹配」负缓存把 id 直取也压掉（反之亦然，id 填错的库也不该污染标题路径）。
     let ckey = match &subject_id {
         Some(id) => format!("id:{id}"),
-        None => cache_key(&title, year.as_deref()),
+        None => cache_key(&title, year.as_deref(), &prefix),
     };
 
     // 已有完整结果 → 直接推，省一次排队。
@@ -1891,8 +1954,18 @@ fn search_cache() -> &'static Cache<String, Option<SuggestItem>> {
     })
 }
 
-fn cache_key(title: &str, year: Option<&str>) -> String {
-    format!("{}|{}", cache_title_key(title), year.unwrap_or(""))
+/// 缓存键：片名 + 年份 + **代理前缀**。
+///
+/// 前缀必须进键：用户「直连不行 → 换加速前缀」是最常见的自救动作，而正/负
+/// 缓存各活 10/5 分钟——键里没有代理维度时，换完代理仍然命中旧结果，看起来
+/// 像「换代理完全没用」。前端 store 的键也含代理模式，两侧维度保持一致。
+fn cache_key(title: &str, year: Option<&str>, prefix: &str) -> String {
+    format!(
+        "{}|{}|{}",
+        cache_title_key(title),
+        year.unwrap_or(""),
+        prefix.trim()
+    )
 }
 
 /// 缓存键专用的片名归一：与 `normalize_title` 同法（去年份括号、半角、去噪声、
@@ -2117,6 +2190,8 @@ mod tests {
             }
         })
         .await;
+        // 键含代理前缀：换代理必须落到新键，否则旧的负缓存会继续压掉重试。
+        let prefix = base.clone();
         let req = stubbed_request(base, "查无此片负缓存乙", None);
         assert!(fetch_with(&req, stub_clock).await.expect("fetch").is_none());
         let after_first = hits.load(Ordering::SeqCst);
@@ -2129,7 +2204,7 @@ mod tests {
         );
         // 「确认无结果」是命中态 Some(None)，不是「没查过」的 None。
         // multi_thread runtime 会驱动 moka 后台维护，async 读直接可见。
-        let key = cache_key("查无此片负缓存乙", None);
+        let key = cache_key("查无此片负缓存乙", None, &prefix);
         assert_eq!(negative_cache().get(&key).await, Some(()));
         assert_eq!(cache_get(&key).await, Some(None));
 
@@ -2775,18 +2850,24 @@ mod tests {
         // 不能再用整表清空/随机 key 断言 miss）。
         // 同季的不同写法共用一个键（空格/全角括号差异）。
         assert_eq!(
-            cache_key("庆余年 第一季", Some("2019")),
-            cache_key("庆余年第一季", Some("2019")),
+            cache_key("庆余年 第一季", Some("2019"), ""),
+            cache_key("庆余年第一季", Some("2019"), ""),
             "同季不同写法共用一个键"
         );
         // 不同季必须分开：缓存早于 pick_candidate 打分命中，键若剥季，无年份时
         // 第二季会拿到第一季的条目。
         assert_ne!(
-            cache_key("庆余年 第一季", Some("2019")),
-            cache_key("庆余年（第二季）", Some("2019")),
+            cache_key("庆余年 第一季", Some("2019"), ""),
+            cache_key("庆余年（第二季）", Some("2019"), ""),
             "同剧不同季必须分键"
         );
-        let key = cache_key("庆余年 第一季", Some("2019"));
+        // 代理前缀必须进键：换完代理还命中旧结果，用户会以为「换代理没用」。
+        assert_ne!(
+            cache_key("庆余年 第一季", Some("2019"), ""),
+            cache_key("庆余年 第一季", Some("2019"), "https://ghproxy.example/"),
+            "不同代理前缀必须分键"
+        );
+        let key = cache_key("庆余年 第一季", Some("2019"), "");
         cache_put(key.clone(), Some(meta()));
         assert_eq!(
             cache_get(&key).await.expect("hit").expect("positive"),
@@ -2794,7 +2875,7 @@ mod tests {
         );
         assert!(cache_get("roundtrip-missing-key|").await.is_none());
         // 负结果同样入缓存：轮播/详情页重复问同一个查不到的片名不再走网络。
-        let neg_key = cache_key("查无此片roundtrip", None);
+        let neg_key = cache_key("查无此片roundtrip", None, "");
         cache_put(neg_key.clone(), None);
         assert_eq!(cache_get(&neg_key).await.expect("negative hit"), None);
         // 三态各归其表：「确认无结果」是 Some(None)，不是「没查过」的 None。

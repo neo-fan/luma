@@ -25,6 +25,8 @@ export interface DecoderInstance {
   controls?: { remove(name: string): void };
   setting?: { remove(name: string): void };
   on(event: "destroy", handler: () => void): void;
+  /** once 与 on 同签名：destroy 只需触发一次，避免复用实例上累积处理器。 */
+  once(event: "destroy", handler: () => void): void;
 }
 
 interface DecoderMediaView {
@@ -115,7 +117,9 @@ export function attachHlsDecoder(host: DecoderHost, url: string): void {
     hls.destroy();
   };
   host.lifecycle.setTeardown(destroy);
-  instance.on("destroy", destroy);
+  // `once`：原地换集/换线会复用同一个 ArtPlayer 实例并重新走这里，用 `on`
+  // 会在实例上累积一串 destroy 处理器（每集 +1 个闭包，钉住已销毁的 Hls）。
+  instance.once("destroy", destroy);
   // 生命信号：清单、子清单、分片任何一步真实拿到数据都算「源在动」，
   // 即便此刻还没凑够一帧解码（冷启大分片就是这个状态）。
   const noteAlive = () => {
@@ -239,7 +243,8 @@ export function attachFlvDecoder(host: DecoderHost, url: string): void {
     player = null;
   };
   host.lifecycle.setTeardown(destroy);
-  instance.on("destroy", destroy);
+  // 同 HLS 分支：`once` 避免原地换台时在复用实例上累积 destroy 处理器。
+  instance.once("destroy", destroy);
   void (async () => {
     try {
       const mod = (await import("mpegts.js")) as unknown as { default?: MpegtsLike } & MpegtsLike;

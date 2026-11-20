@@ -200,48 +200,54 @@ impl ConfigStore {
             });
         }
 
-        let manual = manual_disabled_keys(&runtime);
         let mut next_runtime = derive_runtime(&fresh);
-        apply_manual_disables(&mut next_runtime, &manual);
-
-        let headers = next_runtime.headers.clone();
-        let imported_json = serde_json::to_string(&fresh)?;
-        let runtime_json = serde_json::to_string(&next_runtime)?;
-        let source_json = serde_json::to_string(&source)?;
-        let write = ConfigWrite {
-            id: &target_id,
-            name: &fresh.name,
-            imported_at: &fresh.imported_at,
-            imported_json: &imported_json,
-            runtime_json: &runtime_json,
-            source_json: &source_json,
-        };
+        // 手动禁用集必须取「提交时刻」的最新 runtime，并与写回放在**同一个写锁**里：
+        // 网络窗口（数秒到数十秒）内用户可能刚点过站点开关，用进函数时克隆的旧快照
+        // 会把这次操作重新启用（开关「自己弹回去」）。DB 写同步且不跨 await。
+        // active 判定必须在取 entries 写锁**之前**完成（锁序：active → entries）。
         let is_active = self
             .active
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_deref()
             == Some(target_id.as_str());
-        // active 走 activate_config（同 id 再写一次 active，语义不变）；非
-        // active 只更新行，绝不因为「顺手刷新」把用户切到别的订阅。
-        if is_active {
-            self.db.activate_config(write)?;
-        } else {
-            self.db.update_config(write)?;
-        }
+        let headers;
         {
             let mut guard = self
                 .entries
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(entry) = guard
+            let entry = guard
                 .iter_mut()
                 .find(|entry| entry.imported.id == target_id)
-            {
-                entry.imported = fresh;
-                entry.runtime = Some(next_runtime.clone());
-                entry.source = source;
+                .ok_or_else(|| {
+                    AppError::new(code::INVALID_ARGUMENT, "配置在刷新期间已被删除")
+                })?;
+            let manual = manual_disabled_keys(runtime_of(entry));
+            apply_manual_disables(&mut next_runtime, &manual);
+
+            headers = next_runtime.headers.clone();
+            let imported_json = serde_json::to_string(&fresh)?;
+            let runtime_json = serde_json::to_string(&next_runtime)?;
+            let source_json = serde_json::to_string(&source)?;
+            let write = ConfigWrite {
+                id: &target_id,
+                name: &fresh.name,
+                imported_at: &fresh.imported_at,
+                imported_json: &imported_json,
+                runtime_json: &runtime_json,
+                source_json: &source_json,
+            };
+            // active 走 activate_config（同 id 再写一次 active，语义不变）；非
+            // active 只更新行，绝不因为「顺手刷新」把用户切到别的订阅。
+            if is_active {
+                self.db.activate_config(write)?;
+            } else {
+                self.db.update_config(write)?;
             }
+            entry.imported = fresh;
+            entry.runtime = Some(next_runtime.clone());
+            entry.source = source;
         }
         if is_active {
             crate::netrules::replace(&headers);
@@ -277,24 +283,32 @@ impl ConfigStore {
         site_key: &str,
         enabled: bool,
     ) -> Result<ConfigSnapshot, AppError> {
-        let (imported, mut runtime, source) = {
-            let active = self
-                .active
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone();
-            let guard = self
-                .entries
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let entry = pick(active.as_deref(), guard.as_slice())
-                .ok_or_else(|| AppError::new(code::INVALID_ARGUMENT, "no active config"))?;
-            (
-                entry.imported.clone(),
-                runtime_of(entry).clone(),
-                entry.source.clone(),
-            )
-        };
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        // 「取当前快照 → 改 → 写库 → 写回」必须在同一个写锁里完成：旧实现先读克隆、
+        // 再写库、最后整体覆盖 entry.runtime，两次并发开关（或与 refresh 提交交错）
+        // 会各按旧快照写回，后写的把先写的改动静默覆盖 —— 用户看到开关「自己弹回去」。
+        // DB 写是同步的（不跨 await），持锁时间只有一次 upsert。
+        // 锁序：先取 active（上一步已释放）再取 entries，与 all_sites 等读点一致。
+        let mut guard = self
+            .entries
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let index = {
+            let current = active.as_deref();
+            guard
+                .iter()
+                .position(|entry| current == Some(entry.imported.id.as_str()))
+                .or_else(|| guard.len().checked_sub(1))
+        }
+        .ok_or_else(|| AppError::new(code::INVALID_ARGUMENT, "no active config"))?;
+        let entry = &mut guard[index];
+        let imported = entry.imported.clone();
+        let mut runtime = runtime_of(entry).clone();
+        let source = entry.source.clone();
 
         let mut found = false;
         for site in runtime.sites.iter_mut() {
@@ -344,19 +358,8 @@ impl ConfigStore {
             runtime_json: &runtime_json,
             source_json: &source_json,
         })?;
-        // 直接整体替换 runtime 快照（不是只改 sites 字段）；不碰 active marker。
-        {
-            let mut guard = self
-                .entries
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(entry) = guard
-                .iter_mut()
-                .find(|entry| entry.imported.id == imported.id)
-            {
-                entry.runtime = Some(runtime.clone());
-            }
-        }
+        // 同一个写锁内写回（不是只改 sites 字段）；不碰 active marker。
+        entry.runtime = Some(runtime.clone());
         // 返回改后的运行快照，前端 onImported(snapshot) 换掉站点缓存，
         // 让 fan-out 立即生效。
         Ok(runtime)

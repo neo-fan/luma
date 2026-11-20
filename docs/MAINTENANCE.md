@@ -23,7 +23,7 @@
 | 阶段断言 | `python tests/acceptance/p0.py` ~ `p3.py` | stub + 运行中的应用 | 改 sidecar / 打包后 |
 | 真实配置 | 导入 → 搜索 → 详情 → 播放 | 外网 | 源兼容结论（外网抖动不算回归） |
 
-`check.py` 覆盖：契约、版本一致性、Python 兼容、py 框架、语法编译、前端单测、Rust 单测、运行时产物体检。加 `--full` 会额外跑 `pnpm build`。
+`check.py` 覆盖（11 项）：契约、版本一致性、Python 兼容、py 框架、适配层健壮性、Python 语法、运行时产物体检、qjs-runner 单测、qjs 引擎（GBK + ds）、前端单测、Rust 单测。加 `--full` 会额外跑 `pnpm build`。
 
 新增/调整用例前先看 `docs/TESTING.md`：单测（`src/**`、Rust 内联）/ 离线检查（`tests/offline/`）/ 阶段验收（`tests/acceptance/`）/ 窗口探针（`tools/`）的边界与命令都在那一份里，加进 `check.py` 要同步本表与那里的清单。
 
@@ -51,7 +51,7 @@
 
 1. 规格先行：新增 command 或错误码需改 `docs/spec.md`。
 2. Rust 侧一律 `Result<T, AppError>`，生产路径禁 `unwrap()`；错误码走 `code::*`。
-3. `src-tauri/src/lib.rs` 的 `generate_handler!` 注册（当前 37 个）。
+3. `src-tauri/src/lib.rs` 的 `generate_handler!` 注册（当前 40 个）。
 4. 前端唯一出口 `src/lib/invoke.ts`，禁止 `import` Node 内置模块。
 5. 评估 `capabilities/default.json` 权限白名单（嗅探窗口**故意**不在 `windows: ["main"]` 内，零 command 权限）。
 6. 探针卫生：会切换后端 active 配置的探针，cleanup 必须 `location.reload()`，否则前端残留 stub 站点让后续假失败。
@@ -72,7 +72,7 @@
 - 分工：**当前规范**写 `AGENTS.md`；**对外说明**写 `README.md`；**贡献流程**写 `CONTRIBUTING.md`；**逐轮过程**留在 git history 与 `CHANGELOG.md`（本仓库不设内部日志目录）。
 - **`AGENTS.md` 有硬预算：≤ 20 KB**。它是给 AI 协作者的指令文件，超过 65 KB 的指令预算就会被截断（旧版曾膨胀到 95,925 字节，实测第 298 行之后全部读不到）。写新内容前先问「这是当前规范，还是一条决策记录？」：决策记录写进 `CHANGELOG.md` 或提交信息，`AGENTS.md` 只留一句结论。
 - `AGENTS.md` 里的测试数字是**当时快照**，当前基线以 `docs/RELEASING.md` 与 `tools/check.py` 输出为准，不要拿旧数字改代码。
-- 本仓库**只保留活文档**（`docs/` 下 7 份）；冻结快照（竞品评估、UI 走查、逐站实测等）不再随仓库分发，需要的读者看 git 历史。
+- 本仓库**只保留活文档**（`docs/` 下 11 份，含本地专用 `verification-config.md`）；冻结快照（竞品评估、UI 走查、逐站实测等）不再随仓库分发，需要的读者看 git 历史。
 - 每次发版更新 `CHANGELOG.md` 与 `docs/size-report.md`。
 
 ## 7. 日志与诊断
@@ -94,12 +94,15 @@
 
 1. **CI 首次远端运行待验证**：`.github/workflows/check.yml` 已落地（`checks` / `rust` / `py-adapter` 三个 job），但本机没有远端仓库，尚未在 GitHub runner 上实跑过；首次推送后要按实际报错调（重点看 `rust` job 的 `pnpm build` + 资源桩是否够用）。
 2. Rust `#[path]` 是物理分层，逻辑模块名仍是 `crate::config`，依赖方向不受编译器约束（刻意取舍，第二阶段再做前缀化）。
-3. 超长文件：`PlayerPage.tsx`（1750）、`usePlayerEngine.ts`（1481）、`domain/spider/mod.rs`（928）、`domain/spider/quickjs.rs`（738）。
+3. 超长文件：`usePlayerEngine.ts`（1433）、`hooks/playback/usePlaybackController.ts`（958）、`PlayerPage.tsx`（939）、`domain/spider/mod.rs`（957）、`domain/spider/quickjs.rs`（774）。
    2.0.0 从 `usePlayerEngine` 拆出五个模块：`playerVolumeFade` / `playerPosterHold` / `playerPrefsWriter` /
    `playerStallWatchdog` / `playerThroughputMeter`，判决部分进 `lib/{vod,live}SessionMachine`，各带 node 行为测试。
    剩余部分是 ArtPlayer 实例装配、`customType` 里的解码器挂载与原地换集 promise：三者共享 `art` / `video` /
    `teardownDecoders` 和同一条切换时序，再往外拆需要传入多个内部句柄，不构成真边界。要动它，先给解码器
    挂载找一层所有权边界。
+   `usePlaybackController` 同理：换集 / 换源 / 换线共享同一组 ref（代次、提交门、队列、账本），已把纯逻辑
+   （`playbackTarget` / `episodePlayResolve` / `playerRoute`）与令牌（`switchToken` / `switchQueue`）拆出去，
+   剩下的 958 行是编排时序本身，再切会把「谁先谁后」拆散到两个文件、反而更难读。
    （`domain/config`、`domain/proxy`、`infra/db`、`infra/logging` 已按职责拆分，见 §10。）
 
 4. 四端协议靠约定 + 5 类结构校验，未做代码生成。
@@ -113,8 +116,9 @@
 - `tools/` 71 个脚本平铺 → 已按用途分 `probes/` / `diag/` / `verify/` / `audit/` 四个子目录，`tools/run_probes.mjs` 仍是唯一入口。
 - `domain/config.rs`（2,154 行 god module）→ 已拆为 `config/{mod,derive,naming,import,github,refresh}.rs`，命令层与实现分离。
 - `domain/proxy.rs`（1,105 行）→ 已拆为 `proxy/{mod,handlers,guard,playlist}.rs` + `proxy/tests.rs`；`mod.rs` 留状态/路由/命令层，handler、目标校验、播放列表改写各自成文件。
-- `infra/db.rs`（1,026 行）→ 已拆为 `db/{mod,schema,meta,configs,favorites,history}.rs` + `db/tests.rs`；行结构体留 `mod.rs`，每个子模块一个 `impl Db`，schema 迁移与四类仓储互不牵连。
-- `infra/logging.rs`（587 行）→ 已拆为 `logging/{mod,writer,redact,ui,diagnostics,report}.rs` + `logging/tests.rs`；`mod.rs` 留目录解析/初始化/级别解析与 4 个命令，按日滚动、脱敏规则、诊断采集、反馈文件各成文件。
+- `infra/db.rs`（1,026 行）→ 已拆为 `db/{mod,schema,meta,configs,playback}.rs` + `db/tests.rs`；行结构体留 `mod.rs`，每个子模块一个 `impl Db`。2.0 把收藏与历史合并为单表 `playback`（收藏只是 `favorite` 标记），原 `favorites.rs` / `history.rs` 的读写并入 `playback.rs`。
+- **播放页「当前播放目标」四套状态并存** → 已收成一份真源：`hooks/playback/{playbackTarget,usePlaybackController}.ts`（`intent ?? committed` + 代次令牌 + 串行提交门 + 手动持有），删除 `useEpisodeList.ts` / `usePlaybackSwitchCore.ts` 与 `pendingPick/manualPick/switchedSource` 派生链。之后又把换集/换源各自手写一遍的「集级解析 + 类型校验 + 提交」抽成 `episodePlayResolve.ts` / `applySwitch`，四条出口的 `player` 路由收敛到 `playerRoute.ts`——这段曾经两处各写一份，只有一处补了类型校验，症状是「换源能播、换集白屏」。
+- `infra/logging.rs`（587 行）→ 已拆为 `logging/{mod,redact,ui,diagnostics,report}.rs` + `logging/tests.rs`；`mod.rs` 留目录解析/初始化/级别解析与 4 个命令，脱敏规则、诊断采集、反馈文件各成文件（按日滚动原本没有独立 `writer.rs`，写入逻辑一直在 `mod.rs`）。
 - `probe_page_cache` 注入点：随 TanStack 迁移（`63b70f9`）已改挂 `lib/queryClient.ts` 的 `fetchQuery` spy（按 `queryKey[0]` 前缀计数、`staleTime===0` 判 force），「缓存复用不重复回源 + ↻刷新强制回源」契约重新钉住；实测 `node tools/probes/probe_page_cache.mjs` 全绿（c1=cPlay=c2、c3≥c2+1、无未捕获异常）。原 §9.5「必然红」的描述已过时。
 
 ## 11. 第三方库替换清单的逐项结论

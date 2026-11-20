@@ -28,7 +28,7 @@ export default function ConfigImportSection({
 
   const importConfig = async (kind: "url" | "text", value: string) => {
     if (!value) {
-      onError(kind === "url" ? "请先填写配置地址" : "请先粘贴配置内容");
+      onError(kind === "url" ? "请先填写订阅地址" : "请先粘贴订阅内容");
       return;
     }
     setImporting(true);
@@ -91,7 +91,7 @@ export default function ConfigImportSection({
   return (
     <>
       <div className="settings-block">
-        <h2 className="section-title">导入配置（URL）</h2>
+        <h2 className="section-title">导入订阅（URL）</h2>
         <div className="search-bar">
           <input
             className="input"
@@ -117,13 +117,13 @@ export default function ConfigImportSection({
           </button>
         </div>
         <label className="config-name">
-          <span className="config-name__label">配置名称</span>
+          <span className="config-name__label">订阅名称</span>
           <input
             className="input"
             type="text"
             value={name}
             maxLength={48}
-            placeholder="留空则使用域名 / 配置内名称"
+            placeholder="留空则使用域名 / 订阅内名称"
             onChange={(event) => {
               setName(event.target.value);
               setNameTouched(true);
@@ -136,11 +136,11 @@ export default function ConfigImportSection({
       </div>
 
       <div className="settings-block">
-        <h2 className="section-title">导入配置（粘贴文本）</h2>
+        <h2 className="section-title">导入订阅（粘贴文本）</h2>
         <textarea
           className="textarea"
           value={text}
-          placeholder="把 api.json 的内容粘贴到这里（名称沿用上方「配置名称」）"
+          placeholder="把 api.json 的内容粘贴到这里（名称沿用上方「订阅名称」）"
           onChange={(event) => setText(event.target.value)}
         />
         <button

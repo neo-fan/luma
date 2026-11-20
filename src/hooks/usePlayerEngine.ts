@@ -12,7 +12,7 @@
  * 逻辑时须同步更新探针的 fetch 目标，且不要在注释里复刻同样的字面串，
  * 否则会让自检形同虚设。
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   Dispatch,
   MutableRefObject,
@@ -296,7 +296,6 @@ export function usePlayerEngine({
   resolved,
   resolving,
   siteKey,
-  vodName,
   vodId,
   poster,
   onVideoMeta,
@@ -904,7 +903,9 @@ export function usePlayerEngine({
     // 早设一次（构造后 ArtPlayer 还没有倍速概念），loadedmetadata 时再确认一次：
     // 那才是真正开始用这份媒体的时刻，也是续播消费的节拍。
     video.playbackRate = wantedRate();
-    video.addEventListener("loadedmetadata", () => {
+    // 具名以便 cleanup 精确移除：旧代码注册匿名箭头、却 remove 一个从未注册的
+    // applyResume（no-op），一旦首帧前卸载就会在已 detach 的 video 上残留回调。
+    const onFirstMeta = () => {
       video.playbackRate = wantedRate();
       applyResume();
       // 片头自动跳：仅当续播点没落在片头之后（resumeMs <= intro）才跳，避免
@@ -917,7 +918,8 @@ export function usePlayerEngine({
           // 首分片未到时 seek 会抛 InvalidStateError，忽略；下一次 timeupdate 会重报窗口态。
         }
       }
-    }, { once: true });
+    };
+    video.addEventListener("loadedmetadata", onFirstMeta, { once: true });
 
     // 片头/片尾窗口态上报：驱动调用方的「跳过片头/片尾」浮层按钮。只在窗口态
     // 翻转时回调，不每帧刷；配置用取值器懒读（同倍速，绝不进本 effect 依赖）。
@@ -1229,7 +1231,6 @@ export function usePlayerEngine({
           video.volume = swVolume;
         }
       }, 1250);
-      trackSwitchDisposer(() => window.clearTimeout(swReplay));
       // 首帧前保留画面：teardown 销毁 Hls 即清 MSE 缓冲，画面立刻黑。趁缓冲
       // 还在抓当前帧当 poster。MSE blob 同源，drawImage 不会 taint；跨源 native
       // src 会抛 SecurityError——catch 住跳过，退回无海报，不阻塞换集。
@@ -1253,7 +1254,11 @@ export function usePlayerEngine({
         // 「咔」的爆音（与 hardStop 同一处理）。暂停态切换不出声，不动它。
         video.muted = true;
       }
+      // 先收上一轮的全部 disposer，再登记本轮的：swReplay 必须在
+      // disposeSwitchCycle() 之后注册，否则刚登记就被同一次 dispose 清掉，
+      // 1250ms 的倍速/音量纠正永不执行（换集后偏好被 ArtPlayer 重置）。
       disposeSwitchCycle();
+      trackSwitchDisposer(() => window.clearTimeout(swReplay));
       teardownDecoders?.();
       teardownDecoders = null;
       /**
@@ -1376,7 +1381,9 @@ export function usePlayerEngine({
       video.removeEventListener("ratechange", prefsWriter.onRateChange);
       video.removeEventListener("loadedmetadata", reportMeta);
       video.removeEventListener("resize", reportMeta);
-      video.removeEventListener("loadedmetadata", applyResume);
+      video.removeEventListener("loadedmetadata", onFirstMeta);
+      video.removeEventListener("loadedmetadata", reportSkipState);
+      video.removeEventListener("timeupdate", reportSkipState);
       fader.dispose();
       // 先通知上层把 portal 里的角标摘掉，再销毁 ArtPlayer：反过来的话 React
       // 会往一个已经被 remove() 的节点里做移除。
@@ -1403,16 +1410,24 @@ export function usePlayerEngine({
     // `resolving` 必须进依赖：新一轮解析开始时要立刻卸载旧内核，不能等
     // `setResolved(null)` 落地（两者都是 effect 阶段的 setState，晚一帧）。
     // 其余都是稳定引用（ref / setter），或仅用于日志与回调闭包（vodId）。
+    // `vodName` 曾在依赖里却从未被 effect 用到：一旦有人让原地换源同步片名
+    // （很自然的改动），这条死依赖就会把换源变成整实例销毁 + 黑屏数秒。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, resolving, siteKey, vodName]);
+  }, [resolved, resolving, siteKey]);
 
-  return {
-    switchSource: (url: string) =>
-      switchRef.current?.(url) ??
-      Promise.reject(new Error("播放器尚未就绪，暂时不能原地换集")),
-    notice: (text: string | null) => noticeRef.current?.(text),
-    switching: machineSwitching,
-    setSkipSettingTooltip: (text: string) => skipSettingTooltipRef.current?.(text),
-    setLoading: (show: boolean) => loadingRef.current?.(show),
-  };
+  // 句柄必须记忆化：调用方（PlayerPage）把它放进三个 effect 的依赖里。若每次
+  // 渲染返回新对象，慢加载期间 2s 一次的 setSlowNotice 就会让 interval 重建、
+  // 设置面板整个 remove+add。实现体全部只读 ref，唯一真依赖是 machineSwitching。
+  return useMemo(
+    () => ({
+      switchSource: (url: string) =>
+        switchRef.current?.(url) ??
+        Promise.reject(new Error("播放器尚未就绪，暂时不能原地换集")),
+      notice: (text: string | null) => noticeRef.current?.(text),
+      switching: machineSwitching,
+      setSkipSettingTooltip: (text: string) => skipSettingTooltipRef.current?.(text),
+      setLoading: (show: boolean) => loadingRef.current?.(show),
+    }),
+    [machineSwitching],
+  );
 }

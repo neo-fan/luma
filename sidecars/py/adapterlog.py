@@ -91,8 +91,14 @@ def log_crash(
     fingerprint: str,
     source_api: str,
     message: str,
-    trace: str,
+    trace: str = "",
 ) -> None:
+    """Record a spider crash.
+
+    `trace` defaults to empty on purpose: every caller sits on an error path, so
+    a missing argument must not raise and replace the exception being reported
+    (a logger that throws is strictly worse than no logger).
+    """
     log_event(
         {
             "level": "ERROR",

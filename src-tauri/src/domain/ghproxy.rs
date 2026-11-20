@@ -22,6 +22,13 @@ pub const META_KEY: &str = "github_proxy";
 /// 默认代理：2026-11-14 实测三家里 raw/archive 延时最低（0.14~0.33s）。
 pub const DEFAULT_PROXY: &str = "https://gh-proxy.com/";
 
+/// 内置三家加速代理：订阅地址 / GitHub 资源拉取时并发竞速，谁先成功用谁。
+pub const BUILTIN_PREFIXES: [&str; 3] = [
+    "https://gh-proxy.com/",
+    "https://ghfast.top/",
+    "https://ghproxy.net/",
+];
+
 /// 探测目标：一个长期存在的小文件，三家的 raw 通道都能取到。
 /// 用 GitHub 官方 raw 而不是某个具体源的 ext —— 探针要能长期活着。
 const PROBE_TARGET: &str = "https://raw.githubusercontent.com/hunshcn/gh-proxy/master/README.md";
@@ -127,6 +134,31 @@ fn is_github_host(host: &str) -> bool {
     GITHUB_HOSTS.iter().any(|known| host == *known)
 }
 
+/// `prefix + http(s)://...` → (前缀, 裸地址)；没有代理前缀时 None。
+pub fn split_proxy(url: &str) -> Option<(&str, &str)> {
+    let bare = strip_proxy(url);
+    if bare.len() == url.len() {
+        None
+    } else {
+        Some((&url[..url.len() - bare.len()], bare))
+    }
+}
+
+/// 该前缀是否属于 app 内置三家（内置前缀视为「app 加速」，剥掉存裸并参与竞速）。
+pub fn is_builtin_prefix(prefix: &str) -> bool {
+    let lower = prefix.to_ascii_lowercase();
+    BUILTIN_PREFIXES
+        .iter()
+        .any(|known| lower.starts_with(known))
+}
+
+/// 剥掉（可能多段的）代理前缀后是否落在 GitHub 系主机上。
+pub fn is_github_url(url: &str) -> bool {
+    host_of(strip_proxy(url))
+        .map(is_github_host)
+        .unwrap_or(false)
+}
+
 /// `https://any.proxy/https://github.com/x` → `https://github.com/x`。
 ///
 /// 只看「第一段路径本身是不是一个 http(s) URL」，不看它指向哪：多段前缀
@@ -134,7 +166,7 @@ fn is_github_host(host: &str) -> bool {
 /// 正常地址的第一段是 owner 名，永远不以 `http` 开头，所以不会误伤；
 /// `?url=https://github.com/...` 这种查询参数也不匹配（要求是路径段）。
 /// 剥完由调用方判定底层是否 GitHub，非 GitHub 的多段地址会原样返回。
-fn strip_proxy(url: &str) -> &str {
+pub fn strip_proxy(url: &str) -> &str {
     let mut current = url.trim();
     while let Some(inner) = nested_target(current) {
         current = inner;

@@ -81,6 +81,29 @@ const IMAGE_ACCEPT: &str =
 const IMAGE_TIMEOUT: Duration = Duration::from_secs(8);
 /// 非 `image/*` 响应最多攒这么多字节再嗅探，超过不往内存里读。
 const MAX_SNIFF_BYTES: usize = 8 * 1024 * 1024;
+/// m3u8 清单的读取上限。正常清单几十 KB；给 8 MB 是防「CDN 错误页 / 重定向到
+/// 视频文件」时把整条响应吃进内存（此前这里是 `bytes()`，没有上限）。
+const MAX_PLAYLIST_BYTES: usize = 8 * 1024 * 1024;
+
+/// 流式读 body，最多收集 `cap + 1` 字节：多留的 1 字节只用于判断「确实超限」。
+///
+/// 不能用 `bytes()` 先整条收进内存（上限对内存峰值形同虚设），也不能用
+/// `StreamExt::take(n)`——它按 **chunk 个数** 计数，而一个 chunk 可能就是一整条 body。
+async fn read_capped(upstream: reqwest::Response, cap: usize) -> Result<Vec<u8>, String> {
+    use futures_util::StreamExt;
+    let mut out: Vec<u8> = Vec::new();
+    let mut stream = upstream.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|err| format!("body read failed: {err}"))?;
+        let room = cap + 1 - out.len();
+        if bytes.len() >= room {
+            out.extend_from_slice(&bytes[..room]);
+            break;
+        }
+        out.extend_from_slice(&bytes);
+    }
+    Ok(out)
+}
 
 /// 封面失败的分类。日志与重试策略都只看它：必须把「本机网络 / TLS」和
 /// 「上游真不是图片」分开，否则 502 全被当成一个原因，排查时毫无信息量。
@@ -335,10 +358,11 @@ async fn image_response(
     // 没声明成图片（常见 `application/octet-stream` / `binary/octet-stream`
     // / 空 body 的防盗链页）：读回来按文件头嗅探，认出是图片就补对
     // content-type 再回给 <img>。
-    let body = match upstream.bytes().await {
-        Ok(bytes) => bytes,
-        Err(err) => return Err((ImageFailure::Other, format!("body read failed: {err}"))),
-    };
+    // 按字节上限流式收集（见 `read_capped` 的注释）：读满上限即停，不把整条
+    // 响应收进内存。
+    let body = read_capped(upstream, MAX_SNIFF_BYTES)
+        .await
+        .map_err(|err| (ImageFailure::Other, err))?;
     if body.len() > MAX_SNIFF_BYTES {
         return Err((
             ImageFailure::NotImage,
@@ -527,7 +551,7 @@ pub(super) async fn handle_proxy(
     if is_playlist && status.is_success() {
         // Relative segment URIs must be rewritten, otherwise hls.js resolves
         // them against 127.0.0.1:9978 and every segment 404s.
-        let body = match upstream.bytes().await {
+        let body = match read_capped(upstream, MAX_PLAYLIST_BYTES).await {
             Ok(bytes) => bytes,
             Err(err) => {
                 return deny(
@@ -536,6 +560,12 @@ pub(super) async fn handle_proxy(
                 )
             }
         };
+        if body.len() > MAX_PLAYLIST_BYTES {
+            return deny(
+                StatusCode::BAD_GATEWAY,
+                &format!("playlist too large (>{} bytes)", MAX_PLAYLIST_BYTES),
+            );
+        }
         let text = crate::textio::decode(&body);
         // A 200 with a non-playlist body is the normal shape of a dead source:
         // netdisk resolvers answer `{"code":201,"msg":"解析失败了","url":""}` and

@@ -19,6 +19,9 @@ import { readLiveChannel, rememberLiveChannel } from "../lib/liveChannels";
 import { getEpgUrl } from "../lib/epgSettings";
 import { notify } from "../lib/notify";
 import { noticeTtl } from "../lib/notice";
+import { log } from "../lib/logger";
+import { startTrace } from "../lib/switchTrace";
+import type { SwitchTrace } from "../lib/switchTrace";
 import { classifyLiveFailure, liveFailureMessage } from "../lib/playErrors";
 import { mediaAdvanced } from "../lib/mediaAlive";
 import type {
@@ -223,6 +226,25 @@ export default function LivePage({
   }, [videoMeta.width, channel?.name, pauseVodMedia]);
 
   /**
+   * 「换台/换线在途」的最新值（见下方 streamSwitching）。
+   *
+   * 两个用途，都是为了让**用户刚选的目标**不被旧流抢走：
+   * 1. 旧实例的报错/看门狗判死不触发自动换线——那会把线路再往前推一格；
+   * 2. 旧实例的报错文案不上屏——它说的是上一个台。
+   */
+  const streamSwitchingRef = useRef(false);
+
+  /**
+   * 换台/换线埋点：点下去 → 新流第一帧（或结论性错误）的耗时。
+   * 结论写进日志的 `trace` 行，CDP 探针与设置页导出的日志都能对齐同一 id。
+   */
+  const switchTraceRef = useRef<SwitchTrace | null>(null);
+
+  /** 上一个渲染的频道名：`selectLine` 里据此区分「换台」与「换线」。 */
+  const channelNameRef = useRef("");
+  channelNameRef.current = channel?.name ?? "";
+
+  /**
    * 内核 / 解析钩子只会 set 字符串；这里顺手把阶段打回 `play`，避免上一轮
    * 「单线路判死」的阶段泄漏到新的错误上（那样会把只换线路就能解决的错误
    * 说成「只能换频道」）。
@@ -233,6 +255,17 @@ export default function LivePage({
     if (value && !channel) {
       return;
     }
+    // 换台/换线在途：报错来自即将被替换掉的旧实例，说的是上一个台。
+    if (value && streamSwitchingRef.current) {
+      return;
+    }
+    if (typeof value === "string" && value) {
+      // 埋点：内核/解码层面的失败（不一定是当前换线那一轮，但一定影响用户）。
+      switchTraceRef.current?.end("fail", {
+        reason: value.slice(0, 120),
+        stage: "engine",
+      });
+    }
     setVideoStage("play");
     setVideoError(value);
   }, [channel]);
@@ -242,6 +275,7 @@ export default function LivePage({
     resolving,
     stage,
     reloading,
+    switching: streamSwitching,
     resolveError,
     resolveRetryable,
     reload,
@@ -256,6 +290,9 @@ export default function LivePage({
     vodId: channel?.name ?? "",
     setSwitchTip,
     setVideoError: setEngineVideoError,
+    // 换台/换线不再销毁播放实例：控制栏与线路 selector 是直播唯一的换线出口，
+    // 一旦随实例消失，用户就被锁在「正在连接播放地址…」的黑面板里（实测）。
+    keepInstanceWhileSwitching: true,
   });
 
   const reloadRef = useRef<(() => void) | null>(null);
@@ -273,6 +310,7 @@ export default function LivePage({
   const verdictTimer = useRef<number | null>(null);
   /** 自动换线的落点计算要读最新状态，用 ref 承接（内核只拿一个函数）。 */
   const switchOrFailoverRef = useRef<() => Promise<void>>(async () => {});
+  streamSwitchingRef.current = streamSwitching;
 
   const clearVerdict = useCallback(() => {
     if (verdictTimer.current !== null) {
@@ -313,6 +351,15 @@ export default function LivePage({
         return;
       }
       const idx = ((next % total) + total) % total;
+      // 上一次没出画就被这一下取代：收口成 aborted，日志里能看出「用户改了主意」。
+      switchTraceRef.current?.end("aborted", { reason: "superseded" });
+      switchTraceRef.current = startTrace("live-switch", {
+        // 换台 vs 换线：同一个 trace 名字，靠 mode 区分，便于统计两种路径的耗时。
+        mode: channelNameRef.current === name ? "line" : "channel",
+        channel: name,
+        line: idx,
+        total,
+      });
       setLiveLine(sourceKey, name, idx);
       rememberLiveChannel(sourceKey, { name, line: idx });
       setVideoError("");
@@ -332,6 +379,11 @@ export default function LivePage({
    */
   switchOrFailoverRef.current = async () => {
     if (!channel) {
+      return;
+    }
+    // 用户刚点了别的台/线路，新地址正在后台解析：旧流的判死结论作废，
+    // 不能顺手把线路再往前推一格（那会把用户的选择覆盖掉）。
+    if (streamSwitchingRef.current) {
       return;
     }
     const total = channel.lines.length;
@@ -359,6 +411,10 @@ export default function LivePage({
         // 单线路判死：把内核给的最后一句原文带进归类，能看出原因的按原因
         // 引导（解码 / 超时 / 网络），看不出原因才用「换频道」的结论文案。
         const lastError = lastErrorRef.current;
+        switchTraceRef.current?.end("fail", {
+          reason: lastError.slice(0, 120) || "single-line",
+          stage: "single-line",
+        });
         setVideoStage("single-line");
         setVideoError(
           lastError || liveFailureMessage({ stage: "single-line" }),
@@ -374,6 +430,13 @@ export default function LivePage({
       setRecovering(true);
       // 自动换线是「后台已经帮你做了」的事件，不是页面状态：走全局 toast，
       // 不占顶部横幅（那条位置留给需要用户处置的错误）。
+      log.info("live failover", {
+        channel: channel.name,
+        from: lineIdx,
+        to: idx,
+        total,
+        tried: tried.size,
+      });
       selectLine(channel.name, idx, total);
       notify.warn(
         `线路 ${lineIdx + 1} 无法播放，已自动切到线路 ${idx + 1}/${total}`,
@@ -381,6 +444,7 @@ export default function LivePage({
       return;
     }
     setRecovering(false);
+    switchTraceRef.current?.end("fail", { reason: "exhausted", total });
     setFatalError(classifyLiveFailure({ stage: "exhausted" }));
     setVideoError("");
   };
@@ -413,13 +477,18 @@ export default function LivePage({
    */
   useEffect(() => {
     if (videoMeta.width > 0) {
+      // 埋点收口：这一下换台/换线真正出画了（首帧尺寸可用）。
+      switchTraceRef.current?.end("ok", {
+        w: videoMeta.width,
+        h: videoMeta.height,
+      });
       clearVerdict();
       setVideoError("");
       setVideoStage("play");
       setFatalError(null);
       setSlowNotice("");
     }
-  }, [videoMeta.width, clearVerdict]);
+  }, [videoMeta.width, videoMeta.height, clearVerdict]);
 
   /** 「解析来自某解析器」这类附带说明是告知，按统一时长表走。 */
   useEffect(() => {
@@ -452,6 +521,30 @@ export default function LivePage({
 
   // 常驻层切页不卸载：播放状态进全局 store，侧栏图标才能亮小圆点。
   usePlaybackIndicator(videoRef, "live", resolved);
+
+  /** 引擎句柄放 ref：setLoading 要读最新实例，但不能因此多跑 effect。 */
+  const engineRef = useRef(engine);
+  engineRef.current = engine;
+
+  /**
+   * 换台/换线在途（旧实例仍在画面上）：
+   *
+   * 1. `lineSwitchStarted` = 看门狗让位——旧流这几秒没出画不代表它死了，
+   *    绝不能因此触发自动换线，把用户刚选的台/线路顶掉；
+   * 2. 转圈交给 ArtPlayer 原生 loading，旧画面与控制栏原地不动。
+   */
+  useEffect(() => {
+    lineSwitchStarted.current = streamSwitching;
+    engineRef.current?.setLoading(streamSwitching);
+    // 立刻停住旧台：新地址在后台解析的这几秒不该继续响上一个频道的声音。
+    // 新实例建好会自己起播（解码器 attach 后调 play），不需要这里续播。
+    if (streamSwitching) {
+      const video = videoRef.current;
+      if (video && !video.paused) {
+        video.pause();
+      }
+    }
+  }, [streamSwitching]);
 
   /**
    * 换台/换线与「源侧慢」的提示统一进播放器 notice：贴着画面、全屏可见。
@@ -519,19 +612,24 @@ export default function LivePage({
     [pick, selectLine, sourceKey, pauseVodMedia],
   );
 
-  const step = (delta: 1 | -1) => {
-    if (!channel || flat.length === 0) {
-      return;
-    }
-    const at = flat.findIndex((item) => item.name === channel.name);
-    if (at < 0) {
-      return;
-    }
-    const next = flat[(at + delta + flat.length) % flat.length];
-    if (next) {
-      playChannel(next);
-    }
-  };
+  // 频道栏加了 memo：这里必须是稳定引用，否则每次换台/慢提示重渲染都会让
+  // 上千个频道按钮整片重算。
+  const step = useCallback(
+    (delta: 1 | -1) => {
+      if (!channel || flat.length === 0) {
+        return;
+      }
+      const at = flat.findIndex((item) => item.name === channel.name);
+      if (at < 0) {
+        return;
+      }
+      const next = flat[(at + delta + flat.length) % flat.length];
+      if (next) {
+        playChannel(next);
+      }
+    },
+    [channel, flat, playChannel],
+  );
 
   const position = channel
     ? flat.findIndex((item) => item.name === channel.name) + 1
@@ -587,8 +685,8 @@ export default function LivePage({
           <h1 className="page-title">直播</h1>
         </header>
         <Empty
-          title="当前配置没有直播源"
-          description="导入带 lives[] 的配置后，这里会列出直播分组与频道。"
+          title="当前订阅没有直播源"
+          description="导入带 lives[] 的订阅后，这里会列出直播分组与频道。"
           icon={Tv}
         />
       </section>
@@ -680,6 +778,7 @@ export default function LivePage({
                   playable={playable}
                   recovering={recovering}
                   pending={resolved === null}
+                  switching={streamSwitching}
                   resolveError={
                     resolveError ? (resolveFailure?.message ?? resolveError) : ""
                   }

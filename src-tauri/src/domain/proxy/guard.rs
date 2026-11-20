@@ -179,6 +179,12 @@ pub(super) async fn check_target(url: &Url, allow_local: bool) -> Result<(), Str
     let host = url
         .host_str()
         .ok_or_else(|| "url has no host".to_string())?;
+    // 已审查且仍在 TTL 内的 host 直接放行：HLS 分片/封面是逐请求过这条路的，
+    // 每次重解析 DNS 纯属浪费，而钉住项本身就是「审查通过」的产物——建连时
+    // `PinnedResolver` 只用这批已审 IP，重绑定拿不到第二次机会。
+    if pinned(host).is_some() {
+        return Ok(());
+    }
     let port = url.port_or_known_default().unwrap_or(80);
     let addrs = tokio::net::lookup_host((host, port))
         .await

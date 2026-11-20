@@ -593,9 +593,8 @@ pub async fn site_health(
     req: SiteHealthRequest,
 ) -> Result<SiteHealthResult, AppError> {
     let config_id = state
-        .active_snapshot()
-        .ok_or_else(|| AppError::new(code::INVALID_ARGUMENT, "no active config"))?
-        .id;
+        .active_id()
+        .ok_or_else(|| AppError::new(code::INVALID_ARGUMENT, "no active config"))?;
 
     // 与 aggregate 完全相同的筛选口径：enabled 默认 true、可被路由到可用
     // runtime、且确实有 api / ext（分隔条之类不算）。注意这里读的是

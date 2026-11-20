@@ -10,11 +10,11 @@
 │   routes → AppShell → pages → hooks/lib → stores              │
 │   唯一 IPC 入口: src/lib/invoke.ts                            │
 └───────────────┬──────────────────────────────────────────────┘
-                │ Tauri invoke（37 个 command）
+                │ Tauri invoke（40 个 command）
 ┌───────────────▼──────────────────────────────────────────────┐
 │ 主进程 Rust/Tauri (src-tauri/src, cargo)                      │
-│   infra/  底座: error/env/paths/process/netrules/http/        │
-│            bridge/db/migrate/store/logging/window             │
+│   infra/  底座: error/env/paths/process/netrules/http/pct/    │
+│            textio/started/bridge/db/store/logging/window      │
 │   domain/ 业务: config/play/parse/proxy/live/sniff/           │
 │            clipboard + spider/{cms,python,quickjs}           │
 │   本地反代 :9978  (m3u8 重写 / parses / headers / /image)     │
@@ -31,7 +31,7 @@
 
 ## 2. IPC 与数据流
 
-- 前端唯一出口 `src/lib/invoke.ts` → Tauri `invoke(cmd, args)` → Rust `generate_handler!` 注册的 37 个 command。禁止前端 `import` Node 内置模块。
+- 前端唯一出口 `src/lib/invoke.ts` → Tauri `invoke(cmd, args)` → Rust `generate_handler!` 注册的 40 个 command。禁止前端 `import` Node 内置模块。
 - 主进程 ↔ sidecar：通用 `spawn_stdio` / `call_on` / `kill_conn`（`bridge.rs`）；每行 stdout 是一帧 JSON-RPC，主循环线程池 `max_workers=8`。
 - 归一化契约 `contracts/luma.schema.json` 是 TS / Rust 两端唯一真源；`tests/offline/contract_check.py` 校验 TS 侧字段。
 
@@ -49,7 +49,7 @@
 | 类型 | 执行方 | 状态 | 说明 |
 |---|---|---|---|
 | `cms` | 主进程直接 HTTP | ✅ 主体 | `api.php/provide/vod`，直链 m3u8 |
-| `python` | Python 适配层 | ✅ 支持 | 只执行第三方 `spider` 脚本（`py/main.py` → `pyspider.py` → `pyrun.py`），返回值原样交回、由宿主 `cms_parse.rs` 归一化；含 JSON 安全/空信封/`_absolutize` 降级 |
+| `python` | Python 适配层 | ✅ 支持 | 只执行第三方 `spider` 脚本（`py/main.py` → `pyspider.py`，进程内常驻实例池），返回值原样交回、由宿主 `cms_parse.rs` 归一化；含 JSON 安全/空信封/`_absolutize` 降级 |
 | `quickjs` | qjs-runner | ✅ 支持（部分） | ESM 加载 + cheerio 等价；`initEnv` 完整 polyfill、FongMi class-based 仍未支持 |
 | `jvm` | （无运行时） | ⛔ 运行时已移除 | jar 站点仍被识别为 `jvm` 并在导入时屏蔽（`enabled=false`+`disabledReason`）；Android dex jar 依赖 ART/okhttp/gson/QuickJS，Win x64 无法加载。JVM 运行时（`spider/jvm.rs` / `sidecars/java` / `sidecars/jre`）已于 1.0.3 整体移除 |
 
@@ -79,17 +79,32 @@ PlayerPage.resolve_play
 - 内置播放器 **ArtPlayer**；FLV 走 mpegts.js（WebView2 无内置 FLV 解码）；`<video>` 报 `MEDIA_ERR_DECODE/ SRC_NOT_SUPPORTED`（常见于 HEVC）时直接落到换线路 / 换源，不再有外部播放兜底。
 - 自动换源铁律：**「慢 ≠ 死」**——没有明确失败（4xx/5xx、非 `#EXTM3U`、首分片是图片/HTML）不换；超时算 `unknown`，连续 3 次才换。
 
+### 5.1 前端切换编排（`src/hooks/playback/`）
+
+播放目标只有一份真源，四条异步链（换集 / 换源 / 换线 / 自动自愈）都只是「产生一个新目标」：
+
+| 模块 | 职责 |
+|---|---|
+| `playbackTarget.ts` | `PlaybackTarget` + reducer（`catalog`/`intent`/`commit`/`cancel`/`reset`）；显示恒为 `intent ?? committed`，索引由 `clampTarget` 钳制 |
+| `usePlaybackController.ts` | 目录拉取、选集、换源、换线、自愈的唯一编排点：`switchToken` 单调代次抢占 + `commitGate` 串行提交（进锁再校验代次）+ `switchQueue` 合并连点 + `manualHold` 手动意图持有期内让自愈让位 |
+| `episodePlayResolve.ts` | 单集解析单一实现：集级缓存 → `playerContent` 前置解析 → `resolve_play` → 校验播放类型未变（`hls → page` 必须退整页） |
+| `playerRoute.ts` | `player` 路由唯一构造点（`playFrom` 决定线路 headers、`failoverKey` 决定换线账本能否续上） |
+| `lib/switchToken.ts` / `lib/switchQueue.ts` | 代次令牌 / 串行提交门 / 手动持有；队列合并与同步 `peek` 判等 |
+| `lib/failoverLedger.ts` | 按剧记账：试过的 url / 源、切换次数预算，防搜索风暴 |
+
+不变式：**最终上屏的一定是最新一次选中**；迟到的旧解析拿不到画面；手动选择压过自动自愈（60s 持有期）；`30s` 兜底只复位「切换中」UI，**不作废代次、不撤意图**（解析硬上限 50s，作废会让真正完成的结果被丢弃、画面卡住）。
+
 ## 6. 本地反代与嗅探
 
-- 反代（`proxy/{mod,handlers,guard,playlist}.rs` + `netrules.rs`）：对源站请求做 UA/Referer/Cookie 透传、m3u8 分片重写、`/image` 封面代理；`LUMA_PROXY_PORT` release 9978 / debug 9979（绑定后由宿主写回环境变量）。
+- 反代（`proxy/{mod,handlers,guard,playlist,speed}.rs` + `netrules.rs`）：对源站请求做 UA/Referer/Cookie 透传、m3u8 分片重写、`/image` 封面代理；`speed.rs` 在分片转发途中累计字节做吞吐采样（前端 HUD 每秒轮询 `/meter`，量的是源站真实下载速度而不是回环速度）；`LUMA_PROXY_PORT` release 9978 / debug 9979（绑定后由宿主写回环境变量）。
 - 嗅探（`sniff.rs`）：隐藏 `sniffer-*` WebView2 加载播放页，用 `WebResourceRequested` 抓取媒体请求；独立 `data_directory` + 覆盖 `--remote-debugging-port=0`（避开 dev 的 9222 冲突）；成功缓存 10 分钟、失败不缓存、串行化避免抢 user data dir。
 - 爬虫自带代理（`handle_spider_proxy`，`spider::proxy_call`）：实现 `Spider.proxy`/`localProxy` 的源（如央视频 yangshipin 的 `live_mode=proxy`）把播放地址回指到 `/proxy`，宿主用 `last_play_site()` 找到上一个点播源、把整张 query 表交给其 `proxy()`，返回 `[contentType, headers, bytes]` 作 HTTP 响应。路由判据：带 `do=py|js|jar` 直接回调；无 `do=` 但 `url=` 为空且带其它参数（FongMi 系 `getProxyUrl()` 基址不含 `do=` 的写法）也回调——空 `url=` 本就不是合法直连。Python 基类 `proxy()` 委派 `localProxy()`（社区源多只实现后者）。
 
 ## 7. 数据层（SQLite）
 
 - `<data>/luma.db`（`rusqlite bundled`，静态编译，WAL + `synchronous=NORMAL` + `busy_timeout=5000`，`Mutex<Connection>`）。
-- 表：`configs(id, imported_json, runtime_json, source_json, ...)` 整存深层嵌套方言对象；`meta(active_config_id)`；`favorites`/`history` 规范化列 + `(site_key, vod_id)` 主键。
-- 写顺序：先提交事务，再刷新内存读缓存；所有写操作经事务，防 active 指向不存在配置。**无迁移**（未上线、无旧数据）。
+- 表：`configs(id, imported_json, runtime_json, source_json, ...)` 整存深层嵌套方言对象（**过渡期**）；`subscriptions`（2.0 目标：`address` 裸地址唯一 + `payload` 存内联正文）；`playback` 播放记录**单表**（`title_key` 剧名归一化唯一 + `favorite` flag + `episode_number` 语义集号 + `prefs_json` 扩展位，取代旧 `favorites`/`history` 两张表）；`meta(active_config_id)`。
+- 写顺序：先提交事务，再刷新内存读缓存；所有写操作经事务，防 active 指向不存在配置。**2.0 破坏性升级**：`PRAGMA user_version` 闸门，低于 2 时丢弃旧收藏/历史分表并清空订阅刷新状态，订阅地址保留在 `configs`，由下一次 60s 刷新重新拉取 + 解析。
 
 ## 8. 前端分层
 
@@ -97,8 +112,9 @@ PlayerPage.resolve_play
 src/routes.tsx       8 条路由（react-router createHashRouter，detail/player 大字段走 history.state）
 src/AppShell.tsx    布局壳：侧栏/配置同步/命令面板/Esc 返回/滚动恢复，注册 registerNav
 src/pages/          首页/分类/搜索/详情/播放/直播/收藏/历史/设置
-src/hooks/          跨页复用 hook（usePlayerEngine 等）
-src/lib/            invoke（唯一 IPC）、pageCache、usePageState、playerPrefs、sources、sourceCache、format、logger、clipboard、nav
+src/hooks/          跨页复用 hook（usePlayerEngine / usePlayResolution / usePlaybackHistory /
+                    useLiveCatalog）+ playback/（单一播放目标 + 切换编排，见 §5.1）
+src/lib/            invoke（唯一 IPC）、queryClient、usePageState、playerPrefs、sources、sourceCache、format、logger、clipboard、nav
 src/stores/         zustand：只收编跨页共享态（cache/preferredSite/sidebarCollapsed）
 src/components/     ErrorBar / Spinner / SourcePicker / player/* / settings/*
 src/types/luma.ts  归一化契约 TS 侧
@@ -108,7 +124,7 @@ src/types/luma.ts  归一化契约 TS 侧
 
 ## 9. Rust 分层（`src-tauri/src`）
 
-- `infra/` 底座、`domain/` 业务；`lib.rs` 用 `#[path = "infra/foo.rs"] pub mod foo;` 映射，**逻辑模块名与 37 个 command 路径不变**（物理分层，未做 `crate::infra::*` 前缀化）。
+- `infra/` 底座、`domain/` 业务；`lib.rs` 用 `#[path = "infra/foo.rs"] pub mod foo;` 映射，**逻辑模块名与 40 个 command 路径不变**（物理分层，未做 `crate::infra::*` 前缀化）。
 - `db↔store`、`proxy↔spider` 各同层规避环；生产路径一律 `Result<T, AppError>`，禁 `unwrap()`。
 - 编译：`cargo check --manifest-path src-tauri/Cargo.toml`；debug 默认开 CDP `:9222`（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`）。
 

@@ -27,6 +27,8 @@ const TTL_MS = 5 * 60_000;
 const MAX_SWITCHES = 4;
 /** 单桶地址上限，防极端站点刷爆内存。 */
 const MAX_URLS = 64;
+/** 桶数上限：TTL 只在「同键回访」时生效，看完就不再回来的键必须靠这条兜底。 */
+const MAX_KEYS = 128;
 
 interface Entry {
   urls: Set<string>;
@@ -48,6 +50,18 @@ function bucket(key: string): Entry {
   const cur = ledger.get(key);
   if (cur && Date.now() - cur.ts < TTL_MS) {
     return cur;
+  }
+  if (ledger.size >= MAX_KEYS) {
+    // 先清过期项（多数情况一次就够），仍超限再按插入序丢最旧的。
+    const now = Date.now();
+    for (const [k, entry] of ledger) {
+      if (now - entry.ts >= TTL_MS) ledger.delete(k);
+    }
+    while (ledger.size >= MAX_KEYS) {
+      const oldest = ledger.keys().next();
+      if (oldest.done || oldest.value === key) break;
+      ledger.delete(oldest.value);
+    }
   }
   const fresh: Entry = { urls: new Set(), sites: [], switches: 0, ts: Date.now() };
   ledger.set(key, fresh);

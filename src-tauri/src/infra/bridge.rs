@@ -299,7 +299,7 @@ pub(crate) async fn call_on(
     let id = conn.next_id();
     let (tx, rx) = oneshot::channel();
     {
-        let mut pending = conn.pending.lock().unwrap();
+        let mut pending = conn.pending.lock().unwrap_or_else(|p| p.into_inner());
         pending.insert(id, tx);
     }
 
@@ -312,18 +312,43 @@ pub(crate) async fn call_on(
 
     {
         let mut stdin = conn.stdin.lock().await;
-        if let Err(err) = stdin.write_all(line.as_bytes()).await {
-            drop(stdin);
-            conn.pending.lock().unwrap().remove(&id);
-            conn.alive.store(false, Ordering::SeqCst);
-            return Err(AppError::new(code::SPIDER_CRASH, "write to sidecar failed")
-                .with_cause(err.to_string()));
-        }
-        if let Err(err) = stdin.flush().await {
-            drop(stdin);
-            conn.pending.lock().unwrap().remove(&id);
-            return Err(AppError::new(code::SPIDER_CRASH, "flush sidecar failed")
-                .with_cause(err.to_string()));
+        // 写管道同样可能永久挂起：sidecar 若正卡在子进程里不读 stdin，管道缓冲
+        // （约 64KB）写满后 `write_all` 会一直等，而这里持有 stdin 锁 —— 之后
+        // **所有**调用（含别的 method、含取消帧）都会在这行排队，表现为整个
+        // spider 通道冻结且不报超时。用调用超时（再封顶 2s）兜住，超时即判定
+        // 连接不可用，让上层按 crash 重建，而不是等一个永远不会来的回包。
+        let write_timeout = timeout.min(Duration::from_secs(2));
+        let written = tokio::time::timeout(write_timeout, async {
+            stdin.write_all(line.as_bytes()).await?;
+            stdin.flush().await
+        })
+        .await;
+        match written {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                conn.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+                conn.alive.store(false, Ordering::SeqCst);
+                return Err(AppError::new(code::SPIDER_CRASH, "write to sidecar failed")
+                    .with_cause(err.to_string()));
+            }
+            Err(_) => {
+                conn.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+                conn.alive.store(false, Ordering::SeqCst);
+                tracing::warn!(
+                    method,
+                    sidecar = conn.label,
+                    waited_ms = write_timeout.as_millis() as u64,
+                    "sidecar stdin write timed out, connection marked dead"
+                );
+                return Err(AppError::new(
+                    code::SITE_TIMEOUT,
+                    format!(
+                        "{} {method} stdin write timed out after {}ms",
+                        conn.label,
+                        write_timeout.as_millis()
+                    ),
+                ));
+            }
         }
     }
 
@@ -332,7 +357,7 @@ pub(crate) async fn call_on(
         Ok(Ok(Err(err))) => Err(err),
         Ok(Err(_)) => Err(AppError::new(code::SPIDER_CRASH, "sidecar channel closed")),
         Err(_) => {
-            conn.pending.lock().unwrap().remove(&id);
+            conn.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
             // 宿主已经放弃这次调用，但 sidecar 里的 worker 还在跑（`spider.py` 可以
             // 一直占到子进程结束）。不发取消帧的话，用户的下一次重试就排在一个没
             // 人等的调用后面，看到的还是同一条超时。fire-and-forget：调用方已经拿
@@ -373,13 +398,20 @@ fn spawn_cancel(conn: &std::sync::Arc<Conn>, target_id: u64) {
             }
         };
         line.push('\n');
-        let mut stdin = conn.stdin.lock().await;
-        if let Err(err) = stdin.write_all(line.as_bytes()).await {
-            tracing::debug!(error = %err, target_id, "cancel frame write failed");
-            return;
-        }
-        if let Err(err) = stdin.flush().await {
-            tracing::debug!(error = %err, target_id, "cancel frame flush failed");
+        // 取消帧是 fire-and-forget：调用方早已拿到超时错误，这里绝不能再无限等
+        // （管道写满时连取锁 + 写会一起挂住，任务只增不减）。
+        let wrote = tokio::time::timeout(Duration::from_secs(3), async {
+            let mut stdin = conn.stdin.lock().await;
+            stdin.write_all(line.as_bytes()).await?;
+            stdin.flush().await
+        })
+        .await;
+        match wrote {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::debug!(error = %err, target_id, "cancel frame write failed")
+            }
+            Err(_) => tracing::debug!(target_id, "cancel frame write timed out"),
         }
     });
 }

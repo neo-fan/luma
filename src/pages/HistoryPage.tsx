@@ -127,7 +127,8 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
     setError("");
     try {
       await api.historyClear();
-      setItems([]);
+      // 后端只删非收藏：列表同步保留收藏行，避免「清空后收藏项也跟着消失」的错觉。
+      setItems((list) => list.filter((item) => item.favorite));
       log.info("history cleared");
     } catch (err) {
       setError(`清空历史失败：${errorMessage(err)}`);
@@ -189,6 +190,15 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
                   : 0;
               return (
                 <div className="fav-item" key={key}>
+                  {item.favorite ? (
+                    <span
+                      className="fav-item__star"
+                      title="已收藏"
+                      aria-label="已收藏"
+                    >
+                      <Icon name="star" size={14} />
+                    </span>
+                  ) : null}
                   <PlayButton
                     percent={watched}
                     label={
@@ -225,7 +235,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
         <ConfirmDialog
           open={confirmClear}
           title="清空观看历史"
-          message={`确定清空 ${items.length} 条观看历史吗？此操作不可恢复。`}
+          message="确定清空观看记录吗？已收藏的剧会保留（含播放进度）。"
           confirmText="清空"
           danger
           onConfirm={() => void doClearAll()}

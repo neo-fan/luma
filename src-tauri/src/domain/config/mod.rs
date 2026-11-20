@@ -517,6 +517,21 @@ impl ConfigStore {
         pick(active.as_deref(), guard.as_slice()).map(|entry| runtime_of(entry).clone())
     }
 
+    /// 只取当前配置 id。`active_snapshot()` 会整份深拷贝（上百个站点 + 原始
+    /// JSON），仅为一个 id 在体检/诊断这类路径上做整份克隆不值得。
+    pub fn active_id(&self) -> Option<String> {
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let guard = self
+            .entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        pick(active.as_deref(), guard.as_slice()).map(|entry| entry.imported.id.clone())
+    }
+
     /// Just the config-level `parses[]` pool. `parse_resolve` runs on every
     /// play attempt; cloning the whole snapshot there would also copy the raw
     /// config JSON (hundreds of KB) for a field nobody looks at.

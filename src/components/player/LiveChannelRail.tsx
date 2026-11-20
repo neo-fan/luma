@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import ChannelLogo from "../ChannelLogo";
 import ErrorBar from "../ErrorBar";
 import Icon from "../Icon";
@@ -37,7 +37,7 @@ interface LiveChannelRailProps {
  *
  * 数据由调用方加载（`useLiveCatalog`），这里只管筛选、折叠、滚动与高亮。
  */
-export default function LiveChannelRail({
+function LiveChannelRail({
   groups,
   loading,
   error,
@@ -244,3 +244,8 @@ export default function LiveChannelRail({
     </aside>
   );
 }
+
+// 频道数常上千且没有虚拟化：父组件（播放器慢提示节拍、换台）每次重渲染都让
+// 整片按钮重算。memo 生效的前提是 LivePage 传的 onPick/onStep/onRefresh 稳定
+// （已在 useCallback 里保证）。
+export default memo(LiveChannelRail);

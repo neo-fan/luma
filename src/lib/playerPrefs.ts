@@ -50,10 +50,17 @@ export function clampVolume(value: number): number {
 }
 
 /**
- * 倍速合法区间。倍速本身已不存在这份全局偏好里（它按剧存在 history 行上），
+ * 倍速合法区间。倍速本身已不存在这份全局偏好里（它按剧存在 playback 行上），
  * 但区间仍是播放器的事实：ArtPlayer 菜单只给这几档，入库前也要过一遍。
+ *
+ * ⚠️ `0` / 负数 = 「这部剧没设过倍速」（`playback.rate` 的默认值），必须当成
+ * 没设过 → 1.0。数值钳制会把 0 抬到下限 0.5，等于**所有没设过倍速的剧都以
+ * 半速起播**（实测：新装后每部片都是 0.5x）。先判「有没有值」，再钳区间。
  */
 export function clampRate(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return DEFAULT_RATE;
+  }
   return clamp(value, RATE_MIN, RATE_MAX, DEFAULT_RATE);
 }
 
