@@ -80,7 +80,7 @@ corepack pnpm dev:app
 
 ## 5. 现状基线
 
-`python tools/check.py` 11/11、`pnpm test` 652（79 个文件）、`cargo test --lib` 257 passed / 2 ignored；sidecar `cargo test` 7 passed（GBK 编解码纯函数）。
+`python tools/check.py` 11/11、`pnpm test` 692（81 个文件）、`cargo test --lib` 265 passed / 2 ignored；sidecar `cargo test` 7 passed（GBK 编解码纯函数）。
 数字随提交变化，以 `AGENTS.md`「当前状态」为准。
 
 ## 6. 探针依赖的 DOM 契约

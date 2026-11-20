@@ -1,5 +1,5 @@
 import { FolderOpen, Puzzle } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Navigate } from "../lib/nav";
 import AsyncBoundary from "../components/AsyncBoundary";
 import Empty from "../components/Empty";
@@ -14,6 +14,11 @@ import SearchSkeleton from "../components/Skeleton";
 import Spinner from "../components/Spinner";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
+import {
+  activeOptionV,
+  buildExtend,
+  filterDefsFor,
+} from "../lib/categoryFilters";
 import { CACHE_TTL } from "../lib/queryClient";
 import { notify } from "../lib/notify";
 import { leafClasses } from "../lib/categories";
@@ -186,6 +191,12 @@ export default function HomePage({
   const [catLoadingMore, setCatLoadingMore] = useState(false);
   const [catError, setCatError] = useState("");
   const [catReload, setCatReload] = useState(0);
+  /**
+   * 筛选面板选中值：`{ [filterKey]: 选项v }`。空串/未选=「全部」，不进
+   * extend（py 源对缺省值有自己的默认语义，塞空串反而覆盖）。切站 / 切
+   * 分类时重置——TVBox 的筛选定义与选中值都只对产生它的分类有效。
+   */
+  const [filterSel, setFilterSel] = useState<Record<string, string>>({});
   /** 下拉的即时值；真正的 siteKey 由防抖后的 onSiteChange 更新。 */
   const [draftSite, setDraftSite] = useState(siteKey);
   /** 下一次 siteKey 生效时是否跳过缓存（用户主动切换 = 自动刷新）。 */
@@ -224,6 +235,25 @@ export default function HomePage({
   const selectedSite = sites.some((item) => item.key === draftSite)
     ? draftSite
     : siteKey;
+
+  // 当前分类的筛选定义（豆瓣[py] 等 py/js 源在 homeContent(filter=true) 里
+  // 顺带返回；CMS 源没有）。定义与选中值一起算出 extend。两层都要 memo：
+  // filterDefs 不 memo 的话每次渲染都是新数组，activeExtend 的 useMemo
+  // 依赖失效、分类加载 effect 每帧重跑（请求风暴，2026-11-20 实测）。
+  const filterMap = homeForSite?.filters ?? null;
+  const filterDefs = useMemo(
+    () => filterDefsFor(filterMap, activeTid),
+    [filterMap, activeTid],
+  );
+  const activeExtend = useMemo(
+    () => buildExtend(filterDefs, filterSel),
+    [filterDefs, filterSel],
+  );
+  /** loadMore / 手动刷新 effect 只订阅 catReload 等自己的信号，extend 走 ref 取最新。 */
+  const extendRef = useRef(activeExtend);
+  extendRef.current = activeExtend;
+  /** 上一次分类加载用的 extend 签名：识别「筛选变了」，避免沿用旧页数。 */
+  const extendSignatureRef = useRef("");
 
   // 新策略只屏蔽 jvm（Android dex/jar）源，quickjs 已解禁。
   // 旧 localStorage 缓存没有 disabledReason：这里按 runtime 兜一层，
@@ -413,8 +443,12 @@ export default function HomePage({
       setCatLoading(false);
       return;
     }
+    const extendChanged = extendSignatureRef.current !== JSON.stringify(activeExtend);
+    extendSignatureRef.current = JSON.stringify(activeExtend);
+    // 筛选条件变化（或按条件重新进入）时：旧条件下已加载的页数对新条件毫无
+    // 意义（pagecount/条目完全不同），只拉第 1 页。
     const pagesLoaded =
-      selection.siteKey === siteKey ? Math.max(1, selection.page) : 1;
+      !extendChanged && selection.siteKey === siteKey ? Math.max(1, selection.page) : 1;
     let alive = true;
     setCatItems([]);
     setCatNext(1);
@@ -426,7 +460,7 @@ export default function HomePage({
       let hasMore = true;
       for (let page = 1; page <= pagesLoaded && alive; page += 1) {
         try {
-          const result = await api.category(siteKey, activeTid, page, false);
+          const result = await api.category(siteKey, activeTid, page, false, activeExtend);
           all.push(...(result.list ?? []));
           hasMore = morePages(result, page);
           if (!hasMore) {
@@ -452,7 +486,14 @@ export default function HomePage({
       alive = false;
     };
     // selection 故意不进依赖：只在站点 / 分类变化时重跑；page 由 loadMore 更新，
-    // 不应触发整段重拉。eslint-disable-next-line react-hooks/exhaustive-deps
+    // 不应触发整段重拉。activeExtend 变化（筛选面板点选）必须整段重拉：
+    // 换条件后第 1 页就不同了。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteKey, activeTid, activeExtend]);
+
+  /** 切站 / 切分类时清空筛选选中值（定义与选中值都只对产生它的分类有效）。 */
+  useEffect(() => {
+    setFilterSel({});
   }, [siteKey, activeTid]);
 
   const isCategory = activeTid !== "";
@@ -500,7 +541,7 @@ export default function HomePage({
     setCatLoadingMore(true);
     void (async () => {
       try {
-        const result = await api.category(siteKey, activeTid, page, false);
+        const result = await api.category(siteKey, activeTid, page, false, extendRef.current);
         const items = result.list ?? [];
         setCatItems((prev) => [...prev, ...items]);
         setCatNext((next) => next + 1);
@@ -533,7 +574,7 @@ export default function HomePage({
     setCatError("");
     void (async () => {
       try {
-        const result = await api.category(siteKey, activeTid, 1, true);
+        const result = await api.category(siteKey, activeTid, 1, true, extendRef.current);
         if (alive) {
           const items = result.list ?? [];
           setCatItems(items);
@@ -597,6 +638,23 @@ export default function HomePage({
       siteKey,
       tid: String(activeTid) === next ? "" : next,
       page: 1,
+    });
+  };
+
+  /**
+   * 筛选点选：点「全部」（v=""）或再点已选项 = 清除该组（回源默认）；
+   * 其它 = 记入选中值。extend 变化由分类加载 effect 的 activeExtend 依赖
+   * 收口，这里只管状态。
+   */
+  const pickFilter = (key: string, value: string) => {
+    setFilterSel((prev) => {
+      const next = { ...prev };
+      if (value === "" || prev[key] === value) {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
+      return next;
     });
   };
   /** 刷新的是「当前看得见的那张网格」：分类态刷分类，推荐态刷首页。 */
@@ -712,6 +770,38 @@ export default function HomePage({
               </button>
             ))
           )}
+        </div>
+      ) : null}
+
+      {/* 筛选面板：TVBox `homeContent(filter=true)` 返回的 filters（豆瓣[py]
+          的「电影筛选/电视筛选」等）。有定义才渲染；每组一行 chips，点
+          「全部」清该组。 */}
+      {isCategory && filterDefs.length > 0 ? (
+        <div className="filter-panel" data-testid="filter-panel">
+          {filterDefs.map((def) => {
+            const activeV = activeOptionV(def, filterSel);
+            return (
+              <div className="filter-group" key={def.key}>
+                <span className="filter-group__name">{def.name}</span>
+                <div className="filter-group__options">
+                  {def.value.map((option) => {
+                    const active = activeV === option.v;
+                    return (
+                      <button
+                        key={`${option.v}`}
+                        type="button"
+                        className={active ? "chip chip--filter is-active" : "chip chip--filter"}
+                        aria-pressed={active}
+                        onClick={() => pickFilter(def.key, option.v)}
+                      >
+                        {option.n}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       ) : null}
 

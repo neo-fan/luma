@@ -703,6 +703,54 @@
   background: var(--panel-raised);
 }
 
+/* ---------- 筛选面板（TVBox homeContent filters） ---------- */
+
+/* 面板整体：每组一行，纵向堆叠；与分类 chip 栏同宽同距。 */
+.filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* 一组筛选（类型 / 地区 / 年代…）：组名固定宽度，选项横向可滚。
+   选项可能是二十几个地区，换行会吃掉半屏，沿用分类栏的单行滚动口径。 */
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.filter-group__name {
+  flex: 0 0 auto;
+  min-width: 3.5em;
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  text-align: right;
+}
+
+.filter-group__options {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 2px;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+}
+
+/* 筛选选项 chip 比分类 chip 小一号：面板一组就可能几十个选项。 */
+.chip--filter {
+  flex: 0 0 auto;
+  min-height: calc(var(--h-chip) - 6px);
+  padding: 0 9px;
+  font-size: var(--fs-xs, var(--fs-sm));
+}
+
+/* 面板里的组数不止一行时选项也要能被键盘聚焦：全局 button:focus-visible 已覆盖。 */
+
 
 /* 选项的后置内容（站点选择的收藏 ★ 等）。原名 .site-select__favorite，
    是「为迁就探针另起一套类名」留下的最后一处残迹；能力已并进 AppSelect。

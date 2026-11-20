@@ -12,6 +12,7 @@ import { mergeHomeFallback, normalizeHomeResult } from "./home";
 import { pickRecoveryCandidate } from "./detailRecovery";
 import { noDetailSources } from "./noDetailSource";
 import { loadCategoryPage } from "./categoryLoad";
+import { extendCacheSuffix } from "./categoryFilters";
 import { log } from "./logger";
 // type-only：sources.ts 运行时反向依赖本模块，这里只借类型不引运行时代码。
 import type { AggregateRow } from "./sources";
@@ -194,8 +195,12 @@ export function narrowLives(value: unknown): LiveSource[] {
  */
 export const cacheKeys = {
   home: (siteKey: string) => `home:${siteKey}`,
-  category: (siteKey: string, tid: string, page: number) =>
-    `category:${siteKey}:${tid}:${page}`,
+  category: (siteKey: string, tid: string, page: number, extend?: Record<string, string>) => {
+    const base = `category:${siteKey}:${tid}:${page}`;
+    // 同一组筛选条件无论以什么顺序点选都命中同一缓存条目；无筛选退回旧形态。
+    const suffix = extendCacheSuffix(extend ?? {});
+    return suffix ? `${base}@${suffix}` : base;
+  },
   search: (siteKey: string, keyword: string, page: number) =>
     `search:${siteKey}:${keyword}:${page}`,
   detail: (siteKey: string, vodId: string) => `detail:${siteKey}:${vodId}`,
@@ -372,7 +377,10 @@ export const api = {
       async () => {
         // JS 源按 TVBox 原始协议给 `class`，py 适配层给 `classes`：在这里统一，
         // 否则 JS 源首页分类空白。
-        const base = normalizeHomeResult(await spider<HomeResult>(siteKey, "homeContent", []));
+        // filter=true 是 TVBox 标准语义：源在 homeContent 里顺带返回 filters
+        // （豆瓣[py] 的「电影筛选/电视筛选」就靠它出筛选定义）。CMS 运行时
+        // 忽略该参数，js/py 源的 homeContent(filter) 本来就是标准签名。
+        const base = normalizeHomeResult(await spider<HomeResult>(siteKey, "homeContent", [true]));
         if (base.list.length > 0) {
           return base;
         }
@@ -406,13 +414,26 @@ export const api = {
     });
   },
 
-  category(siteKey: string, tid: string, page: number, force = false): Promise<ResultPage> {
-    const key = cacheKeys.category(siteKey, tid, page);
+  /**
+   * 分类内容。`extend` 是筛选面板的选中值（TVBox `categoryContent` 的第 4 参，
+   * 形如 `{ 类型: "喜剧", sort: "R" }`）：
+   * - 缓存键按 extend 后缀区分，同条件共享缓存、不同条件互不串；
+   * - py 适配层会把 (tid, pg, filter, extend) 补齐成 4 参标准签名，CMS 运行时
+   *   忽略多余参数，js 源本就按 4 参签名实现——三个运行时都安全。
+   */
+  category(
+    siteKey: string,
+    tid: string,
+    page: number,
+    force = false,
+    extend: Record<string, string> = {},
+  ): Promise<ResultPage> {
+    const key = cacheKeys.category(siteKey, tid, page, extend);
     const load = (withForce: boolean) =>
       loadCached<ResultPage>(
         key,
         CACHE_TTL.category,
-        () => spider<ResultPage>(siteKey, "categoryContent", [String(tid), page]),
+        () => spider<ResultPage>(siteKey, "categoryContent", [String(tid), page, true, extend]),
         withForce,
       );
     return loadCategoryPage(
