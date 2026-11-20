@@ -56,6 +56,7 @@
 - **首页 hero「电影感暗底」**：背景重模糊 + 近乎去色 + 均匀深遮罩，根治浅色海报糊出的脏棕「泥」背景；「下一张」改为右缘全高常驻热区 + 浅色玻璃圆衬。
 - **播放器「下一集」切换态**：转环取代箭头 + `cursor:not-allowed` 锁定态（旧版描弧叠箭头「不协调」、且点击无「已禁用」反馈）。
 - **豆瓣缓存键保留季标记**：`cache_key` 不再剥掉「第X季」，年份仍是首选区分、季标记兜底。
+- **片头/片尾自动跳过提示可即时执行、暂停不打断**：倒计时期间新增「立即跳过」，想马上跳不必先取消再点按钮；手动跳过任一类型都会先撤掉在跑的倒计时——此前片头倒计时中点「跳过片尾」，3 秒后会把刚跳到结尾的位置又拉回片头；视频暂停时倒计时冻结（deadline 顺延），恢复播放后继续剩余秒数。计时改为 deadline + 200ms tick，`countdownSeconds` 纯函数覆盖取整边界。
 - **Tauri 配置正规化**：`app.security.csp` 由 `null` 改为显式策略——生产 `script-src 'self'`、开发 `devCsp` 额外放开 Vite HMR；`img-src` / `media-src` / `connect-src` 仍放通任意 `http(s)`，因为封面与流地址来自用户导入的配置，域名无法枚举，`style-src 'unsafe-inline'` 与 `worker-src blob:` 分别是 ArtPlayer 运行时注入样式、hls.js blob worker 所需。`app.security.capabilities` 显式列出 `main-access`，不再依赖 `capabilities/` 目录扫描。`additionalBrowserArgs` 补回被覆盖掉的 wry 默认 `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`。`bundle` 补 `licenseFile`、`category` 改为 `Video`，窗口加 `center`。开发入口文档统一为 `pnpm dev:app`。
 
 ### 新增

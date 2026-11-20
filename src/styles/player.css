@@ -230,6 +230,7 @@
   white-space: nowrap;
 }
 
+.skip-overlay__auto-now,
 .skip-overlay__auto-cancel {
   padding: 5px 12px;
   border: 1px solid rgba(255, 255, 255, 0.28);
@@ -244,6 +245,13 @@
     border-color var(--dur) var(--ease);
 }
 
+/* 立即执行是这段提示里的主动作，取消是次要动作，两者不做同权重。 */
+.skip-overlay__auto-now {
+  background: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.42);
+}
+
+.skip-overlay__auto-now:hover,
 .skip-overlay__auto-cancel:hover {
   background: rgba(20, 24, 34, 0.85);
   border-color: var(--accent);

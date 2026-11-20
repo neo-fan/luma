@@ -3,6 +3,7 @@ import {
   AUTO_SKIP_COUNTDOWN_S,
   MAX_SKIP_MS,
   clampSkipMs,
+  countdownSeconds,
   formatSkipMs,
   introMs,
   outroMs,
@@ -150,6 +151,21 @@ describe("withSkipMs", () => {
   it("result round-trips through serialize/parse unchanged", () => {
     const next = withSkipMs(base, "intro", 120_000);
     expect(parseSkipConfig(serializeSkipConfig(next))).toEqual(next);
+  });
+});
+
+describe("countdownSeconds", () => {
+  it("向上取整：剩 2999ms 仍显示 3 秒，剩 1ms 显示 1 秒", () => {
+    expect(countdownSeconds(3000)).toBe(3);
+    expect(countdownSeconds(2999)).toBe(3);
+    expect(countdownSeconds(1000)).toBe(1);
+    expect(countdownSeconds(999)).toBe(1);
+    expect(countdownSeconds(1)).toBe(1);
+  });
+
+  it("到点与透支都归零，不出现负数", () => {
+    expect(countdownSeconds(0)).toBe(0);
+    expect(countdownSeconds(-50)).toBe(0);
   });
 });
 

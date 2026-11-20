@@ -20,22 +20,38 @@ interface Props {
   pending: AutoSkipPending | null;
   onSkipIntro: () => void;
   onSkipOutro: () => void;
+  onSkipNow: () => void;
   onCancelAuto: () => void;
 }
 
 const KIND_LABEL: Record<"intro" | "outro", string> = { intro: "片头", outro: "片尾" };
 
-export function SkipOverlay({ host, state, pending, onSkipIntro, onSkipOutro, onCancelAuto }: Props) {
+export function SkipOverlay({
+  host,
+  state,
+  pending,
+  onSkipIntro,
+  onSkipOutro,
+  onSkipNow,
+  onCancelAuto,
+}: Props) {
   if (!host) {
     return null;
   }
   return createPortal(
     <>
       {pending ? (
-        <div className={`skip-overlay__auto skip-overlay__auto--${pending.kind}`} role="status">
+        <div
+          className={`skip-overlay__auto skip-overlay__auto--${pending.kind}`}
+          role="status"
+          aria-live="off"
+        >
           <span className="skip-overlay__auto-text">
             {pending.remaining} 秒后跳过{KIND_LABEL[pending.kind]}
           </span>
+          <button type="button" className="skip-overlay__auto-now" onClick={onSkipNow}>
+            立即跳过
+          </button>
           <button type="button" className="skip-overlay__auto-cancel" onClick={onCancelAuto}>
             取消
           </button>

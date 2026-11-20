@@ -169,6 +169,11 @@ export function shouldSkipOutro(currentMs: number, durationMs: number, outro: nu
  */
 export const AUTO_SKIP_COUNTDOWN_S = 3;
 
+/** 倒计时显示用：剩余毫秒向上取整到秒（0 = 该跳了）。 */
+export function countdownSeconds(remainingMs: number): number {
+  return Math.max(0, Math.ceil(remainingMs / 1000));
+}
+
 /** `useAutoSkipPrompt` 用来判定「刚刚进入某个窗口」的最小窗口快照。 */
 export interface SkipWindowFlags {
   introMs: number;

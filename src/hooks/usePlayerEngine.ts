@@ -913,10 +913,17 @@ export function usePlayerEngine({
 
     // 片头/片尾窗口态上报：驱动调用方的「跳过片头/片尾」浮层按钮。只在窗口态
     // 翻转时回调，不每帧刷；配置用取值器懒读（同倍速，绝不进本 effect 依赖）。
+    // `force` 用于新媒体首帧：换集后外部状态可能还停在旧媒体的窗口里，不强制
+    // 上报一次的话，旧窗口的「跳过片头」按钮会一直挂着。
     let lastInIntro = false;
     let lastInOutro = false;
-    const reportSkipState = () => {
+    const reportSkipState = (force = false) => {
       if (siteKey === "live") {
+        if (force || lastInIntro || lastInOutro) {
+          lastInIntro = false;
+          lastInOutro = false;
+          onSkipState?.({ introMs: 0, outroMs: 0, inIntro: false, inOutro: false });
+        }
         return;
       }
       const segs = rememberedSkip?.() ?? [];
@@ -926,14 +933,18 @@ export function usePlayerEngine({
       const durMs = Number.isFinite(video.duration) ? video.duration * 1000 : 0;
       const inIntro = shouldSkipIntro(curMs, intro);
       const inOutro = shouldSkipOutro(curMs, durMs, outro);
-      if (inIntro !== lastInIntro || inOutro !== lastInOutro) {
+      if (force || inIntro !== lastInIntro || inOutro !== lastInOutro) {
         lastInIntro = inIntro;
         lastInOutro = inOutro;
         onSkipState?.({ introMs: intro, outroMs: outro, inIntro, inOutro });
       }
     };
-    video.addEventListener("loadedmetadata", reportSkipState);
-    video.addEventListener("timeupdate", reportSkipState);
+    // 原生事件会把 Event 传进第一个参数；带 `force` 后必须包一层，否则每次
+    // timeupdate 都被当成强制上报。
+    const onSkipMeta = () => reportSkipState(true);
+    const onSkipTick = () => reportSkipState();
+    video.addEventListener("loadedmetadata", onSkipMeta);
+    video.addEventListener("timeupdate", onSkipTick);
 
     // 全屏元素是 `.art-video-player` 本身（ArtPlayer 的 `$player`），所以角标
     // 这类要跟着画面走的浮层由调用方 portal 进这个节点，而不是排在 stage 里。
@@ -1372,8 +1383,8 @@ export function usePlayerEngine({
       video.removeEventListener("loadedmetadata", reportMeta);
       video.removeEventListener("resize", reportMeta);
       video.removeEventListener("loadedmetadata", onFirstMeta);
-      video.removeEventListener("loadedmetadata", reportSkipState);
-      video.removeEventListener("timeupdate", reportSkipState);
+      video.removeEventListener("loadedmetadata", onSkipMeta);
+      video.removeEventListener("timeupdate", onSkipTick);
       fader.dispose();
       // 先通知上层把 portal 里的角标摘掉，再销毁 ArtPlayer：反过来的话 React
       // 会往一个已经被 remove() 的节点里做移除。
