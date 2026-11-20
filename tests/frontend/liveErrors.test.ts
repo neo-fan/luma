@@ -166,3 +166,34 @@ describe("LivePage 接入分类文案", () => {
     expect(page.match(/<ErrorBar/g) ?? []).toHaveLength(3);
   });
 });
+
+describe("换线尝试预算：只允许自动换线路，绝不自动换台/换源", () => {
+  const page = read("src/pages/LivePage.tsx");
+
+  it("预算闸在 switchOrFailover 里、线路数多于预算才生效", () => {
+    expect(page).toContain("const LIVE_LINE_ATTEMPTS = 5;");
+    expect(page).toContain(
+      "total > LIVE_LINE_ATTEMPTS && tried.size >= LIVE_LINE_ATTEMPTS",
+    );
+    expect(page).toContain('reason: "probe-limit"');
+    expect(page).toContain('stage: "probe-limit"');
+  });
+
+  it("手动刷新重新起一轮：换线预算一起归零", () => {
+    // 没有这句，刷新后预算用完的频道一条线路都不敢再试。
+    expect(page).toContain("换线尝试预算必须一起归零");
+  });
+
+  it("probe-limit 结论如实说「已停止」，不冒充「所有线路都试过」，动作留给用户", () => {
+    const info = classifyLiveFailure({ stage: "probe-limit" });
+    expect(info.message).toContain("已停止自动换线");
+    expect(info.message).not.toContain("所有线路");
+    expect(info.hint).toContain("不会替你换台");
+    expect(info.hint).toContain("换一个频道");
+  });
+
+  it("线路少于预算的频道保持穷尽口径：全部试过才说「所有线路」", () => {
+    const info = classifyLiveFailure({ stage: "exhausted" });
+    expect(info.message).toContain("所有线路");
+  });
+});

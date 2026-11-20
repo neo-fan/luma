@@ -89,6 +89,7 @@ export type LiveFailureStage =
   | "sniff" // 页面型地址的第 4 级嗅探
   | "play" // 播放内核（hls.js / mpegts.js）报错
   | "single-line" // 单线路等待 4s 仍没出画：本轮没有可自动切换的目标
+  | "probe-limit" // 本轮自动换线次数用完：停止换线，下一步动作在用户手上
   | "exhausted"; // 该频道所有线路都试过
 
 export interface LiveFailureInput {
@@ -150,6 +151,19 @@ const SINGLE_LINE_FAILURE: LiveFailureInfo = {
   hint: "该频道只有一条线路，没有可自动切换的目标；请换一个频道，或换一个直播源。",
 };
 
+/**
+ * 本轮自动换线的尝试预算用完（线路很多、并非全部试过）。
+ *
+ * 口径必须精确：自动恢复**只会换线路，从不自动换台/换源**——所以文案说清
+ * 「还有线路没试」但已停止，下一步（换台或点刷新重试）由用户决定；
+ * 绝不能写成「所有线路都试过」那种假结论。
+ */
+const PROBE_LIMIT_FAILURE: LiveFailureInfo = {
+  reason: "lines",
+  message: "这个频道连着几条线路都没能出画，已停止自动换线。",
+  hint: "自动恢复只会换线路，不会替你换台；请在左侧换一个频道，或点刷新再试一轮。",
+};
+
 /** 错误码 → 归类。只收「明确指向某类失败」的码；泛化码交给 message 关键词。 */
 const LIVE_CODE_REASON: Record<string, LiveFailureReason> = {
   SITE_TIMEOUT: "timeout",
@@ -199,6 +213,9 @@ export function classifyLiveFailure(
   // 「所有线路都试过」「页面型地址嗅探失败」是调用方已经确证的结论，直接采信。
   if (stage === "exhausted") {
     return fromReason("lines");
+  }
+  if (stage === "probe-limit") {
+    return PROBE_LIMIT_FAILURE;
   }
   if (stage === "sniff") {
     return fromReason("sniff");

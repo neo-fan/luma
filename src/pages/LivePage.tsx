@@ -33,6 +33,12 @@ import type { VideoMeta } from "../lib/resolution";
 import { api } from "../lib/invoke";
 import type { LiveChannel, LiveSource } from "../types/luma";
 
+/**
+ * 一轮内每频道最多自动换几条线路（见 `switchOrFailover` 的预算闸）。
+ * 线路数 ≤ 该值的频道仍会自然试完全部，结论是「所有线路都试过」。
+ */
+const LIVE_LINE_ATTEMPTS = 5;
+
 interface LivePageProps {
   lives: LiveSource[];
   /** 是否停在点播播放页：为 true 时直播必须让出声音（直播与点播只能一个在播）。 */
@@ -302,6 +308,9 @@ export default function LivePage({
     setVideoStage("play");
     setFatalError(null);
     setSwitchTip("");
+    // 用户点刷新 = 重新开始一轮：换线尝试预算必须一起归零，
+    // 否则预算用完过的频道刷新后一条都不敢试。
+    triedRef.current.clear();
     reload();
   };
 
@@ -421,6 +430,27 @@ export default function LivePage({
           lastError || liveFailureMessage({ stage: "single-line" }),
         );
       }, 4_000);
+      return;
+    }
+    // 换线尝试预算：死线路一条要 25~80s 才判死（hlsBudget 对慢源刻意宽容），
+    // 22 条的频道马拉松下去用户只能干等十分钟的转圈。一轮最多试
+    // `LIVE_LINE_ATTEMPTS` 条，用完就停下给出诚实结论——**自动只换线路，
+    // 从不自动换台/换源**，换台是用户的动作。线路本就少于预算的频道不走
+    // 这条：循环自然穷尽，文案保持「全部线路都试过」。
+    if (total > LIVE_LINE_ATTEMPTS && tried.size >= LIVE_LINE_ATTEMPTS) {
+      setRecovering(false);
+      switchTraceRef.current?.end("fail", {
+        reason: "probe-limit",
+        total,
+        tried: tried.size,
+      });
+      log.info("live probe budget exhausted", {
+        channel: channel.name,
+        tried: tried.size,
+        total,
+      });
+      setFatalError(classifyLiveFailure({ stage: "probe-limit" }));
+      setVideoError("");
       return;
     }
     for (let step = 1; step < total; step += 1) {
