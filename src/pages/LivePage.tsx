@@ -191,11 +191,20 @@ export default function LivePage({
       }
       return;
     }
-    if (pausedForVod.current) {
+    // 只恢复「本次为点播让路」的那一次暂停，且**必须在用户已经回到直播页时**才恢复。
+    // 少了 liveActive 这半条件，就会在「听完点播、人已经切到首页/搜索」时误触发：
+    // vodPlaying 一旦转 false，直播会自己响起来，而此刻既不在直播页、点播也没出声，
+    // 用户听到的就是「后台永远有个停不掉的声音」（现网实测）。回到直播页的续播
+    // 由下面的 liveActive effect 负责，这里不抢。
+    if (liveActive && pausedForVod.current) {
       pausedForVod.current = false;
       void video.play().catch(() => {
         /* 被浏览器拦下就停在原地，用户点播放器上的播放即可 */
       });
+    } else if (!liveActive && pausedForVod.current) {
+      // 诊断行：让路记账还在、但人不回直播页 → 刻意不复活直播的声音。
+      // 没有这条 INFO，「为什么直播没续上」只能靠猜。
+      log.info("live resume deferred: not on live route", { channel: channel?.name ?? "" });
     }
   }, [vodActive, vodPlaying, liveActive, playUrl]);
 

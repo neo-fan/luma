@@ -85,6 +85,14 @@ describe("live page takes the sound back when it becomes visible", () => {
     expect(live).toContain("if (!liveActive && (vodActive || vodPlaying))");
   });
 
+  it("never resurrects live audio on a neutral route (ghost-sound regression)", () => {
+    // 「直播→点播→暂停点播→切首页」路径上，旧代码会在中立路由把为点播让路而
+    // 暂停的直播直接 play() 回来——用户听到一个看不见、停不掉的后台声音。
+    // 恢复必须绑定 liveActive；被抑制的恢复要留 INFO 可诊断。
+    expect(live).toContain("if (liveActive && pausedForVod.current) {");
+    expect(live).toContain('log.info("live resume deferred: not on live route"');
+  });
+
   it("pauses background vod and restarts itself on entering the live route", () => {
     expect(live).toContain("if (!liveActive) {\n      return;\n    }");
     expect(live).toContain("pauseVodMedia();");
