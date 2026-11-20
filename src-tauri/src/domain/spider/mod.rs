@@ -454,19 +454,25 @@ async fn aggregate(
     let mut ok = 0usize;
     let mut failed = 0usize;
     // 非流式（首页聚合）：按调用方墙钟截断慢尾巴，clamp 防极值。
-    // 流式搜索：不限总墙钟——结果在陆续上屏，等所有站点跑完
-    // 再收尾；每站仍受自身 per-site timeout 约束，不会有无限挂起的源。
-    // 上限 600s 只是防御性兜底（per-site timeout × 波次远小于它）。
-    let streaming_unbounded = streaming.is_some();
-    let budget = timeout.clamp(Duration::from_millis(8_000), Duration::from_millis(30_000));
+    // 流式搜索：旧注释写「不限总墙钟」，但实现把 600s 挂在了**每一次** join_next
+    // 迭代上——N 个任务每轮都重置，等于没有总时限；慢网尾段实测拖到 600s+ 才
+    // 收尾（search done elapsedMs=637s）。现在改成真正的总预算：
+    // 「波次 × 单站超时 + 一波松弛」，clamp 到 45~120s。结果仍逐站上屏；预算
+    // 用尽只 abort 还没答完的尾部站点，它们照旧计入 skipped。
+    let is_streaming = streaming.is_some();
+    let rounds = (sites.len() + MAX_FANOUT - 1) / MAX_FANOUT;
+    let streaming_total = timeout
+        .saturating_mul(rounds as u32)
+        .saturating_add(timeout)
+        .clamp(Duration::from_secs(45), Duration::from_secs(120));
+    let budget = if is_streaming {
+        streaming_total
+    } else {
+        timeout.clamp(Duration::from_millis(8_000), Duration::from_millis(30_000))
+    };
     loop {
-        let remaining = if streaming_unbounded {
-            // 流式：无墙钟截断，等到 JoinSet 排空（Ok(None) 分支）。
-            Duration::from_secs(600)
-        } else {
-            budget.saturating_sub(started.elapsed())
-        };
-        if !streaming_unbounded && remaining.is_zero() {
+        let remaining = budget.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
             set.abort_all();
             break;
         }
