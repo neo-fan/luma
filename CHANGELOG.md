@@ -57,6 +57,7 @@
 - **播放器「下一集」切换态**：转环取代箭头 + `cursor:not-allowed` 锁定态（旧版描弧叠箭头「不协调」、且点击无「已禁用」反馈）。
 - **豆瓣缓存键保留季标记**：`cache_key` 不再剥掉「第X季」，年份仍是首选区分、季标记兜底。
 - **片头/片尾自动跳过提示可即时执行、暂停不打断**：倒计时期间新增「立即跳过」，想马上跳不必先取消再点按钮；手动跳过任一类型都会先撤掉在跑的倒计时——此前片头倒计时中点「跳过片尾」，3 秒后会把刚跳到结尾的位置又拉回片头；视频暂停时倒计时冻结（deadline 顺延），恢复播放后继续剩余秒数。计时改为 deadline + 200ms tick，`countdownSeconds` 纯函数覆盖取整边界。
+- **片头/片尾跳过去掉常驻按钮**：只保留进入窗口时 3 秒的半透明轻提示（一行小字 + 「取消」文本），不再有右下角「跳过片头/片尾」大按钮；提示不挡画面点击。
 - **关闭自动换源/自动换线，切换一律以 UI 选择为准**：现网日志里用户手动切到布布追剧后，hls fatal 触发看门狗判死，自愈总线又把他换回欧乐影院（`auto failover from=py_bubuzhuiju to=py_oule`）。现在判死只上报失败原因（机器进 `failed`、动作 `reportFailure`），不再有任何自动换线/换源；换线按钮改为乐观切换——直接切到同序集，不探活、不预算、不受「已试线路」影响，失败由用户再操作。
 - **Tauri 配置正规化**：`app.security.csp` 由 `null` 改为显式策略——生产 `script-src 'self'`、开发 `devCsp` 额外放开 Vite HMR；`img-src` / `media-src` / `connect-src` 仍放通任意 `http(s)`，因为封面与流地址来自用户导入的配置，域名无法枚举，`style-src 'unsafe-inline'` 与 `worker-src blob:` 分别是 ArtPlayer 运行时注入样式、hls.js blob worker 所需。`app.security.capabilities` 显式列出 `main-access`，不再依赖 `capabilities/` 目录扫描。`additionalBrowserArgs` 补回被覆盖掉的 wry 默认 `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`。`bundle` 补 `licenseFile`、`category` 改为 `Video`，窗口加 `center`。开发入口文档统一为 `pnpm dev:app`。
 

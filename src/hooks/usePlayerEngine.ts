@@ -148,7 +148,7 @@ export interface SkipWindowState {
   introMs: number;
   /** 片尾时长 ms（0 = 未设）。 */
   outroMs: number;
-  /** 当前是否落在片头窗口内（可「跳过片头」）。 */
+  /** 当前是否落在片头窗口内。 */
   inIntro: boolean;
   /** 当前是否落在片尾窗口内（可「跳过片尾」）。 */
   inOutro: boolean;
@@ -205,7 +205,7 @@ export interface UsePlayerEngineArgs {
   rememberedSkip?: () => SkipSegment[];
   /**
     * 跳过窗口态变化上报（片头/片尾是否正在、各自时长），供调用方渲染
-    * 「跳过片头/片尾」浮层按钮。只在窗口态翻转时回调，不每帧刷。
+    * 「跳过片头/片尾」的轻提示。只在窗口态翻转时回调，不每帧刷。
     */
   onSkipState?: (state: SkipWindowState) => void;
   /**
@@ -910,10 +910,10 @@ export function usePlayerEngine({
     };
     video.addEventListener("loadedmetadata", onFirstMeta, { once: true });
 
-    // 片头/片尾窗口态上报：驱动调用方的「跳过片头/片尾」浮层按钮。只在窗口态
+    // 片头/片尾窗口态上报：驱动自动跳过的轻提示。只在窗口态
     // 翻转时回调，不每帧刷；配置用取值器懒读（同倍速，绝不进本 effect 依赖）。
     // `force` 用于新媒体首帧：换集后外部状态可能还停在旧媒体的窗口里，不强制
-    // 上报一次的话，旧窗口的「跳过片头」按钮会一直挂着。
+    // 上报一次的话，旧窗口的提示会一直挂着。
     let lastInIntro = false;
     let lastInOutro = false;
     const reportSkipState = (force = false) => {

@@ -770,23 +770,12 @@ export default function PlayerPage({
     engine.notice("没有可接的下一集");
   };
   const autoSkipMediaKey = [activeSiteKey, display.vodId, display.lineIndex, display.episodeIndex].join(":");
-  const { pending: autoSkipPending, cancel: cancelAutoSkip, skipNow: skipPendingNow } =
-    useAutoSkipPrompt(
-      skipState,
-      autoSkipMediaKey,
-      (kind: SkipKind) => (kind === "intro" ? doSkipIntro() : doSkipOutro()),
-      () => videoRef.current?.paused ?? false,
-    );
-  // 手动跳先撤销在跑的倒计时：否则片头倒计时期间点「跳过片尾」，3 秒后会把
-  // 刚跳到结尾的位置又拉回片头。
-  const manualSkipIntro = () => {
-    cancelAutoSkip();
-    doSkipIntro();
-  };
-  const manualSkipOutro = () => {
-    cancelAutoSkip();
-    doSkipOutro();
-  };
+  const { pending: autoSkipPending, cancel: cancelAutoSkip } = useAutoSkipPrompt(
+    skipState,
+    autoSkipMediaKey,
+    (kind: SkipKind) => (kind === "intro" ? doSkipIntro() : doSkipOutro()),
+    () => videoRef.current?.paused ?? false,
+  );
   // 切换在途 → ArtPlayer 原生 loading；收口即隐藏。
   useEffect(() => {
     engine.setLoading(switching || engine.switching);
@@ -827,11 +816,7 @@ export default function PlayerPage({
       />
       <SkipOverlay
         host={playerRoot}
-        state={skipState}
         pending={autoSkipPending}
-        onSkipIntro={manualSkipIntro}
-        onSkipOutro={manualSkipOutro}
-        onSkipNow={skipPendingNow}
         onCancelAuto={cancelAutoSkip}
       />
       <SkipSettingsDialog
