@@ -718,13 +718,11 @@ export default function PlayerPage({
   const nowEpisode = activeEpisode?.name || episodeName;
 
   /**
-   * 选集区在途态。必须覆盖「换下一条线路」：`nextLine` 为了不让 UI 卡成永久
-   * 转圈，发起时就把 phase 收回 idle（见 usePlaybackController.nextLine），而线路
-   * 候选要**并发探活**才知道最终切到哪条，实测这段约 9s。这期间播放器已经写着
-   * 「正在切换线路…」，底部选集区却毫无反馈、仍停在旧线路，用户读到的就是
-   * 「点了没反应」。`nextLineBusy` 正是这段窗口的信号。
+   * 选集区只关心「目录有没有拿到」：换源/换集的线路数据在 intent 落地前就已经
+   * 写进 `display.lines`，再罩一层 loading 等于二次加载（用户已经能看到剧集）。
+   * 只有首次从历史/收藏进入、目录尚未回来时才遮。
    */
-  const panelBusy = switching || engine.switching || nextLineBusy;
+  const panelBusy = switching && lines.length === 0;
 
   /** 片头/片尾配置改动统一入口：写 ref + 镜像 state + 齿轮行 tooltip + 即时落库。 */
   const applySkipConfig = (segs: SkipSegment[]) => {

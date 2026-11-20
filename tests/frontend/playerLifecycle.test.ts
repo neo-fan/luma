@@ -115,23 +115,18 @@ describe('history writer attaches after the player instance exists', () => {
   });
 });
 
-describe("episode panel follows an in-flight line switch", () => {
-  // 2026-11-20 CDP 实测：点播放器里的「换下一条线路」后，候选要并发探活
-  // （实测 ~9s）才知道切到哪条线。这期间播放器写着「正在切换线路…」，底部
-  // 选集区却因为 `nextLine` 把 phase 收回 idle 而毫无反馈、仍停在旧线路，
-  // 用户读到的就是「点了没反应 / panel 没立刻切换」。
-  // 契约：面板在途态必须把 nextLineBusy 也算进去。
+describe("episode panel does not reload while switching streams", () => {
+  // 换源/换集的线路数据在意图落地前就已经写进 display.lines；面板再罩 loading
+  // 就是二次加载。只有首次目录尚未拿到时才遮。
   const page = read("src/pages/PlayerPage.tsx");
   const panel = read("src/components/player/EpisodePanel.tsx");
 
-  it("PlayerPage feeds nextLineBusy into the panel loading state", () => {
-    expect(page).toMatch(
-      /const panelBusy = switching \|\| engine\.switching \|\| nextLineBusy;/,
-    );
+  it("only masks the panel when the catalogue is still empty", () => {
+    expect(page).toMatch(/const panelBusy = switching && lines\.length === 0;/);
     expect(page).toMatch(/loading=\{panelBusy\}/);
   });
 
-  it("EpisodePanel renders the loading state it is fed", () => {
+  it("EpisodePanel keeps the loading markup for the first catalogue load", () => {
     expect(panel).toContain('player-episodes is-loading');
     expect(panel).toContain("aria-busy={loading || undefined}");
   });

@@ -11,8 +11,8 @@ interface EpisodePanelProps {
   /** 已请求、还没落地的集：那一格显示排队态，不代表正在播放。 */
   pendingPick?: { lineIndex: number; episodeIndex: number } | null;
   /**
-   * 换源/换集在途：整个选集区进入加载态（网格罩一层 spinner + aria-busy）。
-   * 与播放器画面的「加载中」同时出现——用户在哪都能看出「这一下已生效，在后台换流」。
+   * 目录尚未拿到（首次从历史/收藏进入）：整个选集区进入加载态。
+   * 换源/换集的线路数据在意图落地前就已经可用，不再用 loading 罩住面板。
    */
   loading?: boolean;
   setPanelLine: (value: number) => void;
