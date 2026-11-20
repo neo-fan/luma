@@ -11,6 +11,7 @@ import {
   type MutableRefObject,
 } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { loadWithRetry } from "./lib/lazyRetry";
 import Spinner from "./components/Spinner";
 import NavIcon from "./components/NavIcon";
 import CommandPalette from "./components/CommandPalette";
@@ -46,7 +47,7 @@ import type { ConfigSnapshot, LiveSource } from "./types/luma";
  * 但**渲染位置在 AppShell 的常驻层**而不是路由里：切到别的页面时只切
  * visibility，ArtPlayer / hls.js 实例与那条流继续活着（后台播放）。
  */
-const LivePage = lazy(() => import("./pages/LivePage"));
+const LivePage = lazy(() => loadWithRetry("LivePage", () => import("./pages/LivePage")));
 
 /** 侧栏展示用：prerelease 缩写（如 `1.2.0-beta` → `1.2.0.b`），数据源仍是合法 semver。 */
 const versionLabel = formatVersion(APP_VERSION);

@@ -2,6 +2,7 @@ import { Suspense, lazy } from "react";
 import Spinner from "../Spinner";
 import { navBack, navNavigate } from "../../lib/nav";
 import { canFailover } from "../../lib/format";
+import { loadWithRetry } from "../../lib/lazyRetry";
 import { useSiteState } from "../../stores/appStore";
 import type { PlaySession } from "../../stores/appStore";
 
@@ -13,7 +14,9 @@ import type { PlaySession } from "../../stores/appStore";
  * 走 display:none 或卸载都会让 hls.js 重新拉流、进度归零，切换回来就是重播。
  * 所以隐藏用 `visibility: hidden`（媒体继续解码），见 `.player-host.is-idle`。
  */
-const PlayerPage = lazy(() => import("../../pages/PlayerPage"));
+const PlayerPage = lazy(() =>
+  loadWithRetry("PlayerPage", () => import("../../pages/PlayerPage")),
+);
 
 interface PlayerHostProps {
   session: PlaySession;
