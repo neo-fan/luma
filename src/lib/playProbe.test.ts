@@ -2,8 +2,8 @@
  * 线路探活的判据：HTTP 200 不等于「能播」。
  *
  * py_bubuzhuiju 的 PAN1 走网盘解析接口，token 失效时仍回 200 +
- * `{"code":201,"msg":"解析失败了","url":""}`。旧实现只看 response.ok，把这条
- * 死线路当成可用线路切过去，hls.js 拿到 JSON 后报 manifestParsingError。
+ * `{"code":201,"msg":"解析失败了","url":""}`；只看 response.ok 会把这条死线路
+ * 当成可用切过去，hls.js 拿到 JSON 后报 manifestParsingError。所以判据必须读 body。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { probeLineVerdict, probePlayable } from "./playProbe";

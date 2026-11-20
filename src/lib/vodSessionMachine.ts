@@ -44,7 +44,7 @@ export type VodSessionEvent =
  | { type: "FAILED"; cause: FailoverCause; detail?: string };
 
 export interface VodSessionContext {
-  /** 会话身份：每次换集/重载自增，取代散落的 `switchGeneration` 代数比较。 */
+  /** 会话身份：每次换集 / 重载自增，作为在途回调的代次比较基准。 */
   sessionId: number;
   targetUrl: string;
   /** 本会话是否已出过画（首帧）。 */
@@ -53,7 +53,7 @@ export interface VodSessionContext {
   resumeIntent: boolean;
   /** 「未知」探测累计次数，达阈值判死换线。 */
   unresponsiveProbes: number;
- /** 本轮切换是否被用户暂停打断过续播（取代 `resumeCancelled`）。 */
+  /** 本轮切换是否被用户暂停打断过续播。 */
   resumeAborted: boolean;
   /**
    * 进入 `recovering` 时携带的判死原因（离开 recovering 开新会话即清空）。

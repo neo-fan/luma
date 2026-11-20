@@ -3,8 +3,8 @@
  *
  * 星形改用 Lucide 的 `Star`，与侧栏「收藏」入口、工具栏其它图标同一套几何；
  * 状态仍只靠「描边 → 实心金色」表达，不写文字，因此可访问性必须自带
- * `aria-label` / `aria-pressed`。探针也按 `aria-pressed` 判断状态 ——
- * 图标按钮没有 `textContent`，按文案断言的旧写法会全红。
+ * `aria-label` / `aria-pressed`。图标按钮没有 `textContent`，探针据
+ * `aria-pressed` 判断状态。
  */
 import { useEffect, useRef, useState } from "react";
 import { Star } from "lucide-react";

@@ -56,9 +56,9 @@ function readSiteCache(): SiteCache | null {
     if (typeof cache.configId !== "string" || !Array.isArray(cache.sites)) {
       return null;
     }
-    // localStorage 是唯一「写入方版本 ≠ 读取方版本」的来源：旧版本/被手改过的
-    // 缓存里 sites / lives 可能夹带形状漂移的项。收窄层只在这条读回路径上跑，
-    // 丢弃非法项；Rust 快照经 setCache 直接落库时不经此处（见 invoke.ts）。
+    // localStorage 是唯一「写入方版本 ≠ 读取方版本」的来源：存下来的 sites / lives
+    // 可能夹带形状漂移的项。收窄层只在这条读回路径上跑，丢弃非法项；Rust 快照经
+    // setCache 直接落库时不经此处（见 invoke.ts）。
     return {
       configId: cache.configId,
       sites: narrowSites(cache.sites),

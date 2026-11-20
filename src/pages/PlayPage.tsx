@@ -40,8 +40,8 @@ function watchedPercent(item: HistoryItem): number {
 }
 
 /**
- * 一条历史能不能直接续播：必须有播放地址。旧版本写入的记录可能只有
- * 详情页信息，那就退回详情页，让详情页重新解析线路。
+ * 一条历史能不能直接续播：必须有播放地址。只存了详情页信息、没有地址的记录
+ * 退回详情页，让详情页重新解析线路。
  */
 function canResume(item: HistoryItem): item is HistoryItem & { playUrl: string } {
   return Boolean(item.playUrl && item.playUrl.trim());

@@ -58,8 +58,8 @@ export function toAppError(err: unknown): AppError {
     return err as AppError;
   }
   // 前端自己 `throw new Error("…")` 的地方（播放编排、换源）也走这里。
-  // Error 实例没有 `code` 字段，旧逻辑会把它降级成 "unknown IPC error"，
-  // 用户看不到真正原因（实测网盘线路那句提示就是这么丢的）。
+  // Error 没有 `code` 字段：原样带上 message、记成 INTERNAL，否则真实原因会被
+  // 压成通用的 "unknown IPC error"，界面上就看不出到底哪一步失败。
   if (err instanceof Error) {
     return { code: "INTERNAL", message: err.message };
   }

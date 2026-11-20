@@ -43,7 +43,7 @@ export function describeHlsError(details: string | undefined): string {
  *
  * fatal 不等于确定：`manifestLoadTimeOut` / `fragLoadTimeOut` / `networkError`
  * 这些在慢源冷启（首个分片 9MB+、上游接口 18s 才回）时必然出现，hls 自己会
- * 重试。旧实现见到 fatal 就跳走，用户看到的就是「明明能播却被换线」。
+ * 重试——把 fatal 直接当成「线路坏了」就跳走，换掉的恰恰是明明能播的线路。
  *
  * 这些一律交给播放页的停滞看门狗去**独立复核**：只有复核拿到明确失败
  * （HTTP 4xx/5xx、内容不是 m3u8、分片是占位图）才换源。

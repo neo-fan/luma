@@ -159,7 +159,7 @@ export default function DetailPage({
           // 列表卡片若还在索引里，空态就退化成「卡片详情」而不是白板。
           setEmptyCard(recallCard(siteKey, vodId));
           // 发现型源（豆瓣[py] 等）连 searchContent 都没有，同站按名回查必然
-          // 失败。改用片名在其它站点里找一个真能播的详情，成功就直接切过去；
+          // 失败。这里直接用片名在其它站点找一个真能播的详情，成功就切过去；
           // 用户一旦手动操作（重试 / 打开换源面板）就中止，避免迟到结果跳页。
           const word = (title || "").trim();
           if (!word || skipCrossSource.has(`${siteKey}:${vodId}`)) {

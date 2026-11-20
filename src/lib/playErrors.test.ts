@@ -28,8 +28,9 @@ describe("describeHlsError", () => {
 /**
  * 「时间型失败」不是「线路坏了」的证据。
  *
- * 慢源冷启（首个分片 9MB+ / 上游接口 18s）必然先触发这些 fatal，
- * 旧实现见到 fatal 就换线，用户看到的是「明明能播却被换走」。
+ * 慢源冷启（首个分片 9MB+ / 上游接口 18s）必然先触发这些 fatal；把它们当成
+ * 「线路坏了」就换线，用户看到的就是「明明能播却被换走」。这里锁住它们只算
+ * 非证据，交给播放页看门狗独立复核。
  */
 describe("isTimingFailure", () => {
   it("treats load timeouts and network stalls as non-evidence", () => {

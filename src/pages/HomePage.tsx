@@ -327,9 +327,9 @@ export default function HomePage({
             // 空结果不写缓存：下次进入重新拉，也让自动顺延每次都有机会执行。
             // 有内容才缓存，保证返回首页仍能秒开。
             // 有卡片、或只有分类的源都要留住：DRPY/js 源的推荐流经常是空的
-            // （源侧接口本身不给），分类才是唯一入口。旧逻辑按 list 判空，
-            // 会把 classes 一起丢掉，页面只剩「暂无分类 + 暂无推荐内容」，
-            // 看起来像这个源彻底坏了。
+            // （源侧接口本身不给），分类才是唯一入口——若按 list 判空就会把
+            // classes 一起丢掉，页面只剩「暂无分类 + 暂无推荐内容」，看起来像
+            // 这个源彻底坏了。
             const cards = (result?.list ?? []).length;
             const cats = (result?.classes ?? []).length;
             setHomeState({

@@ -1,15 +1,13 @@
 /**
  * 播放页切换编排。
  *
- * 核心不变式：**只有一个播放目标真源**。重构前「当前在播哪一集」散在路由参数、
- * 选集索引、手动选中、换源结果四处互相覆盖，显示时靠优先级链缝合；每加一条
- * 异步动作就要再叠一层「谁覆盖谁」。
+ * 核心不变式：**只有一个播放目标真源**（`intent ?? committed`，详见
+ * `playbackTarget.ts`），所有异步切换都围绕它产生意图、再落地。
  *
  * - 每次用户动作（选集 / 换源 / 下一集）只做一件事：产生一个 `PlaybackTarget`
  *   意图（`intent`），UI 立刻按它显示；后台解析完成后整体替换 `committed`
- *   （`commit`），`intent` 归零。显示恒为 `intent ?? committed`，不存在
- *   `pendingPick ?? manualPick ?? switchedSource ?? 路由` 那种多层覆盖。
- * - 代次仍用 `switchToken`（单调 gen）：每产生一个意图就 `begin()` 抢占，解析
+ *   （`commit`），`intent` 归零。显示恒为 `intent ?? committed`。
+ * - 代次用 `switchToken`（单调 gen）：每产生一个意图就 `begin()` 抢占，解析
  *   可以并发，但落地前必须 `isCurrent(gen)`；真正切画面经 `commitGate` 串行，
  *   进锁后再校验一次代次 —— **最终落到画面的一定是最新一次选中**。
  * - 原地换集用 `switchQueue` 合并连点：忙时只保留最后一个意图；同步 `peek`

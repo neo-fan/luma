@@ -25,7 +25,7 @@ export interface EpisodeSeed {
 /**
  * 按地址精确定位当前线路/集；地址对不上（源轮换了 CDN，很常见）再按
  * 「同线路名 + 同集名」兜底，线路名优先取路由里的 playFrom（用户点的那条）。
- * 都找不到就回到第 1 集第 1 条线路——与旧实现的兜底一致。
+ * 都找不到就回到第 1 集第 1 条线路。
  */
 export function locateEpisode(
   lines: readonly PlayLine[],

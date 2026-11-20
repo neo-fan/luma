@@ -398,12 +398,11 @@ export function usePlayerEngine({
     };
   }, [siteKey]);
   /**
-   * 会话代数真源：actor 的 sessionId（每次 LOAD/USER_SWITCH 自增）。取代原先手搓
-   * 的 `switchGeneration` 计数器——在途探活/换集回调回来时比对它，判断结论是否属于
-   * 已被新一轮切换取代的旧集。影子阶段已验证它与真实切换时序一致（dcc7a12）。
+   * 会话代数真源：actor 的 sessionId（每次 LOAD/USER_SWITCH 自增）。在途探活 /
+   * 换集回调回来时比对它，判断结论是否属于已被新一轮切换取代的旧集。
    */
   const sessionGen = () => sessionActorRef.current?.getSnapshot().context.sessionId ?? 0;
-  /** 首帧真源：actor.hasPlayed（MEDIA_ALIVE 置位、bumpSession 复位），取代本地 hasPlayed。 */
+  /** 首帧真源：actor.hasPlayed（MEDIA_ALIVE 置位、bumpSession 复位）。 */
   const sessionHasPlayed = () => sessionActorRef.current?.getSnapshot().context.hasPlayed ?? false;
   /**
    * 「连续无响应」计数真源：actor.unresponsiveProbes。解释器只在日志里读它，
@@ -585,11 +584,10 @@ export function usePlayerEngine({
     /**
      * 切换类 timer / listener 的显式回收登记。
      *
-     * 此前这些句柄只靠 `videoRef.current !== video` 身份校验兜底——一旦后续
-     * 改动放松校验就会「卸载后继续向已销毁的 video 写音量 / 触发换线」。
-     * 现在改成生命周期闭环：每轮切换开始前 `disposeSwitchCycle()` 收上一轮，
-     * effect cleanup 再收最后一轮。集合规模由「单轮登记的句柄数」封顶
-     * （上一轮条目在新一轮开始时统一清空并回收），连看几千集也不会增长。
+     * 生命周期闭环：每轮切换开始前 `disposeSwitchCycle()` 收上一轮，effect
+     * cleanup 再收最后一轮——确保卸载后不会再向已销毁的 video 写音量 / 触发
+     * 换线。集合规模由「单轮登记的句柄数」封顶（上一轮条目在新一轮开始时统一
+     * 清空并回收），连看几千集也不会增长。
      */
     const switchDisposers = new Set<() => void>();
     const trackSwitchDisposer = (dispose: () => void): void => {
@@ -602,7 +600,7 @@ export function usePlayerEngine({
       switchDisposers.clear();
     };
     // 首帧标志真源 = actor.hasPlayed（见 sessionHasPlayed）：出过画后所有卡顿按
-    // 「网络抖动」处理、换线交给用户手动决定。不再本地维护 hasPlayed。
+    // 「网络抖动」处理、换线交给用户手动决定。
     /** 实测视频码率（kbps）：按分片字节 ÷ 分片时长做指数平滑。 */
     let measuredKbps = 0;
     /**
@@ -610,8 +608,8 @@ export function usePlayerEngine({
      *
      * 停顿判定不能只看 `<video>` 的 `progress`：hls.js 走 MSE，数据是 JS 推
      * 进去的，首个大分片（9MB+ 的 AES-128 源）下载期缓冲毫无变化，`progress`
-     * 一次都不发——旧实现 12 秒一到就判死跳走，而实测这类源 18 秒能正常出画。
-     * 因此把 hls 自己的加载事件（清单 / 子清单 / 分片 / 缓冲）也当作生命信号。
+     * 一次都不发；而这类源实测 18 秒能正常出画。因此把 hls 自己的加载事件
+     * （清单 / 子清单 / 分片 / 缓冲）也当作生命信号。
      */
     let lastAliveAt = Date.now();
     /**
@@ -1034,8 +1032,8 @@ export function usePlayerEngine({
      * 动作名 `requestLineSwitch`）时调到这里。文案与日志 stage 由 `failoverCopy`
      * 给出，原因（判死依据）由机器写在 context 上。
      *
-     * 取代原先 5 处各写一遍的「finishPoster + setVideoError + switchOrFailover」：
-     * 那里头任何一处漏了撤海报，就会有一张静帧永久盖住画面。
+     * 所有交棒都收敛到这一处「撤海报 + 报错误 + 触发换线」，是因为分开写时任何
+     * 一处漏掉撤海报，就会留下一张静帧永久盖住画面。
      */
     const handOverLine = (cause: FailoverCause, detail: string) => {
       const { message, stage } = failoverCopy(cause, detail);
