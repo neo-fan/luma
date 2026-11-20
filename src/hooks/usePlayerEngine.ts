@@ -249,8 +249,13 @@ export interface UsePlayerEngineHandle {
    * 原地换集：复用同一个 ArtPlayer 实例（控制栏、全屏、音量都不重建），
    * 只更换播放源。跨协议（hls → mp4）或播放器未就绪时 reject，由调用方
    * 决定是否退回整页重建。
+   *
+   * `resume` 是**用户切换前的播放意图**，必须由调用方在停旧流之前取好传进来：
+   * 本函数被调用时旧流已经被 `haltCurrentPlayback()` 按停，此时再读
+   * `video.paused` 永远是 `true`，表现为「换集后停在新集第一帧」。缺省才回退
+   * 到现场读一次 DOM。
    */
-  switchSource: (url: string) => Promise<void>;
+  switchSource: (url: string, resume?: boolean) => Promise<void>;
   /**
    * 播放器内的短提示（换集/换源进度、源侧慢）。走 ArtPlayer 自带的 notice 层：
    * 提示出现在画面里而不是页面顶部，全屏时也看得见；样式与播放器一致。
@@ -318,7 +323,7 @@ export function usePlayerEngine({
   /** 驱动 ArtPlayer 原生 loading 的句柄：实例创建时挂上，销毁时清空。 */
   const loadingRef = useRef<((show: boolean) => void) | null>(null);
   /** 原地换集的命令句柄：实例在 effect 里创建，ref 负责把命令送到它手上。 */
-  const switchRef = useRef<((url: string) => Promise<void>) | null>(null);
+  const switchRef = useRef<((url: string, resume?: boolean) => Promise<void>) | null>(null);
   /** 播放器内提示通道：同样由 effect 里创建实例时挂上。 */
   const noticeRef = useRef<((text: string | null) => void) | null>(null);
 
@@ -1190,7 +1195,7 @@ export function usePlayerEngine({
     noticeRef.current = (text: string | null) => {
       art.notice.show = text ?? "";
     };
-    switchRef.current = async (url: string) => {
+    switchRef.current = async (url: string, resume?: boolean) => {
       if (!videoRef.current) {
         throw new Error("player is not ready");
       }
@@ -1201,9 +1206,12 @@ export function usePlayerEngine({
       }
       // 记录切换前的播放意图：teardown 销毁解码器会把 video 打回 paused，
       // ArtPlayer 的 switchUrl 不会替我们续播——新源挂上后必须手动 play()，
-      // 否则缓冲完成了却停在暂停态，用户看到的就是「换集后黑屏不动」
-      // 。
-      const wasPlaying = !video.paused && !video.ended;
+      // 否则缓冲完成了却停在暂停态，用户看到的就是「换集后黑屏不动」。
+      //
+      // `resume` 由调用方在停旧流**之前**取好传入：本函数被调用时旧流已被
+      // 按停，现场读 DOM 只会永远得到 false（跳过片尾 / 换集后停在新集第一帧
+      // 的实际成因）。
+      const wasPlaying = resume ?? (!video.paused && !video.ended);
       // 换集 = USER_SWITCH，续播意图如实带入；要不要播由机器的 wantsResume 守卫决定。
       sessionActorRef.current?.send({ type: "USER_SWITCH", url, resumeIntent: wasPlaying });
       /**
@@ -1422,8 +1430,8 @@ export function usePlayerEngine({
   // 设置面板整个 remove+add。实现体全部只读 ref，唯一真依赖是 machineSwitching。
   return useMemo(
     () => ({
-      switchSource: (url: string) =>
-        switchRef.current?.(url) ??
+      switchSource: (url: string, resume?: boolean) =>
+        switchRef.current?.(url, resume) ??
         Promise.reject(new Error("播放器尚未就绪，暂时不能原地换集")),
       notice: (text: string | null) => noticeRef.current?.(text),
       switching: machineSwitching,

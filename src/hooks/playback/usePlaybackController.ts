@@ -234,6 +234,25 @@ export function usePlaybackController(
     }
   }, [videoRef]);
 
+  /**
+   * 用户在**发起这次切换时**是否想继续播。
+   *
+   * 必须在 `haltCurrentPlayback()` 之前取：停旧流之后 `video.paused` 恒为
+   * true，把它当意图传给内核，新集就会停在第 0 秒（跳过片尾 / 换集「暂停」的
+   * 实际成因）。而在一次切换的连点里不再重取：那时视频是我们自己按停的，
+   * 重取会把「用户想接着看」误判成「用户想暂停」。
+   */
+  const resumeIntentRef = useRef(true);
+  const phaseRef = useRef<PlaybackPhase>(phase);
+  phaseRef.current = phase;
+  const captureResumeIntent = useCallback(() => {
+    if (phaseRef.current !== "idle") {
+      return;
+    }
+    const video = videoRef.current;
+    resumeIntentRef.current = Boolean(video && !video.paused && !video.ended);
+  }, [videoRef]);
+
   // 目录拉取：组件按 siteKey:vodId:playUrl 重建，这里首次挂载跑一次即可。
   useEffect(() => {
     if (siteKey === "live") {
@@ -335,6 +354,7 @@ export function usePlaybackController(
       play: PlayResolved,
       identity: { siteKey: string; playFrom: string; url: string },
       target: PlaybackTarget,
+      resume: boolean,
     ) => {
       const d = depsRef.current;
       d.resumeMsRef.current = 0;
@@ -343,7 +363,7 @@ export function usePlaybackController(
         if (!engine) {
           throw new Error("播放内核未就绪");
         }
-        await engine.switchSource(play.proxyUrl);
+        await engine.switchSource(play.proxyUrl, resume);
         switchedUrlRef.current = play.proxyUrl;
         playingEpisodeRef.current = identity;
         dispatch({ type: "commit", target });
@@ -378,6 +398,8 @@ export function usePlaybackController(
       }
       manualHoldRef.current.engage(MANUAL_HOLD_MS);
       const { gen } = switchToken.current.begin();
+      // 播放意图必须在停旧流**之前**取（见 `captureResumeIntent`）。
+      captureResumeIntent();
       // 立刻停旧流：拿到新地址前播放器不出声；用户仍可继续点（队列合并、只认最新）。
       haltCurrentPlayback();
       const next: PlaybackTarget = { ...current, lineIndex: targetLine, episodeIndex: index };
@@ -386,7 +408,7 @@ export function usePlaybackController(
       depsRef.current.setSwitchTip(tip ?? `正在切换到「${line.episodes[index].name}」…`);
       queue?.request({ siteKey: current.siteKey, lineIndex: targetLine, episodeIndex: index, gen });
     },
-    [haltCurrentPlayback, markPhase],
+    [captureResumeIntent, haltCurrentPlayback, markPhase],
   );
 
   /** 队列执行器：原地换集；失败/冷路径退回整页 navigate。 */
@@ -399,7 +421,9 @@ export function usePlaybackController(
         return;
       }
       const episode = line.episodes[index];
-      const wasPlayingBefore = videoRef.current ? !videoRef.current.paused : false;
+      // 意图在点击时就取好了（`captureResumeIntent`）；这里读到的是「用户发起
+      // 这一轮切换时是否在播」，不是「我们自己刚按停之后的状态」。
+      const wasPlayingBefore = resumeIntentRef.current;
       markPhase("preparing");
       d.flushHistoryRef.current?.();
 
@@ -441,6 +465,7 @@ export function usePlaybackController(
           play,
           { siteKey: current.siteKey, playFrom: line.name, url: episode.url },
           target,
+          wasPlayingBefore,
         );
         d.setSwitchTip(!wasPlayingBefore ? `已切到「${episode.name}」，点播放继续` : "");
       } catch (err) {
@@ -465,6 +490,8 @@ export function usePlaybackController(
       d.setVideoError("");
       manualHoldRef.current.engage(MANUAL_HOLD_MS);
       const { gen } = switchToken.current.begin();
+      // 同换集：先取播放意图，再停旧流（否则新源落地后停着不动）。
+      captureResumeIntent();
       // 换源同换集：立刻停旧流，拿到新地址前不切画面。
       haltCurrentPlayback();
       // 换源是最终意图：清掉换集乐观态与排队意图，显示收敛到即将落地的目标。
@@ -561,6 +588,7 @@ export function usePlaybackController(
           play,
           { siteKey: option.siteKey, playFrom: match.line.name, url: match.episode.url },
           nextTarget,
+          resumeIntentRef.current,
         );
         // 内部线路索引随整份 target 落地，panel 天然跟随，这里只是让面板
         // 在落地前也不会停在越界的旧索引上。
@@ -574,7 +602,7 @@ export function usePlaybackController(
         }
       }
     },
-    [applySwitch, episodeName, haltCurrentPlayback, markPhase, videoRef],
+    [applySwitch, captureResumeIntent, episodeName, haltCurrentPlayback, markPhase, videoRef],
   );
 
   /** 相对跳集（下一集/自动接）：以已落地集为基线，连点只 +1、不越界。 */

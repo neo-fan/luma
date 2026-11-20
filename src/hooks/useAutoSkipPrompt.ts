@@ -24,6 +24,8 @@ const TICK_MS = 200;
  * 无副作用；本 hook 只负责那台一次性倒计时与取消态。
  * - `mediaKey` 变化（换集 / 换源 / 换线路重建媒体）→ 复位边沿基准与倒计时，新片头重新生效。
  * - `skipState` 只在窗口翻转时被引擎上报，所以倒计时途中不会被无关帧打断。
+ * - `isReady` 为假时（新一集还在缓冲、画面没出来）**先不显示**倒计时，等出画再起跑：
+ *   否则上一集的静止画面配着新一集的倒计时，看起来就是「跳过片头还是上一集的」。
  * - `isPaused` 为真时冻结倒计时（deadline 顺延）：暂停是「先别动」的明确意图，
  *   不能 3 秒后把用户从暂停里拽走；恢复播放后继续剩余秒数。
  * - `skipNow` 立即执行当前倒计时；手动跳过任一类型前由调用方先 `cancel()`，
@@ -34,17 +36,29 @@ export function useAutoSkipPrompt(
   mediaKey: string,
   onTrigger: (kind: SkipKind) => void,
   isPaused: () => boolean = () => false,
+  /**
+   * 「这一集的画面真的开始播了」——倒计时必须等它为真才起跑。
+   *
+   * 换集后窗口态在 `loadedmetadata` 就到了（此时才第 1 帧、还在缓冲），
+   * 如果立刻显示「3 秒后跳过片头」，用户看到的是**上一集的静止画面**配上
+   * 新一集的倒计时，读起来就是「跳过片头还是上一集的」。等新一集出画再显示，
+   * 倒计时和它要操作的那一集才是同一个东西。
+   */
+  isReady: () => boolean = () => true,
 ): { pending: AutoSkipPending | null; cancel: () => void; skipNow: () => void } {
   const [pending, setPending] = useState<AutoSkipPending | null>(null);
   const prevRef = useRef<SkipWindowState | null>(null);
   const pendingRef = useRef<AutoSkipPending | null>(null);
+  const armedRef = useRef<SkipKind | null>(null);
   const deadlineRef = useRef(0);
   const lastTickRef = useRef(0);
   const timerRef = useRef<number | null>(null);
   const onTriggerRef = useRef(onTrigger);
   const pausedRef = useRef(isPaused);
+  const readyRef = useRef(isReady);
   onTriggerRef.current = onTrigger;
   pausedRef.current = isPaused;
+  readyRef.current = isReady;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -65,6 +79,7 @@ export function useAutoSkipPrompt(
 
   const cancel = useCallback(() => {
     clearTimer();
+    armedRef.current = null;
     pendingRef.current = null;
     setPending(null);
   }, [clearTimer]);
@@ -72,6 +87,7 @@ export function useAutoSkipPrompt(
   const start = useCallback(
     (kind: SkipKind) => {
       clearTimer();
+      armedRef.current = null;
       const next = { kind, remaining: AUTO_SKIP_COUNTDOWN_S };
       pendingRef.current = next;
       deadlineRef.current = Date.now() + AUTO_SKIP_COUNTDOWN_S * 1000;
@@ -109,8 +125,36 @@ export function useAutoSkipPrompt(
       cancel();
       return;
     }
-    start(kind);
+    if (readyRef.current()) {
+      start(kind);
+    } else {
+      // 画面还没起来：先记下这一类，等「真的开始播」再显示倒计时。
+      armedRef.current = kind;
+    }
   }, [skipState, start, cancel]);
+
+  // 待命中的自动跳过：轮询「这一集出画了吗」，一到就起跑。
+  //
+  // 只在 armed 期间开定时器（`pending === null` 且 `armed` 非空时）——播放中是
+  // 常态，不该为此常驻一个轮询。
+  useEffect(() => {
+    if (!armedRef.current) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      const kind = armedRef.current;
+      if (!kind) {
+        window.clearInterval(timer);
+        return;
+      }
+      if (!readyRef.current()) {
+        return;
+      }
+      window.clearInterval(timer);
+      start(kind);
+    }, TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [skipState, start]);
 
   // 媒体身份变化：把边沿基准清零（新片头重新算一次「进入窗口」），并停掉旧倒计时。
   useEffect(() => {

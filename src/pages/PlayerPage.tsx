@@ -548,6 +548,9 @@ export default function PlayerPage({
   /**
    * 接下一集：自然播完（ended）与「跳过片尾」共用同一条路径。返回 false 表示
    * 没有下一集（最后一集或线路数据未就绪），调用方自行决定停在哪。
+   *
+   * 提示只走播放器内的 notice：换流本来就发生在画面里，页面级 toast 在这里
+   * 是重复噪声（用户看到的是画面切走 + 顶部弹一条，两处同时动）。
    */
   const advanceToNext = useCallback(() => {
     if (!canPlayNext || !activeLine) {
@@ -560,10 +563,10 @@ export default function PlayerPage({
       from: display.episodeIndex,
       to: display.episodeIndex + 1,
     });
-    notify.info(`已自动播放下一集${next ? `：${next.name}` : ""}`);
+    engine.notice(`正在播放下一集${next ? `：${next.name}` : ""}`);
     goEpisode(1);
     return true;
-  }, [activeLine, canPlayNext, display.episodeIndex, goEpisode, siteKey, vodId]);
+  }, [activeLine, canPlayNext, display.episodeIndex, engine, goEpisode, siteKey, vodId]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -775,6 +778,12 @@ export default function PlayerPage({
     autoSkipMediaKey,
     (kind: SkipKind) => (kind === "intro" ? doSkipIntro() : doSkipOutro()),
     () => videoRef.current?.paused ?? false,
+    // 倒计时只在「这一集真的出画」后显示：换集后窗口态在 loadedmetadata 就到，
+    // 那时画面还是上一集的静止帧，倒计时会看着像在跳上一集。
+    () => {
+      const v = videoRef.current;
+      return Boolean(v && !v.paused && v.readyState >= 3);
+    },
   );
   // 切换在途 → ArtPlayer 原生 loading；收口即隐藏。
   useEffect(() => {
