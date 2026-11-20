@@ -37,6 +37,46 @@ interface LiveChannelRailProps {
  *
  * 数据由调用方加载（`useLiveCatalog`），这里只管筛选、折叠、滚动与高亮。
  */
+/** 单行频道按钮。抽成 memo 组件的目的：换台时 `currentName` 变化会让整片上千行
+ *  重渲染（连 `ChannelLogo` 一起重走一遍），是换台长任务的主因。三个 props 里
+ *  只有 `active` 会在新旧两行之间翻转，其余行 memo 短路、不再重渲染。
+ *  类名结构（`.live-rail__item(.is-active)`）保持不变——自动滚动与窗口探针按它定位。 */
+interface RailRowProps {
+  channel: LiveChannel;
+  active: boolean;
+  onPick: (channel: LiveChannel) => void;
+}
+
+const RailRow = memo(function RailRow({ channel, active, onPick }: RailRowProps) {
+  return (
+    <button
+      type="button"
+      className={active ? "live-rail__item is-active" : "live-rail__item"}
+      aria-current={active ? "true" : undefined}
+      title={channel.name}
+      onClick={() => onPick(channel)}
+    >
+      <ChannelLogo
+        name={channel.name}
+        logo={channel.logo}
+        size={20}
+      />
+      <span className="live-rail__name">{channel.name}</span>
+      {active ? (
+        <span className="live-rail__eq" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+      ) : channel.lines.length > 1 ? (
+        <span className="live-rail__badge">
+          {channel.lines.length} 路
+        </span>
+      ) : null}
+    </button>
+  );
+});
+
 function LiveChannelRail({
   groups,
   loading,
@@ -172,41 +212,14 @@ function LiveChannelRail({
                 /* 频道容器：展开时条件挂载，入场动画挂在这一层（每组一条），
                    绝不逐频道项动画——上千条逐项入场会让动画数量爆炸。 */
                 <div className="live-rail__channels">
-                  {group.channels.map((channel) => {
-                    const active = channel.name === currentName;
-                    return (
-                      <button
-                        key={`${group.name}::${channel.name}`}
-                        type="button"
-                        className={
-                          active
-                            ? "live-rail__item is-active"
-                            : "live-rail__item"
-                        }
-                        aria-current={active ? "true" : undefined}
-                        title={channel.name}
-                        onClick={() => onPick(channel)}
-                      >
-                        <ChannelLogo
-                          name={channel.name}
-                          logo={channel.logo}
-                          size={20}
-                        />
-                        <span className="live-rail__name">{channel.name}</span>
-                        {active ? (
-                          <span className="live-rail__eq" aria-hidden="true">
-                            <i />
-                            <i />
-                            <i />
-                          </span>
-                        ) : channel.lines.length > 1 ? (
-                          <span className="live-rail__badge">
-                            {channel.lines.length} 路
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
+                  {group.channels.map((channel) => (
+                    <RailRow
+                      key={`${group.name}::${channel.name}`}
+                      channel={channel}
+                      active={channel.name === currentName}
+                      onPick={onPick}
+                    />
+                  ))}
                 </div>
               )}
             </div>
@@ -245,7 +258,8 @@ function LiveChannelRail({
   );
 }
 
-// 频道数常上千且没有虚拟化：父组件（播放器慢提示节拍、换台）每次重渲染都让
-// 整片按钮重算。memo 生效的前提是 LivePage 传的 onPick/onStep/onRefresh 稳定
-// （已在 useCallback 里保证）。
+// 频道数常上千且不做整表虚拟化：换台（`currentName` 变）时靠**行级 memo**（`RailRow`）
+// 把重渲染收敛到真正变化的那一两行——其余行的 `channel`/`onPick` 引用不变，memo 短路，
+// 不再连带重走每行的 `ChannelLogo`。memo 生效的前提是 LivePage 传的
+// onPick/onStep/onRefresh 稳定（已在 useCallback 里保证）。
 export default memo(LiveChannelRail);
