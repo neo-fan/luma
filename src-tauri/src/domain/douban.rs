@@ -960,7 +960,13 @@ struct DoubanBucket {
 }
 
 static DOUBAN_GATE: OnceLock<Mutex<DoubanBucket>> = OnceLock::new();
-static DOUBAN_COOLDOWN: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+/// 限流惩罚槽：`(解除时刻, 连续被限流次数)`。
+///
+/// 次数存在是为了**指数退避**：此前固定 180s 窗口，前端队列每过 ~3 分钟就把
+/// 同一批标题重新送进来、再撞一次限流、再开一个 180s——实测同一部片每
+/// 195s 反复 `douban search throttled`，既刷日志又白耗配额。连续 nth 次惩罚
+/// `THROTTLE_COOLDOWN × 2^(n-1)`，封顶 30 分钟；任一搜索确认成功即清零。
+static DOUBAN_COOLDOWN: OnceLock<Mutex<(Option<Instant>, u32)>> = OnceLock::new();
 
 fn douban_bucket() -> &'static Mutex<DoubanBucket> {
     DOUBAN_GATE.get_or_init(|| {
@@ -1005,7 +1011,7 @@ async fn pace_douban(now: fn() -> Instant) {
     }
 }
 
-/// 限流冷却槽：全局单值 `Mutex<Option<Instant>>`，**刻意不进 moka**。
+/// 限流冷却槽：全局单值，**刻意不进 moka**。
 ///
 /// 这不是缓存，是限流状态机的一个槽：语义是「until 之前对所有请求禁用搜索」，
 /// 读写都是对同一格的覆盖检查，没有 key、没有并发合并需求（`try_get_with`
@@ -1013,27 +1019,43 @@ async fn pace_douban(now: fn() -> Instant) {
 /// 一个单条目缓存 + 后台淘汰任务，还引入「淘汰跑没跑」这种这里不需要的
 /// 不确定性。仓库允许这种有理由的手搓：单槽状态不是缓存。
 fn douban_cooling() -> bool {
-    let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new(None));
+    let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new((None, 0)));
     match cooldown.lock() {
-        Ok(guard) => guard.is_some_and(|until| until > Instant::now()),
+        Ok(guard) => guard.0.is_some_and(|until| until > Instant::now()),
         Err(_) => false,
     }
 }
 
+/// 连续第 `strikes` 次被限流的惩罚时长：180s × 2^(n-1)，封顶 30 分钟。
+fn throttle_backoff(strikes: u32) -> Duration {
+    let exp = strikes.saturating_sub(1).min(10);
+    (THROTTLE_COOLDOWN.saturating_mul(1u32 << exp)).min(Duration::from_secs(1800))
+}
+
 fn cool_down_douban() {
-    let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new(None));
+    let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new((None, 0)));
     if let Ok(mut guard) = cooldown.lock() {
-        *guard = Some(Instant::now() + THROTTLE_COOLDOWN);
+        let next_strikes = guard.1.saturating_add(1);
+        let until = Instant::now() + throttle_backoff(next_strikes);
+        // 只延长、不缩短：并发路径同时判定被限流时，后写的更短窗口不该覆盖前者。
+        let until = match guard.0 {
+            Some(prev) if prev > until => prev,
+            _ => until,
+        };
+        guard.0 = Some(until);
+        guard.1 = next_strikes;
     }
 }
 
-/// 测试复位冷却槽（限流逻辑本身不动，见上方「刻意不进 moka」的注释）。
-/// 429 用例会打开一个 180s 的全局窗口，不清掉会淹死其他走网络路径的用例。
-#[cfg(test)]
+/// 清空惩罚槽（窗口 + 连续计数）。
+///
+/// 两个调用方：① 任一搜索拿到 `Conclusive`（端点正常应答）——限流已解除，
+/// 继续惩罚会把能拿封面的窗口白白拖到 30 分钟；② 测试复位——429 用例会打开
+/// 全局窗口并累积 strikes，不清掉会淹死其他走网络路径的用例。
 fn reset_cooldown() {
-    let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new(None));
+    let cooldown = DOUBAN_COOLDOWN.get_or_init(|| Mutex::new((None, 0)));
     if let Ok(mut guard) = cooldown.lock() {
-        *guard = None;
+        *guard = (None, 0);
     }
 }
 
@@ -1094,6 +1116,8 @@ async fn search_candidates(
                 responded = true;
                 let items = parse_search_data(&data);
                 if !items.is_empty() {
+                    // 端点正常应答且拿到候选：限流已解除，清空惩罚槽与连续计数。
+                    reset_cooldown();
                     return SearchOutcome::Conclusive(items);
                 }
                 tracing::warn!(title, "douban search page returned no subjects");
@@ -1114,6 +1138,7 @@ async fn search_candidates(
             responded = true;
             let items = parse_suggest(&body);
             if !items.is_empty() {
+                reset_cooldown();
                 return SearchOutcome::Conclusive(items);
             }
             tracing::warn!(title, "douban suggest returned no subjects");
@@ -1157,11 +1182,13 @@ async fn search_candidates(
             if !shaped {
                 tracing::warn!(title, shape = %body, "douban mobile search had no subjects");
                 return if responded {
+                    reset_cooldown();
                     SearchOutcome::Conclusive(Vec::new())
                 } else {
                     SearchOutcome::Inconclusive
                 };
             }
+            reset_cooldown();
             SearchOutcome::Conclusive(parse_search_subjects(&body))
         }
         Err(err) => {
