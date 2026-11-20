@@ -903,6 +903,8 @@ export function usePlayerEngine({
     const onFirstMeta = () => {
       video.playbackRate = wantedRate();
       applyResume();
+      // 新地址已经拿到 metadata：上一条线路的失败卡片撤掉（播放器内展示）。
+      setVideoError("");
       // 片头不再在这里静默瞬移：窗口态由下面的 reportSkipState 上报，交给
       // PlayerPage 的「3 秒可取消倒计时」统一处理自动跳（见 `useAutoSkipPrompt`）。
     };

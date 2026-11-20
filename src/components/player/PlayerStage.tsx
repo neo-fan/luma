@@ -13,6 +13,11 @@ interface PlayerStageProps {
   playable: boolean;
   resolveError: string;
   /**
+   * 播放期错误（hls fatal / 解码失败 / 看门狗判死）：只写在播放器里，不占页面
+   * 顶部红条；错误卡片给出的出口仍是「换下一条线路」。
+   */
+  playbackError?: string;
+  /**
    * 还没有任何解析结果（resolved === null）。选台/换地址后的第一帧 effect
    * 尚未把 resolving 翻 true，此时 !playable 只是「还没开始解析」，不是
    * 「解析出了不能播的地址」——不能闪一帧「无法播放」结论卡。
@@ -58,6 +63,7 @@ export default function PlayerStage({
   recovering = false,
   playable,
   resolveError,
+  playbackError = "",
   pending = false,
   retryable = false,
   containerRef,
@@ -67,8 +73,8 @@ export default function PlayerStage({
   switching = false,
 }: PlayerStageProps) {
   // 统一的「忙」（仅无实例的解析类状态走自绘卡片）：解析 / 重新获取 / 无结果但已请求。
-  const pendingBusy = pending && !resolveError;
-  const busy = resolving || reloading || recovering || pendingBusy;
+  const pendingBusy = pending && !resolveError && !playbackError;
+  const busy = !playbackError && (resolving || reloading || recovering || pendingBusy);
   const [waited, setWaited] = useState(0);
   const startedAt = useRef(0);
   useEffect(() => {
@@ -95,7 +101,10 @@ export default function PlayerStage({
     | { kind: "error"; title: string; desc: string }
     | null = null;
 
-  if (resolving) {
+  if (playbackError) {
+    // 已经拿到过可播地址、播放中/播放后才失败：错误压在画面上，不再转圈。
+    overlay = { kind: "error", title: "播放失败", desc: playbackError };
+  } else if (resolving) {
     // 解析分两阶段：问源拿直链 vs 交给反代建连，避免「一直转」被误判卡死。
     overlay = {
       kind: "busy",

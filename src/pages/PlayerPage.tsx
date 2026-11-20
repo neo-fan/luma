@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Navigate } from "../lib/nav";
-import ErrorBar from "../components/ErrorBar";
 import SourcePicker from "../components/SourcePicker";
 import PlayerHeader from "../components/player/PlayerHeader";
 import PlayerStage from "../components/player/PlayerStage";
@@ -820,6 +819,7 @@ export default function PlayerPage({
         recovering={false}
         pending={resolved === null}
         resolveError={switchedUrlRef.current ? "" : resolveError}
+        playbackError={videoError}
         retryable={resolveRetryable}
         containerRef={containerRef}
         poster={posterUrl ?? undefined}
@@ -865,16 +865,7 @@ export default function PlayerPage({
       />
 
       <div className="page-body">
-        {videoError ? (
-          <ErrorBar message={videoError} lifetime="timed" />
-        ) : null}
-        {resolveError && !switchedUrlRef.current ? (
-          <ErrorBar
-            message={`播放地址解析失败：${resolveError}`}
-            lifetime="timed"
-          />
-        ) : null}
-
+        {/* 播放/解析错误统一在播放器画面里展示（PlayerStage），页面顶部不再挂红条。 */}
         {stageNode}
         <PlayerAbout
           vod={vod}

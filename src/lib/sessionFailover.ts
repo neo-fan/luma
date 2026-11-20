@@ -42,9 +42,15 @@ export function failoverCopy(cause: FailoverCause, detail = ""): FailoverCopy {
     case "mediaDecode":
       return { message: `播放器加载失败，${PLAY_FAILURE_HINT}。`, stage: "media decode failed" };
     case "hlsFatal":
-      return { message: `HLS 播放失败：${detail}`, stage: "hls fatal" };
+      return {
+        message: `HLS 播放失败：${detail || "当前线路不可用"}，可换线路或换源`,
+        stage: "hls fatal",
+      };
     case "flvFatal":
-      return { message: `FLV 播放失败：${detail}`, stage: "flv fatal" };
+      return {
+        message: `FLV 播放失败：${detail || "当前线路不可用"}，可换线路或换源`,
+        stage: "flv fatal",
+      };
     case "flvInterrupted":
       return { message: `FLV 播放中断：${detail}`, stage: "flv interrupted" };
     case "linesExhausted":

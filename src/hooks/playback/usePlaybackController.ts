@@ -360,6 +360,8 @@ export function usePlaybackController(
       if (!line || index < 0 || index >= line.episodes.length) {
         return;
       }
+      // 新意图压过旧错误：播放器里的失败卡片不能带进下一次切换。
+      depsRef.current.setVideoError("");
       // 同步判等（不用渲染态）：同一目标已在跑 / 已排队就忽略，避免自己作废自己。
       // 必须含 siteKey：跨源后 display 已是新源，旧源在途 pick 仍是同号集，
       // 若只比 line/ep 会把新源的这次点击误判成重复而吞掉（与 equals 同口径）。
@@ -459,6 +461,8 @@ export function usePlaybackController(
     async (option: SourceOption) => {
       const d = depsRef.current;
       const current = displayRef.current;
+      // 换源是新的用户意图：播放器里的旧失败卡片先撤掉。
+      d.setVideoError("");
       manualHoldRef.current.engage(MANUAL_HOLD_MS);
       const { gen } = switchToken.current.begin();
       // 换源同换集：立刻停旧流，拿到新地址前不切画面。
