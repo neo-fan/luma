@@ -98,3 +98,19 @@ describe("player lifecycle contract", () => {
     expect(idle.slice(0, 300)).not.toMatch(/display:\s*none/);
   });
 });
+
+describe('history writer attaches after the player instance exists', () => {
+  // 2026-11-20 实测回归：usePlaybackHistory 排在 usePlayerEngine 之前，resolved
+  // 那拍 videoRef.current 还是 null → 进度 effect 早退且永不重跑 → 在播不写历史。
+  // 契约：effect 依赖必须带「挂载信号」，页面必须把 playerRoot 喂进来。
+  const hist = read('src/hooks/usePlaybackHistory.ts');
+  const page = read('src/pages/PlayerPage.tsx');
+
+  it('progress effect deps include the attach signal', () => {
+    expect(hist).toMatch(/\[resolved, activeSiteKey, activeVodId, activeVodName, playUrl, ledgerKey, attachSignal\]/);
+  });
+
+  it('PlayerPage wires playerRoot as the attach signal', () => {
+    expect(page).toContain('attachSignal: playerRoot,');
+  });
+});

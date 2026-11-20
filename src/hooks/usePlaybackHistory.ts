@@ -35,6 +35,18 @@ export interface UsePlaybackHistoryOptions {
    * display」的顺序环。
    */
   flushHistoryRef: MutableRefObject<(() => void) | null>;
+  /**
+   * 播放器实例的「挂载信号」（页面持有 playerRoot state，引擎建/拆实例时变化）。
+   *
+   * 本 hook 的调用点必须排在 `usePlayerEngine` **之前**（引擎参数要用它的
+   * read / flush 通道），于是 `resolved` 到达那次渲染里进度 effect 先跑，
+   * `videoRef.current` 还是 null → 早退，而 deps 里没有任何后续会变的量 →
+   * play / pause / timeupdate 监听永远挂不上，「在播却不写历史」（2026-11-20
+   * 实测：点播出画播放，`history_list` 恒空）。引擎在创建路径里先写
+   * `videoRef.current = video` 再回调 `onPlayerRoot`，所以该信号变化后的
+   * 那一次渲染必然能读到活着的元素。换集走原地换流、元素不换，不受影响。
+   */
+  attachSignal: unknown;
 }
 
 export interface PlaybackHistory {
@@ -77,6 +89,7 @@ export function usePlaybackHistory({
   historyMetaRef,
   historyLabelRef,
   flushHistoryRef,
+  attachSignal,
 }: UsePlaybackHistoryOptions): PlaybackHistory {
   /**
    * 这部剧记忆的倍速（0 = 从没设过，播放侧按 1.0 起播）。
@@ -248,7 +261,7 @@ export function usePlaybackHistory({
       void write(true, lastMediaRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, activeSiteKey, activeVodId, activeVodName, playUrl, ledgerKey]);
+  }, [resolved, activeSiteKey, activeVodId, activeVodName, playUrl, ledgerKey, attachSignal]);
 
   return {
     readRememberedRate,

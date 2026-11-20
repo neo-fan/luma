@@ -398,6 +398,7 @@ export default function PlayerPage({
     historyMetaRef,
     historyLabelRef,
     flushHistoryRef,
+    attachSignal: playerRoot,
   });
 
   /**
