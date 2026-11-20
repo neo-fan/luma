@@ -1,37 +1,20 @@
 use super::*;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 每个日志文件最多带多少行到反馈文件里。7 个文件 × 400 行足够定位，
 /// 又不会把用户的历史日志整包发出来。
 const REPORT_TAIL_LINES: usize = 400;
 
-/// Howard Hinnant 的 `civil_from_days`：把 1970-01-01 起的天数转成公历。
-pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    (y + i64::from(month <= 2), month as u32, day as u32)
+/// 反馈文件的时间戳：系统时区，文件名用紧凑格式（Windows 文件名不能带 `:`）。
+///
+/// 以前这里手搓了一套 UTC 天文日换算（`civil_from_days`）来拼文件名和标题，
+/// 与日志行的时间口径还不一致：标题写着 UTC，用户按本地时间读。现在统一走
+/// `chrono::Local`，日志行、文件名、标题三者同一个时钟。
+fn local_stamp() -> String {
+    chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
 }
 
-fn utc_stamp() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|delta| delta.as_secs() as i64)
-        .unwrap_or(0);
-    let (year, month, day) = civil_from_days(secs.div_euclid(86_400));
-    let rem = secs.rem_euclid(86_400);
-    format!(
-        "{year:04}{month:02}{day:02}-{:02}{:02}{:02}",
-        rem / 3_600,
-        (rem % 3_600) / 60,
-        rem % 60
-    )
+fn local_iso() -> String {
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S %:z").to_string()
 }
 
 /// 生成反馈文件（命令层在 `domain/diagnostics.rs`）。
@@ -41,11 +24,11 @@ pub(crate) fn write_report(config: Option<diagnostics::ConfigDigest>) -> Result<
     fs::create_dir_all(&dir).map_err(|err| {
         AppError::new(code::INTERNAL, "create report dir failed").with_cause(err.to_string())
     })?;
-    let path = dir.join(format!("luma-report-{}.txt", utc_stamp()));
+    let path = dir.join(format!("luma-report-{}.txt", local_stamp()));
 
     let mut text = String::new();
     text.push_str("Luma 反馈文件（可整份发送，无需额外说明）\n");
-    text.push_str(&format!("生成时间(UTC): {}\n", utc_stamp()));
+    text.push_str(&format!("生成时间: {}\n", local_iso()));
     text.push_str(&format!(
         "版本: {}\n通道: {}\n平台: {}/{}\n",
         diag.version, diag.channel, diag.os, diag.arch

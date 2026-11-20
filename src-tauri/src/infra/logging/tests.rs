@@ -1,13 +1,23 @@
-use super::report::civil_from_days;
 use super::*;
 
 #[test]
-fn civil_dates_round_trip_known_days() {
-    assert_eq!(civil_from_days(0), (1970, 1, 1));
-    assert_eq!(civil_from_days(11_017), (2000, 3, 1));
-    // 2024-02-29（闰日）与 2026-11-11。
-    assert_eq!(civil_from_days(19_782), (2024, 2, 29));
-    assert_eq!(civil_from_days(20_768), (2026, 11, 11));
+fn log_date_and_timestamp_follow_the_local_calendar() {
+    // 文件名里的日期必须与行内时间戳同一口径（系统时区）。两条分开断言：
+    // 一条钉日期取值，一条钉时间戳带偏移量、不再以 UTC 的 `Z` 结尾。
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    assert_eq!(local_date(), today);
+    assert_eq!(local_date().len(), 10);
+
+    use tracing_subscriber::fmt::time::FormatTime;
+    let mut buf = String::new();
+    LocalTimer
+        .format_time(&mut tracing_subscriber::fmt::format::Writer::new(&mut buf))
+        .expect("format_time");
+    assert!(!buf.ends_with('Z'), "timestamp still UTC: {buf}");
+    assert!(
+        buf.contains('+') || buf.contains('-'),
+        "timestamp has no offset: {buf}"
+    );
 }
 
 #[test]

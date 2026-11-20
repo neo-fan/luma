@@ -16,7 +16,9 @@
 //! 其他取舍：
 //! - 滚动与过滤用官方库：`tracing-appender`（`Rotation::DAILY` +
 //!   `max_log_files`）与 `EnvFilter`；前端通道靠 `Targets` 只放 `target: "ui"`；
-//! - 每个通道保留最近 7 份，按 UTC 日期命名（与 `tracing-appender` 的规则一致）；
+//! - 每个通道保留最近 7 份，**按系统时区的日期命名与切分**（行内时间戳同为
+//!   本地时间，两者必须同一口径——否则北京时间 00:00~08:00 写出的行会落进
+//!   「前一天」的文件里）；
 //! - 日志会被用户直接发给开发者做试运行反馈，所以 URL 一律脱敏（去 query /
 //!   fragment、截断 160 字符）。脱敏点统一在 `CappedWriter::write`——宿主与
 //!   前端两个通道都经过它，任何新增日志默认就是安全的（前端再调一次
@@ -30,11 +32,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::fmt;
 use tracing_subscriber::layer::SubscriberExt;
@@ -82,7 +82,7 @@ impl Channel {
         }
     }
 
-    /// 文件名前缀（`<prefix>.<UTC 日期>.log`）。
+    /// 文件名前缀（`<prefix>.<本地日期>.log`）。
     fn file_prefix(self) -> &'static str {
         match self {
             Channel::App => "luma",
@@ -107,10 +107,10 @@ pub fn channel_dir(channel: Channel) -> PathBuf {
     log_dir().join(channel.dir_name())
 }
 
-/// 当天（UTC）的通道文件路径。宿主自己的两个通道由 `tracing-appender` 按同
-/// 一命名规则创建；适配层的路径由宿主注入给 Python（`LUMA_ADAPTER_LOG`）。
+/// 当天（系统时区）的通道文件路径。宿主自己的两个通道由本模块的 `DailyFile`
+/// 按同一命名规则创建；适配层的路径由宿主注入给 Python（`LUMA_ADAPTER_LOG`）。
 pub fn channel_file(channel: Channel) -> PathBuf {
-    channel_dir(channel).join(format!("{}.{}.log", channel.file_prefix(), utc_date()))
+    channel_dir(channel).join(format!("{}.{}.log", channel.file_prefix(), local_date()))
 }
 
 /// 适配层日志路径（`bridge` 在 spawn Python 时注入 `LUMA_ADAPTER_LOG`）。
@@ -176,16 +176,63 @@ pub fn init() {
     );
 }
 
-fn appender(
-    dir: &Path,
-    channel: Channel,
-) -> Result<RollingFileAppender, tracing_appender::rolling::InitError> {
-    RollingFileAppender::builder()
-        .rotation(Rotation::DAILY)
-        .filename_prefix(channel.file_prefix())
-        .filename_suffix("log")
-        .max_log_files(KEEP_FILES)
-        .build(dir.join(channel.dir_name()))
+fn appender(dir: &Path, channel: Channel) -> io::Result<DailyFile> {
+    DailyFile::open(dir.join(channel.dir_name()), channel.file_prefix())
+}
+
+/// 按「系统时区日期」切分的日志文件。
+///
+/// 为什么不直接用 `tracing-appender` 的 `Rotation::DAILY`：它内部的日期取自
+/// `OffsetDateTime::now_utc()`（`rolling.rs`，且没有可覆写的钩子），北京时间
+/// 00:00~08:00 写出的行会落进「前一天」的文件里——文件名与行内时间戳互相
+/// 矛盾，正是排障时最容易被误读的地方。这里只做一件事：每次写之前比一次
+/// 本地日期，跨天就换句柄；保留份数与容量上限复用下面的 `prune_files`。
+struct DailyFile {
+    dir: PathBuf,
+    prefix: &'static str,
+    /// 当前句柄对应的本地日期（`YYYY-MM-DD`）。
+    date: String,
+    file: fs::File,
+}
+
+impl DailyFile {
+    fn open(dir: PathBuf, prefix: &'static str) -> io::Result<Self> {
+        fs::create_dir_all(&dir)?;
+        let date = local_date();
+        let file = open_append(&dir, prefix, &date)?;
+        // 启动即按保留策略清一次：上一次运行可能留下超过 KEEP_FILES 份。
+        prune_files(&dir, prefix, KEEP_FILES, MAX_CHANNEL_BYTES);
+        Ok(Self {
+            dir,
+            prefix,
+            date,
+            file,
+        })
+    }
+}
+
+impl Write for DailyFile {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let today = local_date();
+        if today != self.date {
+            // 跨天：先开新文件再换句柄，失败时旧句柄照旧可用。
+            self.file = open_append(&self.dir, self.prefix, &today)?;
+            self.date = today;
+            prune_files(&self.dir, self.prefix, KEEP_FILES, MAX_CHANNEL_BYTES);
+        }
+        self.file.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
+fn open_append(dir: &Path, prefix: &str, date: &str) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(format!("{prefix}.{date}.log")))
 }
 
 /// 给 appender 套一层容量上限。
@@ -196,7 +243,7 @@ fn appender(
 /// 整天文件，而不是去切一个正在被追加的句柄（切活跃文件会丢行、还要处理
 /// 句柄重开）。删完整文件既安全又和「按天保留」的语义一致。
 struct CappedWriter {
-    inner: RollingFileAppender,
+    inner: DailyFile,
     dir: PathBuf,
     prefix: &'static str,
     written: AtomicU64,
@@ -204,7 +251,7 @@ struct CappedWriter {
 }
 
 impl CappedWriter {
-    fn new(inner: RollingFileAppender, dir: PathBuf, prefix: &'static str) -> Self {
+    fn new(inner: DailyFile, dir: PathBuf, prefix: &'static str) -> Self {
         let written = dir_bytes(&dir, prefix);
         Self {
             inner,
@@ -219,7 +266,7 @@ impl CappedWriter {
         if self.pruning.swap(true, Ordering::AcqRel) {
             return;
         }
-        prune_bytes(&self.dir, self.prefix, MAX_CHANNEL_BYTES);
+        prune_files(&self.dir, self.prefix, KEEP_FILES, MAX_CHANNEL_BYTES);
         self.written
             .store(dir_bytes(&self.dir, self.prefix), Ordering::Release);
         self.pruning.store(false, Ordering::Release);
@@ -287,6 +334,36 @@ fn dir_bytes(dir: &Path, prefix: &str) -> u64 {
         .sum()
 }
 
+/// 通道的保留策略：先按份数、再按容量，删最旧的文件。
+///
+/// 两份上限是两种不同的失控：份数兜「每天只写几行，攒了很多天」，容量兜
+/// 「一天就写爆」（比如反复重连的 debug 日志）。两条都从最旧的一端删，正在
+/// 写的那一份永远不动——删活跃文件会丢行，还要处理句柄重开。
+fn prune_files(dir: &Path, prefix: &str, keep: usize, cap: u64) {
+    prune_count(dir, prefix, keep);
+    prune_bytes(dir, prefix, cap);
+}
+
+/// 按份数删：文件名里是 ISO 日期，字典序即时间序，所以按路径排序后取前面
+/// 多出来的那几份就是最旧的。最新一份（当前正在写的）永远保留。
+fn prune_count(dir: &Path, prefix: &str, keep: usize) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| channel_file_matches(path, prefix))
+        .collect();
+    if files.len() <= keep.max(1) {
+        return;
+    }
+    files.sort();
+    for old in &files[..files.len() - keep.max(1)] {
+        let _ = fs::remove_file(old);
+    }
+}
+
 /// 删最旧的文件直到低于 `cap`；正在写的那一份（最新的 `.log`）永远保留。
 fn prune_bytes(dir: &Path, prefix: &str, cap: u64) {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -336,13 +413,34 @@ fn channel_file_matches(path: &Path, prefix: &str) -> bool {
     looks_like_log && name.starts_with(prefix)
 }
 
-fn stdout_layer<S>() -> fmt::Layer<S>
+/// 行首时间戳：**系统时区**，带偏移量（`2026-11-21T01:15:52.905780+08:00`）。
+///
+/// `tracing-subscriber` 默认计时器输出 UTC（`…Z`）。但读日志的是按本地时间
+/// 生活的人：「我一点多卡住了」对上一行 `17:15Z` 每次都要心算，跨天时连日期
+/// 都不一致（UTC+8 的凌晨属于 UTC 的前一天）。带偏移量输出，日志转给别的
+/// 时区看也不会产生歧义。
+struct LocalTimer;
+
+impl tracing_subscriber::fmt::time::FormatTime for LocalTimer {
+    fn format_time(&self, w: &mut fmt::format::Writer<'_>) -> std::fmt::Result {
+        write!(
+            w,
+            "{}",
+            chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.6f%:z")
+        )
+    }
+}
+
+/// 返回 `impl Layer` 而不是 `fmt::Layer<S>`：换了自定义计时器后具体类型变成
+/// `fmt::Layer<S, DefaultFields, Format<Full, LocalTimer>>`，写全太脆。
+fn stdout_layer<S>() -> impl Layer<S>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
     fmt::layer()
         .with_ansi(true)
         .with_target(true)
+        .with_timer(LocalTimer)
         .with_thread_ids(false)
         .with_thread_names(false)
 }
@@ -363,6 +461,7 @@ where
     fmt::layer()
         .with_ansi(false)
         .with_target(true)
+        .with_timer(LocalTimer)
         .with_writer(writer)
         .with_filter(targets)
 }
@@ -404,31 +503,16 @@ fn migrate_legacy(root: &Path) {
     }
 }
 
-/// 适配层文件由 Python 自己写，滚动策略也由我们自己执行（按文件名里的日期
-/// 字典序，ISO 日期天然有序），并在初始化时把整目录压到容量上限以内。
+/// 适配层文件由 Python 自己写，滚动策略由宿主执行：与宿主两个通道同一套保留
+/// 口径（份数 + 容量），只是不会跨天换句柄——Python 进程拿到的路径是 spawn
+/// 那一刻的日期，进程活着跨天就会继续写旧文件，重启即恢复。
 fn prune_spider(root: &Path) {
-    let dir = root.join(Channel::Spider.dir_name());
-    prune_bytes(&dir, "spider", MAX_CHANNEL_BYTES);
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return;
-    };
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name.starts_with("spider.") && name.ends_with(".log"))
-                .unwrap_or(false)
-        })
-        .collect();
-    if files.len() <= KEEP_FILES {
-        return;
-    }
-    files.sort();
-    for old in &files[..files.len() - KEEP_FILES] {
-        let _ = fs::remove_file(old);
-    }
+    prune_files(
+        &root.join(Channel::Spider.dir_name()),
+        Channel::Spider.file_prefix(),
+        KEEP_FILES,
+        MAX_CHANNEL_BYTES,
+    );
 }
 
 /// 宿主日志文件名：新命名 `luma.<日期>.log`，1.0.3 之前的 `luma-<日期>.log`。
@@ -441,14 +525,10 @@ pub(super) fn is_spider_log(name: &str) -> bool {
     name.starts_with("spider") && (name.ends_with(".log") || name.ends_with(".log.1"))
 }
 
-/// UTC 日期（YYYY-MM-DD），与 `tracing-appender` 的 `Rotation::DAILY` 一致。
-fn utc_date() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|delta| delta.as_secs() as i64)
-        .unwrap_or(0);
-    let (year, month, day) = report::civil_from_days(secs.div_euclid(86_400));
-    format!("{year:04}-{month:02}-{day:02}")
+/// 系统时区的日期（`YYYY-MM-DD`）：文件名与 `tracing-appender` 的滚动日期
+/// 都要按本地时间，否则 00:00~08:00（UTC+8）写出的行会落进「前一天」。
+fn local_date() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
 // ---- 命令层 ---------------------------------------------------------------

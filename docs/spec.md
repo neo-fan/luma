@@ -155,7 +155,8 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 ## 10. 日志、诊断与版本
 
-- 日志三通道：`app` / `ui` / `spider`，落 `<data>/logs/<channel>/<channel>.<UTC 日期>.log`，
+- 日志三通道：`app` / `ui` / `spider`，落 `<data>/logs/<channel>/<channel>.<本地日期>.log`
+  （系统时区：行首时间戳与文件名日期同一口径，带偏移量），
   单文件 10 MiB 滚动。`spider` 通道只放脚本异常与 traceback，适配层 JSONL 画在同一
   文件里（`layer: "py-adapter"`）。
 - 诊断（设置 → 诊断）：版本、build 号、运行平台、数据目录、日志目录、日志文件、

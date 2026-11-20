@@ -128,7 +128,7 @@ $env:PATH    = "$vc\bin\Hostx64\x64;$sdk\bin\10.0.26100.0\x64;$env:PATH"   # 必
 - 配置解密 / 归一化 / CMS 解析 / M3U / XMLTV 的参考实现全在 Rust（`domain/config/{decrypt,normalize}.rs`、`domain/spider/cms_parse.rs`、`domain/live/{m3u,epg}.rs`）；`sidecars/py/` 里没有这些模块的副本。开发工具要复用旧 Python 实现时去 `tools/audit/`（`cms.py` / `decrypt.py` / `normalize.py`），不要从适配层 import。
 - 调用任何已删方法（`config.decrypt`、`config.normalize`、`config.mergeRepos`、`site.route`、`live.parseM3u`、`live.parseEpg`、`parse.resolve`、`site.parse*`）会明确回 `{"code":"INTERNAL","message":"unknown method: …"}`，不会静默成功。
 - 空详情（脚本返回 `{"list": []}`）由宿主记 `spider detailContent returned no video`（app 通道，带 `source_api` / `vod_id`），spider 通道只留脚本内的异常与 traceback。
-- 诊断日志写 `logs/spider/spider.<UTC 日期>.log`（每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback）。宿主 spawn 时通过 `LUMA_ADAPTER_LOG` 注入这个路径，`LUMA_ADAPTER_LOG` 也可手动改；单个文件上限 10 MiB，超出滚成 `.1`。日志模块对 spider 协议尽力而为——缺失也不让 py 源整体失效。
+- 诊断日志写 `logs/spider/spider.<本地日期>.log`（每行一条 JSON，含站点 `api`、脚本指纹、方法与完整 traceback）。宿主 spawn 时通过 `LUMA_ADAPTER_LOG` 注入这个路径，`LUMA_ADAPTER_LOG` 也可手动改；单个文件上限 10 MiB，超出滚成 `.1`。日志模块对 spider 协议尽力而为——缺失也不让 py 源整体失效。
 - 临时切解释器：`$env:LUMA_PYTHON = <path>`。
 
 ### 3.4 QuickJS 侧载进程（JS 源）
@@ -144,9 +144,11 @@ $env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（安装版�
 ```
 
 - 位置（三个通道，各自独立滚动、各自保留最近 7 天）：
-  - `logs/app/luma.<UTC 日期>.log` —— 宿主（Rust）：网络、数据库、播放、配置导入；
-  - `logs/ui/ui.<UTC 日期>.log` —— 前端（React，`tracing` target 固定 `ui`）；
-  - `logs/spider/spider.<UTC 日期>.log` —— Python 适配层（第三方源脚本的异常与 traceback）。
+  - `logs/app/luma.<本地日期>.log` —— 宿主（Rust）：网络、数据库、播放、配置导入；
+  - `logs/ui/ui.<本地日期>.log` —— 前端（React，`tracing` target 固定 `ui`）；
+  - `logs/spider/spider.<本地日期>.log` —— Python 适配层（第三方源脚本的异常与 traceback）。
+
+  行首时间戳与文件名日期**都按系统时区**（`2026-11-21T01:15:52.905780+08:00`），两者同一口径：`tracing-subscriber` 默认 UTC 会让 UTC+8 凌晨的日志落进「前一天」的文件。宿主两个通道由 `infra/logging` 的 `DailyFile` 自己按本地日期跨天换句柄（`tracing-appender` 的 `Rotation::DAILY` 固定按 UTC 算日期且无可覆写钩子）。
 
   dev/安装模式在 `%APPDATA%\<identifier>\logs\`（如 `app.luma.dev`）；便携模式（exe 同级 `data/`）为 `data/logs\`。每个通道上限 10 MiB，超出先删最旧的一整天，不切正在写的文件。
 - 内容：启动摘要、前端关键操作、IPC 错误、未捕获异常；URL 只记 `scheme+host+path`，查询参数与播放直链不落盘。
