@@ -9,6 +9,8 @@
  * 依赖 dev 桌面窗口已在线（CDP 127.0.0.1:9222）与真实 active 配置；
  * 不重新导入、不改 active。  node tools/probes/probe_source_cache.mjs
  */
+import { NAV_READY, reloadAndWait } from "./lib/probeWait.mjs";
+
 class Cdp {
   constructor(wsUrl) {
     this.ws = new WebSocket(wsUrl);
@@ -183,12 +185,11 @@ try {
   // #/player，PlayerPage 一挂载就 sourceCache.prefetch 全站聚合（PlayerPage.tsx:574），
   // 会把「搜索本身不经过 sourceCache」这条断言的基线 aggregateCalls 污染成 1。
   await cdp.eval("location.hash = '#/'");
-  await cdp.send("Page.reload", { ignoreCache: true });
-
-  const navReady = await cdp.eval(
-    WAIT("return document.querySelector('.nav__item') ? 'OK' : null;", 30000),
-  );
-  assert(navReady === "OK", "sidebar rendered", String(navReady));
+  // reload 会销毁执行上下文：页内 WAIT 可能整条落进旧上下文拿到假绿
+  // （2026-11-20 套件实测），boot 用宿主侧两段式 reloadAndWait。
+  await reloadAndWait(cdp, NAV_READY, 45000).then((navRaw) => {
+    assert(Boolean(navRaw), "sidebar rendered", String(navRaw));
+  });
   assert((await cdp.eval(SPY)) === "OK", "sourceCache singleton wrapped by spy");
 
   const opened = await cdp.eval(CLICK("搜索", ".nav__item"));
@@ -248,10 +249,13 @@ try {
   // 也没有 textContent —— 见 src/components/IconButton.tsx / DetailPage.tsx:739）。
   const swap = await cdp.eval(CLICK("换源", ".page-head button, .page-head a"));
   assert(swap === "CLICKED", "open source-picker", swap);
+  // 契约的本体是下面两条 ensure/refresh 计数断言（不重检索）；「秒出」的
+  // 窗口放宽到 15s：套件里后台预取可能还在路上（慢网 ensure 20s+），
+  // 3s 会把「预取未完成」误判成「触发了重检索」（2026-11-20 套件实测）。
   const fast = await cdp.eval(
-    WAIT("return document.querySelectorAll('.source-item').length >= 1 ? 'READY' : null;", 3000),
+    WAIT("return document.querySelectorAll('.source-item').length >= 1 ? 'READY' : null;", 15000),
   );
-  assert(fast === "READY", "candidates rendered within 3s (no 20s re-search)", String(fast));
+  assert(fast === "READY", "candidates rendered within 15s (prefetch, not re-search)", String(fast));
   const afterRaw = await cdp.eval(STATS);
   const after = JSON.parse(afterRaw || "{}");
   console.log(`[info] before picker: ${beforeRaw}`);

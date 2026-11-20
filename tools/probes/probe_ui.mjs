@@ -153,7 +153,7 @@ const originalActiveId = await cdp.eval(
 
 // 2. settings + config import through the real UI
 await cdp.eval(CLICK("设置"));
-assert((await cdp.eval(WAIT_TEXT("导入配置（URL）"))) === "FOUND", "settings page", "");
+assert((await cdp.eval(WAIT_TEXT("导入订阅（URL）"))) === "FOUND", "settings page", "");
 assert((await cdp.eval(TYPE('input.input', "http://127.0.0.1:8787/config.json"))) === "TYPED", "typed config url", "");
 await cdp.eval(CLICK("导入"));
 const imported = await cdp.eval(WAIT_TEXT("已导入", 30000));

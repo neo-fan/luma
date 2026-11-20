@@ -11,6 +11,7 @@
  * 每一步 assert；任一失败或出现未捕获页面异常即以退出码 1 结束。
  */
 import { writeFileSync } from "node:fs";
+import { NAV_READY, reloadAndWait, waitEval } from "./lib/probeWait.mjs";
 
 const KEYWORD = "走马上任";
 
@@ -148,16 +149,11 @@ try {
   await cdp.send("Runtime.enable");
   await cdp.send("Page.enable");
   // 每次都从最新 bundle 起跑，避免窗口停留在上一次 HMR 的中间态。
-  await cdp.send("Page.reload", { ignoreCache: true });
-
-  // 1. 侧栏搜索：真实聚合搜索（12~20s），等 .result-meta 出现且 .spinner 消失。
-  const navReady = await cdp.eval(
-    WAIT("return document.querySelector('.nav__item') ? 'OK' : null;", 30000),
-  );
-  assert(navReady === "OK", "sidebar .nav__item rendered", String(navReady));
-  const navRaw = await cdp.eval(
-    `JSON.stringify([...document.querySelectorAll('.nav__item')].map((n) => (n.textContent || '').trim()))`,
-  );
+  // reload 会销毁执行上下文：页内 WAIT 整条落进旧上下文会拿到假绿
+  // （旧 DOM 同样有 .nav__item，2026-11-20 套件实测 boot 假绿后整串假红），
+  // 必须用宿主侧两段式 reloadAndWait，在确认新上下文后再等侧栏文本。
+  const navRaw = await reloadAndWait(cdp, NAV_READY, 45000);
+  assert(Boolean(navRaw), "page reloaded with latest bundle", String(navRaw));
   const nav = JSON.parse(navRaw || "[]");
   assert(
     nav.some((t) => t.includes("首页")) && nav.some((t) => t.includes("搜索")),
@@ -376,22 +372,20 @@ try {
     WAIT("return document.querySelector('.player-about') ? 'OK' : null;", 30000),
   );
   assert(aboutReady === "OK", ".player-about rendered", String(aboutReady));
-  const aboutRaw = await cdp.eval(`(() => {
-    const card = document.querySelector('.player-about');
-    if (!card) return null;
-    return JSON.stringify(
-      [...card.querySelectorAll('button, a')].map(
-        (n) => (n.getAttribute('aria-label') || n.textContent || '').trim(),
-      ),
-    );
-  })()`);
-  const aboutButtons = JSON.parse(aboutRaw || "[]");
-  assert(aboutButtons.some((t) => t.includes("换源")), ".player-about has 换源 icon", JSON.stringify(aboutButtons));
-  // 选集改为常驻：不再有「选集」按钮，剧集列表拉到就直接出现在信息卡下面。
-  const episodesReady = await cdp.eval(
-    WAIT("return document.querySelector('.player-episodes .episode') ? 'OK' : null;", 30000),
+  // 换源图标是 ArtPlayer 播放实例就绪后才 push 的（usePlayerEngine 与
+  // 下一集/刷新同批），刚挂的 .player-about 读一帧常拿空数组——与
+  // probe_player_nav 同口径改为轮询，而不是单帧读假红。
+  // 换源图标随播放页新布局移进了选集面板头部（EpisodePanel section-head，
+  // 「N 条线路 · 当前线路 M 集」右侧），不在 .player-about 里——探针锚点
+  // 与 UI 同步（2026-11-20 实测漂移：.player-about 里查 换源 恒为空数组）。
+  // 慢源（py 源解析 + level-4 嗅探 15s/次）可能让选集面板 30s 后才挂出，
+  // 等待窗给 60s。
+  const episodesReady = await waitEval(
+    cdp,
+    "return document.querySelector('.player-episodes .episode') && document.querySelector('.player-episodes .section-head button[aria-label=\"换源\"]') ? 'OK' : null;",
+    60000,
   );
-  assert(episodesReady === "OK", "选集常驻在信息卡下方", String(episodesReady));
+  assert(episodesReady === "OK", "选集面板常驻且换源图标在面板头部", String(episodesReady));
   const panelRaw = await cdp.eval(`(() => {
     const panel = document.querySelector('.player-episodes');
     if (!panel) return null;
@@ -407,9 +401,9 @@ try {
   assert(panel.active > 0, ".player-episodes current .episode.is-active present", JSON.stringify(panel));
   await cdp.shot("player-episodes");
 
-  // 7. 播放页换源图标 → picker 出现 → 关闭图标。
-  const openFromPlayer = await cdp.eval(CLICK("换源", ".player-about button, .player-about a"));
-  assert(openFromPlayer === "CLICKED", "open source-picker from player-about", openFromPlayer);
+  // 7. 选集面板头部换源图标 → picker 出现 → 关闭图标。
+  const openFromPlayer = await cdp.eval(CLICK("换源", ".player-episodes .section-head button"));
+  assert(openFromPlayer === "CLICKED", "open source-picker from episode panel head", openFromPlayer);
   const pickerFromPlayer = await cdp.eval(
     WAIT("return document.querySelector('.source-picker') ? 'OPEN' : null;", 10000),
   );

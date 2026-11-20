@@ -56,7 +56,19 @@
 - **播放器「下一集」切换态**：转环取代箭头 + `cursor:not-allowed` 锁定态（旧版描弧叠箭头「不协调」、且点击无「已禁用」反馈）。
 - **豆瓣缓存键保留季标记**：`cache_key` 不再剥掉「第X季」，年份仍是首选区分、季标记兜底。
 
+### 新增
+- **首页分类筛选面板（TVBox `filters` 协议）**：`homeContent` 按 TVBox 标准语义带 `filter=true` 调用，py/js 源返回的筛选定义（豆瓣[py]「电影筛选/电视筛选」的类型/地区/排序/年代等）渲染成分组 chips；点选后以 `categoryContent` 第 4 参 extend 传给源（空值/「全部」不进 extend，尊重源的默认语义）。缓存键按 extend 稳定后缀区分，同条件共享缓存；筛选变化重置已加载页数，切站/切分类清空选中值。新增 `src/lib/categoryFilters.ts` 纯函数层（形状校验/extend 构造/缓存键后缀/默认高亮）+ 10 条单测。实测豆瓣[py]「电影筛选」点「喜剧」从 6 条冷门片变为 19 条正序热门数据。
+
 ### 工程
+- **窗口探针套件假红修复（reload 竞态与锚点漂移）**：
+  - 新增 `tools/probes/lib/probeWait.mjs`：`waitEval`（宿主侧轮询，eval 异常按未就绪处理）与 `reloadAndWait`（window mark 两段式，先确认旧执行上下文消失再等挂载判据）。此前探针 `Page.reload` 后用页内 WAIT（单条 eval 自旋），整条落进旧上下文拿到假绿，下一条 eval 落在新上下文未挂载 DOM 上——`source_picker` / `artplayer` / `page_cache` 套件里整串假红、单跑全绿的根源。
+  - `probe_source_picker` / `probe_artplayer` / `probe_page_cache` 的 boot 改走 `reloadAndWait`；聚合搜索等待放宽为「`.result-meta` 出现」+ 120s（慢网下卡片早已流入而 meta 迟迟不出，60s 假红）；`probe_source_picker` 的播放页换源图标锚点从 `.player-about` 移到选集面板头部（UI 新布局里入口已随 EpisodePanel 迁移），等待窗 60s 兜慢源解析。
+  - `run_probes.mjs` 的 `resetWindow` 归位判据从「`.nav__item` 存在」升级为「侧栏带 首页/搜索 文本」，避免旧上下文残影通过存在性检查。
+  - 截图改 jpeg + 尽力而为：png 在本机 WebView2 重负载（视频解码中）下会挂到 120s 超时（`probe_ui`/`source_picker` 早已改 jpeg 踩过同一坑），`search_ui`/`artplayer`/`page_cache` 同步改 jpeg，且截图失败只记 warn 不判死（截图是诊断 extras，不是断言）。
+  - `probe_session_machine` 两处假红收敛：原地换集收口的 hasPlayed 断言与机器 MEDIA_ALIVE 事件存在一拍竞态，改 5s 宽限轮询；交棒链「卡在 recovering」窗口 20s → 60s（跨源自愈要跑一次聚合搜索，实测 20~40s，原窗口把正常自愈误判成「上层没接住」）。
+  - `probe_source_cache`：boot 同步改走 `reloadAndWait`；「候选 3s 内直出」放宽到 15s——契约本体是 ensure/refresh 计数断言（不触发重检索），3s 会把慢网下「后台预取未完成」误判成重检索。
+- 回归快照同步：`pnpm test` 692（81 文件，新增 categoryFilters 单测）。
+- **启动失败改为可取证退出，不再 panic**：`src-tauri/src/lib.rs` 把 `run()` 拆成外壳与 `run_inner() -> Result<(), AppError>`，DB 打开、两个 store 加载、Tauri 应用构建共 4 处 `expect` 全部改为 `?` 上抛；外壳统一写 `tracing::error!` + `eprintln!` 后以退出码 1 结束。`logging::init()` 先于这些步骤，失败原因仍落日志。补 1 条错误映射单测。同步 `AGENTS.md` / `RELEASING.md` / `TESTING.md` 的回归快照：`pnpm test` 682（80 文件）、`cargo test --lib` 265 passed / 2 ignored、`adapter_isolation` 15/15、契约方法 8 项。
 - **健壮性与去重收口（2.0.0 收尾）**：
   - **播放切换编排去重**：换集与换源各自手写了一遍「集级缓存 → playerContent → `resolve_play` → 类型校验 → 写缓存」，合并为 `hooks/playback/episodePlayResolve.ts`；两处 `commitGate` 落地块合并为 controller 内的 `applySwitch`（进锁校验代次、换流、记真实在播身份、提交整份 target）；四条出口的 `player` 路由对象字面量收敛到 `hooks/playback/playerRoute.ts`——`playFrom` 丢了新页面就没有线路 headers，`failoverKey` 丢了自动换线账本就在跳转后断链，而两者都是可选字段、漏传编译期完全合法。补 7 条单测（缓存命中不回首源站、kind 变化重新解析、不可解析线路不调 `resolve_play`、落在 `page` 一律报错、可选字段不落空串）。
   - **数据层写路径**：播放记录容量裁剪失败改为上抛（原实现按「裁剪失败就整笔回滚」处理，会让刚写入的那条记录一起消失），并排除本次写入行；`PRAGMA user_version` 只在低于当前 schema 版本时写，避免降级运行把版本号改坏。
@@ -94,6 +106,7 @@
   - `check.py` 由 9 项升为 **11 项 ALL GREEN**；文档（AGENTS / CONTRIBUTING / DEVELOPMENT / TESTING / RELEASING / spec / project-layout）的「9 项 / 9/9」与回归计数一并刷新。
 
 ### 修复
+- **两个窗口探针锚定已过时的设置页标题，导入步骤假失败并掩盖真实回归**：`ConfigImportSection` 的区块标题早已从「导入配置（URL）」改成「导入订阅（URL）」，`probe_search_ui` 与 `probe_ui` 仍按旧文案定位，导致 `type config url` 返回 MISSING、`real config imported` 假红——后续搜索实际跑在旧缓存上（`site cache populated` 仍是旧配置 id），整套「导入→搜索→详情→播放」的导入环节形同未测。两个探针的标题锚点改为当前文案；单跑 `search_ui` 复验：11 项导入/搜索断言全绿，真实导入新配置（73 可用 / 20 屏蔽），详情页 41 集、播放器解码出 1920×1080 首帧。
 - **订阅里的畸形直播源（`https://https://…`）报「网络不可达」，且永远拿不到 GitHub 加速**：取证到源头——上游 `cluntop/tvbox` 的 `box.json` 第 10 条直播源**原文就写着** `"url": "https://https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u"`（社区配置常见手误），库里两份快照（imported/runtime）都带着它。它还会**躲过加速改写**：`ghproxy::apply` 先 `strip_proxy` 再判主机，而这条地址第一段主机被解析成 `https:`（不是 GitHub）→ 原样返回，于是既没加速也治不好，最后被直接丢给 `reqwest` → `fetch … failed` → 界面「直播源加载失败 / 网络不可达」，用户完全看不出是配置笔误。修法按「**全局收敛到一点**」：`domain/config/normalize.rs` 新增 `repair_url`，只纠正三类确定性畸形（重复前导 scheme、scheme 后多余斜杠、scheme 后空白；保留最内层 scheme——那才是贴着主机的一个），**不补 scheme、不改大小写、不碰 magnet/ws/data**（猜出来的地址比坏地址更难查）。两个应用点都在配置层：导入转换（`normalize_config`，含把 `_raw` 一起过）与启动自愈（`ConfigStore::load` 重放同一函数并落库，沿用 `refresh_policy` 的「只在真变了才写」形状）；**请求路径不再兜底**（此前在 `http::fetch` 加过一层，按收敛要求撤掉）。订阅地址自己写歪时只影响相对解析基准，配置 id 仍按原样派生，避免「纠正前后算出两个 id → 重新导入多出一份重复配置」。前端不需要第二份兜底：`AppShell` 启动即以 `config_active` 无条件覆盖站点缓存里的 lives。证据：修复版 dev 启动后应用视图 `remainingBad:0`、当前库文件扫描 `double-scheme total:0`；那条 YanG 源治好并**首次拿到加速前缀**，`liveParse` 188ms 返回 3 组 86 个频道（此前是加载失败）。单测覆盖三类纠正 + 「合法代理写法 `https://gh-proxy.com/https://…` 绝不能动」的负例 + 导入纠正 + id 不变 + 启动自愈落库，config 48 项全绿。
 - **设置页手填的 EPG 地址也纳入同一 `repair_url` 纠正点**：上一项把畸形地址纠正收敛到配置层（订阅 lives），但 EPG 是运行态设置（`live_epg` / `live_epg_warm` 每次把用户填的地址传给后端），不走导入路径，写歪了不会被治。现把同一纠正接到后端 EPG 命令入口：`config::repair_url` 提为 `pub(crate)`，两个命令在 http(s) 校验后、取数与结果缓存 key 之前先纠正地址，覆盖所有来源（手填 / 早期存下的坏值）。
 - **点播点「换下一条线路」后底部选集区毫无反应（实测 9s 空窗）**：CDP 时间线坐实——点击瞬间起，播放器已经写着「正在切换线路…」，底部 `.player-episodes` 却全程 `is-loading=false`、线路 chip 高亮仍停在旧线路，直到 ~9.7s 探测成功才跳过去；用户读到的是「点了没反应」。原因：线路候选要**并发探活**才知道最终切到哪条，而 `nextLine` 为了不让 UI 卡成永久转圈，发起时就把 phase 收回 `idle`，于是 `loading={switching || engine.switching}` 在这段窗口里恒为 false——面板自带的在途态（注释写明「与播放器画面的加载中同时出现」）恰恰漏接了这条入口。修复：`PlayerPage` 抽出 `panelBusy = switching || engine.switching || nextLineBusy` 喂给面板。复验（同一条 6 线路的慢源）：点击后 `t+0.0s panelLoading=true`，`t+9.7s` chip 0→4 落地、在途态同时解除，`t+10.7s` 出画，`panel_showed_loading_while_switching: true`。契约测（`playerLifecycle.test.ts`）钉住这条接线与面板对 `is-loading`/`aria-busy` 的消费。

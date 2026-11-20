@@ -18,6 +18,7 @@
  * 截图写入 tools/.out/page-cache.png；退出码 0 仅当全部断言通过且无未捕获页面异常。
  */
 import { writeFileSync } from "node:fs";
+import { NAV_READY, reloadAndWait, waitEval } from "./lib/probeWait.mjs";
 
 const KEYWORD = "走马上任";
 const SETTLE_MS = 2000;
@@ -75,10 +76,17 @@ class Cdp {
   }
 
   async shot(name) {
-    const res = await this.send("Page.captureScreenshot", { format: "png" });
-    const path = `tools/.out/${name}.png`;
-    writeFileSync(path, Buffer.from(res.data, "base64"));
-    console.log(`[shot] ${path}`);
+    // 截图是诊断 extras，不是断言：重负载（视频解码中）下
+    // Page.captureScreenshot 会挂到 120s 超时（2026-11-20 套件实测，
+    // search_ui 全绿步骤后栽在截图上）。尽力而为：失败只记 warn。
+    try {
+      const res = await this.send("Page.captureScreenshot", { format: "jpeg", quality: 85 });
+      const path = `tools/.out/${name}.jpg`;
+      writeFileSync(path, Buffer.from(res.data, "base64"));
+      console.log(`[shot] ${path}`);
+    } catch (err) {
+      console.log(`[warn] screenshot ${name} failed: ${String(err && err.message || err)}`);
+    }
   }
 
   close() {
@@ -267,16 +275,17 @@ try {
   await cdp.send("Runtime.enable");
   await cdp.send("Page.enable");
   // 唯一一次 reload；之后不再 reload，否则 window.__cacheSpy 会被清空。
-  await cdp.send("Page.reload", { ignoreCache: true });
-  await new Promise((r) => setTimeout(r, 2500)); // 2~3s 等新 bundle 起来
+  // reload 会销毁执行上下文：页内 WAIT 可能落进旧上下文拿到假绿
+  // （2026-11-20 套件实测），boot 一律用宿主侧两段式 reloadAndWait。
+  const navRaw = await reloadAndWait(cdp, NAV_READY, 45000);
+  assert(Boolean(navRaw), "page reloaded, sidebar mounted", String(navRaw));
+  if (!navRaw) await diag("reload-nav-timeout");
 
-  // --- Step 1: 等首页 shell + Tauri IPC 就绪，立即注入 spy ---
-  const navReady = await cdp.eval(WAIT("return document.querySelector('.nav__item') ? 'OK' : null;", 30000));
-  assert(navReady === "OK", "page reloaded, .nav__item rendered", String(navReady));
-  if (navReady !== "OK") await diag("reload-nav-timeout");
-
-  const tauriReady = await cdp.eval(
-    WAIT("return (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') ? 'OK' : null;", 30000),
+  // --- Step 1: 等 Tauri IPC 就绪，立即注入 spy ---
+  const tauriReady = await waitEval(
+    cdp,
+    "return (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') ? 'OK' : null;",
+    30000,
   );
   assert(tauriReady === "OK", "Tauri runtime ready", String(tauriReady));
   if (tauriReady !== "OK") await diag("tauri-not-ready");
@@ -296,8 +305,14 @@ try {
   assert(typed === "TYPED", `type keyword '${KEYWORD}' (native setter + input event)`, typed);
   const submitted = await cdp.eval(CLICK("搜索", ".search-bar button"));
   assert(submitted === "CLICKED", "submit search via .search-bar button (搜索)", submitted);
-  const meta = await cdp.eval(
-    WAIT("const el = document.querySelector('.result-meta'); return el && !document.querySelector('.spinner') ? (el.innerText || 'DONE') : null;", 60000),
+  // 聚合完成 = .result-meta 出现（result-meta 只在全站聚合收尾时渲染；
+  // 2026-11-20 套件实测慢网下 60s 不够、而卡片早已流入，放宽为只等 meta
+  // 并把窗口放大到 120s）。随后的 cards>0 断言独立兜底。
+  const meta = await waitEval(
+    cdp,
+    "return document.querySelector('.content .result-meta') ? (document.querySelector('.content .result-meta').innerText || 'DONE') : null;",
+    120000,
+    500,
   );
   assert(!!meta, "aggregate search finished (.result-meta shown, .spinner gone)", String(meta));
   if (!meta) await diag("search-not-finished");

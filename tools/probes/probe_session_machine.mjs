@@ -223,8 +223,18 @@ if (!clicked) {
     if (outcome.ctx?.sessionId !== pre.ctx.sessionId + 1) {
       problems.push(`原地换集 sessionId 应 ${pre.ctx.sessionId + 1}，实际 ${outcome.ctx?.sessionId}`);
     }
-    if (outcome.ctx?.hasPlayed !== true) problems.push("原地换集收口后 hasPlayed 没回到 true");
-    if (outcome.ctx?.unresponsiveProbes !== 0) problems.push("原地换集后 unknown 计数没被 bumpSession 复位");
+    // hasPlayed 由 MEDIA_ALIVE 喂进机器，outcome 的捕获条件（urlChanged +
+    // readyState≥2）可能早机器一拍：给 5s 宽限轮询再断言，别拿捕获瞬间
+    // 的快照误报「收口后没回 true」（2026-11-20 套件实测）。
+    const settled = await until(
+      SESSION,
+      (s) => s.ctx?.hasPlayed === true && s.ctx?.unresponsiveProbes === 0,
+      5000,
+      300,
+    );
+    if (!settled.ok) {
+      problems.push(`原地换集收口后 5s 内 hasPlayed 未回到 true（unknown=${settled.value?.ctx?.unresponsiveProbes}）`);
+    }
   }
 }
 
@@ -279,7 +289,10 @@ if (chainReady) {
     const preSession = before.ctx?.sessionId;
     let stuckSince = Date.now();
     let handed = { ok: false, value: null };
-    const chainDeadline = Date.now() + 30000;
+    // recovering 的出口是 LOAD / USER_SWITCH / FAILED；换线秒级，但**跨源
+    // 自愈**要走一次聚合搜索找候选（实测 20~40s），20s 窗口对它过紧。
+    // 60s 连续卡在 recovering 才判「上层没接住」。
+    const chainDeadline = Date.now() + 75000;
     while (Date.now() < chainDeadline) {
       const r = await cdp.eval(SESSION);
       if (r.state !== "recovering") {
@@ -289,14 +302,14 @@ if (chainReady) {
         handed = { ok: true, value: r };
         break;
       }
-      if (Date.now() - stuckSince > 20000) {
-        problems.push(`交棒后机器卡在 recovering 超过 20s，上层没有接住：${JSON.stringify(r.ctx)}`);
+      if (Date.now() - stuckSince > 60000) {
+        problems.push(`交棒后机器卡在 recovering 超过 60s，上层没有接住：${JSON.stringify(r.ctx)}`);
         break;
       }
       await cdp.sleep(400);
     }
     if (!handed.ok && problems.length === 0) {
-      problems.push("交棒后 30s 内没有新会话接手（既没重建实例也没自增 sessionId）");
+      problems.push("交棒后 75s 内没有新会话接手（既没重建实例也没自增 sessionId）");
     } else if (handed.ok) {
       console.log(
         "新会话:",

@@ -63,10 +63,17 @@ class Cdp {
   }
 
   async shot(name) {
-    const res = await this.send("Page.captureScreenshot", { format: "png" });
-    const path = `tools/.out/${name}.png`;
-    writeFileSync(path, Buffer.from(res.data, "base64"));
-    console.log(`[shot] ${path}`);
+    // 截图是诊断 extras，不是断言：重负载（视频解码中）下
+    // Page.captureScreenshot 会挂到 120s 超时（2026-11-20 套件实测，
+    // search_ui 全绿步骤后栽在截图上）。尽力而为：失败只记 warn。
+    try {
+      const res = await this.send("Page.captureScreenshot", { format: "jpeg", quality: 85 });
+      const path = `tools/.out/${name}.jpg`;
+      writeFileSync(path, Buffer.from(res.data, "base64"));
+      console.log(`[shot] ${path}`);
+    } catch (err) {
+      console.log(`[warn] screenshot ${name} failed: ${String(err && err.message || err)}`);
+    }
   }
 
   close() {
@@ -113,7 +120,7 @@ const TYPE = (selector, value) => `(() => {
  * section（GitHub 加速 / 本地反代 / 直播节目单 / 配置管理 各自带 input），全局第一个
  * 不是配置 URL 输入框 —— 曾因此把 URL 写进别的字段，导入只拿到 1 个站点的配置，
  * 随后所有依赖真实配置的探针全部跑在错配置上（表现为一大片超时）。
- * 锚定「导入配置（URL）」这个标题本身，section 顺序再怎么变也不会串台。
+ * 锚定「导入订阅（URL）」这个标题本身，section 顺序再怎么变也不会串台。
  */
 const TYPE_IN_BLOCK = (heading, value, nth = 0) => `(() => {
   const block = [...document.querySelectorAll('.settings-block')]
@@ -163,7 +170,7 @@ assert(
   (await cdp.eval(WAIT("return document.querySelector('.settings-block .section-title') ? 'OK' : null;", 20000))) === "OK",
   "settings page mounted",
 );
-assert((await cdp.eval(TYPE_IN_BLOCK("导入配置（URL）", CONFIG))) === "TYPED", "type config url");
+assert((await cdp.eval(TYPE_IN_BLOCK("导入订阅（URL）", CONFIG))) === "TYPED", "type config url");
 assert((await cdp.eval(CLICK("导入"))) === "CLICKED", "click import");
 // `已导入配置` is a section title, so wait for the success notice AND a fully
 // populated site cache instead of a loose substring match.

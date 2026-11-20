@@ -238,8 +238,16 @@ async function resetWindow(cdp) {
   }
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
+    // 归位判据要求侧栏有**文本**（首页/搜索）：只有 DOM 节点可能是
+    // 新上下文刚挂的中间态，甚至旧上下文的残影；文本齐备 = React 树挂完。
     const ready = await cdp
-      .eval(`!!document.querySelector('.nav__item') && !!document.querySelector('.page')`)
+      .eval(
+        `(() => {
+          const items = [...document.querySelectorAll('.nav__item')].map((n) => (n.textContent || '').trim());
+          return items.some((t) => t.includes('首页')) && items.some((t) => t.includes('搜索'))
+            && !!document.querySelector('.page');
+        })()`,
+      )
       .catch(() => false);
     if (ready) return true;
     await new Promise((r) => setTimeout(r, 400));

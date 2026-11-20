@@ -10,6 +10,7 @@
  *   LUMA_KEYWORD=走马上任 node tools/probes/probe_artplayer.mjs
  */
 import { writeFileSync } from "node:fs";
+import { NAV_READY, reloadAndWait, waitEval } from "./lib/probeWait.mjs";
 
 const KEYWORD = process.env.LUMA_KEYWORD || "走马上任";
 
@@ -66,10 +67,17 @@ class Cdp {
   }
 
   async shot(name) {
-    const res = await this.send("Page.captureScreenshot", { format: "png" });
-    const path = `tools/.out/${name}.png`;
-    writeFileSync(path, Buffer.from(res.data, "base64"));
-    console.log(`[shot] ${path}`);
+    // 截图是诊断 extras，不是断言：重负载（视频解码中）下
+    // Page.captureScreenshot 会挂到 120s 超时（2026-11-20 套件实测，
+    // search_ui 全绿步骤后栽在截图上）。尽力而为：失败只记 warn。
+    try {
+      const res = await this.send("Page.captureScreenshot", { format: "jpeg", quality: 85 });
+      const path = `tools/.out/${name}.jpg`;
+      writeFileSync(path, Buffer.from(res.data, "base64"));
+      console.log(`[shot] ${path}`);
+    } catch (err) {
+      console.log(`[warn] screenshot ${name} failed: ${String(err && err.message || err)}`);
+    }
   }
 
   close() {
@@ -137,9 +145,11 @@ const page = await waitForPage();
 const cdp = new Cdp(page.webSocketDebuggerUrl);
 await cdp.send("Runtime.enable");
 await cdp.send("Page.enable");
-await cdp.send("Page.reload", { ignoreCache: true });
-const boot = await cdp.eval(WAIT("return document.querySelector('.nav__item') ? 'OK' : null;", 30000));
-assert(boot === "OK", "page reloaded with latest bundle", String(boot));
+// reload 会销毁执行上下文：页内 WAIT 可能整条落进旧上下文拿到假绿
+// （2026-11-20 套件实测：boot ok 但「open search page」起整串假红）。
+// 用宿主侧两段式 reloadAndWait，确认新上下文挂载后再继续。
+const navRaw = await reloadAndWait(cdp, NAV_READY, 45000);
+assert(Boolean(navRaw), "page reloaded with latest bundle", String(navRaw));
 
 // 1. 真实配置全站搜索（沿用 SQLite active 配置，不重复导入）。
 assert((await cdp.eval(CLICK("搜索", ".nav__item"))) === "CLICKED", "open search page");
@@ -153,11 +163,13 @@ assert(searchMounted === "OK", "search page mounted", String(searchMounted));
 assert((await cdp.eval(SELECT(".search-bar select", "__all__"))) === "__all__", "select all sites");
 assert((await cdp.eval(TYPE(".search-bar input.input", KEYWORD))) === "TYPED", "type keyword");
 assert((await cdp.eval(CLICK("搜索", ".search-bar button"))) === "CLICKED", "submit search");
-const meta = await cdp.eval(
-  WAIT(
-    "const el = document.querySelector('.result-meta'); return el && !document.querySelector('.spinner') ? el.innerText : null;",
-    60000,
-  ),
+// 聚合完成 = .result-meta 出现（慢网 60s 可能不够，卡片早已流入；
+// 2026-11-20 套件实测）。cards>0 断言独立兜底。
+const meta = await waitEval(
+  cdp,
+  "return document.querySelector('.result-meta') ? (document.querySelector('.result-meta').innerText || 'DONE') : null;",
+  120000,
+  500,
 );
 assert(!!meta, "aggregate search finished", String(meta));
 const cards = Number(await cdp.eval(`document.querySelectorAll('.vod-card').length`));
