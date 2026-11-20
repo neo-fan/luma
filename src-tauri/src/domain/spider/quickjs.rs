@@ -36,9 +36,6 @@ const MAX_SOURCES: u64 = 64;
 /// js 脚本的内存缓存：TTL 600s、上限 64 条，同 key 并发首次访问合并成一次下载
 /// （moka `try_get_with`；求值失败不进缓存）。drpy2 这类包几十 KB～几 MB，
 /// 一次 fan-out 里重复抓取是实打实的带宽与时间成本。
-///
-/// 取代原先「`StdMutex<HashMap<String,(String, Instant)>>` 自研 TTL 表 +
-/// `infra::flights` 自研 single-flight」两套手搓实现。
 static SOURCE_CACHE: OnceLock<Cache<String, String>> = OnceLock::new();
 
 fn source_cache() -> &'static Cache<String, String> {

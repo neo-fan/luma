@@ -30,10 +30,8 @@ const PLAYLIST_PROBE_BYTES: usize = 8 * 1024;
 
 /// 同页面嗅探结果的内存缓存，key = 页面 URL，value = 嗅到的直链。
 ///
-/// 取代原「`HashMap<String, SniffHit> + Instant + Mutex` 自研 TTL 表」：过期条目
-/// 由 moka 直接淘汰、读不到（与旧实现「`found_at.elapsed() >= SNIFF_TTL` 就当没
-/// 命中」一致——sniff 没有磁盘兜底，过期就重新开隐藏窗口）。上限 128 条沿用旧值，
-/// 改为按策略逐条淘汰（旧实现满 128 直接 `clear`，会把整张表冲掉）。
+/// 用 moka：过期条目直接淘汰、读不到就重新嗅探（sniff 没有磁盘兜底，过期就要
+/// 重开隐藏窗口）。上限 128 条、按访问策略逐条淘汰，不会一次把整张表冲掉。
 static SNIFF_CACHE: OnceLock<Cache<String, String>> = OnceLock::new();
 
 fn sniff_cache() -> &'static Cache<String, String> {
@@ -49,9 +47,9 @@ const SNIFF_MAX_ENTRIES: u64 = 128;
 
 /// 缓存读、未命中才嗅探、成功后写缓存的公共控制流。
 ///
-/// 失败时直接返回 `Err` 且**不写缓存**（与旧实现一致：`remember_sniff` 只在
-/// 嗅探成功分支调用）。把这段逻辑抽出来，是为了让 TTL 语义、命中/回源、失败
-/// 不入缓存这些行为可以对着一个本地 `Cache` 单独测，而不必依赖隐藏 WebView2。
+/// 失败时直接返回 `Err` 且**不写缓存**：`remember_sniff` 只在嗅探成功分支调用。
+/// 把这段逻辑抽出来，是为了让 TTL 语义、命中/回源、失败不入缓存这些行为可以对着
+/// 一个本地 `Cache` 单独测，而不必依赖隐藏 WebView2。
 async fn sniff_cached<F, Fut>(
     cache: &Cache<String, String>,
     page: &str,
@@ -601,9 +599,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn sniff_expired_entry_is_a_miss() {
-        // 语义保持的硬证据：条目过期后「读不到」（与旧 `found_at.elapsed() >=
-        // SNIFF_TTL` 视为未命中一致）。moka 淘汰靠后台任务驱动，多线程运行时
-        // 显式 `run_pending_tasks()` 推进。
+        // 语义保持的硬证据：条目过期后「读不到」，即视为未命中、重新嗅探。
+        // moka 淘汰靠后台任务驱动，多线程运行时显式 `run_pending_tasks()` 推进。
         let cache = sniff_test_cache(Duration::from_millis(20));
         cache
             .insert("http://page/3".to_string(), "http://cdn/3.m3u8".to_string())

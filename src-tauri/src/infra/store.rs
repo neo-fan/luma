@@ -380,9 +380,9 @@ impl LibraryStore {
 
     /// 删除单条播放记录；显式删除时收藏行也会被删掉。
     ///
-    /// 直接查库按 (site_key, vod_id) 定位，不再依赖读缓存：缓存可能因写后
-    /// reload 的窗口期尚未包含该行，旧实现会「查不到 → 静默成功」让 DB 行残留。
-    /// 只有真正删到行才刷新缓存，避免无谓的整表重读。
+    /// 直接查库按 (site_key, vod_id) 定位，不依赖读缓存：缓存可能因写后 reload 的
+    /// 窗口期尚未包含该行，靠缓存会「查不到 → 静默成功」留下 DB 残留行。只有真正
+    /// 删到行才刷新缓存，避免无谓的整表重读。
     pub fn remove_history(&self, site_key: &str, vod_id: &str) -> Result<(), AppError> {
         let removed = self.db.remove_playback_ref(site_key, vod_id)?;
         if removed > 0 {
@@ -397,8 +397,8 @@ pub fn favorites_list(state: tauri::State<'_, LibraryStore>) -> Vec<FavoriteItem
     state.list_favorites()
 }
 
-/// 同步命令会落在主线程：播放中每 5s 一次的历史上行若带一次事务 + 全表回读，
-/// 会在滚动/进度条上表现为周期性微卡。改成 async 即由 Tauri 调度到 runtime。
+/// 同步命令会落在主线程：播放中每 5s 一次的历史上行若带一次事务 + 全表回读，会在
+/// 滚动 / 进度条上表现为周期性微卡。async 命令由 Tauri 调度到 runtime，避开主线程。
 #[tauri::command]
 pub async fn favorites_toggle(
     state: tauri::State<'_, LibraryStore>,

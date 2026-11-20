@@ -1,8 +1,8 @@
 //! Configuration import and snapshot store (spec T-05).
 //!
 //! 解密、JSONC 清洗、归一化与多仓合并都在本模块内完成（decrypt / normalize）；
-//! 这里只负责取载荷、走完流程、落快照。曾经这三步是 sidecar 往返，导入排在
-//! 爬虫队列后面时会撞 15s 超时（见 1.0.2 与 1.0.3 的变更记录）。
+//! 这里只负责取载荷、走完流程、落快照。全部在宿主进程内跑，导入不会被排在爬虫
+//! 队列后面撞超时。
 
 use crate::db::{ConfigWrite, Db};
 use crate::error::{code, AppError};

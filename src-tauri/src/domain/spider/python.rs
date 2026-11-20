@@ -27,9 +27,9 @@ static PY_CONCURRENCY: OnceLock<Semaphore> = OnceLock::new();
 /// 一条脚本的来源结论。
 ///
 /// `Stale` 是「网络失败后拿过期磁盘快照救场」的结果：它能让这一次播放继续，
-/// **但不该占住内存缓存**——否则网络恢复后还要白等一个 TTL 才重试（旧实现就是
-/// 这个语义：过期条目只在兜底分支读，不刷新 `fetched_at`）。所以调用方拿到
-/// `Stale` 会立刻 `invalidate`，下一次仍然尝试回源。
+/// **但不该占住内存缓存**——过期条目只在兜底分支读、不刷新 `fetched_at`，否则
+/// 网络恢复后还要白等一个 TTL 才重试。所以调用方拿到 `Stale` 会立刻 `invalidate`，
+/// 下一次仍然尝试回源。
 #[derive(Clone)]
 enum Source {
     Fresh(String),
@@ -38,9 +38,6 @@ enum Source {
 
 /// py 脚本的内存缓存：TTL 600s、上限 64 条，同 key 并发首次访问合并成一次下载
 /// （`try_get_with` 保证；错误不进缓存）。
-///
-/// 取代原先「`HashMap + Instant` 自研 TTL 表 + `infra::flights` 自研 single-flight」
-/// 两套东西——它们是同一个库的两个特性（评审：优先用主流库，不要手搓）。
 static SOURCE_CACHE: OnceLock<Cache<String, Source>> = OnceLock::new();
 
 fn source_cache() -> &'static Cache<String, Source> {
@@ -63,8 +60,8 @@ fn snapshot_dir() -> PathBuf {
     crate::store::data_dir().join("spider-src")
 }
 
-/// URL → 稳定文件名：XXH3（`xxhash-rust`，主流、快，非加密用途足够），取代原先
-/// 手搓的 FNV-1a——「不要手搓轮子」。只用于映射磁盘快照文件名，不承担安全职责。
+/// URL → 稳定文件名：XXH3（`xxhash-rust`，主流、快，非加密用途足够）。只用于映射
+/// 磁盘快照文件名，不承担安全职责。
 fn snapshot_key(url: &str) -> String {
     format!("{:016x}", xxhash_rust::xxh3::xxh3_64(url.as_bytes()))
 }
@@ -260,12 +257,11 @@ impl SpiderRuntime for PythonRuntime {
     }
 }
 
-/// py 源返回值归一（原 `sidecars/py/pyspider.py::_normalize`）：契约映射只留
-/// 一份 Rust 实现，适配层回归「只执行脚本」。
+/// py 源返回值归一：契约映射只在 Rust 这一份实现里做，适配层只负责执行脚本。
 ///
-/// 形状不对时返回空信封而不是错误——一个坏源不该拖垮整轮聚合。空详情曾经完全
-/// 不可见（UI 只报「未获取到影片详情」），所以仍记一条 INFO，带脚本 URL 和
-/// vodId：适配层的 `spider.log` 只收脚本异常，这条是宿主侧的归一化诊断，落宿主
+/// 形状不对时返回空信封而不是错误——一个坏源不该拖垮整轮聚合。空详情本身合法
+/// （发现型源没有 detailContent），但不能悄无声息，所以仍记一条 INFO，带脚本 URL
+/// 和 vodId：适配层的 `spider.log` 只收脚本异常，这条是宿主侧的归一化诊断，落宿主
 /// 日志。
 fn normalize(site: &Value, method: SpiderMethod, args: &[Value], result: Value) -> Value {
     let normalized = crate::spider::cms_parse::normalize_spider_result(method.as_str(), &result);

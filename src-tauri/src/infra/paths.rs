@@ -47,10 +47,10 @@ pub fn sidecar_roots() -> Vec<PathBuf> {
 
 /// Tauri 报告的 resource 目录（安装版 = exe/resources，便携版 = exe 目录）。
 ///
-/// 宿主在 `setup()` 里发布它——那时 tokio worker 已经在跑，而
-/// `std::env::set_var` 与并发 `std::env::var` 是数据竞争（edition 2021 下
-/// `set_var` 还不是 `unsafe`，但 Windows 上真会读到撕裂/错值；2026-11-16
-/// 评审 P2）。改成 `OnceLock`：发布一次、之后只读，天然线程安全。
+/// 宿主在 `setup()` 里发布它——那时 tokio worker 已经在跑，而 `std::env::set_var`
+/// 与并发 `std::env::var` 是数据竞争（edition 2021 下 `set_var` 还不是 `unsafe`，
+/// 但 Windows 上真会读到撕裂 / 错值）。所以用 `OnceLock`：发布一次、之后只读，
+/// 天然线程安全。
 ///
 /// `LUMA_RESOURCE_DIR` 环境变量仍然生效（外部覆盖：手工跑 sidecar、集成
 /// 测试指定 bundle 布局），优先级低于宿主显式发布的那一次。

@@ -288,9 +288,9 @@ impl ConfigStore {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        // 「取当前快照 → 改 → 写库 → 写回」必须在同一个写锁里完成：旧实现先读克隆、
-        // 再写库、最后整体覆盖 entry.runtime，两次并发开关（或与 refresh 提交交错）
-        // 会各按旧快照写回，后写的把先写的改动静默覆盖 —— 用户看到开关「自己弹回去」。
+        // 「取当前快照 → 改 → 写库 → 写回」必须在同一个写锁里完成：否则两次并发
+        // 开关（或与 refresh 提交交错）会各按自己读到的旧快照写回、整体覆盖
+        // entry.runtime，后写的把先写的改动静默抹掉——用户看到开关「自己弹回去」。
         // DB 写是同步的（不跨 await），持锁时间只有一次 upsert。
         // 锁序：先取 active（上一步已释放）再取 entries，与 all_sites 等读点一致。
         let mut guard = self

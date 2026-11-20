@@ -136,12 +136,11 @@ fn write_epg_disk(url: &str, raw: &str) {
 
 /// 取 XMLTV 原始表：内存 → 磁盘 → 网络（GitHub 地址走加速前缀）。
 async fn load_epg_raw(state: &ConfigStore, epg_url: &str) -> Result<Arc<String>, AppError> {
-    // 先查内存：命中就直接返回，不去读加速前缀（`github_proxy` 是一次
-    // sqlite meta 读，旧实现也只在网络分支才读它）。未命中才用 `try_get_with`
-    // 合并并发首次访问成一次回源，求值失败不进缓存（下一次仍回源）。求值体
-    // `cold_epg_raw` 内部保留「磁盘 → 网络」两级兜底：内存里过期的条目读不到
-    // （moka 直接淘汰），兜底来源仍是磁盘快照（磁盘 6h TTL 独立于内存 3h TTL），
-    // 语义与旧的「内存未命中再看磁盘」完全一致。
+    // 先查内存：命中就直接返回，不去读加速前缀（`github_proxy` 是一次 sqlite meta
+    // 读，只在真要回源时才读）。未命中才用 `try_get_with` 合并并发首次访问成一次
+    // 回源，求值失败不进缓存（下一次仍回源）。求值体 `cold_epg_raw` 内部保留「磁盘
+    // → 网络」两级兜底：内存里过期的条目读不到（moka 直接淘汰），兜底来源仍是磁盘
+    // 快照（磁盘 6h TTL 独立于内存 3h TTL）。
     let cache = epg_raw_cache();
     let key = epg_url.to_string();
     if let Some(raw) = cache.get(&key).await {
@@ -192,9 +191,8 @@ async fn cold_epg_raw(epg_url: String, prefix: String) -> Result<Arc<String>, Ap
 /// (~0.5 s); zapping between channels would pay that on every click. Keyed by
 /// `url | channel | date` because the adapter already filtered by date.
 ///
-/// 上限 64 条（与旧实现同量级）：一次会话里连切几百个频道不该堆出几百份节目单。
-/// 旧实现是「满 64 直接 clear」，换成 moka 按访问频率逐条淘汰——同样是给内存封顶，
-/// 但不会把整张表冲掉后让老频道重新解析（评审：用库的淘汰策略，不要手搓全清）。
+/// 上限 64 条：一次会话里连切几百个频道不该堆出几百份节目单。用 moka 按访问频率
+/// 逐条淘汰给内存封顶——不会一次把整张表冲掉、让老频道重新解析。
 static EPG_RESULT_CACHE: OnceLock<Cache<String, Value>> = OnceLock::new();
 
 fn epg_result_cache() -> &'static Cache<String, Value> {
@@ -396,7 +394,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn epg_raw_concurrent_same_url_downloads_once() {
         // (b) 同 key 并发只回源一次：7.6 MB 的节目单重复下载最贵，`try_get_with`
-        // 的合并语义正是取代原自研 single-flight 的地方。
+        // 的合并语义保证同 key 并发共享一次回源。
         let hits = Arc::new(AtomicUsize::new(0));
         let (url, task) = ok_stub(hits.clone()).await;
         let cache = raw_cache(Duration::from_secs(30));

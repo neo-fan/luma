@@ -61,9 +61,7 @@ pub(crate) fn refresh_due(interval_hours: u32, checked_at: Option<u64>, now_ms: 
 ///
 /// 目前两类：jar（Android dex，Win x64 无解，见 `docs/ARCHITECTURE.md`）和
 /// 「相对地址没解析出来」（粘贴文本 / 本地文件导入，见 `unresolved_relative`）。
-/// JS 源曾经也被一刀切封禁，qjs-runner 支持 ESM + `assets://` 之后已放开
-/// （见 `docs/js-support.md`）。被封的站点行在 `imported` 里原样保留，策略变化
-/// 可以重新派生，不丢用户配置。
+/// 被封的站点行在 `imported` 里原样保留，策略变化可以重新派生，不丢用户配置。
 pub(crate) fn blocked_reason(site: &Value) -> Option<&'static str> {
     if unresolved_relative(site) {
         return Some(RELATIVE_BLOCK_REASON);

@@ -1,12 +1,12 @@
-//! 配置字段方言归一化 + 站点路由（原 `sidecars/py/normalize.py`，2026-11-14 迁入 Rust）。
+//! 配置字段方言归一化 + 站点路由。
 //!
 //! 社区配置同一件事有好几种写法：顶层 `list` / `parse` / `jar`，站点里 `title`
 //! 当名字，`headers` 有时是对象有时是 JSON 字符串，相对路径 `./py/x.py` 要相对
 //! 配置地址解析。这里把它们收敛成 `ConfigSnapshot` 的形状，认不出的字段一律
 //! 塞进 `_raw`（不丢数据），下游只读归一化结果。
 //!
-//! 与旧实现的唯一结构性差别：这些函数现在是纯函数、同步、零 IPC。导入链路不再
-//! 排队等 Python 适配层，也不需要 30s 预算兜底。
+//! 这些函数都是纯函数、同步、零 IPC：导入直接走宿主进程，不必排队等 Python
+//! 适配层，也不需要 30s 预算兜底。
 
 use crate::error::{code, AppError};
 use serde_json::{json, Map, Value};

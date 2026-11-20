@@ -1219,8 +1219,7 @@ enum DetailPath {
 /// 生命周期的表反而不合理——它和正结论共享同一条 TTL 约定（1 小时后重新
 /// 探测），差别只在读侧语义：正路径要取出变体，否定路径只要「存在即生效」。
 /// 所以正/负各一个 moka 实例：`Cache<String, DetailPath>` 只存 Tv/Movie，
-/// `Cache<String, ()>` 存 Unavailable，取代原先同一 HashMap 里混着
-/// `DetailPath::Unavailable` 加手工 `retain` 清扫的写法。
+/// `Cache<String, ()>` 存 Unavailable。
 static DETAIL_PATH_CACHE: OnceLock<Cache<String, DetailPath>> = OnceLock::new();
 static DETAIL_UNAVAILABLE_CACHE: OnceLock<Cache<String, ()>> = OnceLock::new();
 
@@ -1431,8 +1430,7 @@ async fn fetch_with(
     // 冷 key 去重：首页一屏几十张卡片、详情页与头图同时问同一个片名时，
     // 缓存里还没有条目，每个调用者都会跑一遍完整搜索链（候选搜索 + 摘要 +
     // rexxar 详情）。令牌桶只限速、不去重，所以放大仍然发生——moka
-    // `try_get_with` 让同 key 并发共享同一次执行：求值 Ok 进正缓存，
-    // Err 不进缓存（取代原先 `HashMap + Instant` 表和自研 flights 两套手搓）。
+    // `try_get_with` 让同 key 并发共享同一次执行：求值 Ok 进正缓存，Err 不进缓存。
     let outcome = positive_cache()
         .try_get_with(key, cold_fetch(kind, prefix, title, year, now))
         .await;
@@ -1452,12 +1450,10 @@ async fn fetch_with(
 }
 
 /// 冷路径的两种失败。`try_get_with` 的 Ok/Err 只二分「进不进正缓存」，
-/// 「确认无结果」和「查询失败」都是 Err，但只有前者要写负缓存 —— 用
-/// 错误类型把它们区分开。与旧 `Cached { meta: Option<DoubanMeta> }` 的
-/// 三态一一对应：正缓存 Ok ↔ `Some(Some(meta))`；`NotFound` ↔
-/// `Some(None)`（查过、确认没有）；`Transient` ↔ 外层 `None`（没查过/
-/// 没查出结论）。失败连负缓存都不进是旧实现没有、约束要求的修正：旧表
-/// 会把一次断网也「确认无结果」5 分钟。
+/// 「确认无结果」和「查询失败」都是 Err，但只有前者要写负缓存——用错误类型把
+/// 它们区分开：`Ok` 命中正缓存；`NotFound` 是查过、确认没有，写负缓存压制重复
+/// 查询；`Transient` 是没查出结论，什么缓存都不进、下次照常重试。失败绝不能进
+/// 负缓存，否则一次断网会被记成「确认无结果」整整 5 分钟。
 #[derive(Debug, Clone)]
 enum ColdFail {
     /// 搜索链跑通了但没有任何匹配条目：负缓存（`NEG_CACHE_TTL`）压制重复查询。
@@ -1502,9 +1498,9 @@ async fn cold_fetch(
     Ok(meta)
 }
 
-/// 搜索 + 选优，按 title+year 合并并发并缓存结果（粗/细两路共用）。
-/// `Ok(item)` 选中；`NotFound` 确认无匹配（已写负缓存）；`Transient` 传输失败 /
-/// 冷却——不进任何缓存、下次照常重试。取代原先粗/细各跑一遍搜索。
+/// 搜索 + 选优，按 title+year 合并并发并缓存结果（粗/细两路共用，各跑一遍搜索
+/// 会被这一个入口合并）。`Ok(item)` 选中；`NotFound` 确认无匹配（已写负缓存）；
+/// `Transient` 传输失败 / 冷却——不进任何缓存、下次照常重试。
 async fn resolve_candidate(
     kind: ProxyKind,
     prefix: &str,
@@ -1939,13 +1935,10 @@ pub async fn douban_request(
 /// 正/负缓存分两个 moka 实例：TTL 不同（10min vs 5min），moka 的
 /// `time_to_live` 是表级属性，一张表装不下两种寿命 —— 这也正好让
 /// 「命中 / 确认无结果 / 没查过」三态各归其表：正表有值 = 命中，负表有值 =
-/// 确认无结果（`cache_get` 的 `Some(None)`），两表皆空 = 未查过（外层
-/// `None`）。取代原先一张 HashMap 用 `Option<DoubanMeta>` 的嵌套表达。
+/// 确认无结果（`cache_get` 的 `Some(None)`），两表皆空 = 未查过（外层 `None`）。
 ///
-/// 淘汰行为差异（相对旧的「`CACHE_CAP` 超限整表 `retain`」）：旧实现超限才
-/// 清扫一次过期项、清扫后仍可能超限（没有真正的容量上限），也没有限制
-/// 活跃条目数；现在是 `max_capacity`（近似 LRU/W-TinyLFU 逐出）+ 后台按
-/// TTL 逐出，活跃条目也有硬上限，不再有「写线程持锁扫全表」的毛刺。
+/// 用 moka：`max_capacity`（近似 LRU / W-TinyLFU 逐出）给活跃条目设硬上限，过期项
+/// 由后台任务逐条清。这样既不会无界增长，也没有「写线程持锁扫全表」的毛刺。
 static META_POSITIVE: OnceLock<Cache<String, DoubanMeta>> = OnceLock::new();
 static META_NEGATIVE: OnceLock<Cache<String, ()>> = OnceLock::new();
 
@@ -2432,9 +2425,8 @@ mod tests {
         }
     }
 
-    /// 同 `cache_put`：旧版是同步函数，测试直接调；moka 读取是 async，这里
-    /// 改成 async，外层/内层 `Option` 的三态语义与旧版逐一对应
-    /// （`Some(Some)` 正命中 / `Some(None)` 确认无结果 / `None` 没查过）。
+    /// 缓存读取：外层 `Option` 表示查过没有、内层 `Option` 表示结果——
+    /// `Some(Some)` 正命中 / `Some(None)` 确认无结果 / `None` 没查过。
     async fn cache_get(key: &str) -> Option<Option<DoubanMeta>> {
         if let Some(meta) = positive_cache().get(key).await {
             return Some(Some(meta));

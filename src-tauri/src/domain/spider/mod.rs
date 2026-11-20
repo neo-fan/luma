@@ -430,7 +430,7 @@ fn search_penalty() -> &'static StdMutex<SearchPenalty> {
 /// 扇出是 `MAX_FANOUT` 并发，N 个站需要 `ceil(N / MAX_FANOUT)` 波；每波最多
 /// 吃满单站超时 `per_site_ms`。所以自然上界是 `波次 × 单站超时`，再加一波松弛
 /// 覆盖调度抖动。clamp 到 [45s, 120s]：健康配置（一波就完）不该被拖到 45s 以下
-/// 误杀慢源，也不能让慢网尾段超过 120s（旧实现没有总上限，实测拖到 637s）。
+/// 误杀慢源，也不能让慢网尾段超过 120s（没有总上限时，实测一次拖到 637s）。
 fn streaming_budget_ms(per_site_ms: u64, site_count: usize, fanout: usize) -> u64 {
     let fanout = fanout.max(1);
     let waves = (site_count + fanout - 1) / fanout;
@@ -532,11 +532,10 @@ async fn aggregate(
     let mut ok = 0usize;
     let mut failed = 0usize;
     // 非流式（首页聚合）：按调用方墙钟截断慢尾巴，clamp 防极值。
-    // 流式搜索：旧注释写「不限总墙钟」，但实现把 600s 挂在了**每一次** join_next
-    // 迭代上——N 个任务每轮都重置，等于没有总时限；慢网尾段实测拖到 600s+ 才
-    // 收尾（search done elapsedMs=637s）。现在改成真正的总预算：
-    // 「波次 × 单站超时 + 一波松弛」，clamp 到 45~120s。结果仍逐站上屏；预算
-    // 用尽只 abort 还没答完的尾部站点，它们照旧计入 skipped。
+    // 流式搜索：总预算取「波次 × 单站超时 + 一波松弛」，clamp 到 45~120s。把超时
+    // 挂在**每一次** `join_next` 迭代上等于没有总时限（N 个任务每轮都重置，慢网尾段
+    // 实测能拖到 600s+ 才收尾）。结果仍逐站上屏；预算用尽只 abort 还没答完的尾部
+    // 站点，它们照旧计入 skipped。
     let is_streaming = search_streaming;
     let streaming_total = Duration::from_millis(streaming_budget_ms(
         timeout.as_millis() as u64,
