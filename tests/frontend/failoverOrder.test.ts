@@ -29,7 +29,7 @@ describe("automatic failover is disabled", () => {
   it("manual next-line switches optimistically to the same episode", () => {
     expect(orchestration).toContain("const nextLine = useCallback(() => {");
     expect(orchestration).toContain("const targetLine = (c.lineIndex + 1) % total;");
-    expect(orchestration).toContain("selectEpisode(targetLine, index);");
+    expect(orchestration).toMatch(/selectEpisode\(targetLine, index, "正在切换线路…"\)/);
   });
 
   it("vod page never calls an auto switch on resolve/playback failure", () => {

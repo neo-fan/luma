@@ -102,7 +102,7 @@ export interface PlaybackController {
   switchedUrlRef: MutableRefObject<string | null>;
   /** 真正在播的集身份：fatal 按它作废解析缓存。 */
   playingEpisodeRef: MutableRefObject<{ siteKey: string; playFrom: string; url: string }>;
-  selectEpisode: (targetLine: number, index: number) => void;
+  selectEpisode: (targetLine: number, index: number, tip?: string) => void;
   goEpisode: (delta: number) => void;
   switchSource: (option: SourceOption) => Promise<void>;
   nextLine: () => void;
@@ -354,7 +354,7 @@ export function usePlaybackController(
 
   /** 点选集：乐观显示 + 入队；后台解析，落地经串行提交门。 */
   const selectEpisode = useCallback(
-    (targetLine: number, index: number) => {
+    (targetLine: number, index: number, tip?: string) => {
       const current = displayRef.current;
       const line = current.lines[targetLine];
       if (!line || index < 0 || index >= line.episodes.length) {
@@ -383,7 +383,7 @@ export function usePlaybackController(
       const next: PlaybackTarget = { ...current, lineIndex: targetLine, episodeIndex: index };
       markPhase("preparing");
       dispatch({ type: "intent", target: next });
-      depsRef.current.setSwitchTip(`正在切换到「${line.episodes[index].name}」…`);
+      depsRef.current.setSwitchTip(tip ?? `正在切换到「${line.episodes[index].name}」…`);
       queue?.request({ siteKey: current.siteKey, lineIndex: targetLine, episodeIndex: index, gen });
     },
     [haltCurrentPlayback, markPhase],
@@ -589,7 +589,7 @@ export function usePlaybackController(
       if (target < 0 || target >= line.episodes.length) {
         return;
       }
-      selectEpisode(c.lineIndex, target);
+      selectEpisode(c.lineIndex, target, "正在切换到下一集…");
     },
     [selectEpisode],
   );
@@ -613,7 +613,7 @@ export function usePlaybackController(
     }
     const index = Math.min(Math.max(c.episodeIndex, 0), episodes.length - 1);
     setNextLineBusy(true);
-    selectEpisode(targetLine, index);
+    selectEpisode(targetLine, index, "正在切换线路…");
   }, [nextLineBusy, selectEpisode]);
 
   // 乐观切换的忙碌态由 phase 收口：selectEpisode 立刻进 preparing，落地或失败后回 idle。

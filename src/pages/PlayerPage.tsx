@@ -766,14 +766,8 @@ export default function PlayerPage({
     if (advanceToNext()) {
       return;
     }
-    const v = videoRef.current;
-    if (v && Number.isFinite(v.duration) && v.duration > 0) {
-      try {
-        v.currentTime = Math.max(0, v.duration - 0.5);
-      } catch {
-        /* seek 未就绪时忽略 */
-      }
-    }
+    // 没有可接的下一集：保持当前画面，不 seek 到结尾制造一次暂停。
+    engine.notice("没有可接的下一集");
   };
   const autoSkipMediaKey = [activeSiteKey, display.vodId, display.lineIndex, display.episodeIndex].join(":");
   const { pending: autoSkipPending, cancel: cancelAutoSkip, skipNow: skipPendingNow } =

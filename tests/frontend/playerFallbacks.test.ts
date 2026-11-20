@@ -72,7 +72,7 @@ describe("player stage fallback action", () => {
     const page = source("pages/PlayerPage.tsx");
     const controller = source("hooks/playback/usePlaybackController.ts");
     expect(controller).toContain("const nextLine = useCallback(() => {");
-    expect(controller).toContain("selectEpisode(targetLine, index);");
+    expect(controller).toMatch(/selectEpisode\(targetLine, index, "正在切换线路…"\)/);
     expect(page).toContain("onNextLine={nextLine}");
     const live = source("pages/LivePage.tsx");
     expect(live).toContain("const selectNextLine = useCallback(");
