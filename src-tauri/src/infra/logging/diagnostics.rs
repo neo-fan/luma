@@ -30,6 +30,8 @@ pub struct LogFileInfo {
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostics {
     pub version: &'static str,
+    /// 发布通道（`stable` / `beta` / `dev`）：同机并存时靠它判断这份诊断来自哪个包。
+    pub channel: &'static str,
     /// 提交 short hash（与前端同一来源，便于确认前后端是否同源）。
     pub build_hash: &'static str,
     /// 本次运行的启动时刻（epoch 秒）。界面上的 build 号统一取它：dev 下前端
@@ -72,6 +74,7 @@ pub(crate) fn collect(config: Option<ConfigDigest>) -> Diagnostics {
     let (log_files, log_bytes) = log_files();
     Diagnostics {
         version: env!("CARGO_PKG_VERSION"),
+        channel: crate::channel::current().as_str(),
         build_hash: env!("BUILD_HASH"),
         started_at: crate::started::epoch_secs().to_string(),
         build_time: exe_build_time(),

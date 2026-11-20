@@ -266,15 +266,16 @@
   opacity: 0.85;
 }
 
-/* 调试标记：`tauri dev` 起的窗口与同机安装的正式版版本号完全一样（数据目录
-   不同：Luma-debug / Luma），靠这个胶囊 + 窗口标题的 "(Dev)" 后缀区分。 */
+/* 通道标记：stable 不显示；beta / dev 与同机安装的正式版版本号可能完全一样
+   （数据目录与反代端口不同），靠这个胶囊 + 窗口标题后缀区分。 */
 .sidebar__version {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.sidebar__dev {
+.sidebar__dev,
+.sidebar__beta {
   padding: 0 6px;
   border: 1px solid rgba(91, 124, 250, 0.45);
   border-radius: var(--r-pill);
@@ -286,6 +287,13 @@
   letter-spacing: 0.06em;
   line-height: 1.6;
   text-transform: uppercase;
+}
+
+/* beta 与 dev 同机也可能并存，两者用不同色，避免装错包时分不清。 */
+.sidebar__beta {
+  border-color: rgba(245, 170, 60, 0.5);
+  background: rgba(245, 170, 60, 0.12);
+  color: #f5aa3c;
 }
 
 /* 收缩态**不动任何 padding**：图标轴（左侧 26px）在收放全程一像素都不移，

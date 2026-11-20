@@ -25,7 +25,7 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/
 
 function logPath() {
   const day = new Date().toISOString().slice(0, 10);
-  return join(homedir(), "AppData", "Roaming", "Luma-debug", "logs", "app", `luma.${day}.log`);
+  return join(homedir(), "AppData", "Roaming", "app.luma.dev", "logs", "app", `luma.${day}.log`);
 }
 
 function sizeOf(path) {

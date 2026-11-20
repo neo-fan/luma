@@ -14,7 +14,7 @@ capped at 10 MiB with one `.1` backup, matching the host's per-channel cap.
 Resolution order for the log path (first writable wins):
   LUMA_ADAPTER_LOG  -> explicit override (the Rust host always sets it)
   LUMA_DATA_DIR     -> <data>/logs/spider/spider.log
-  APPDATA           -> <APPDATA>/Luma/logs/spider/spider.log  (Windows default)
+  APPDATA           -> <APPDATA>/app.luma/logs/spider/spider.log  (Windows default)
   XDG_DATA_HOME     -> <xdg>/luma/logs/spider/spider.log
   fallback          -> <sidecars/py>/logs/spider.log
 """
@@ -41,7 +41,7 @@ def _resolve_log_path() -> Path:
     if env("LUMA_DATA_DIR"):
         candidates.append(Path(env("LUMA_DATA_DIR")) / "logs" / "spider" / "spider.log")
     if env("APPDATA"):
-        candidates.append(Path(env("APPDATA")) / "Luma" / "logs" / "spider" / "spider.log")
+        candidates.append(Path(env("APPDATA")) / "app.luma" / "logs" / "spider" / "spider.log")
     if env("XDG_DATA_HOME"):
         candidates.append(Path(env("XDG_DATA_HOME")) / "luma" / "logs" / "spider" / "spider.log")
     candidates.append(Path(__file__).resolve().parent / "logs" / "spider.log")

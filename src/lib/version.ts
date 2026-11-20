@@ -60,10 +60,13 @@ export const BUILD_STAMP = formatBuildTime(BUILD_TIME);
 export const IS_DEV_BUILD = import.meta.env.DEV;
 
 /**
- * 版本展示：prerelease 缩写为业界常见形式（如 `1.2.0-beta` → `1.2.0.b`）。
+ * 版本展示：prerelease 缩写为业界常见形式（如 `2.0.0-beta.1` → `2.0.0.b1`）。
  * 数据源仍保持 package.json 的合法 semver，只在 UI 层做映射：
- * -alpha→.a、-beta→.b、-rc→.rc；没有后缀的原样返回。
+ * -alpha[.N]→.a[N]、-beta[.N]→.b[N]、-rc[.N]→.rc[N]；没有后缀的原样返回。
  */
 export function formatVersion(raw?: string | null): string {
-  return (raw ?? "").replace(/-alpha$/i, ".a").replace(/-beta$/i, ".b").replace(/-rc$/i, ".rc");
+  return (raw ?? "")
+    .replace(/-alpha(\.\d+)?$/i, (_, seq?: string) => `.a${seq ? seq.slice(1) : ""}`)
+    .replace(/-beta(\.\d+)?$/i, (_, seq?: string) => `.b${seq ? seq.slice(1) : ""}`)
+    .replace(/-rc(\.\d+)?$/i, (_, seq?: string) => `.rc${seq ? seq.slice(1) : ""}`);
 }

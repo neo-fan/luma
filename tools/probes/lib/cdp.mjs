@@ -11,7 +11,7 @@
  *   const active = await cdp.invoke("config_active");
  *   await cdp.close();
  *
- * 前置：`corepack pnpm tauri dev` 窗口已起（默认 CDP 9222；可用 CDP_PORT 覆盖）。
+ * 前置：`corepack pnpm dev:app` 窗口已起（默认 CDP 9222；可用 CDP_PORT 覆盖）。
  */
 
 const DEFAULT_MATCH = "localhost:1420";

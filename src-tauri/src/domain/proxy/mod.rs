@@ -1,9 +1,9 @@
 //! Local HTTP reverse proxy (spec 7.5 / T-08).
 //!
-//! Binds `127.0.0.1:<DEFAULT_PORT>` (release 9978, debug 9979 so a running
-//! release instance never makes debug fall back to an ephemeral port and a
-//! spider defaulting to 9978 never points at the wrong instance); when even
-//! that port is taken it falls back to an ephemeral port and publishes the
+//! Binds `127.0.0.1:<default_port()>` — stable 9978 / beta 9977 / dev 9979, so
+//! channels running side by side never steal each other's fixed port and a
+//! spider defaulting to one of them never points at the wrong instance; when
+//! even that port is taken it falls back to an ephemeral port and publishes the
 //! real one through `proxy_status`.
 //! Only loopback is bound. Targets are validated against a whitelist that
 //! rejects loopback / private / link-local / multicast addresses, unless
@@ -25,12 +25,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
-// Debug and release may run side by side; give them distinct fixed ports so
-// coexistence is deterministic instead of relying on the ephemeral fallback.
-#[cfg(debug_assertions)]
-pub const DEFAULT_PORT: u16 = 9979;
-#[cfg(not(debug_assertions))]
-pub const DEFAULT_PORT: u16 = 9978;
+// Channel-scoped fixed port; see `infra::channel`.
+fn default_port() -> u16 {
+    crate::channel::current().proxy_port()
+}
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(20);
 // The fallback UA and the "fill in defaults" helper live in `netrules` so the
 // resolver and the proxy cannot drift apart. Some CDNs answer garbage (or a
@@ -101,7 +99,7 @@ static ACTIVE_PORT: AtomicU16 = AtomicU16::new(0);
 
 pub fn active_port() -> u16 {
     match ACTIVE_PORT.load(Ordering::Relaxed) {
-        0 => DEFAULT_PORT,
+        0 => default_port(),
         port => port,
     }
 }
@@ -210,7 +208,7 @@ pub fn start() -> Result<Arc<ProxyState>, AppError> {
 }
 
 fn bind_listener() -> Result<std::net::TcpListener, AppError> {
-    let primary = format!("127.0.0.1:{DEFAULT_PORT}");
+    let primary = format!("127.0.0.1:{}", default_port());
     match std::net::TcpListener::bind(&primary) {
         Ok(listener) => {
             listener.set_nonblocking(true).map_err(|err| {
@@ -220,7 +218,7 @@ fn bind_listener() -> Result<std::net::TcpListener, AppError> {
             Ok(listener)
         }
         Err(err) => {
-            tracing::warn!(port = DEFAULT_PORT, error = %err, "proxy port busy, falling back to ephemeral port");
+            tracing::warn!(port = default_port(), error = %err, "proxy port busy, falling back to ephemeral port");
             let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|err| {
                 AppError::new(code::INTERNAL, "proxy bind failed").with_cause(err.to_string())
             })?;

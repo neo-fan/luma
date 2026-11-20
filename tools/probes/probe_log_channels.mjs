@@ -6,7 +6,7 @@
  * `target: "ui"`）、`spider/`（Python 适配层）。分流的单测只覆盖路由规则，
  * 这里端到端验一次真实落盘：写一条带随机标记的日志，再到数据目录里核对。
  *
- * 依赖 dev 窗口（CDP 9222）。数据目录默认取 `%APPDATA%\Luma-debug`（debug 标识），
+ * 依赖 dev 窗口（CDP 9222）。数据目录默认取 `%APPDATA%\app.luma.dev`（dev 通道），
  * 可用 `LUMA_DATA_DIR` 覆盖（便携模式 / 自定义目录时）。
  *
  *   node tools/probes/probe_log_channels.mjs
@@ -18,7 +18,7 @@ import { connect, finish } from "./lib/cdp.mjs";
 
 const dataDir =
   process.env.LUMA_DATA_DIR ||
-  join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "Luma-debug");
+  join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "app.luma.dev");
 const logsRoot = join(dataDir, "logs");
 
 const cdp = await connect();

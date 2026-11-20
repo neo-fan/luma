@@ -18,6 +18,8 @@
 // ---- infra/：底座能力 ----
 #[path = "infra/bridge.rs"]
 pub mod bridge;
+#[path = "infra/channel.rs"]
+pub mod channel;
 #[path = "infra/db/mod.rs"]
 pub mod db;
 #[path = "infra/env.rs"]
@@ -124,19 +126,30 @@ pub fn run() {
 }
 
 fn run_inner() -> Result<(), AppError> {
+    // 通道的唯一真源是合并后的 identifier（beta 由 `--config` 覆写）；必须在
+    // 数据目录、反代端口被解析之前发布。context 只构造一次，后面交给 build()。
+    let context = tauri::generate_context!();
+    let channel = channel::init(context.config().identifier.as_str());
     // 界面的 build 号取「本次启动时刻」：越早记越好，保证它是进程真正起来的时刻。
     started::mark();
     // 最先做：晚于 WebView2 环境创建就失效（见函数注释）。
     let devtools_default = enable_devtools_port();
     // 把解析后的数据目录发布给子进程：py 适配器的 spider.log 只认
     // LUMA_DATA_DIR / APPDATA 环境变量（见 adapterlog.py），不注入的话
-    // debug 隔离（Luma-debug）下的 sidecar 日志仍会落回 %APPDATA%/Luma。
+    // debug 隔离（app.luma.dev）下的 sidecar 日志仍会落回 %APPDATA%/app.luma。
     // 必须先于 logging::init()（后者解析同一目录）与任何 sidecar spawn。
     std::env::set_var("LUMA_DATA_DIR", crate::store::data_dir());
     // Logging first: DB migration, sidecar resolution and proxy startup all
     // emit tracing events, and a trial user needs them on disk even if the
     // window never renders.
     logging::init();
+    tracing::info!(
+        channel = channel.as_str(),
+        identifier = %context.config().identifier,
+        data_dir = %crate::store::data_dir().display(),
+        proxy_port = channel.proxy_port(),
+        "release channel"
+    );
     if devtools_default {
         // 上一次 dev 没退干净时端口会被旧 WebView2 占着，新实例的 DevTools
         // 就绑不上（表现为「探针连到的其实是旧窗口」或窗口起不来）。
@@ -174,17 +187,14 @@ fn run_inner() -> Result<(), AppError> {
         .plugin(tauri_plugin_shell::init())
         .manage(config_store)
         .manage(library_store)
-        .setup(|app| {
+        .setup(move |app| {
             // 标题栏跟随主界面深色，避免 Windows 默认浅色/系统深灰与画布色差。
             if let Some(window) = app.get_webview_window("main") {
                 window::apply_dark_caption(&window);
-                // 调试窗口与已安装的正式版同机并存（数据目录 Luma-debug / Luma），
-                // 版本号一模一样，任务栏与标题栏必须一眼可辨。判定用 Tauri 官方
-                // `tauri::is_dev()`（未启用 custom-protocol，即 `tauri dev`），
-                // 不用 debug_assertions：`tauri build --debug` 也是 debug 断言，
-                // 但它是产物包，不该冒充调试窗口。
-                if tauri::is_dev() {
-                    let title = format!("Luma {} (Dev)", env!("CARGO_PKG_VERSION"));
+                // 三通道可能同机并存（stable / beta / dev），版本号一模一样，
+                // 任务栏与标题栏必须一眼可辨；标题后缀与数据目录后缀同源。
+                if let Some(label) = channel.label() {
+                    let title = format!("Luma {} ({label})", env!("CARGO_PKG_VERSION"));
                     let _ = window.set_title(&title);
                 }
             }
@@ -309,7 +319,7 @@ fn run_inner() -> Result<(), AppError> {
             storage::storage_clear,
             clipboard::copy_text,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .map_err(|err| startup_error("创建 Tauri 应用失败", err))?;
     app.run(|_app, event| {
         // 退出收口：sidecar 优雅关停。以前只有 Job Object 兜底（进程一定

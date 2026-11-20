@@ -423,6 +423,8 @@ export interface DiagnosticsLogFile {
 
 export interface Diagnostics {
   version: string;
+  /** 发布通道：`stable` / `beta` / `dev`（宿主按 identifier 推导）。 */
+  channel: string;
   /** 最近提交 short hash（与前端同源，便于比对前后端是否同构建）。 */
   buildHash: string;
   /** 本次运行的启动时刻（epoch 秒字符串）：界面上的 build 号统一显示它。 */

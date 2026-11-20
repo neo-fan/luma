@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Luma",
   "version": "../package.json",
-  "identifier": "dev.luma.desktop",
+  "identifier": "app.luma",
   "build": {
     "beforeDevCommand": "corepack pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -18,15 +18,18 @@
         "backgroundColor": "#0a0a0b",
         "width": 1280,
         "height": 800,
+        "center": true,
         "minWidth": 960,
         "minHeight": 640,
         "resizable": true,
         "fullscreen": false,
-        "additionalBrowserArgs": "--enable-features=PlatformHEVCDecoderSupport --ignore-gpu-blocklist --autoplay-policy=no-user-gesture-required"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --enable-features=PlatformHEVCDecoderSupport --ignore-gpu-blocklist --autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {
-      "csp": null
+      "capabilities": ["main-access"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; media-src 'self' data: blob: http: https:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* http: https:; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; media-src 'self' data: blob: http: https:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* http: https: ws:; worker-src 'self' blob:; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'"
     }
   },
   "bundle": {
@@ -43,8 +46,9 @@
     "longDescription": "Luma 是 TVBox 配置的桌面播放客户端，支持 CMS / Python / JS 源、直播与本地 ArtPlayer 播放。",
     "publisher": "Luma",
     "license": "GPL-3.0-or-later",
+    "licenseFile": "../LICENSE",
     "copyright": "Copyright © 2026 Luma contributors",
-    "category": "Utility",
+    "category": "Video",
     "windows": {
       "nsis": {
         "installMode": "currentUser",

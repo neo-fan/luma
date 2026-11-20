@@ -70,7 +70,7 @@ function assert(ok, label, detail = "") {
 const targets = await (await fetch(CDP)).json();
 const page = targets.find((t) => t.type === "page" && t.webSocketDebuggerUrl);
 if (!page) {
-  console.error("no CDP page target; start `corepack pnpm tauri dev` first");
+  console.error("no CDP page target; start `corepack pnpm dev:app` first");
   process.exit(2);
 }
 const cdp = new Cdp(page.webSocketDebuggerUrl);

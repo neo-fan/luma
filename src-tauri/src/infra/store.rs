@@ -111,11 +111,9 @@ pub fn data_dir() -> PathBuf {
     }
     if let Ok(appdata) = std::env::var("APPDATA") {
         if !appdata.trim().is_empty() {
-            // debug 构建（dev / 直跑 debug exe）与正式版数据完全隔离。
-            if cfg!(debug_assertions) {
-                return PathBuf::from(appdata).join("Luma-debug");
-            }
-            return PathBuf::from(appdata).join("Luma");
+            // 目录名 = identifier：`app.luma` / `app.luma.beta` / `app.luma.dev`。
+            // 与系统里看到的包身份同名，通道隔离不再维护一套额外的目录后缀。
+            return PathBuf::from(appdata).join(crate::channel::data_dir_name());
         }
     }
     PathBuf::from("data")

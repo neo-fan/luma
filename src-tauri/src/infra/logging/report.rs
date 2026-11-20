@@ -47,8 +47,8 @@ pub(crate) fn write_report(config: Option<diagnostics::ConfigDigest>) -> Result<
     text.push_str("Luma 反馈文件（可整份发送，无需额外说明）\n");
     text.push_str(&format!("生成时间(UTC): {}\n", utc_stamp()));
     text.push_str(&format!(
-        "版本: {}\n平台: {}/{}\n",
-        diag.version, diag.os, diag.arch
+        "版本: {}\n通道: {}\n平台: {}/{}\n",
+        diag.version, diag.channel, diag.os, diag.arch
     ));
     text.push('\n');
     text.push_str("== 诊断 ==\n");

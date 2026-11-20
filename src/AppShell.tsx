@@ -37,7 +37,7 @@ import {
   IS_DEV_BUILD,
   readableBuildTime,
 } from "./lib/version";
-import { currentStartedAt, loadStartedAt, unifiedBuildStamp } from "./lib/appInfo";
+import { currentChannel, currentStartedAt, loadRuntimeInfo, unifiedBuildStamp } from "./lib/appInfo";
 import { navBack, registerNav, viewToLocation, type View } from "./lib/nav";
 import { useAppStore, useSiteState, selectLives } from "./stores/appStore";
 import type { ConfigSnapshot, LiveSource } from "./types/luma";
@@ -49,7 +49,7 @@ import type { ConfigSnapshot, LiveSource } from "./types/luma";
  */
 const LivePage = lazy(() => loadWithRetry("LivePage", () => import("./pages/LivePage")));
 
-/** 侧栏展示用：prerelease 缩写（如 `1.2.0-beta` → `1.2.0.b`），数据源仍是合法 semver。 */
+/** 侧栏展示用：prerelease 缩写（如 `2.0.0-beta.1` → `2.0.0.b1`），数据源仍是合法 semver。 */
 const versionLabel = formatVersion(APP_VERSION);
 
 const NAV_ITEMS: {
@@ -120,17 +120,24 @@ export default function AppShell() {
    * 时间——dev 下 Vite 与 cargo 的构建时刻必然不同，两处数字永远对不上。
    */
   const [startedAt, setStartedAt] = useState(currentStartedAt);
+  // 通道只认宿主：stale 的构建期猜测会让 beta 包在侧栏显示成 dev（或相反）。
+  const [channel, setChannel] = useState(currentChannel);
   useEffect(() => {
     let alive = true;
-    void loadStartedAt().then((value) => {
-      if (alive && value) {
-        setStartedAt(value);
-      }
+    void loadRuntimeInfo().then((info) => {
+      if (!alive) return;
+      if (info.startedAt) setStartedAt(info.startedAt);
+      if (info.channel) setChannel(info.channel);
     });
     return () => {
       alive = false;
     };
   }, []);
+
+  // dev 安装包也是 release 构建（IS_DEV_BUILD=false），所以先看宿主通道；
+  // 只有在宿主信息到货前用构建类型兜底，避免 dev 窗第一屏没有标记。
+  const channelLabel =
+    channel === "beta" ? "beta" : channel === "dev" || IS_DEV_BUILD ? "dev" : "";
 
   const location = useLocation();
   const rNav = useNavigate();
@@ -479,14 +486,17 @@ export default function AppShell() {
             <div className="sidebar__foot">
               <span className="sidebar__version">
                 version: {versionLabel}
-                {/* 调试窗口与已安装的正式版同机并存，版本号一样但数据目录
-                    不同（Luma-debug vs Luma），必须一眼可辨。 */}
-                {IS_DEV_BUILD ? (
+                {/* 同机并存时版本号可能完全一样，靠通道后缀与数据目录区分。 */}
+                {channelLabel ? (
                   <span
-                    className="sidebar__dev"
-                    title="调试构建（tauri dev）：数据目录、窗口标题都与正式版分开"
+                    className={`sidebar__${channelLabel}`}
+                    title={
+                      channelLabel === "dev"
+                        ? "调试通道（dev）：数据目录 app.luma.dev、反代 9979，与正式版独立"
+                        : "测试通道（beta）：数据目录 app.luma.beta、反代 9977，与正式版独立"
+                    }
                   >
-                    dev
+                    {channelLabel}
                   </span>
                 ) : null}
               </span>

@@ -19,12 +19,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TAURI_CONF = "src-tauri/tauri.conf.json"
+BETA_CONF = "src-tauri/tauri.beta.conf.json"
+DEV_CONF = "src-tauri/tauri.dev.conf.json"
 MAIN_PY = "sidecars/py/main.py"
 AGENTS = "AGENTS.md"
+
+# 通道 overlay 是入库的可审计副本；identifier 由 package.json 的 appId 派生。
+CHANNEL_SUFFIXES = {"stable": "", "beta": ".beta", "dev": ".dev"}
+CHANNEL_CONFS = {TAURI_CONF: "stable", BETA_CONF: "beta", DEV_CONF: "dev"}
 
 
 def read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
+
+
+def package_app_id() -> str:
+    """`package.json` 的 `appId` 是 identifier 前缀；缺失时按包名派生（同 build.rs）。"""
+    pkg = json.loads(read("package.json"))
+    return str(pkg.get("appId") or f"app.{pkg.get('name', 'luma')}")
 
 
 def package_version() -> str:
@@ -107,6 +119,42 @@ def main() -> int:
     if conf.get("version") != "../package.json":
         problems.append(f"{TAURI_CONF}: version = {conf.get('version')!r}，应指向 '../package.json'")
 
+    # 通道身份：identifier 统一由 package.json 的 appId + 通道后缀派生；
+    # 三份 overlay 是提交入库的副本，必须与派生值一致，否则会覆盖另一个通道的安装。
+    try:
+        base_id = package_app_id()
+    except (OSError, KeyError, ValueError) as err:
+        problems.append(f"package.json: 无法读取 appId（{err}）")
+        base_id = None
+    if base_id:
+        if not re.fullmatch(r"[A-Za-z0-9.-]+", base_id):
+            problems.append(f"package.json: appId {base_id!r} 含非法字符")
+        for rel, name in CHANNEL_CONFS.items():
+            try:
+                channel_conf = json.loads(read(rel))
+            except (OSError, ValueError) as err:
+                problems.append(f"{rel}: 无法解析（{err}）")
+                continue
+            expected_id = base_id + CHANNEL_SUFFIXES[name]
+            actual_id = channel_conf.get("identifier")
+            if actual_id != expected_id:
+                problems.append(
+                    f"{rel}: identifier = {actual_id!r}，应为 {expected_id!r}"
+                    f"（appId + {CHANNEL_SUFFIXES[name]!r}）"
+                )
+            if channel_conf.get("version") not in (None, "../package.json"):
+                problems.append(f"{rel}: version 应省略或指向 '../package.json'，避免第二份版本号")
+        try:
+            beta_name = json.loads(read(BETA_CONF)).get("productName")
+            stable_name = conf.get("productName", "Luma")
+            if not beta_name or beta_name == stable_name:
+                problems.append(
+                    f"{BETA_CONF}: productName 应区别于 stable（{stable_name!r}），"
+                    "否则开始菜单与安装目录同名"
+                )
+        except (OSError, ValueError) as err:
+            problems.append(f"{BETA_CONF}: 无法解析（{err}）")
+
     # 适配层：宿主注入优先，回退 package.json；不允许再出现字面量版本号。
     main_py = read(MAIN_PY)
     if not re.search(r"(?m)^VERSION\s*=\s*_read_version\(\)\s*$", main_py):
@@ -134,6 +182,11 @@ def main() -> int:
     print(f"  src-tauri/Cargo.toml {expected}")
     print(f"  src-tauri/Cargo.lock {expected}")
     print(f"  {TAURI_CONF}  ../package.json")
+    if base_id:
+        derived = " / ".join(
+            f"{name} {base_id}{suffix}" for name, suffix in CHANNEL_SUFFIXES.items()
+        )
+        print(f"  通道 overlay        {derived}")
     print(f"  sidecars/py ping    {fallback}（注入覆盖生效）")
     print(f"  {AGENTS}            {expected}")
     return 0

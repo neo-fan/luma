@@ -2,6 +2,8 @@
   "name": "luma",
   "private": true,
   "version": "2.0.0",
+  "appId": "app.luma",
+  "productName": "Luma",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "packageManager": "pnpm@9.15.4",
@@ -9,6 +11,8 @@
     "dev": "vite",
     "dev:app": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "build": "tsc --noEmit && vite build",
+    "build:app": "tauri build",
+    "build:beta": "tauri build --config src-tauri/tauri.beta.conf.json",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run"

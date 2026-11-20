@@ -267,7 +267,7 @@ if (!stubOk && selected.some((probe) => probe.needsStub)) {
 
 const cdp = await connect();
 if (!cdp) {
-  console.error("连不上 dev 窗口（CDP 9222）：先跑 `corepack pnpm tauri dev`");
+  console.error("连不上 dev 窗口（CDP 9222）：先跑 `corepack pnpm dev:app`");
   process.exit(2);
 }
 

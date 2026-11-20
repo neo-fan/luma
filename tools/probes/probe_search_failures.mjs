@@ -150,13 +150,13 @@ function todayLogFile() {
   // Channel::Ui / file_prefix "ui"）。扁平的 logs/luma-<date>.log 已被三通道布局取代。
   const name = `ui.${utc}.log`;
   const base = path.join(os.homedir(), "AppData", "Roaming");
-  // debug 构建的数据目录是 Luma-debug（见 store.rs 的 debug_assertions 分支）；
-  // release 是 Luma。两个都试，取今天日志真实存在的那个。
-  for (const dir of [path.join(base, "Luma-debug"), path.join(base, "Luma")]) {
+  // dev 构建的数据目录是 app.luma.dev（见 store.rs 的 channel 分支）；
+  // stable 是 app.luma。两个都试，取今天日志真实存在的那个。
+  for (const dir of [path.join(base, "app.luma.dev"), path.join(base, "app.luma")]) {
     const file = path.join(dir, "logs", "ui", name);
     if (existsSync(file)) return file;
   }
-  return path.join(base, "Luma-debug", "logs", "ui", name);
+  return path.join(base, "app.luma.dev", "logs", "ui", name);
 }
 
 function readLog(file) {

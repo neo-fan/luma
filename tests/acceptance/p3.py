@@ -117,7 +117,7 @@ def t32_phase() -> None:
 
     if not NSIS_INSTALLER.is_file():
         check(False, "T-32 installer", "NSIS installer built",
-              "run `corepack pnpm tauri build`")
+              "run `corepack pnpm build:app`")
         return
 
     size_mb = NSIS_INSTALLER.stat().st_size / (1024 * 1024)

@@ -20,6 +20,9 @@ fn main() {
     // 一个版本号对不上的包。见 docs/RELEASING.md §1。
     println!("cargo:rerun-if-changed=../package.json");
     assert_version();
+    // 通道身份与应用版本同源：`package.json` 的 appId / productName / version。
+    // 运行时不猜 identifier，直接用它派生数据目录与通道（见 infra/channel.rs）。
+    println!("cargo:rustc-env=LUMA_APP_ID={}", app_id());
 
     // 优先读环境变量（重编脚本显式注入，避免 cargo 子进程取不到 git 时回退 unknown）；
     // 时间戳始终优先用构建时刻，不用 git 提交时间——用户要的是「这个 exe 什么时候编的」。
@@ -81,15 +84,16 @@ fn assert_version() {
     }
 }
 
-/// 读 `package.json` 顶层的 `"version"` 字段。
+/// 读 `package.json` 顶层的字符串字段。
 ///
-/// 只为构建期断言服务，不引 JSON 依赖：顶层字段固定两个空格缩进，依赖字段是
-/// `"pkg": "^1.2.3"` 不带 `version` 键，因此按行取第一个顶格字段即可。
-fn package_version() -> Option<String> {
+/// 只为构建期注入服务，不引 JSON 依赖：顶层字段固定两个空格缩进，依赖字段是
+/// `"pkg": "^1.2.3"`，按 `key` 精确匹配即可。
+fn package_field(key: &str) -> Option<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../package.json");
     let text = std::fs::read_to_string(path).ok()?;
+    let prefix = format!("  \"{key}\"");
     text.lines().find_map(|line| {
-        let rest = line.strip_prefix("  \"version\"")?;
+        let rest = line.strip_prefix(&prefix)?;
         let rest = rest
             .trim_start()
             .strip_prefix(':')?
@@ -98,4 +102,14 @@ fn package_version() -> Option<String> {
         let value = rest.split('"').next()?.trim();
         (!value.is_empty()).then(|| value.to_string())
     })
+}
+
+fn package_version() -> Option<String> {
+    package_field("version")
+}
+
+/// `appId` 缺失时按包名派生（`luma` → `app.luma`）；目录被单独拷贝出去构建时
+/// 也不会凭空写死一个身份。
+fn app_id() -> String {
+    package_field("appId").unwrap_or_else(|| format!("app.{}", env!("CARGO_PKG_NAME")))
 }
