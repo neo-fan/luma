@@ -18,9 +18,7 @@ import { buildImageUrl, needsProxy, normalizePic } from "../lib/imageUrl";
 import { getProxyBaseUrl, resolveProxiedImageSync } from "../hooks/useProxiedImage";
 import {
   consumeAutoNav,
-  ledgerHasUrl,
   ledgerMarkSite,
-  ledgerMarkUrl,
   ledgerReset,
 } from "../lib/failoverLedger";
 import { resolutionBadge, resolutionDetail } from "../lib/resolution";
@@ -126,7 +124,6 @@ export default function PlayerPage({
   const ledgerKey = failoverKey || vodName.trim();
   const failoverStarted = useRef(false);
   const lineSwitchStarted = useRef(false);
-  const lineAttempt = useRef<Promise<boolean> | null>(null);
   /**
    * 点播「下一集」控制栏按钮。用 ref 转发：剧集列表异步到达，若把它直接做进
    * 播放内核的 effect 依赖，就会为了一个按钮把正在播的实例整个重建（双声）。
@@ -141,7 +138,6 @@ export default function PlayerPage({
     height: 0,
   });
 
-  const [recovering, setRecovering] = useState(false);
   const [showSources, setShowSources] = useState(false);
   /** 收藏状态：与详情页共用同一份 SQLite 数据，这里只做镜像。 */
   const [favorite, setFavorite] = useState(false);
@@ -208,7 +204,6 @@ export default function PlayerPage({
     episodeNavRef,
     failoverStarted,
     lineSwitchStarted,
-    lineAttempt,
   });
 
   const {
@@ -468,17 +463,6 @@ export default function PlayerPage({
   const playable = resolved !== null && BUILTIN_KINDS.includes(resolved.kind);
 
   /**
-   * 媒体是否已经真的出过画（或正在播）。这是「不能自动换源」的最硬证据。
-   */
-  const mediaHasStarted = () => {
-    const video = videoRef.current;
-    if (!video) {
-      return false;
-    }
-    return video.currentTime > 0 || (!video.paused && video.readyState >= 2);
-  };
-
-  /**
    * 与详情页共用的换源候选缓存：播放页多是从详情跳转过来，缓存已就绪；
    * 从历史/收藏直接播放时这里补一次精确片名的后台检索。
    */
@@ -505,7 +489,6 @@ export default function PlayerPage({
     }
     failoverStarted.current = false;
     lineSwitchStarted.current = false;
-    lineAttempt.current = null;
     const carried = window.sessionStorage.getItem("luma:autoSwitch");
     if (carried) {
       window.sessionStorage.removeItem("luma:autoSwitch");
@@ -516,53 +499,8 @@ export default function PlayerPage({
     }
   }, [siteKey, playUrl]);
 
-  /**
-   * 自动换源：当前源取不到流时，交给自愈总线（先换线、再换源）。
-   * 原地换集/换源之后路由 playUrl 已不代表正在播的地址，暂停中也不换。
-   */
-  useEffect(() => {
-    if (
-      !active ||
-      switchedUrlRef.current ||
-      videoRef.current?.paused ||
-      mediaHasStarted()
-    ) {
-      return;
-    }
-    if (resolving || resolveError || !resolved || resolved.kind !== "page") {
-      return;
-    }
-    if (ledgerHasUrl(ledgerKey, playUrl)) {
-      return;
-    }
-    void controller.switchOrFailoverRef.current();
-  }, [active, resolved, resolving, resolveError, playUrl, ledgerKey, switchedUrlRef, controller.switchOrFailoverRef]);
-
-  /**
-   * 解析失败也要自动换线路：网盘 token 线路会直接留一块「无法解析」。
-   * 慢源超时属于「没定论」，不自动换走。
-   */
-  useEffect(() => {
-    if (
-      !active ||
-      switchedUrlRef.current ||
-      videoRef.current?.paused ||
-      mediaHasStarted() ||
-      resolving ||
-      !resolveError
-    ) {
-      return;
-    }
-    if (ledgerHasUrl(ledgerKey, playUrl) || resolveRetryable) {
-      return;
-    }
-    ledgerMarkUrl(ledgerKey, playUrl);
-    setRecovering(true);
-    setSwitchTip("当前线路无法解析，正在尝试其它线路…");
-    void controller.switchOrFailoverRef
-      .current()
-      .finally(() => setRecovering(false));
-  }, [active, resolving, resolveError, resolveRetryable, playUrl, ledgerKey, switchedUrlRef, controller.switchOrFailoverRef]);
+  // 取不到流 / 解析失败时不再自动换线或换源：只留错误条与手动按钮。
+  // 切换一律由用户点选发起（乐观切换，不预先探活）。
 
   /**
    * 播放内核：ArtPlayer + hls.js / mpegts.js + 偏好记忆 + stalled watchdog。
@@ -574,7 +512,6 @@ export default function PlayerPage({
     lastMediaRef,
     failoverStarted,
     lineSwitchStarted,
-    switchOrFailoverRef: controller.switchOrFailoverRef,
     episodeNavRef,
     canNext: canPlayNext,
     switching,
@@ -610,31 +547,36 @@ export default function PlayerPage({
   }, [resolved]);
 
   /**
-   * 看完一集自动接下一集：连看时不必每集回来点按钮。
+   * 接下一集：自然播完（ended）与「跳过片尾」共用同一条路径。返回 false 表示
+   * 没有下一集（最后一集或线路数据未就绪），调用方自行决定停在哪。
    */
+  const advanceToNext = useCallback(() => {
+    if (!canPlayNext || !activeLine) {
+      return false;
+    }
+    const next = activeLine.episodes[display.episodeIndex + 1];
+    log.info("auto next episode", {
+      siteKey,
+      vodId,
+      from: display.episodeIndex,
+      to: display.episodeIndex + 1,
+    });
+    notify.info(`已自动播放下一集${next ? `：${next.name}` : ""}`);
+    goEpisode(1);
+    return true;
+  }, [activeLine, canPlayNext, display.episodeIndex, goEpisode, siteKey, vodId]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) {
       return;
     }
     const onEnded = () => {
-      if (!canPlayNext || !activeLine) {
-        return;
-      }
-      const next = activeLine.episodes[display.episodeIndex + 1];
-      log.info("auto next episode", {
-        siteKey,
-        vodId,
-        from: display.episodeIndex,
-        to: display.episodeIndex + 1,
-      });
-      notify.info(`已自动播放下一集${next ? `：${next.name}` : ""}`);
-      goEpisode(1);
+      advanceToNext();
     };
     video.addEventListener("ended", onEnded);
     return () => video.removeEventListener("ended", onEnded);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, canPlayNext, display.lineIndex, display.episodeIndex, siteKey, vodId, activeLine]);
+  }, [resolved, advanceToNext]);
 
   const playExternal = async () => {
     if (!EXTERNAL_PLAY_ENABLED) {
@@ -822,6 +764,11 @@ export default function PlayerPage({
     }
   };
   const doSkipOutro = () => {
+    // 有下一集就直接接：以前是 seek 到 duration-0.5 等 ended，流末尾不触发
+    // ended（或视频刚好暂停）时会停在最后一帧，表现成「跳过片尾就暂停」。
+    if (advanceToNext()) {
+      return;
+    }
     const v = videoRef.current;
     if (v && Number.isFinite(v.duration) && v.duration > 0) {
       try {
@@ -870,7 +817,7 @@ export default function PlayerPage({
         reloading={reloading}
         switching={switching || engine.switching}
         playable={playable}
-        recovering={recovering}
+        recovering={false}
         pending={resolved === null}
         resolveError={switchedUrlRef.current ? "" : resolveError}
         retryable={resolveRetryable}
@@ -918,10 +865,10 @@ export default function PlayerPage({
       />
 
       <div className="page-body">
-        {videoError && !recovering ? (
+        {videoError ? (
           <ErrorBar message={videoError} lifetime="timed" />
         ) : null}
-        {resolveError && !recovering && !switchedUrlRef.current ? (
+        {resolveError && !switchedUrlRef.current ? (
           <ErrorBar
             message={`播放地址解析失败：${resolveError}`}
             lifetime="timed"

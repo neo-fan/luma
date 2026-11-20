@@ -291,7 +291,6 @@ export default function LivePage({
     reloading,
     switching: streamSwitching,
     resolveError,
-    errorPlayUrl,
     resolveRetryable,
     reload,
   } = usePlayResolution({
@@ -390,10 +389,23 @@ export default function LivePage({
   );
 
   /**
-   * 自动换线：同一频道的下一线路，试完为止。
-   *
-   * 直播没有「换源」概念（频道是源的一部分），能做的只有换这个频道的另一条
-   * 地址；全部失败就把结论交给用户——目录就在左边，换台比等下去快。
+   * 手动换线：直接切下一条，不做可用性预检，也不受「自动换线已试线路」影响。
+   */
+  const selectNextLine = useCallback(() => {
+    if (!channel || streamSwitchingRef.current) {
+      return;
+    }
+    const total = channel.lines.length;
+    if (total <= 1) {
+      setVideoError("该频道只有一条线路。");
+      return;
+    }
+    selectLine(channel.name, (lineIdx + 1) % total, total);
+  }, [channel, lineIdx, selectLine]);
+
+  /**
+   * 历史自动换线实现（已停用）：保留给判死结论与日志使用，但不再有任何自动
+   * 调用点——自动换线会让用户刚选的线路被覆盖，产品上只保留手动按钮。
    */
   switchOrFailoverRef.current = async () => {
     if (!channel) {
@@ -544,7 +556,6 @@ export default function LivePage({
     lastMediaRef,
     failoverStarted,
     lineSwitchStarted,
-    switchOrFailoverRef,
     liveLineRef,
     reloadRef,
     resolved,
@@ -598,27 +609,9 @@ export default function LivePage({
   }, [engine, switchTip, slowNotice]);
 
   /**
-   * 解析失败也换线路——但要与「源还没答完」区分开。
-   * 超时（`resolveRetryable`）保留当前线路让用户刷新；明确失败才顺延。
-   *
-   * 关键判据：错误必须**属于当前这个 playUrl**（`errorPlayUrl === playUrl`）。
-   * 用户点新台的那次渲染，`resolveError` 还是上一台残留的旧错误串，若照常
-   * 顺延就会把新频道第一条线路秒判死（实测换台后 ~169ms 直接跳到线路 2）。
+   * 换线下滑：**不再自动触发**。解析失败只把错误交给用户，换线由控制栏按钮
+   * 发起（`switchOrFailoverRef` 现在是纯手动动作，见 PlayerStage.onNextLine）。
    */
-  useEffect(() => {
-    if (!channel || resolving || !resolveError || resolveRetryable) {
-      return;
-    }
-    // 错误属于上一个地址：这是「刚换台」的那一拍，旧结论作废，等新一轮自己说话。
-    if (errorPlayUrl !== playUrl) {
-      return;
-    }
-    // 全部线路都试过了：`switchOrFailoverRef` 自己会给结论，别再触发。
-    if (channel.lines.length <= triedRef.current.size) {
-      return;
-    }
-    void switchOrFailoverRef.current();
-  }, [channel, resolving, resolveError, errorPlayUrl, resolveRetryable, lineIdx, playUrl]);
 
   // 新线路出结果就撤掉「自动换线中」的抑制；12s 兜底防止状态卡住。
   useEffect(() => {
@@ -832,7 +825,7 @@ export default function LivePage({
                   retryable={resolveRetryable}
                   containerRef={containerRef}
                   onNextLine={() => {
-                    void switchOrFailoverRef.current();
+                    selectNextLine();
                   }}
                 />
                 <PlayerResolution

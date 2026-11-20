@@ -136,7 +136,7 @@ export const vodSessionMachine = setup({
     // `matches("switching")` 状态驱动，都不在这里。
     resumePlayback: () => undefined,
     cancelResume: () => undefined,
-    navigateFailover: () => undefined,
+    reportFailure: () => undefined,
   },
 }).createMachine({
   id: "playerSession",
@@ -155,7 +155,7 @@ export const vodSessionMachine = setup({
     attaching: {
       on: {
         ATTACHED: "buffering",
-        FAILED: { target: "recovering", actions: "failoverFromEvent" },
+        FAILED: { target: "failed", actions: "failoverFromEvent" },
       },
     },
     buffering: {
@@ -170,7 +170,7 @@ export const vodSessionMachine = setup({
           target: "switching",
           actions: ["setTarget", "setResumeIntent", "bumpSession"],
         },
-        FAILED: { target: "recovering", actions: "failoverFromEvent" },
+        FAILED: { target: "failed", actions: "failoverFromEvent" },
       },
     },
     playing: {
@@ -187,7 +187,7 @@ export const vodSessionMachine = setup({
         },
         // 兜底超时（或复核）之后才挂上新地址：续播照样要发起，否则换集停在暂停态。
         SWITCH_ATTACHED: [{ guard: "wantsResume", actions: "resumePlayback" }],
-        FAILED: { target: "recovering", actions: "failoverFromEvent" },
+        FAILED: { target: "failed", actions: "failoverFromEvent" },
       },
     },
     probing: {
@@ -195,12 +195,12 @@ export const vodSessionMachine = setup({
         PROBE: [
           {
             guard: "isDead",
-            target: "recovering",
+            target: "failed",
             actions: ["incrementProbe", "failoverProbeDead"],
           },
           {
             guard: "isUnknownExhausted",
-            target: "recovering",
+            target: "failed",
             actions: ["incrementProbe", "failoverUnresponsive"],
           },
           {
@@ -217,7 +217,7 @@ export const vodSessionMachine = setup({
         MEDIA_ALIVE: { target: "playing", actions: "resetProbe" },
         FRAG_GROWTH: { target: "playing", actions: "resetProbe" },
         // 探活期间解码器直接报错 = 比任何复核都硬的证据。
-        FAILED: { target: "recovering", actions: ["incrementProbe", "failoverFromEvent"] },
+        FAILED: { target: "failed", actions: ["incrementProbe", "failoverFromEvent"] },
         // 复核在途时换集 / 换源：本轮结论作废，跟着新会话走。
         USER_SWITCH: {
           target: "switching",
@@ -243,25 +243,19 @@ export const vodSessionMachine = setup({
         SWITCH_ATTACHED: [{ guard: "wantsResume", actions: "resumePlayback" }],
         STALL: { target: "probing", guard: "notPlayed" },
         FRAG_GROWTH: { actions: "resetProbe" },
-        FAILED: { target: "recovering", actions: "failoverFromEvent" },
+        FAILED: { target: "failed", actions: "failoverFromEvent" },
       },
     },
-    recovering: {
-      // 进入即「这条线已判死、交棒换线」。恢复路径是上层换源后重建实例（LOAD）
-      // 或手动换集（USER_SWITCH）。
-      entry: "navigateFailover",
+    // 判死即止：只上报失败原因，不自动换线/换源。用户手动换集/换线会发
+    // USER_SWITCH / LOAD 把会话拉回切换流程，乐观切换由播放页负责。
+    failed: {
+      entry: "reportFailure",
       on: {
         LOAD: { target: "resolving", actions: ["setTarget", "bumpSession"] },
         USER_SWITCH: {
           target: "switching",
           actions: ["setTarget", "setResumeIntent", "bumpSession"],
         },
-        FAILED: "failed",
-      },
-    },
-    failed: {
-      on: {
-        LOAD: { target: "resolving", actions: ["setTarget", "bumpSession"] },
       },
     },
   },

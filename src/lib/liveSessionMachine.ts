@@ -97,7 +97,7 @@ export const liveSessionMachine = setup({
       failoverDetail: ({ event }) => (event.type === "FAILED" ? (event.detail ?? "") : ""),
     }),
     // 副作用发起点：实现由解释器用 `machine.provide({ actions })` 注入。
-    requestLineSwitch: () => undefined,
+    reportFailure: () => undefined,
   },
 }).createMachine({
   id: "liveSession",
@@ -119,7 +119,7 @@ export const liveSessionMachine = setup({
       on: {
         ATTACHED: "buffering",
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
-        FAILED: { target: "recovering", actions: "failoverFromEvent" },
+        FAILED: { target: "failed", actions: "failoverFromEvent" },
       },
     },
     buffering: {
@@ -128,7 +128,7 @@ export const liveSessionMachine = setup({
         FRAG_GROWTH: { actions: "resetProbe" },
         STALL: { target: "probing", guard: "notPlayed" },
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
-        FAILED: { target: "recovering", actions: "failoverFromEvent" },
+        FAILED: { target: "failed", actions: "failoverFromEvent" },
       },
     },
     playing: {
@@ -143,7 +143,7 @@ export const liveSessionMachine = setup({
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
         // 手动换线路。
         LINE_SWITCH: { target: "tuning", actions: ["setTarget", "bumpSession"] },
-        FAILED: { target: "recovering", actions: "failoverFromEvent" },
+        FAILED: { target: "failed", actions: "failoverFromEvent" },
       },
     },
     probing: {
@@ -151,12 +151,12 @@ export const liveSessionMachine = setup({
         PROBE: [
           {
             guard: "isDead",
-            target: "recovering",
+            target: "failed",
             actions: ["incrementProbe", "failoverProbeDead"],
           },
           {
             guard: "isUnknownExhausted",
-            target: "recovering",
+            target: "failed",
             actions: ["incrementProbe", "failoverUnresponsive"],
           },
           {
@@ -172,23 +172,17 @@ export const liveSessionMachine = setup({
         ],
         MEDIA_ALIVE: { target: "playing", actions: "resetProbe" },
         FRAG_GROWTH: { target: "playing", actions: "resetProbe" },
-        FAILED: { target: "recovering", actions: ["incrementProbe", "failoverFromEvent"] },
+        FAILED: { target: "failed", actions: ["incrementProbe", "failoverFromEvent"] },
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
         // 复核在途时手动换线：本轮结论作废。
         LINE_SWITCH: { target: "tuning", actions: ["setTarget", "bumpSession"] },
       },
     },
-    recovering: {
-      // 直播的「恢复」= 换下一条线路重连；LivePage 换线时发 LINE_SWITCH/LOAD 驱动。
-      entry: "requestLineSwitch",
+    // 判死即止：只上报失败原因，不自动换线。手动换线发 LINE_SWITCH 或重连 LOAD。
+    failed: {
+      entry: "reportFailure",
       on: {
         LINE_SWITCH: { target: "tuning", actions: ["setTarget", "bumpSession"] },
-        LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
-        FAILED: "failed",
-      },
-    },
-    failed: {
-      on: {
         LOAD: { target: "tuning", actions: ["setTarget", "bumpSession"] },
       },
     },

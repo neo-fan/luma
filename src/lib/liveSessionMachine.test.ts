@@ -59,13 +59,13 @@ describe("liveSessionMachine", () => {
     expect(a.getSnapshot().context.lineIndex).toBe(1);
   });
 
-  it("出画前探活判死 → 请求换线路（recovering），换线后重连", () => {
+  it("出画前探活判死 → 请求换线路（failed），换线后重连", () => {
     const a = fresh();
     toLiveWaiting(a, "line1");
     a.send({ type: "STALL" });
     expect(a.getSnapshot().matches("probing")).toBe(true);
     a.send({ type: "PROBE", verdict: "dead" });
-    expect(a.getSnapshot().matches("recovering")).toBe(true);
+    expect(a.getSnapshot().matches("failed")).toBe(true);
     a.send({ type: "LINE_SWITCH", url: "line2", lineIndex: 1 });
     expect(a.getSnapshot().matches("tuning")).toBe(true);
   });
@@ -80,7 +80,7 @@ describe("liveSessionMachine", () => {
     }
     a.send({ type: "STALL" });
     a.send({ type: "PROBE", verdict: "unknown" });
-    expect(a.getSnapshot().matches("recovering")).toBe(true);
+    expect(a.getSnapshot().matches("failed")).toBe(true);
   });
 
   it("复核未达阈值回到 playing 后，首帧证据仍会置位 hasPlayed", () => {
@@ -117,7 +117,7 @@ describe("liveSessionMachine", () => {
     expect(a.getSnapshot().context.unresponsiveProbes).toBe(0);
     a.send({ type: "STALL" });
     a.send({ type: "PROBE", verdict: "dead" });
-    expect(a.getSnapshot().matches("recovering")).toBe(true);
+    expect(a.getSnapshot().matches("failed")).toBe(true);
     const b = fresh();
     toLiveWaiting(b);
     b.send({ type: "STALL" });
@@ -131,7 +131,7 @@ describe("liveSessionMachine", () => {
     const a = fresh();
     toLiveWaiting(a);
     a.send({ type: "STALL" });
-    a.send({ type: "PROBE", verdict: "dead" }); // recovering
+    a.send({ type: "PROBE", verdict: "dead" }); // failed
     a.send({ type: "FAILED", cause: "linesExhausted" });
     expect(a.getSnapshot().matches("failed")).toBe(true);
     a.send({ type: "LOAD", url: "c3", lineIndex: 0 });
@@ -145,8 +145,8 @@ describe("liveSessionMachine 副作用发起（解释器接线的契约）", () 
     const actor = createActor(
       liveSessionMachine.provide({
         actions: {
-          requestLineSwitch: ({ context }) =>
-            calls.push(`switch:${String(context.failoverCause)}:${context.failoverDetail}`),
+          reportFailure: ({ context }) =>
+            calls.push(`report:${String(context.failoverCause)}:${context.failoverDetail}`),
 
         },
       }),
@@ -160,7 +160,7 @@ describe("liveSessionMachine 副作用发起（解释器接线的契约）", () 
     toLiveWaiting(actor as unknown as ReturnType<typeof fresh>);
     actor.send({ type: "STALL" });
     actor.send({ type: "PROBE", verdict: "dead" });
-    expect(calls).toEqual(["switch:probeDead:"]);
+    expect(calls).toEqual(["report:probeDead:"]);
   });
 
   it("unknown 累计到阈值才换线路，之前只留证据", () => {
@@ -170,10 +170,10 @@ describe("liveSessionMachine 副作用发起（解释器接线的契约）", () 
       actor.send({ type: "STALL" });
       actor.send({ type: "PROBE", verdict: "unknown" });
     }
-    expect(calls.filter((c) => c.startsWith("switch:")).length).toBe(0);
+    expect(calls.filter((c) => c.startsWith("report:")).length).toBe(0);
     actor.send({ type: "STALL" });
     actor.send({ type: "PROBE", verdict: "unknown" });
-    expect(calls.filter((c) => c.startsWith("switch:"))).toEqual(["switch:probeUnresponsive:"]);
+    expect(calls.filter((c) => c.startsWith("report:"))).toEqual(["report:probeUnresponsive:"]);
   });
 
   it("红线：出过画之后不再自动换线路", () => {

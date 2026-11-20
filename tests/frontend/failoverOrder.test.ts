@@ -1,9 +1,9 @@
 /**
- * 点播自动切换的顺序契约：**当前源同一集 → 当前源其它集 → 跨站换源**。
+ * 自动切换已停用：换线 / 换源只能由 UI 选择发起，且不做可用性预检。
  *
- * 这段逻辑做过一次实测修正（1.0.4）：HLS fatal 与 kind=page 两个失败信号前后脚
- * 到，第二个看到「已在换线」就当失败，于是线路还在探活、页面已经跳到别的源了。
- * 顺序与去重都是不可见的时序行为，只能靠源码不变量守住。
+ * 这条红线来自现网反馈——用户手动切到布布追剧后，hls fatal 让看门狗判死，
+ * 自愈总线又把他换回欧乐影院；「切换以 UI 为准」必须是源码级不变量，不能靠
+ * 调用方自觉。
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -12,44 +12,41 @@ import { describe, expect, it } from "vitest";
 const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
-describe("auto line switch order", () => {
-  // 换线/换源编排已收敛到单一 controller。
+describe("automatic failover is disabled", () => {
   const orchestration = read("src/hooks/playback/usePlaybackController.ts");
+  const playerPage = read("src/pages/PlayerPage.tsx");
+  const livePage = read("src/pages/LivePage.tsx");
 
-  it("tries the current source's lines before crossing sources", () => {
-    const lineCall = orchestration.indexOf("const switched = await tryNextLine();");
-    const sourceCall = orchestration.indexOf("await tryFailover();");
-    expect(lineCall).toBeGreaterThan(0);
-    expect(sourceCall).toBeGreaterThan(lineCall);
+  it("controller no longer probes candidates or crosses sources on its own", () => {
+    expect(orchestration).not.toContain("tryNextLine");
+    expect(orchestration).not.toContain("tryFailover");
+    expect(orchestration).not.toContain("firstPlayable");
+    expect(orchestration).not.toContain("probePlayable");
+    expect(orchestration).not.toContain("switchOrFailover");
+    expect(orchestration).not.toContain("auto failover");
   });
 
-  it("splits the candidates into same episode first,其它集 second", () => {
-    expect(orchestration).toContain("sameEpisodeName(episode.name, currentEpisodeName)");
-    expect(orchestration).toContain("const sameEpisodeList = usable");
-    expect(orchestration).toContain("const otherEpisodes = usable");
-    const first = orchestration.indexOf("await firstPlayable(sameEpisodeList");
-    const second = orchestration.indexOf("await firstPlayable(otherEpisodes");
-    expect(first).toBeGreaterThan(0);
-    expect(second).toBeGreaterThan(first);
+  it("manual next-line switches optimistically to the same episode", () => {
+    expect(orchestration).toContain("const nextLine = useCallback(() => {");
+    expect(orchestration).toContain("const targetLine = (c.lineIndex + 1) % total;");
+    expect(orchestration).toContain("selectEpisode(targetLine, index);");
   });
 
-  it("dedupes concurrent failures by awaiting the in-flight attempt", () => {
-    expect(orchestration).toContain("const inflight = depsRef.current.lineAttempt.current;");
-    expect(orchestration).toContain("return inflight;");
-    // 不能再用「已开始就当失败」的布尔早退。
-    expect(orchestration).not.toContain("if (lineSwitchStarted.current) {");
+  it("vod page never calls an auto switch on resolve/playback failure", () => {
+    expect(playerPage).not.toContain("switchOrFailoverRef");
+    expect(playerPage).not.toContain("正在尝试其它线路");
   });
 
-  it("tells the user which stage it is in", () => {
-    expect(orchestration).toContain("正在尝试同源的其它线路");
-    expect(orchestration).toContain("当前源没有可播线路，正在尝试其它源");
+  it("live page keeps only the manual line button", () => {
+    expect(livePage).toContain("const selectNextLine = useCallback(");
+    expect(livePage).toContain("selectNextLine();");
+    expect(livePage).not.toMatch(/void switchOrFailoverRef\.current\(\)/);
   });
 
-  it("does not claim a source switch while switching lines", () => {
-    // 2.0.0 起交棒文案集中在 `lib/sessionFailover.ts`（原先散在引擎 5 个交棒点），
-    // 所以这条口径在那儿钉；引擎侧只把「为什么判死」交给机器。
+  it("failure copy never promises an automatic switch", () => {
     const copy = read("src/lib/sessionFailover.ts");
-    expect(copy).toContain("正在切换线路");
-    expect(copy).not.toContain("，正在换源");
+    expect(copy).not.toContain("正在切换");
+    expect(copy).not.toContain("正在找其它源");
+    expect(copy).toContain("换线路或换源");
   });
 });

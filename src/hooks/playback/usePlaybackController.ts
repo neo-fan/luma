@@ -24,33 +24,19 @@ import type { PlaybackState, PlaybackTarget } from "./playbackTarget";
 import { api, cacheKeys } from "../../lib/invoke";
 import { errorMessage } from "../../lib/invoke";
 import { CACHE_TTL, peekFresh } from "../../lib/queryClient";
-import { parsePlayLines, sameEpisodeName } from "../../lib/format";
+import { parsePlayLines } from "../../lib/format";
 import type { PlayLine } from "../../lib/format";
 import { pickMatchingEpisode } from "../../lib/sources";
 import type { SourceOption } from "../../lib/sources";
 import { locateEpisode, seedFromCachedDetail } from "../../lib/episodeSeed";
 import type { EpisodeSeed } from "../../lib/episodeSeed";
-import { resolveEpisodeTarget } from "../../lib/episodeResolve";
-import { invalidateEpisodePlayCache, setEpisodePlayCache } from "../../lib/episodePlayCache";
+import { invalidateEpisodePlayCache } from "../../lib/episodePlayCache";
 import { resolveEpisodePlay } from "./episodePlayResolve";
 import { playerRoute } from "./playerRoute";
-import { firstPlayable } from "../../lib/probeRace";
-import { probePlayable } from "../../lib/playProbe";
-import { lineRank } from "../../lib/lineHealth";
-import {
-  ledgerBudget,
-  ledgerCountSwitch,
-  ledgerHasUrl,
-  ledgerMarkSite,
-  ledgerMarkUrl,
-  ledgerSiteSeen,
-  markAutoNav,
-} from "../../lib/failoverLedger";
-import { PLAY_FAILURE_HINT } from "../../lib/features";
 import { log } from "../../lib/logger";
 import { notify } from "../../lib/notify";
 import type { Navigate } from "../../lib/nav";
-import type { PlayResolved, VodInfo, ResultPage } from "../../types/luma";
+import type { PlayResolved, VodInfo } from "../../types/luma";
 import type { EpisodeNavControl, UsePlayerEngineHandle } from "../usePlayerEngine";
 
 /** 手动意图持有期：覆盖「慢源 detail + 解析 + 50s 硬上限」的最坏手动路径。 */
@@ -97,7 +83,6 @@ export interface PlaybackControllerOptions {
   episodeNavRef: MutableRefObject<EpisodeNavControl | null>;
   failoverStarted: MutableRefObject<boolean>;
   lineSwitchStarted: MutableRefObject<boolean>;
-  lineAttempt: MutableRefObject<Promise<boolean> | null>;
 }
 
 export interface PlaybackController {
@@ -117,8 +102,6 @@ export interface PlaybackController {
   switchedUrlRef: MutableRefObject<string | null>;
   /** 真正在播的集身份：fatal 按它作废解析缓存。 */
   playingEpisodeRef: MutableRefObject<{ siteKey: string; playFrom: string; url: string }>;
-  /** 自动自愈总线：页面预建、这里每渲染把最新结论挂上去，供 engine 使用。 */
-  switchOrFailoverRef: MutableRefObject<() => Promise<void>>;
   selectEpisode: (targetLine: number, index: number) => void;
   goEpisode: (delta: number) => void;
   switchSource: (option: SourceOption) => Promise<void>;
@@ -203,7 +186,7 @@ export function usePlaybackController(
   // 作废那条坏缓存（否则空 key 的 invalidate 是 no-op，用户返回该集再踩同一个坏地址）。
   // 之后的原地换集 / 换源在 commit 回调里覆盖为最新值。
   const playingEpisodeRef = useRef({ siteKey, playFrom, url: playUrl });
-  const switchOrFailoverRef = useRef<() => Promise<void>>(async () => undefined);
+  // 手动换线/换源/换集都不再经过「自愈总线」：没有自动切换，也没有探活闸门。
 
   const display = displayTarget(state);
   const committed = state.committed;
@@ -607,332 +590,34 @@ export function usePlaybackController(
     [selectEpisode],
   );
 
-  const probeCandidate = useCallback(
-    async (
-      key: string,
-      candidate: { line: string; url: string },
-      signal: AbortSignal,
-    ): Promise<boolean> => {
-      try {
-        const target = await resolveEpisodeTarget(key, candidate.line, candidate.url);
-        if (target.unresolvable || signal.aborted) {
-          return false;
-        }
-        const probe = await api.resolvePlay({
-          siteKey: key,
-          url: target.url,
-          ua: target.ua,
-          referer: target.referer,
-          cookie: target.cookie,
-        });
-        if (probe.kind === "page" || signal.aborted) {
-          return false;
-        }
-        const ok = await probePlayable(probe.proxyUrl, probe.kind);
-        if (ok) {
-          setEpisodePlayCache(key, candidate.line, candidate.url, probe);
-        }
-        return ok;
-      } catch {
-        return false;
-      }
-    },
-    [],
-  );
-
-  /** 自动换线：同源同集 → 同源其它集；找到即 navigate 重建。 */
-  const tryNextLine = useCallback(async (): Promise<boolean> => {
-    const inflight = depsRef.current.lineAttempt.current;
-    if (inflight) {
-      return inflight;
-    }
-    const d = depsRef.current;
-    d.lineSwitchStarted.current = true;
-    const attempt = (async (): Promise<boolean> => {
-      const { gen, signal } = switchToken.current.begin();
-      const c = committedRef.current;
-      // 记「真正在播的地址」而非路由 raw playUrl：原地换集后路由不变，
-      // 用旧值记账本会让刚失败的新集不在账本里，probe 又把它当候选选回来。
-      ledgerMarkUrl(d.ledgerKey, playingEpisodeRef.current.url || d.playUrl);
-
-      type Candidate = { line: string; episode: { name: string; url: string } };
-      let episodes: Candidate[] = c.lines.flatMap((line) =>
-        line.episodes.map((episode) => ({ line: line.name, episode })),
-      );
-      if (episodes.length === 0) {
-        try {
-          const detail = await api.detail(c.siteKey, c.vodId);
-          const first = detail[0];
-          if (first) {
-            episodes = parsePlayLines(first.vod_play_from, first.vod_play_url).flatMap(
-              (line) => line.episodes.map((episode) => ({ line: line.name, episode })),
-            );
-          }
-        } catch {
-          // 详情拿不到就直接走跨站换源。
-        }
-      }
-
-      const currentEpisodeName =
-        c.lines[c.lineIndex]?.episodes[c.episodeIndex]?.name ?? d.episodeName;
-      const usable = episodes
-        .filter(
-          ({ episode }) => Boolean(episode.url) && !ledgerHasUrl(d.ledgerKey, episode.url),
-        )
-        .map(({ line, episode }) => ({
-          line,
-          name: episode.name,
-          url: episode.url,
-          sameEpisode: sameEpisodeName(episode.name, currentEpisodeName),
-        }))
-        .sort((a, b) => {
-          if (a.sameEpisode !== b.sameEpisode) {
-            return Number(b.sameEpisode) - Number(a.sameEpisode);
-          }
-          return lineRank(c.siteKey, a.line) - lineRank(c.siteKey, b.line);
-        });
-
-      const sameEpisodeList = usable.filter((item) => item.sameEpisode).slice(0, 12);
-      const otherEpisodes = usable.filter((item) => !item.sameEpisode).slice(0, 8);
-      const probe = (item: { line: string; url: string }, sig: AbortSignal) =>
-        probeCandidate(c.siteKey, item, sig);
-
-      d.setSwitchTip("正在尝试同源的其它线路…");
-      let picked = sameEpisodeList.length
-        ? await firstPlayable(sameEpisodeList, probe, { concurrency: 4, signal })
-        : null;
-      if (!picked && otherEpisodes.length) {
-        d.setSwitchTip("当前源没有同集可播线路，正在尝试其它集…");
-        picked = await firstPlayable(otherEpisodes, probe, { concurrency: 4, signal });
-      }
-      if (!picked) {
-        return false;
-      }
-      if (!switchToken.current.isCurrent(gen)) {
-        return false;
-      }
-      ledgerMarkUrl(d.ledgerKey, picked.url);
-      ledgerCountSwitch(d.ledgerKey);
-      markAutoNav();
-      d.setSwitchTip(`已自动切换到可播放线路「${picked.name}」`);
-      videoRef.current = null;
-      d.navigate(
-        playerRoute({
-          siteKey: c.siteKey,
-          vodId: c.vodId,
-          vodName: c.vodName,
-          episodeName: picked.name,
-          playUrl: picked.url,
-          playFrom: picked.line,
-          failoverKey: d.ledgerKey,
-        }),
-        true,
-      );
-      return true;
-    })();
-
-    d.lineAttempt.current = attempt;
-    try {
-      return await attempt;
-    } finally {
-      d.lineSwitchStarted.current = false;
-      if (d.lineAttempt.current === attempt) {
-        d.lineAttempt.current = null;
-      }
-    }
-  }, [probeCandidate, videoRef]);
-
-  /** 自动跨站换源：整站找同名影片，逐个探活，首个 200 的 navigate 过去。 */
-  const tryFailover = useCallback(async () => {
-    const d = depsRef.current;
-    if (d.failoverStarted.current) {
-      return;
-    }
-    d.failoverStarted.current = true;
-    // 闩锁只防「同一轮自愈被 watchdog 高频重入」，不能一次失败就永久封死。
-    // 去重真源是 ledger（ledgerSiteSeen/ledgerBudget 已记录试过的源），所以
-    // 除成功 navigate 外的所有出口都释放闩锁，让下一个 watchdog 周期能换批源
-    // 再试——否则无候选时不 navigate、闩锁恒 true，后续自愈全被静默吞掉。
-    let navigated = false;
-    const { gen, signal } = switchToken.current.begin();
-    markPhase("idle");
-    if (!d.allowFailover) {
-      d.setSwitchTip("");
-      d.setVideoError("该源不允许换源，请手动切换播放线路或稍后重试。");
-      d.failoverStarted.current = false;
-      return;
-    }
-    const c = committedRef.current;
-    const name = c.vodName.trim();
-    if (!name) {
-      d.failoverStarted.current = false;
-      return;
-    }
-    d.setSwitchTip("当前源无法播放，正在寻找其它可用源…");
-    try {
-      const agg = (await api.spiderInvoke({
-        siteKey: "all",
-        method: "searchContent",
-        args: [name, false, 1],
-        timeoutMs: 6000,
-      })) as {
-        results?: { siteKey: string; ok: boolean; data?: ResultPage }[];
-      };
-
-      const candidates = (agg.results ?? [])
-        .filter((item) => item.ok && item.data)
-        .flatMap((item) =>
-          (item.data?.list ?? [])
-            .filter(
-              (vod) =>
-                vod.vod_name &&
-                (vod.vod_name.includes(name) || name.includes(vod.vod_name)),
-            )
-            .slice(0, 1)
-            .map((vod) => ({ siteKey: item.siteKey, vod })),
-        )
-        .filter((item) => !ledgerSiteSeen(d.ledgerKey, item.siteKey));
-
-      for (const candidate of candidates.slice(0, 8)) {
-        ledgerMarkSite(d.ledgerKey, candidate.siteKey);
-        try {
-          const detail = await api.detail(candidate.siteKey, String(candidate.vod.vod_id));
-          const first = detail[0];
-          if (!first) {
-            continue;
-          }
-          const nextLines = parsePlayLines(first.vod_play_from, first.vod_play_url);
-          const currentEpisodeName =
-            c.lines[c.lineIndex]?.episodes[c.episodeIndex]?.name ?? d.episodeName;
-          const ordered = nextLines
-            .flatMap((line) =>
-              line.episodes.map((episode) => ({ line: line.name, episode })),
-            )
-            .sort((a, b) => {
-              const sameEpisode =
-                Number(b.episode.name === currentEpisodeName) -
-                Number(a.episode.name === currentEpisodeName);
-              if (sameEpisode !== 0) {
-                return sameEpisode;
-              }
-              return (
-                lineRank(candidate.siteKey, a.line) - lineRank(candidate.siteKey, b.line)
-              );
-            });
-          const candidatesOfSite = ordered
-            .filter(
-              ({ episode }) =>
-                Boolean(episode.url) && !ledgerHasUrl(d.ledgerKey, episode.url),
-            )
-            .slice(0, 8)
-            .map(({ line, episode }) => ({ line, name: episode.name, url: episode.url }));
-          const picked = await firstPlayable(
-            candidatesOfSite,
-            (item, sig) => probeCandidate(candidate.siteKey, item, sig),
-            { concurrency: 4, signal },
-          );
-          if (!picked) {
-            continue;
-          }
-          if (!switchToken.current.isCurrent(gen)) {
-            return;
-          }
-          const tip = `已自动切换到「${candidate.siteKey}」`;
-          log.info("auto failover", {
-            from: c.siteKey,
-            to: candidate.siteKey,
-            vodId: String(candidate.vod.vod_id),
-          });
-          window.sessionStorage.setItem("luma:autoSwitch", tip);
-          d.setSwitchTip(tip);
-          ledgerMarkUrl(d.ledgerKey, picked.url);
-          ledgerCountSwitch(d.ledgerKey);
-          videoRef.current = null;
-          navigated = true;
-          d.navigate(
-            playerRoute({
-              siteKey: candidate.siteKey,
-              vodId: String(candidate.vod.vod_id),
-              vodName: candidate.vod.vod_name || first.vod_name || name,
-              episodeName: picked.name,
-              playUrl: picked.url,
-              playFrom: picked.line,
-              failoverKey: d.ledgerKey,
-            }),
-            true,
-          );
-          return;
-        } catch {
-          continue;
-        }
-      }
-      d.setSwitchTip("");
-      d.setVideoError(`所有源都无法播放该影片，${PLAY_FAILURE_HINT}。`);
-    } catch (err) {
-      d.setSwitchTip("");
-      d.setVideoError(`换源失败：${errorMessage(err)}`);
-    } finally {
-      // 成功 navigate 后页面即将卸载，保持闩锁无所谓；留在本页则释放，
-      // 让后续 watchdog 换批源重试（已试源由 ledger 去重，不会搜索风暴）。
-      if (!navigated) {
-        d.failoverStarted.current = false;
-      }
-    }
-  }, [markPhase, probeCandidate, videoRef]);
-
-  /** 自愈总线：线路失败时先换线、再换源；手动意图持有期内让位。 */
-  const switchOrFailover = useCallback(async () => {
-    const d = depsRef.current;
-    if (manualHoldRef.current.active()) {
-      log.info("auto failover deferred", {
-        reason: "manual switch in flight",
-        ledgerKey: d.ledgerKey,
-      });
-      return;
-    }
-    const playing = playingEpisodeRef.current;
-    invalidateEpisodePlayCache(playing.siteKey, playing.playFrom, playing.url);
-    if (ledgerBudget(d.ledgerKey) <= 0) {
-      d.setSwitchTip("");
-      d.setVideoError("已自动尝试多条线路和多个源仍无法播放，请手动切换线路或换一集。");
-      return;
-    }
-    const switched = await tryNextLine();
-    if (!switched) {
-      d.setSwitchTip("当前源没有可播线路，正在尝试其它源…");
-      await tryFailover();
-    }
-  }, [tryFailover, tryNextLine]);
-  switchOrFailoverRef.current = switchOrFailover;
-
-  /** 面板「换下一条线路」：与自动换线同通道，但由用户触发。 */
+  /** 面板「换下一条线路」：乐观切换——直接切到同序集，不做可用性预检。 */
   const nextLine = useCallback(() => {
     if (nextLineBusy) {
       return;
     }
-    const d = depsRef.current;
+    const c = committedRef.current;
+    const total = c.lines.length;
+    if (total <= 1) {
+      depsRef.current.setVideoError("当前源没有其它线路，可以换一个源或稍后重试。");
+      return;
+    }
+    const targetLine = (c.lineIndex + 1) % total;
+    const episodes = c.lines[targetLine]?.episodes ?? [];
+    if (episodes.length === 0) {
+      depsRef.current.setVideoError("这条线路没有可播的剧集，请换一个源。");
+      return;
+    }
+    const index = Math.min(Math.max(c.episodeIndex, 0), episodes.length - 1);
     setNextLineBusy(true);
-    manualHoldRef.current.engage(MANUAL_HOLD_MS);
-    // 手动换线也会 navigate 重建：先停旧流，避免切换期间继续出声。
-    haltCurrentPlayback();
-    markPhase("idle");
-    d.setSwitchTip("正在切换到下一条线路…");
-    void tryNextLine()
-      .then((switched) => {
-        if (!switched) {
-          // 换线失败、留在本页：立即释放手动持有，让自愈无需等满 60s
-          // （与 switchSource 失败出口同约定；成功 navigate 则页面重建无所谓）。
-          manualHoldRef.current.release();
-          d.setSwitchTip("");
-          d.setVideoError("当前源没有其它可播线路了，可以换一个源或稍后重试。");
-        }
-      })
-      .catch(() => {
-        manualHoldRef.current.release();
-        d.setSwitchTip("");
-      })
-      .finally(() => setNextLineBusy(false));
-  }, [haltCurrentPlayback, markPhase, nextLineBusy, tryNextLine]);
+    selectEpisode(targetLine, index);
+  }, [nextLineBusy, selectEpisode]);
+
+  // 乐观切换的忙碌态由 phase 收口：selectEpisode 立刻进 preparing，落地或失败后回 idle。
+  useEffect(() => {
+    if (phase === "idle") {
+      setNextLineBusy(false);
+    }
+  }, [phase]);
 
   return {
     display,
@@ -947,7 +632,6 @@ export function usePlaybackController(
     nextLineBusy,
     switchedUrlRef,
     playingEpisodeRef,
-    switchOrFailoverRef,
     selectEpisode,
     goEpisode,
     switchSource,

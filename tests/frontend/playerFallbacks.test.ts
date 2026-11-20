@@ -68,13 +68,15 @@ describe("player stage fallback action", () => {
   });
 
   it("wires the button to the line switcher on both pages", () => {
-    // 「换下一条线路」的执行体在编排 controller；播放页只负责把回调递给 PlayerStage。
+    // 「换下一条线路」是乐观切换：直接切同序集，不做可用性预检。
     const page = source("pages/PlayerPage.tsx");
-    expect(source("hooks/playback/usePlaybackController.ts")).toContain("const nextLine = useCallback(() => {");
-    expect(source("hooks/playback/usePlaybackController.ts")).toContain("void tryNextLine()");
+    const controller = source("hooks/playback/usePlaybackController.ts");
+    expect(controller).toContain("const nextLine = useCallback(() => {");
+    expect(controller).toContain("selectEpisode(targetLine, index);");
     expect(page).toContain("onNextLine={nextLine}");
     const live = source("pages/LivePage.tsx");
-    expect(live).toContain("onNextLine={() => {");
+    expect(live).toContain("const selectNextLine = useCallback(");
+    expect(live).toContain("selectNextLine();");
   });
 });
 
@@ -107,23 +109,20 @@ describe("live page takes the sound back when it becomes visible", () => {
   });
 });
 
-describe("live auto-failover ignores a stale-round resolve error", () => {
-  // P1 竞态（CDP 实测：点 CCTV5 后 169ms，上一台「解析超时」的残留错误把新台
-  // 第一条线路自动跳走）：resolveError 是 state，换台那次渲染仍是旧错误串，
-  // 自动换线必须按「错误归属地址」放行。契约 = hook 配对写入 + 页面守卫文本。
+describe("live page never auto-switches on resolve errors", () => {
   const live = source("pages/LivePage.tsx");
   const resolution = source("hooks/usePlayResolution.ts");
 
   it("hook commits errorPlayUrl paired with every resolveError write", () => {
-    // 每个写错误的分支都必须同时写归属：catch / no-url 写当前 playUrl，清除路径写空串。
-    // 同一同步块的双 setter 保证「任一渲染里两值一致」，消费方才能放心比对。
+    // 错误归属仍是可观测字段（诊断/未来手动提示要用），但页面不再据此自动换线。
     expect(resolution).toContain("const [errorPlayUrl, setErrorPlayUrl]");
     expect(resolution).toContain("setErrorPlayUrl(playUrl);"); // catch + no-url
     expect(resolution).toContain("setErrorPlayUrl(\"\")"); // 缓存命中 / 常规清除
     expect(resolution).toContain("errorPlayUrl,"); // 出现在 return
   });
 
-  it("page defers auto line switch unless the error belongs to current playUrl", () => {
-    expect(live).toContain("if (errorPlayUrl !== playUrl)");
+  it("page no longer defers an auto line switch by error ownership", () => {
+    expect(live).not.toContain("if (errorPlayUrl !== playUrl)");
+    expect(live).not.toContain("void switchOrFailoverRef.current()");
   });
 });

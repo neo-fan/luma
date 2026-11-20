@@ -164,8 +164,6 @@ export interface UsePlayerEngineArgs {
   /** 跨站换源与 stalled watchdog 的并发闸门。 */
   failoverStarted: MutableRefObject<boolean>;
   lineSwitchStarted: MutableRefObject<boolean>;
-  /** 线路切换失败后的兜底（整站找同名影片）；用 ref 转发避免本 effect 因 lines 重挂。 */
-  switchOrFailoverRef: MutableRefObject<() => Promise<void>>;
   /**
    * 直播多线路切换控件。用 ref 转发（而非直接传数组/回调）：
    * 这两个值随每次切线路而变，进依赖数组会让播放内核整个重建。
@@ -282,7 +280,6 @@ export function usePlayerEngine({
   lastMediaRef,
   failoverStarted,
   lineSwitchStarted,
-  switchOrFailoverRef,
   liveLineRef,
   episodeNavRef,
   canNext,
@@ -366,14 +363,14 @@ export function usePlayerEngine({
         ? (createActor(
             liveSessionMachine.provide({
               actions: {
-                requestLineSwitch: ({ context }) => runFailover(context),
+                reportFailure: ({ context }) => runFailover(context),
               },
             }),
           ) as unknown as ReturnType<typeof createActor<typeof vodSessionMachine>>)
         : createActor(
             vodSessionMachine.provide({
               actions: {
-                navigateFailover: ({ context }) => runFailover(context),
+                reportFailure: ({ context }) => runFailover(context),
                 ...resumeNotes,
               },
             }),
@@ -1031,16 +1028,14 @@ export function usePlayerEngine({
      * `probeLineVerdict`），把三态结论喂给机器，由转换表决定「继续等 / 累计 / 交棒」。
      */
     /**
-     * 交棒换线的**唯一**执行点：机器进入 `recovering`（点播）/ `recovering`（直播，
-     * 动作名 `requestLineSwitch`）时调到这里。文案与日志 stage 由 `failoverCopy`
-     * 给出，原因（判死依据）由机器写在 context 上。
+     * 线路判死后的唯一出口：撤冻结帧 + 报错误，**不自动切换**。
      *
-     * 所有交棒都收敛到这一处「撤海报 + 报错误 + 触发换线」，是因为分开写时任何
-     * 一处漏掉撤海报，就会留下一张静帧永久盖住画面。
+     * 自动换线/换源已停用（用户明确要求：切换只由 UI 选择发起，且乐观切换）。
+     * 这里保留统一出口是为了「任何一处漏撤海报都会留下静帧」这条边界，而不是
+     * 为了交棒——手动换线/换源由播放页自己发起。
      */
     const handOverLine = (cause: FailoverCause, detail: string) => {
       const { message, stage } = failoverCopy(cause, detail);
-      // 已经交棒：本轮不必再看（真源在 watchdog 里，见 playerStallWatchdog）。
       watchdog.stop();
       log.warn(stage, {
         siteKey,
@@ -1049,10 +1044,9 @@ export function usePlayerEngine({
         unresponsiveProbes: sessionUnresponsiveProbes(),
         detail,
       });
-      // 线路已判死：冻结帧的使命结束，撤掉后交给换线链路，绝不让静帧盖住后续画面。
+      // 线路已判死：冻结帧的使命结束，撤掉后把画面留给错误态，绝不让静帧盖住它。
       posterHold.finish(false);
       setVideoError(message);
-      void switchOrFailoverRef.current();
     };
     /**
      * 挂起的续播重试（`canplay` / `pause` 两个 once 监听 + play()）。

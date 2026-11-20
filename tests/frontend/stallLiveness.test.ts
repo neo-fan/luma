@@ -38,13 +38,14 @@ describe("stall watchdog", () => {
     expect(engine).not.toContain("decideWatchdogVerdict");
     expect(vodMachine).toContain("export const UNRESPONSIVE_LIMIT = 3;");
     expect(vodMachine).toContain("context.unresponsiveProbes + 1 >= UNRESPONSIVE_LIMIT");
-    // 看门狗只交证据（不翻译 ok↔alive），引擎把结论原样转给机器，
-    // 交棒由机器进入 recovering 时回调唯一的实现点 handOverLine 完成。
+    // 看门狗只交证据（不翻译 ok↔alive），引擎把结论原样转给机器；
+    // 判死只上报失败，不自动换线/换源（`reportFailure` 是唯一出口）。
     expect(watchdog).toContain('send({ type: "PROBE", verdict })');
     expect(engine).toContain("send: (event) => sessionActorRef.current?.send(event)");
     expect(engine).not.toContain('matches("recovering")');
-    expect(engine).toContain("navigateFailover");
-    expect(engine).toContain("requestLineSwitch");
+    expect(engine).toContain("reportFailure");
+    expect(engine).not.toContain("navigateFailover");
+    expect(engine).not.toContain("requestLineSwitch");
     expect(engine).toContain("const handOverLine =");
     // 文案与日志 stage 的唯一来源。
     expect(failoverCopy).toContain("stall probe unresponsive");

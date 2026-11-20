@@ -36,18 +36,18 @@ export interface FailoverCopy {
 export function failoverCopy(cause: FailoverCause, detail = ""): FailoverCopy {
   switch (cause) {
     case "probeDead":
-      return { message: "当前线路已确认无法加载，正在切换…", stage: "stall probe dead" };
+      return { message: "当前线路无法加载，请换线路或换源。", stage: "stall probe dead" };
     case "probeUnresponsive":
-      return { message: "当前线路多次无响应，正在切换…", stage: "stall probe unresponsive" };
+      return { message: "当前线路多次无响应，请换线路或换源。", stage: "stall probe unresponsive" };
     case "mediaDecode":
       return { message: `播放器加载失败，${PLAY_FAILURE_HINT}。`, stage: "media decode failed" };
     case "hlsFatal":
-      return { message: `HLS 播放失败：${detail}，正在切换线路`, stage: "hls fatal" };
+      return { message: `HLS 播放失败：${detail}`, stage: "hls fatal" };
     case "flvFatal":
       return { message: `FLV 播放失败：${detail}`, stage: "flv fatal" };
     case "flvInterrupted":
       return { message: `FLV 播放中断：${detail}`, stage: "flv interrupted" };
     case "linesExhausted":
-      return { message: "所有线路都不可用，正在找其它源…", stage: "lines exhausted" };
+      return { message: "当前线路不可用，请换线路或换源。", stage: "lines exhausted" };
   }
 }

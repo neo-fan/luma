@@ -113,7 +113,7 @@ describe("vodSessionMachine", () => {
     expect(a.getSnapshot().context.unresponsiveProbes).toBe(0);
     a.send({ type: "STALL" });
     a.send({ type: "PROBE", verdict: "dead" });
-    expect(a.getSnapshot().matches("recovering")).toBe(true);
+    expect(a.getSnapshot().matches("failed")).toBe(true);
   });
 
   it(`unknown 探测累计到 ${UNRESPONSIVE_LIMIT} 次才判死换线`, () => {
@@ -127,7 +127,7 @@ describe("vodSessionMachine", () => {
     expect(a.getSnapshot().context.unresponsiveProbes).toBe(UNRESPONSIVE_LIMIT - 1);
     a.send({ type: "STALL" });
     a.send({ type: "PROBE", verdict: "unknown" });
-    expect(a.getSnapshot().matches("recovering")).toBe(true);
+    expect(a.getSnapshot().matches("failed")).toBe(true);
   });
 
   it("红线：出过画之后 STALL 进不了 probing，坏到底也不自动换线", () => {
@@ -157,14 +157,14 @@ describe("vodSessionMachine", () => {
     toWaiting(a);
     a.send({ type: "STALL" });
     a.send({ type: "PROBE", verdict: "dead" });
-    expect(a.getSnapshot().matches("recovering")).toBe(true);
+    expect(a.getSnapshot().matches("failed")).toBe(true);
     const before = a.getSnapshot().context.sessionId;
     // 上层换源成功 → 重建实例 → 新的 LOAD。
     a.send({ type: "LOAD", url: "e1-other.m3u8" });
     expect(a.getSnapshot().matches("resolving")).toBe(true);
     expect(a.getSnapshot().context.sessionId).toBe(before + 1);
     expect(a.getSnapshot().context.unresponsiveProbes).toBe(0);
-    // 另一条恢复路径：recovering 期间用户直接点下一集。
+    // 另一条恢复路径：failed 期间用户直接点下一集。
     const b = fresh();
     toWaiting(b);
     b.send({ type: "STALL" });
@@ -184,18 +184,18 @@ describe("vodSessionMachine", () => {
     expect(a.getSnapshot().matches("switching")).toBe(true);
   });
 
-  it("复核在途解码器直接报错 = 最硬的证据，直接 recovering", () => {
+  it("复核在途解码器直接报错 = 最硬的证据，直接 failed", () => {
     const a = fresh();
     toWaiting(a);
     a.send({ type: "STALL" });
     a.send({ type: "FAILED", cause: "mediaDecode" });
-    expect(a.getSnapshot().matches("recovering")).toBe(true);
+    expect(a.getSnapshot().matches("failed")).toBe(true);
   });
 
   it("failed 后 LOAD 开新会话", () => {
     const a = fresh();
     a.send({ type: "LOAD", url: "e1" });
-    // 解析阶段就失败（拿不到地址）→ failed；解码阶段失败才走 recovering 换线。
+    // 解析阶段就失败（拿不到地址）→ failed；解码阶段失败才走 failed 换线。
     a.send({ type: "FAILED", cause: "linesExhausted" });
     expect(a.getSnapshot().matches("failed")).toBe(true);
     const before = a.getSnapshot().context.sessionId;
@@ -216,8 +216,8 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
     const actor = createActor(
       vodSessionMachine.provide({
         actions: {
-          navigateFailover: ({ context }) =>
-            calls.push(`failover:${String(context.failoverCause)}:${context.failoverDetail}`),
+          reportFailure: ({ context }) =>
+            calls.push(`report:${String(context.failoverCause)}:${context.failoverDetail}`),
           resumePlayback: () => calls.push("resumePlayback"),
           cancelResume: () => calls.push("cancelResume"),
         },
@@ -232,7 +232,7 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
     toWaiting(actor as unknown as ReturnType<typeof fresh>);
     actor.send({ type: "STALL" });
     actor.send({ type: "PROBE", verdict: "dead" });
-    expect(calls).toEqual(["failover:probeDead:"]);
+    expect(calls).toEqual(["report:probeDead:"]);
   });
 
   it("unknown 前两次只留证据，第三次才交棒", () => {
@@ -247,7 +247,7 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
     expect(actor.getSnapshot().context.unresponsiveProbes).toBe(UNRESPONSIVE_LIMIT - 1);
     actor.send({ type: "STALL" });
     actor.send({ type: "PROBE", verdict: "unknown" });
-    expect(calls).toEqual(["failover:probeUnresponsive:"]);
+    expect(calls).toEqual(["report:probeUnresponsive:"]);
   });
 
   it("PROBE ok 只复位计数，绝不交棒", () => {
@@ -306,15 +306,15 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
     const a = instrumented();
     toWaiting(a.actor as unknown as ReturnType<typeof fresh>);
     a.actor.send({ type: "FAILED", cause: "mediaDecode", detail: "code=3" });
-    expect(a.calls).toEqual(["failover:mediaDecode:code=3"]);
+    expect(a.calls).toEqual(["report:mediaDecode:code=3"]);
 
     const b = instrumented();
     toWaiting(b.actor as unknown as ReturnType<typeof fresh>);
     b.actor.send({ type: "FAILED", cause: "hlsFatal", detail: "manifestError" });
-    expect(b.calls).toEqual(["failover:hlsFatal:manifestError"]);
+    expect(b.calls).toEqual(["report:hlsFatal:manifestError"]);
   });
 
-  it("交棒不重放：离开 recovering 后必须重新取证才会再交一次", () => {
+  it("交棒不重放：离开 failed 后必须重新取证才会再交一次", () => {
     const { actor, calls } = instrumented();
     toWaiting(actor as unknown as ReturnType<typeof fresh>);
     actor.send({ type: "STALL" });
@@ -322,14 +322,14 @@ describe("vodSessionMachine 副作用发起（解释器接线的契约）", () =
     // 上层换源成功 → 新会话；此时 context 里的判死原因必须被清空
     actor.send({ type: "LOAD", url: "e2" });
     expect(actor.getSnapshot().context.failoverCause).toBeNull();
-    expect(actor.getSnapshot().matches("recovering")).toBe(false);
+    expect(actor.getSnapshot().matches("failed")).toBe(false);
     // 新一轮：不重新取证就不会再交棒
     actor.send({ type: "RESOLVED", url: "e2" });
     actor.send({ type: "ATTACHED" });
-    expect(calls).toEqual(["failover:probeDead:"]);
+    expect(calls).toEqual(["report:probeDead:"]);
     actor.send({ type: "STALL" });
     actor.send({ type: "PROBE", verdict: "dead" });
-    expect(calls).toEqual(["failover:probeDead:", "failover:probeDead:"]);
+    expect(calls).toEqual(["report:probeDead:", "report:probeDead:"]);
   });
 
   it("SWITCH_ATTACHED 才发起续播（不是出画之后）", () => {

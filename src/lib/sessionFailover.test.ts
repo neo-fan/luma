@@ -34,10 +34,15 @@ describe("failover copy table", () => {
     expect(new Set(stages).size).toBe(CAUSES.length);
   });
 
-  it("does not promise a source switch when it is only switching lines", () => {
-    // 用户看到「跳到别的源」会以为逻辑错了：换线阶段的文案只能说切换线路。
-    expect(failoverCopy("hlsFatal", "manifestError").message).toContain("正在切换线路");
-    expect(failoverCopy("probeDead").message).not.toContain("源");
-    expect(failoverCopy("probeUnresponsive").message).not.toContain("源");
+  it("reports the failure without promising an automatic switch", () => {
+    // 自动换线/换源已停用：判死文案只能陈述失败，不能写成「正在切换」。
+    for (const cause of ["hlsFatal", "probeDead", "probeUnresponsive", "linesExhausted"] as FailoverCause[]) {
+      const { message } = failoverCopy(cause, "detail");
+      expect(message, `${cause} 不应承诺自动切换`).not.toContain("正在切换");
+      expect(message, `${cause} 不应承诺自动换源`).not.toContain("其它源");
+    }
+    // 探活/穷尽这两类没有原始报错可展示，文案要给出用户可执行的出口。
+    expect(failoverCopy("probeDead").message).toContain("换线路或换源");
+    expect(failoverCopy("linesExhausted").message).toContain("换线路或换源");
   });
 });
