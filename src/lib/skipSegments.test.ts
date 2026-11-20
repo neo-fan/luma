@@ -5,6 +5,7 @@ import {
   clampSkipMs,
   countdownSeconds,
   formatSkipMs,
+  formatSkipSummary,
   introMs,
   outroMs,
   outroStartMs,
@@ -120,6 +121,24 @@ describe("formatSkipMs", () => {
     expect(formatSkipMs(180_000)).toBe("3分钟");
     // 越界夹取到上限，仍出可读文案
     expect(formatSkipMs(MAX_SKIP_MS)).toBe("30分钟");
+  });
+});
+
+describe("formatSkipSummary", () => {
+  it("stays short enough for one gear row", () => {
+    // 齿轮行右侧只有一格：中文单位串（「片头1分50秒 · 片尾45秒」）会把它挤到换行。
+    const both = formatSkipSummary([
+      { kind: "intro", ms: 110_000 },
+      { kind: "outro", ms: 45_000 },
+    ]);
+    expect(both).toBe("110s/45s");
+    expect(both.length).toBeLessThanOrEqual(12);
+  });
+
+  it("names the kind when only one is configured", () => {
+    expect(formatSkipSummary([{ kind: "intro", ms: 90_000 }])).toBe("片头90s");
+    expect(formatSkipSummary([{ kind: "outro", ms: 30_000 }])).toBe("片尾30s");
+    expect(formatSkipSummary([])).toBe("未设置");
   });
 });
 

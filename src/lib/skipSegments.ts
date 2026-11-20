@@ -132,14 +132,26 @@ export function withSkipMs(segments: SkipSegment[], kind: SkipKind, ms: number):
   return KINDS.flatMap((k) => kept.filter((s) => s.kind === k));
 }
 
-/** 齿轮行 tooltip 用的汇总：「片头1分钟 · 片尾30秒」，都没设则「未设置」。 */
+/**
+ * 齿轮行右侧的展示值：`110s/45s`（片头/片尾，顺序与左侧标题一致）。
+ *
+ * 只写秒数：原先「片头1分50秒 · 片尾45秒」这种中文单位串把齿轮行右侧挤满，
+ * 在窄窗口里会换行/截断；这一行本来就叫「片头/片尾」，单位再省成 `s` 即可读。
+ * 只设一类时补上标题（`片头110s`），否则单独一个数字看不出是哪一类。
+ */
 export function formatSkipSummary(segments: SkipSegment[]): string {
-  const parts: string[] = [];
-  const intro = introMs(segments);
-  const outro = outroMs(segments);
-  if (intro > 0) parts.push(`片头${formatSkipMs(intro)}`);
-  if (outro > 0) parts.push(`片尾${formatSkipMs(outro)}`);
-  return parts.length ? parts.join(" · ") : "未设置";
+  const intro = Math.round(introMs(segments) / 1000);
+  const outro = Math.round(outroMs(segments) / 1000);
+  if (intro > 0 && outro > 0) {
+    return `${intro}s/${outro}s`;
+  }
+  if (intro > 0) {
+    return `片头${intro}s`;
+  }
+  if (outro > 0) {
+    return `片尾${outro}s`;
+  }
+  return "未设置";
 }
 
 /**
