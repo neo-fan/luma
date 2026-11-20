@@ -33,8 +33,8 @@ def interp() -> str:
     actually runs on: it ships requests / lxml / pyquery / pycryptodome. Falling
     back to the host interpreter silently changes behaviour — without `requests`
     the adapter uses its urllib fallback and `py_base_spider_check` starts doing
-    real DNS lookups, which used to crash the gate instead of failing a check.
-    Override with `LUMA_PYTHON` (same env var the Rust side uses).
+    real DNS lookups, which would crash the gate outright instead of just
+    failing one check. Override with `LUMA_PYTHON` (same env var the Rust side uses).
     """
     override = os.environ.get("LUMA_PYTHON")
     if override and Path(override).is_file():

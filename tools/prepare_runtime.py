@@ -369,8 +369,9 @@ def step_qjs_assets(verify_sha: bool = True) -> bool:
                 if isinstance(item, dict) and item.get("local")
             }
         # Verify every file the manifest knows about, not just the 8 required
-        # ESM deps: `drpy2.min.js` is an extra bundled engine and used to slip
-        # past this check, so a corrupted copy went unnoticed until the app ran.
+        # ESM deps: `drpy2.min.js` is an extra bundled engine that would slip
+        # past a required-only check, leaving a corrupted copy unnoticed until
+        # the app runs.
         for name in sorted(set(QJS_ASSET_FILES) | set(by_local)):
             item = by_local.get(name)
             path = QJS_ASSETS_LIB / name

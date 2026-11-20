@@ -14,16 +14,16 @@ Alignment contract (see AGENTS.md "py 框架对齐 TVBox 原生"):
     "utf-8"`, and `html()` = `etree.HTML()` (tolerant, always xpath-able).
   * `__init__` must NOT overwrite subclass `header`/`headers` class attributes,
     nor assume they are dicts. The native `base.spider.Spider.__init__` only
-    sets `self.extend`; subclass class attributes (e.g. Douban's WeChat UA +
-    Referer) therefore survive. We used to hard-assign `self.header =
-    {"User-Agent": DEFAULT_UA}`, which silently broke every source that declares
-    a custom header as a class attribute (douban / 4KAV / shanzha / shortfilm /
-    农民 / 嗨皮 ...) -> frodo HTTP 400 -> empty home list. Fixed by copying the
-    class attribute. Spiders may ALSO declare `header`/`headers` as a *method*
+    sets `self.extend`, so subclass class attributes (e.g. Douban's WeChat UA +
+    Referer) survive — copy the class attribute rather than hard-assign a
+    default. A hard-assigned `self.header = {"User-Agent": DEFAULT_UA}` silently
+    breaks every source that declares a custom header as a class attribute
+    (douban / 4KAV / shanzha / shortfilm / 农民 / 嗨皮 ...) -> frodo HTTP 400 ->
+    empty home list. Spiders may ALSO declare `header`/`headers` as a *method*
     returning a freshly-signed dict (`def header(self): ...`, recomputed per
-    request for time/nonce signatures, e.g. guowaiju / 云端影视). That callable
-    is preserved as-is and invoked lazily by `_merge_headers`; coercing it to a
-    dict is what used to raise "'method' object is not iterable".
+    request for time/nonce signatures, e.g. guowaiju / 云端影视). That callable is
+    preserved as-is and invoked lazily by `_merge_headers`; coercing it to a dict
+    raises "'method' object is not iterable".
   * Deliberate deviations forced by the one-shot child-process model (do NOT
     "fix" these): `log()` writes stderr (stdout is the JSON-RPC frame), no
     `__new__` singleton, proxy URL is `?url=` via `LUMA_PROXY_PORT`, cache is

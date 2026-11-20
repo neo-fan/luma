@@ -159,7 +159,7 @@ def main() -> int:
           "string payload is not sliced into characters", str(to_args("detailContent", "204658")))
     check(to_args("detailContent", ["204658"]) == [["204658"]], "args", "standard list payload")
 
-    # 6) 嵌入式 Python 子进程必须能 import 本地模块（曾经的全局回归）
+    # 6) 嵌入式 Python 子进程必须能 import 本地模块（base.spider 等第三方脚本依赖）
     embed = ROOT / "sidecars" / "python-embed" / "python.exe"
     pyrun = (PY / "pyrun.py").read_text(encoding="utf-8")
     check(pyrun.index("sys.path.insert(0, _HERE)") < pyrun.index("from adapterlog import"),

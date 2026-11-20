@@ -83,13 +83,13 @@ DEFAULT_ENVELOPES = {
 def json_safe(value: object, path: str = "$", dropped: list | None = None, depth: int = 0):
     """Force any third-party spider return value into a JSON-serializable shape.
 
-    TVBox spiders are untrusted community code. A source that returns a bound
-    method, a custom object, a non-string dict key or NaN used to blow up here
-    at `json.dumps(frame)` with "Object of type method is not JSON serializable"
-    — the child produced *no frame at all*, so the caller only saw a generic
-    "py spider produced no frame". Sanitizing at the process boundary keeps the
-    protocol frame intact; every replaced value is logged with its JSON path so
-    the offending field can still be diagnosed (never silently swallowed).
+    TVBox spiders are untrusted community code: a source can return a bound
+    method, a custom object, a non-string dict key or NaN. Those crash
+    `json.dumps(frame)` ("Object of type method is not JSON serializable") so the
+    child emits *no frame at all*, and the caller only sees a generic "py spider
+    produced no frame". Sanitizing at the process boundary keeps the protocol
+    frame intact; every replaced value is logged with its JSON path so the
+    offending field can still be diagnosed (never silently swallowed).
 
     This is a general guarantee, not a per-source patch: it applies to every
     method (home/category/detail/search/player/live/proxy).
@@ -172,9 +172,9 @@ def proxy_result(result: object) -> dict:
 def to_args(method: str, raw: list) -> list:
     """Map our internal arg order to the TVBox spider signature.
 
-    A string payload used to be indexed character-by-character here (`raw[0]`
-    became the first *character* of the vod id). Normalize once at the process
-    boundary so every method sees a list, whatever the caller sent.
+    A bare string payload must not be indexed character-by-character (`raw[0]`
+    would become the first *character* of the vod id). Normalize once at the
+    process boundary so every method sees a list, whatever the caller sent.
     """
     if not isinstance(raw, (list, tuple)):
         raw = [] if raw is None else [raw]

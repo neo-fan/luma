@@ -74,9 +74,8 @@ def strip_jsonc(text: str) -> str:
 def _validated(text: str) -> str | None:
     """Return JSONC-cleaned text once it parses as an object, else None.
 
-    `decrypt` used to call `_try_json` (which scans for comments) and then
-    `strip_jsonc` again to build its return value. On a large config that is
-    two full character scans of the same text.
+    Cleaning then re-cleaning a large config means two full character scans of
+    the same text; try the raw text and the stripped text in one pass instead.
     """
     for candidate in (text, strip_jsonc(text)):
         try:

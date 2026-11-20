@@ -8,11 +8,9 @@ Protocol surface (see `docs/spec.md` §5):
 * `debug.*` — fault injection for acceptance tests, gated behind
   `LUMA_ADAPTER_DEBUG=1`.
 
-Everything else that used to live here (config decrypt/normalize/mergeRepos,
-site routing, m3u/XMLTV parsing, parse resolution, CMS field mapping) is now
-plain Rust in the host process. Keeping a second implementation in the sidecar
-meant two places to fix for one contract — the 1.0.1 "import timeout" bug was a
-symptom of the old design.
+Everything else — config decrypt/normalize/mergeRepos, site routing, m3u/XMLTV
+parsing, parse resolution, CMS field mapping — is plain Rust in the host process.
+A second implementation here would mean two places to fix for one contract.
 
 One JSON frame per line on stdin/stdout. stdout carries protocol frames only and
 is written solely through `write_raw`; at startup `sys.stdout` is replaced by a

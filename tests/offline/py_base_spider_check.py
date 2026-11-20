@@ -102,9 +102,9 @@ class _FakeSession:
 def test_encoding() -> None:
     # `fetch`/`post` only honour the injected `_session` when `requests` is
     # importable; without it the adapter deliberately falls back to urllib and
-    # the fake session is bypassed — which used to turn this offline check into
-    # a real DNS lookup and crash the gate. The bundled python-embed ships
-    # requests, so run this file with it (`tools/check.py` does that).
+    # the fake session is bypassed — turning this offline check into a real DNS
+    # lookup that can crash the gate. The bundled python-embed ships requests, so
+    # run this file with it (`tools/check.py` does that).
     if spider_mod.requests is None:
         na("http", "fetch/post 强制 utf-8", "requests 不可用（请用 sidecars/python-embed 运行）")
         return

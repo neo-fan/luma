@@ -109,8 +109,9 @@ def route(site: dict[str, Any], global_spider: str | None) -> str:
     if api.startswith("csp_") or (api and not api.startswith(("http://", "https://")) and "/" not in api):
         return "jvm"
     # Group dividers (`{"key":"1","name":"--- 1 ---"}`) carry no api/ext/jar at
-    # all. They used to inherit the global spider and be counted as jvm sites,
-    # which burned one guaranteed-to-fail call per divider on every fan-out.
+    # all, so they are not a real source. Inheriting the global spider here would
+    # count them as jvm sites and burn one guaranteed-to-fail call per divider on
+    # every fan-out.
     if not api and not site.get("ext") and not site.get("jar"):
         return "none"
     if global_spider and not api:
@@ -135,7 +136,7 @@ def normalize_site(
     `playerType` still need an explicit copy here: listing them in `known` only
     keeps them out of `_raw`, it does not keep them in the normalized site.
     Group dividers return `"none"` and are disabled so they do not inherit the
-    global spider (which used to burn one doomed jvm call per divider).
+    global spider — doing so would burn one doomed jvm call per divider.
     """
     site = dict(raw)
     for alias, canonical in SITE_ALIASES.items():

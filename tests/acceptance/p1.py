@@ -394,8 +394,8 @@ def qjs_phase() -> None:
         str(bytes_result.get("b64"))[:24],
     )
 
-    # `getProxyUrl()` is the reason drpy2 sources returned 404 play URLs: the
-    # stub used to hand back ''. It must now point at the host's real port.
+    # getProxyUrl() must resolve to the host's real port: a stub handing back ''
+    # makes drpy2 sources produce 404 play URLs.
     gp_src = (
         "globalThis.spider = { homeContent: function () {"
         " return { list: [ { vod_id: 'x', vod_name: getProxyUrl('vod') } ] }; } };"
