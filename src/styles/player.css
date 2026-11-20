@@ -300,6 +300,27 @@
   border-color: var(--border-strong);
 }
 
+/* 按剧的「跳过」开关：挤在标题与关闭之间，左侧靠 push 推开右侧按钮。 */
+.skip-overlay__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: 10px;
+  color: var(--text-soft);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.skip-overlay__switch input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* 标签 / 输入 / 取点按钮三列定宽网格：列宽固定后按钮文案再短也不横向溢出。 */
 .skip-overlay__field {
   display: grid;
@@ -322,13 +343,6 @@
   background: var(--panel-sunken);
   color: var(--text);
   font-variant-numeric: tabular-nums;
-}
-
-.skip-overlay__hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--fs-2xs);
-  line-height: 1.5;
 }
 
 .skip-overlay__close {

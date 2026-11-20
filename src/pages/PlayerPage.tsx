@@ -377,6 +377,8 @@ export default function PlayerPage({
     rememberedSkipRef,
     skipConfig,
     setSkipConfig,
+    skipEnabled,
+    setSkipEnabled,
   } = usePlaybackHistory({
     siteKey,
     vodId,
@@ -731,7 +733,13 @@ export default function PlayerPage({
   const applySkipConfig = (segs: SkipSegment[]) => {
     rememberedSkipRef.current = segs;
     setSkipConfig(segs);
-    engine.setSkipSettingTooltip(formatSkipSummary(segs));
+    engine.setSkipSettingTooltip(formatSkipSummary(segs, skipEnabled));
+    flushHistoryRef.current?.();
+  };
+  /** 这部剧的「跳过」开关：只切是否发起跳转，已配好的时长原样留着。 */
+  const applySkipEnabled = (next: boolean) => {
+    setSkipEnabled(next);
+    engine.setSkipSettingTooltip(formatSkipSummary(skipConfig, next));
     flushHistoryRef.current?.();
   };
   /** 自定义弹窗「取当前播放时间」读实时播放头 / 时长。 */
@@ -745,10 +753,10 @@ export default function PlayerPage({
       durationMs: Number.isFinite(v.duration) ? v.duration * 1000 : Number.NaN,
     };
   };
-  // 齿轮行 tooltip 跟随当前配置（历史载入 / 弹窗改动都覆盖到）。
+  // 齿轮行 tooltip 跟随当前配置与开关（历史载入 / 弹窗改动都覆盖到）。
   useEffect(() => {
-    engine.setSkipSettingTooltip(formatSkipSummary(skipConfig));
-  }, [skipConfig, engine]);
+    engine.setSkipSettingTooltip(formatSkipSummary(skipConfig, skipEnabled));
+  }, [skipConfig, skipEnabled, engine]);
 
   // 自动跳过：进入片头/片尾窗口先给 3 秒可取消倒计时，到点才真正 seek。边沿判定与
   // 倒计时在 `useAutoSkipPrompt`；这里只给「执行跳转」的动作 + 媒体身份（换集/换源复位）。
@@ -774,7 +782,9 @@ export default function PlayerPage({
   };
   const autoSkipMediaKey = [activeSiteKey, display.vodId, display.lineIndex, display.episodeIndex].join(":");
   const { pending: autoSkipPending, cancel: cancelAutoSkip } = useAutoSkipPrompt(
-    skipState,
+    // 这部剧关掉跳过：窗口态一律不给（倒计时/自动跳都挂在它上面，源头断掉即可，
+    // 不必在内核与弹窗里各判一次开关）。
+    skipEnabled ? skipState : null,
     autoSkipMediaKey,
     (kind: SkipKind) => (kind === "intro" ? doSkipIntro() : doSkipOutro()),
     () => videoRef.current?.paused ?? false,
@@ -832,6 +842,8 @@ export default function PlayerPage({
         host={playerRoot}
         open={skipSettingsOpen}
         config={skipConfig}
+        enabled={skipEnabled}
+        onEnabledChange={applySkipEnabled}
         getPlayhead={getPlayhead}
         onConfigChange={applySkipConfig}
         onClose={() => setSkipSettingsOpen(false)}

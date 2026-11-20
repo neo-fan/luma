@@ -197,10 +197,13 @@ export interface UsePlayerEngineArgs {
   rememberedRate?: () => number;
   /** 用户改了倍速：调用方把它写回这部剧的 history 行。 */
   onRememberedRate?: (rate: number) => void;
-  /**
-    * 这部剧的片头/片尾跳过配置（来自 `HistoryItem.skipJson`，经
+/**
+    * 这部剧的片头/片尾时长（来自 `HistoryItem.skipJson`，经
     * `parseSkipConfig` 解析）。同 `rememberedRate`：用**取值函数**，异步落地
     * 绝不能进内核 effect 依赖，否则重建正在播的实例。
+    *
+    * 开关不在这里：内核只负责「当前是否落在片头/片尾窗口」，这部剧关掉跳过时
+    * 由播放页不把窗口态交给倒计时（`useAutoSkipPrompt` 收到 null 即不动作）。
     */
   rememberedSkip?: () => SkipSegment[];
   /**

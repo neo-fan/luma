@@ -140,6 +140,18 @@ describe("formatSkipSummary", () => {
     expect(formatSkipSummary([{ kind: "outro", ms: 30_000 }])).toBe("片尾30s");
     expect(formatSkipSummary([])).toBe("未设置");
   });
+
+  it("says 已关闭 instead of showing seconds that will not fire", () => {
+    expect(
+      formatSkipSummary(
+        [
+          { kind: "intro", ms: 110_000 },
+          { kind: "outro", ms: 45_000 },
+        ],
+        false,
+      ),
+    ).toBe("已关闭");
+  });
 });
 
 describe("withSkipMs", () => {

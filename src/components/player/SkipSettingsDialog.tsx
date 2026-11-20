@@ -22,6 +22,9 @@ interface Props {
   host: HTMLDivElement | null;
   open: boolean;
   config: SkipSegment[];
+  /** 这部剧的「跳过」开关：关掉只是不跳，已配好的时长保留。 */
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
   /** 读当前播放头与时长（秒）；拿不到（未就绪）返回 null，取点按钮随之禁用。 */
   getPlayhead: () => { currentMs: number; durationMs: number } | null;
   onConfigChange: (segments: SkipSegment[]) => void;
@@ -30,7 +33,16 @@ interface Props {
 
 const MAX_SEC = 1800; // 与 skipSegments 的 30min 上限对齐
 
-export function SkipSettingsDialog({ host, open, config, getPlayhead, onConfigChange, onClose }: Props) {
+export function SkipSettingsDialog({
+  host,
+  open,
+  config,
+  enabled,
+  onEnabledChange,
+  getPlayhead,
+  onConfigChange,
+  onClose,
+}: Props) {
   if (!host || !open) {
     return null;
   }
@@ -57,6 +69,14 @@ export function SkipSettingsDialog({ host, open, config, getPlayhead, onConfigCh
     <div className="skip-overlay__panel" role="dialog" aria-label="片头片尾设置">
       <div className="skip-overlay__head">
         <span className="skip-overlay__title">片头 / 片尾</span>
+        <label className="skip-overlay__switch">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => onEnabledChange(e.target.checked)}
+          />
+          <span>{enabled ? "跳过已开" : "跳过已关"}</span>
+        </label>
         <button
           type="button"
           className="skip-overlay__dismiss"
@@ -109,7 +129,6 @@ export function SkipSettingsDialog({ host, open, config, getPlayhead, onConfigCh
         </button>
       </div>
 
-      <p className="skip-overlay__hint">按这部剧记忆，换源也带着走；0 / 关闭即不跳。</p>
       <button type="button" className="skip-overlay__close" onClick={onClose}>
         完成
       </button>

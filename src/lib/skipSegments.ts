@@ -40,8 +40,11 @@ export function clampSkipMs(value: unknown): number {
 }
 
 /**
- * 解析 `skipJson`：坏 JSON / 非数组 / 非对象项 / 非法 kind 一律丢弃，越界 ms 夹取。
+ * 解析 `skipJson`：坏 JSON / 非对象项 / 非法 kind 一律丢弃，越界 ms 夹取。
  * 同一 kind 出现多次取最后一条（后者覆盖）。返回稳定顺序：intro 在前、outro 在后。
+ *
+ * 两种形状都吃：旧格式是裸数组 `[{kind,ms}]`，2.0 起是 `{enabled, segments}`
+ * （开关按剧记，见 `parseSkipEnabled`）。这里只关心时长，开关由调用方各自读。
  */
 export function parseSkipConfig(raw: string | null | undefined): SkipSegment[] {
   if (!raw || !raw.trim()) {
@@ -53,11 +56,16 @@ export function parseSkipConfig(raw: string | null | undefined): SkipSegment[] {
   } catch {
     return [];
   }
-  if (!Array.isArray(value)) {
+  const list = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as { segments?: unknown }).segments)
+      ? ((value as { segments: unknown[] }).segments)
+      : null;
+  if (!list) {
     return [];
   }
   const byKind = new Map<SkipKind, number>();
-  for (const item of value) {
+  for (const item of list) {
     if (!item || typeof item !== "object") {
       continue;
     }
@@ -83,10 +91,31 @@ export function parseSkipConfig(raw: string | null | undefined): SkipSegment[] {
   return out;
 }
 
-/** 序列化回 `skipJson`；空配置写 `"[]"`（与后端默认/继承语义一致）。 */
-export function serializeSkipConfig(segments: SkipSegment[]): string {
-  const normalized = parseSkipConfig(JSON.stringify(segments));
-  return JSON.stringify(normalized);
+/**
+ * 这部剧的「跳过」开关。旧格式（裸数组）与缺字段都按**开**读——手写或继承来的
+ * 配置里没有这个键时，行为必须和以前一致，不能因为少一个键就把跳过关掉。
+ */
+export function parseSkipEnabled(raw: string | null | undefined): boolean {
+  if (!raw || !raw.trim()) {
+    return true;
+  }
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return (value as { enabled?: unknown }).enabled !== false;
+    }
+  } catch {
+    /* 坏 JSON 按默认（开）处理，时长那边同样会解析成空 */
+  }
+  return true;
+}
+
+/** 序列化回 `skipJson`：`{enabled, segments}`（段仍走同一套校验）。 */
+export function serializeSkipConfig(segments: SkipSegment[], enabled = true): string {
+  return JSON.stringify({
+    enabled: enabled !== false,
+    segments: parseSkipConfig(JSON.stringify(segments)),
+  });
 }
 
 export function introMs(segments: SkipSegment[]): number {
@@ -138,8 +167,12 @@ export function withSkipMs(segments: SkipSegment[], kind: SkipKind, ms: number):
  * 只写秒数：原先「片头1分50秒 · 片尾45秒」这种中文单位串把齿轮行右侧挤满，
  * 在窄窗口里会换行/截断；这一行本来就叫「片头/片尾」，单位再省成 `s` 即可读。
  * 只设一类时补上标题（`片头110s`），否则单独一个数字看不出是哪一类。
+ * 关掉时直接写「已关闭」——比继续显示秒数更准确地反映「现在不跳」。
  */
-export function formatSkipSummary(segments: SkipSegment[]): string {
+export function formatSkipSummary(segments: SkipSegment[], enabled = true): string {
+  if (!enabled) {
+    return "已关闭";
+  }
   const intro = Math.round(introMs(segments) / 1000);
   const outro = Math.round(outroMs(segments) / 1000);
   if (intro > 0 && outro > 0) {

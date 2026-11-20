@@ -3,7 +3,7 @@ import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "reac
 import { ledgerSuccess } from "../lib/failoverLedger";
 import { resolutionFromVideo } from "../lib/resolution";
 import { api } from "../lib/invoke";
-import { parseSkipConfig, serializeSkipConfig } from "../lib/skipSegments";
+import { parseSkipConfig, parseSkipEnabled, serializeSkipConfig } from "../lib/skipSegments";
 import type { SkipSegment } from "../lib/skipSegments";
 import type { HistoryItem, PlayResolved } from "../types/luma";
 
@@ -61,6 +61,12 @@ export interface PlaybackHistory {
   /** 片头/片尾配置镜像 state：ref 供引擎懒读，state 供配置弹窗受控显示。 */
   skipConfig: SkipSegment[];
   setSkipConfig: Dispatch<SetStateAction<SkipSegment[]>>;
+  /**
+   * 这部剧的「跳过」开关。关掉只影响是否发起跳转，不丢已配好的时长；
+   * 与 skipConfig 一样按剧存进 `skip_json`。
+   */
+  skipEnabled: boolean;
+  setSkipEnabled: (enabled: boolean) => void;
 }
 
 /**
@@ -107,6 +113,13 @@ export function usePlaybackHistory({
   const readRememberedSkip = useCallback(() => rememberedSkipRef.current, []);
   /** 配置镜像 state：ref 供引擎懒读不触发重渲染，state 供浮层编辑器受控显示。 */
   const [skipConfig, setSkipConfig] = useState<SkipSegment[]>([]);
+  const [skipEnabled, setSkipEnabledState] = useState(true);
+  /** 开关同时更新 ref（写历史时不必等渲染）与 state（弹窗受控）。 */
+  const skipEnabledRef = useRef(true);
+  const setSkipEnabled = useCallback((enabled: boolean) => {
+    skipEnabledRef.current = enabled;
+    setSkipEnabledState(enabled);
+  }, []);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -127,8 +140,11 @@ export function usePlaybackHistory({
         // 片头/片尾配置与倍速同性质：按剧记忆，续播那些提前返回之前先摘出来。
         if (hit?.skipJson) {
           const segs = parseSkipConfig(hit.skipJson);
+          const enabled = parseSkipEnabled(hit.skipJson);
           rememberedSkipRef.current = segs;
+          skipEnabledRef.current = enabled;
           setSkipConfig(segs);
+          setSkipEnabledState(enabled);
         }
         const sameEpisode =
           hit?.playUrl === playUrl ||
@@ -203,7 +219,7 @@ export function usePlaybackHistory({
         // 0 = 这次写入没带倍速，宿主侧不会覆盖库里已有的值。
         rate: rememberedRateRef.current,
         // 片头/片尾配置随这部剧写回（后端跨源继承，见 db/playback.rs）。
-        skipJson: serializeSkipConfig(rememberedSkipRef.current),
+        skipJson: serializeSkipConfig(rememberedSkipRef.current, skipEnabledRef.current),
         positionMs:
           snapshot?.positionMs ?? Math.round(video.currentTime * 1000),
         durationMs:
@@ -271,5 +287,7 @@ export function usePlaybackHistory({
     flushHistoryRef,
     skipConfig,
     setSkipConfig,
+    skipEnabled,
+    setSkipEnabled,
   };
 }
