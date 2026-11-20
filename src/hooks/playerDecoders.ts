@@ -52,6 +52,8 @@ export interface DecoderHost {
   };
   ui: {
     error: (message: string) => void;
+    /** 播放器内短提示（ArtPlayer notice）：只用于「正在重连」这类过程态。 */
+    notice: (text: string) => void;
     /** 单码率源：摘掉「清晰度：自动」这类假选项（控件与设置项一起）。 */
     disableQuality: () => void;
     /** 失败路径硬撤冻结帧，绝不让静帧盖住后续画面。 */
@@ -88,6 +90,19 @@ interface FlvPlayerLike {
 }
 
 /**
+ * 就地重连的退避表（毫秒）。数组长度即「一次连续故障最多重连几次」。
+ *
+ * 为什么要有这一步：hls.js 报 fatal 时**已经停止继续拉流**。以前这里对
+ * 「时间型失败」直接返回、等看门狗复核，但看门狗面对「上游一个字节都不回」
+ * 只能得出 `unknown`（证据不足，不判死），于是画面永久停在转圈——用户实测的
+ * 唯一出路是刷新整个页面。刷新就能好本身就说明地址没坏，断的是这一次请求。
+ *
+ * 重连只碰解码器自己：不换地址、不换线路、不动上层状态，所以与「切换只由 UI
+ * 发起」不冲突；预算用完才把失败交上去。
+ */
+const RETRY_DELAYS_MS = [800, 1_600, 3_200, 6_400] as const;
+
+/**
  * HLS：清单/层级/分片三级超时都按「首个分片可能要下 20 秒」设定（见 hlsBudget）。
  *
  * WebView2 的 canPlayType 对 mpegurl 返回 "maybe"，但真把 m3u8 塞给 <video> 会以
@@ -109,11 +124,25 @@ export function attachHlsDecoder(host: DecoderHost, url: string): void {
   // hls-control 插件约定从 art.hls 读 levels / currentLevel。
   instance.hls = hls;
   let disposed = false;
+  /**
+   * 单次连续故障里已经重连过几次。分片真下来了就清零：预算衡量的是
+   * 「这一轮连续失败」，不是「这一集累计失败」——播了十分钟再抖一次，
+   * 应该重新拥有完整预算。
+   */
+  let retryCount = 0;
+  let retryTimer: number | null = null;
+  const cancelRetry = () => {
+    if (retryTimer !== null) {
+      window.clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  };
   const destroy = () => {
     if (disposed) {
       return;
     }
     disposed = true;
+    cancelRetry();
     hls.destroy();
   };
   host.lifecycle.setTeardown(destroy);
@@ -132,6 +161,9 @@ export function attachHlsDecoder(host: DecoderHost, url: string): void {
   hls.on(Hls.Events.LEVEL_LOADED, noteAlive);
   hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
     noteAlive();
+    // 有分片真下来了 = 上一轮断流已经结束，重连预算重新给满。
+    retryCount = 0;
+    cancelRetry();
     // 实测码率：分片真实字节 / 该分片覆盖的媒体时长。
     const bytes = data.frag?.stats?.total;
     const seconds = data.frag?.duration;
@@ -193,6 +225,43 @@ export function attachHlsDecoder(host: DecoderHost, url: string): void {
       writePlayerPrefs({ height: level.height });
     }
   });
+  /**
+   * 就地重连同一条流（不换地址、不换线路）。返回 false 表示这一轮预算用完。
+   *
+   * `reloadManifest` 决定用哪个动作恢复——hls.js 里两者不等价：
+   * `startLoad()` 在 `levels` 为空时直接 `return`（清单压根没拿到，它无事可做），
+   * 这时必须 `loadSource(url)` 重新走一遍 MANIFEST_LOADING。
+   *
+   * 刻意不记生命信号：重连只是「再试一次」，不是「有数据在流动」，记成生命
+   * 信号会让反复断流的死线永远逃过看门狗。
+   */
+  const retryInPlace = (reloadManifest: boolean): boolean => {
+    if (retryCount >= RETRY_DELAYS_MS.length) {
+      return false;
+    }
+    const delay = RETRY_DELAYS_MS[retryCount];
+    retryCount += 1;
+    cancelRetry();
+    host.ui.notice(
+      retryCount === 1
+        ? "网络波动，正在重连…"
+        : `网络波动，正在重连（第 ${retryCount} 次）…`,
+    );
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      if (disposed) {
+        return;
+      }
+      if (reloadManifest) {
+        hls.loadSource(url);
+        return;
+      }
+      // `startLoad()` 会让 stream-controller 丢掉失败分片的状态重新拉，
+      // 这正是 hls.js 官方给的 network-error 恢复动作。
+      hls.startLoad();
+    }, delay);
+    return true;
+  };
   hls.on(Hls.Events.ERROR, (_event, data) => {
     if (disposed || !data.fatal) {
       return;
@@ -200,23 +269,26 @@ export function attachHlsDecoder(host: DecoderHost, url: string): void {
     // `manifestParsingError` 这类枚举名对用户没有意义：它八成意味着
     // 「源返回的不是 m3u8」（网盘解析接口 200 + JSON），文案要指向换源。
     const reason = describeHlsError(data.details);
+    const timing = isTimingFailure(data.details);
     host.log("hls fatal", {
       siteKey: host.identity.siteKey,
       vodId: host.identity.vodId,
       details: String(data.details ?? ""),
       type: String(data.type ?? ""),
     });
-    if (isTimingFailure(data.details)) {
-      // 只是「等太久」：不换源、不报红条，交给看门狗复核。
-      // 刻意不记生命信号：这只是「没等到」，不是「有数据在流动」，
-      // 记成生命信号会让反复超时的死线永远逃过看门狗。
+    // 网络/超时这一族：hls 已经放弃拉流，但地址本身多半没坏——先就地重连，
+    // 预算内成功就不用惊动用户，更不会把正在看的线路切走。
+    // 内容型致命错误（清单不是 m3u8、编码不支持）重连没有意义，直接上报。
+    if (timing && retryInPlace(String(data.details ?? "").startsWith("manifest"))) {
       return;
     }
     host.ui.dropPoster();
     if (host.session.hasPlayed()) {
       // 已经在播的流突然致命：网络抖一下的概率远高于线路真坏了，
       // 自动跳走会把用户正在看的内容切没。只提示，由用户决定。
-      host.ui.error(`网络波动导致播放中断：${reason}，可点刷新重试`);
+      host.ui.error(
+        `网络波动导致播放中断：${reason}，已重连 ${RETRY_DELAYS_MS.length} 次仍未恢复`,
+      );
       return;
     }
     // hls 自己报致命 = 有明确证据，交给状态机判死；文案、撤海报与交棒

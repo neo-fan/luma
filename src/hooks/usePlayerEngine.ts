@@ -683,6 +683,11 @@ export function usePlayerEngine({
       },
       ui: {
         error: setVideoError,
+        // 解码器侧的过程态（例如断流后「正在重连」）走播放器自带 notice：
+        // 它两秒后自动消失，不用上层再维护一份「提示什么时候撤」的状态。
+        notice: (text: string) => {
+          noticeRef.current?.(text);
+        },
         disableQuality: () => {
           qualityOption.control = false;
           qualityOption.setting = false;

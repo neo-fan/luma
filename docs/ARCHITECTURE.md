@@ -69,15 +69,17 @@ PlayerPage.resolve_play
   → playerContent(flag, id, [])      取 playUrl/url + header(UA/Referer/Cookie)
   → 本地反代 :9978 重写 m3u8 相对分片、透传 headers
   → <video> + hls.js (m3u8) / mpegts.js (flv, MSE)
-   → 失败顺序: HLS fatal / stall 看门狗（判决在会话状态机：静默 20s 独立复核，
+   → 失败顺序: HLS fatal → 就地重连同一地址（800/1600/3200/6400ms，共 4 次）
+              → 仍失败则报错，由用户决定换线路 / 换源
+              → stall 看门狗（判决在会话状态机：静默 20s 独立复核，
               dead 一次即判死、unknown 累计三次判死、已出画后不判死）
-              → 同片其它线路 → 其它站点
             → 第4级嗅探(sniff, 隐藏 WebView2 抓 .m3u8/.mp4/...)
 ```
 
 - 反代 `:9978`：scheme 走 `resolve_scheme_link`；源返回的 `127.0.0.1:<port>/proxy?do=...` 本地地址**一律跳过**（该路由未实现，套一层会变 403）。
+- 反代上游超时只看「建连 10s」与「两次读到数据间隔 20s」，**不用整体墙钟截止**：慢 CDN 的 9MB 分片读到 21 秒被掐断会变成半截分片，播放器侧表现为 `fragLoadError` + 永久转圈。
 - 内置播放器 **ArtPlayer**；FLV 走 mpegts.js（WebView2 无内置 FLV 解码）；`<video>` 报 `MEDIA_ERR_DECODE/ SRC_NOT_SUPPORTED`（常见于 HEVC）时直接落到换线路 / 换源，不再有外部播放兜底。
-- 自动换源铁律：**「慢 ≠ 死」**——没有明确失败（4xx/5xx、非 `#EXTM3U`、首分片是图片/HTML）不换；超时算 `unknown`，连续 3 次才换。
+- 自动换源铁律：**「慢 ≠ 死」**——没有明确失败（4xx/5xx、非 `#EXTM3U`、首分片是图片/HTML）不换；超时算 `unknown`，连续 3 次才判死。判死后**只上报，不自动切换**：换线 / 换源由 UI 选择发起（乐观切换，不预检）。
 
 ### 5.1 前端切换编排（`src/hooks/playback/`）
 

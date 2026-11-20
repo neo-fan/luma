@@ -42,7 +42,7 @@ Luma 是 Windows 11 x64 的配置兼容播放框架（空壳框架，兼容 TVBo
 - **Rust 分层是物理分层**：`infra/`、`domain/` 用 `#[path]` 映射，逻辑模块名仍是 `crate::config` 等，因此 40 个 command 路径零改动；`db↔store`、`proxy↔spider` 各自同层以规避环。
 - **配置双快照**：`imported_json` 是导入原件，**永不被运行策略改写**；`runtime_json` 由 `derive_runtime()` 单向派生（含 `enabled`/`disabledReason`）。fan-out / 播放 / 前端缓存只读 runtime；`find_site` 查 imported 以兼容旧收藏，`spider_invoke` 单点补策略检查防绕过。
 - **数据层**：`<data>/luma.db` 单库，WAL + 事务写，先提交再刷内存缓存；无迁移逻辑。便携模式 = exe 同级有 `data/`。
-- **播放链路**：`playerContent` 取 playUrl + header → 反代重写 m3u8 → ArtPlayer/hls.js/mpegts.js → 失败依次：同片换线 → 跨站换源 → 第 4 级嗅探（隐藏 WebView2）；没有外部播放兜底。
+- **播放链路**：`playerContent` 取 playUrl + header → 反代重写 m3u8 → ArtPlayer/hls.js/mpegts.js → 失败依次：就地重连同一地址（800/1600/3200/6400ms，共 4 次）→ 仍失败则上报（换线 / 换源由 UI 选择发起，**不自动切换**）→ 第 4 级嗅探（隐藏 WebView2）；没有外部播放兜底。反代上游超时只看建连 10s 与读空闲 20s，**不得用整体墙钟截止**（会掐断慢分片）。
 - **切换编排只有一份真源**：`src/hooks/playback/`（`intent ?? committed` + 代次令牌 + 串行提交门 + 手动持有）。换集 / 换源 / 换线的落地都必须经 controller 的同一个提交口；**禁止再引入第二套「当前播放目标」状态**（历史上四套状态互相覆盖，是切换错乱的结构性原因）。
 
 ## 支持范围

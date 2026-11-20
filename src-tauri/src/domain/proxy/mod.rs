@@ -29,7 +29,15 @@ use url::Url;
 fn default_port() -> u16 {
     crate::channel::current().proxy_port()
 }
-const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(20);
+/// 建连预算：DNS + TCP + TLS。
+const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// 单次读预算：连续这么久一个字节都没到，才判定这条上游流已经死了。
+///
+/// 这里**不能**用 `ClientBuilder::timeout`：它是整个请求的截止时间（含读完
+/// body）。慢 CDN 上一个 9MB 分片读到第 21 秒会被硬掐断，播放器收到半截分片
+/// → hls.js `fragLoadError` → 画面永久卡在转圈（2026-11-20 实测 meilinvps
+/// 线路）。分片的总时长本来就该由「有没有数据在动」来决定。
+const UPSTREAM_READ_TIMEOUT: Duration = Duration::from_secs(20);
 // The fallback UA and the "fill in defaults" helper live in `netrules` so the
 // resolver and the proxy cannot drift apart. Some CDNs answer garbage (or a
 // 403 body that hls.js reports as `fragParsingError`) when no UA is present.
@@ -73,7 +81,10 @@ pub struct ProxyState {
 /// 客户端上（配置 / CMS / 豆瓣）。
 fn streaming_builder(allow_local: bool) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
-        .timeout(UPSTREAM_TIMEOUT)
+        // 只限制「建连」与「两次读到数据之间的间隔」，不限制整个请求的墙钟时长：
+        // 分片该下多久由带宽决定，卡住则由读超时兜住（见常量注释）。
+        .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
+        .read_timeout(UPSTREAM_READ_TIMEOUT)
         .pool_idle_timeout(Duration::from_secs(60))
         .redirect(guard::redirect_guard(allow_local))
         .dns_resolver(guard::pinned_resolver())
