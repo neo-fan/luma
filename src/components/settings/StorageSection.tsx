@@ -109,7 +109,7 @@ export default function StorageSection({ onError, onNotice }: StorageSectionProp
         存储与清理
         <span className="config-item__meta">　本机占用共 {formatBytes(total)}</span>
       </h2>
-      <ErrorBar message={loadError} />
+      {loadError ? <ErrorBar message={loadError} /> : null}
 
       <ul className="config-list">
         {ROWS.map((row) => {

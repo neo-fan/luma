@@ -116,6 +116,13 @@ export default function ErrorBar({
     return null;
   }
 
+  // 空文案只剩图标与复制按钮——一块「红色空洞」。页面侧本就各自守卫错误态，
+  // 这里再兜一层：没有可说的话就别说（2026-11-20 全页体检：存储节无条件渲染
+  // loadError="" 的空条）。
+  if (!message) {
+    return null;
+  }
+
   return (
     <div
       className={

@@ -216,25 +216,51 @@ export default function SettingsPage({
     },
   ];
 
-  // 目录高亮跟随滚动：观察每个 block，视口上部 1/3 命中谁就点亮谁。
+  // 目录高亮跟随滚动：以**滚动位置**为准——点亮「最后一个已越过判线的区块」，
+  // 滚到底时末块哪怕很短也算（判线够不到它）。此前用 IntersectionObserver 的
+  // 进入事件点亮：连续快速滚动时批量回调里最后处理到的 entry 未必是最上的区块，
+  // 且够到页面底部后末块不再产生新事件——实测高亮停在「诊断」、内容已是
+  // 「存储与清理」（2026-11-20 全页体检）。位置驱动没有这两类竞态。
   useEffect(() => {
-    const els = blocks
-      .map((block) => document.getElementById(block.id))
-      .filter((el): el is HTMLElement => el !== null);
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setActiveId(entry.target.id);
-          }
+    const scroller = document.querySelector(".page-body");
+    if (!scroller) {
+      return;
+    }
+    let ticking = false;
+    const evaluate = () => {
+      ticking = false;
+      const els = Array.from(
+        document.querySelectorAll<HTMLElement>(".settings-anchor"),
+      );
+      if (els.length === 0) {
+        return;
+      }
+      const line = window.innerHeight * 0.35;
+      let current = els[0].id;
+      for (const el of els) {
+        if (el.getBoundingClientRect().top <= line) {
+          current = el.id;
+        } else {
+          break;
         }
-      },
-      { rootMargin: "-15% 0px -75% 0px" },
-    );
-    els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
-    // blocks 只依赖 reload 带来的 node 变化；锚点 id 恒定，重挂即可。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      }
+      if (
+        scroller.scrollTop + scroller.clientHeight >=
+        scroller.scrollHeight - 4
+      ) {
+        current = els[els.length - 1].id;
+      }
+      setActiveId(current);
+    };
+    const onScroll = () => {
+      if (!ticking) {
+        ticking = true;
+        window.requestAnimationFrame(evaluate);
+      }
+    };
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    evaluate();
+    return () => scroller.removeEventListener("scroll", onScroll);
   }, []);
 
   return (
