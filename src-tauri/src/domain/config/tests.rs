@@ -772,3 +772,39 @@ fn due_only_for_active_url_config_that_reached_interval() {
     store.set_refresh_interval(0).unwrap();
     assert!(store.due_config_id().is_none());
 }
+
+/// 存量坏地址的启动自愈：库里已经写着 `https://https://…`（社区订阅原文带来的
+/// 手误）时，`load` 必须把它治好**并落库**。纠正只发生在导入转换与这一处，
+/// 请求路径没有第二份兜底逻辑，所以「治好并持久化」是唯一的收敛点。
+#[test]
+fn load_repairs_stored_malformed_urls_and_persists_them() {
+    let (_guard, dir) = isolate_data_dir();
+    let store = store_at(&dir);
+    let mut snap = snapshot("box", &[]);
+    snap.lives = vec![json!({
+        "name": "YanG",
+        "url": "https://https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u",
+    })];
+    store.insert(snap, text_source()).unwrap();
+
+    // 重启（重新 load）：内存视图已是干净地址。
+    let reloaded = store_at(&dir);
+    let active = reloaded.active_snapshot().expect("active snapshot");
+    assert_eq!(
+        active.lives[0]["url"],
+        "https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u"
+    );
+
+    // 而且真的落库了：第二次启动读到的原始行里不该再有畸形 scheme。
+    let rows = Db::at(dir.clone())
+        .expect("reopen db")
+        .config_rows()
+        .expect("config rows");
+    assert_eq!(rows.len(), 1);
+    for json_col in [&rows[0].imported_json, &rows[0].runtime_json] {
+        assert!(
+            !json_col.contains("https://https://"),
+            "畸形地址必须被治好并落库，实际列：{json_col}"
+        );
+    }
+}

@@ -228,6 +228,13 @@ pub fn normalize_config(raw: &Value, origin: &str) -> Result<Value, AppError> {
         ));
     };
     let mut config = raw_obj.clone();
+    // 订阅地址自己也可能带笔误（`https://https://…`）：相对引用要用它当基准，
+    // 先纠正再解析，否则 `./lib/iptv.m3u` 会拼到畸形主机上。
+    //
+    // 只影响**解析基准**：`origin` 本身继续参与 `short_hash`（配置 id）与默认
+    // 命名。否则同一个订阅纠正前后会算出两个 id，重新导入变成多出一份重复配置。
+    let base_owned = repair_url(origin).unwrap_or_else(|| origin.to_string());
+    let base = base_owned.as_str();
     for (alias, canonical) in TOP_ALIASES {
         if !config.contains_key(canonical) && config.contains_key(alias) {
             if let Some(value) = config.get(alias).cloned() {
@@ -241,7 +248,7 @@ pub fn normalize_config(raw: &Value, origin: &str) -> Result<Value, AppError> {
         .filter(|v| truthy(Some(v)))
         .or_else(|| config.get("jar").filter(|v| truthy(Some(v))));
     let spider_value = spider_raw.and_then(|value| match value {
-        Value::String(_) => match resolve_ref(origin, value) {
+        Value::String(_) => match resolve_ref(base, value) {
             Value::String(text) => Some(text),
             _ => None,
         },
@@ -252,7 +259,7 @@ pub fn normalize_config(raw: &Value, origin: &str) -> Result<Value, AppError> {
         Some(Value::Array(items)) => items
             .iter()
             .filter_map(Value::as_object)
-            .map(|site| normalize_site(site, spider_value.as_deref(), origin))
+            .map(|site| normalize_site(site, spider_value.as_deref(), base))
             .collect(),
         _ => Vec::new(),
     };
@@ -275,13 +282,13 @@ pub fn normalize_config(raw: &Value, origin: &str) -> Result<Value, AppError> {
         None => sites,
     };
 
-    let lives = resolve_items(config.get("lives"), origin);
+    let lives = resolve_items(config.get("lives"), base);
     let parses = resolve_items(
         config
             .get("parses")
             .filter(|v| truthy(Some(v)))
             .or_else(|| config.get("parse")),
-        origin,
+        base,
     );
 
     let mut rest = Map::new();
@@ -291,7 +298,7 @@ pub fn normalize_config(raw: &Value, origin: &str) -> Result<Value, AppError> {
         }
     }
 
-    Ok(json!({
+    let mut snapshot = json!({
         "id": short_hash(origin),
         "name": config_name(&config, origin),
         "importedAt": now_rfc3339(),
@@ -307,7 +314,15 @@ pub fn normalize_config(raw: &Value, origin: &str) -> Result<Value, AppError> {
             _ => Value::Array(Vec::new()),
         },
         "_raw": Value::Object(rest),
-    }))
+    });
+    // 纠正落库前的最后一道：订阅里写歪的地址（`https://https://…` 这类）在这里
+    // 治干净，之后所有下游（直播解析、播放、EPG）读到的都是可用地址。`_raw` 也要
+    // 过——前端「查看原始配置」与重新归一化都会读它，留着坏地址等于留个后门。
+    let repaired = repair_value(&mut snapshot);
+    if repaired > 0 {
+        tracing::warn!(repaired, "config import corrected malformed urls");
+    }
+    Ok(snapshot)
 }
 
 /// 合并多仓快照：站点 key 先到先得，直播与解析直接拼接。
@@ -398,6 +413,117 @@ pub fn merge_repos(snapshots: &[Value]) -> Value {
         "flags": flags,
         "_raw": raw.unwrap_or(Value::Null),
     })
+}
+
+/// 纠正**确定性畸形**的 http(s) 地址，只在 leading 区动手；`Some` = 改过了。
+///
+/// 三类（都是社区订阅里实测存在的写法，正常 URL 不可能长成这样）：
+///   1. 重复前导 scheme：`https://https://host/x` → `https://host/x`。
+///      `cluntop/tvbox` 的 `box.json` 第 10 条直播源就是这一类。合法的加速前缀
+///      第二段 scheme 前面一定有 `/`（`https://gh-proxy.com/https://raw...`），
+///      所以「scheme 紧跟 scheme」才是笔误；保留最内层——那才是贴着主机的一个。
+///   2. scheme 后多余的斜杠：`https:///host/x` → `https://host/x`（空主机名必失败）。
+///   3. scheme 后的空白：`https:// host/x` → `https://host/x`，顺带吃掉首尾空白。
+///
+/// 刻意**不做**：不补 scheme（`host/x` 归相对解析管）、不改大小写、不碰
+/// `magnet:` / `ws:` / `data:` 等非 http(s) 协议——猜出来的地址比坏地址更难查。
+///
+/// **全局只有这一处**：纠正发生在导入转换（`normalize_config`）与启动自愈
+/// （`ConfigStore::load` 重放同一函数并落库），请求路径不再兜底。数据在落库前
+/// 就是干净的，下游（`live_parse`、播放、EPG）读到的永远是纠正后的地址。
+pub fn repair_url(text: &str) -> Option<String> {
+    let head_end = text.find("://")?;
+    let raw_scheme = &text[..head_end];
+    let scheme = raw_scheme.trim();
+    if !is_scheme(scheme) {
+        return None;
+    }
+    let mut rest = &text[head_end + 3..];
+    // 空白与多余斜杠都只可能出现在主机名之前，反复剥直到落定；层数封顶，
+    // 免得将来有人塞进一条病态长串把这里变成循环。
+    for _ in 0..8 {
+        // 先绑定 trim 结果：`trim_start().strip_prefix('/').unwrap_or(rest)` 里的
+        // `rest` 是赋值前的旧值，直接写会把刚 trim 掉的结果又换回未 trim 的那份。
+        let trimmed = rest.trim_start();
+        rest = trimmed.strip_prefix('/').unwrap_or(trimmed);
+        match strip_scheme_prefix(rest) {
+            Some(inner) => rest = inner,
+            None => break,
+        }
+    }
+    let repaired = format!("{scheme}://{rest}");
+    (repaired != text).then_some(repaired)
+}
+
+fn is_scheme(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower == "http" || lower == "https"
+}
+
+/// `http://x` / `https://x`（大小写不限）→ 去掉 scheme 后的剩余；否则 None。
+fn strip_scheme_prefix(rest: &str) -> Option<&str> {
+    for scheme in ["https://", "http://"] {
+        if rest.len() >= scheme.len() && rest[..scheme.len()].eq_ignore_ascii_case(scheme) {
+            return Some(&rest[scheme.len()..]);
+        }
+    }
+    None
+}
+
+/// 纠正一份**已入库**的快照，返回改动条数。字段覆盖与
+/// `ghproxy::rewrite_snapshot` 一致（含 `_raw`），两处按同一顺序遍历，
+/// 免得以后加字段时只改一处、另一处静默漏掉。
+pub fn repair_snapshot(snapshot: &mut crate::config::ConfigSnapshot) -> usize {
+    let mut changed = 0;
+    for site in snapshot.sites.iter_mut() {
+        changed += repair_value(site);
+    }
+    for item in snapshot.lives.iter_mut() {
+        changed += repair_value(item);
+    }
+    for item in snapshot.parses.iter_mut() {
+        changed += repair_value(item);
+    }
+    for item in snapshot.headers.iter_mut() {
+        changed += repair_value(item);
+    }
+    for item in snapshot.flags.iter_mut() {
+        changed += repair_value(item);
+    }
+    if let Some(spider) = snapshot.spider.as_mut() {
+        if let Some(repaired) = repair_url(spider) {
+            tracing::warn!(from = %spider, to = %repaired, "config url repaired");
+            *spider = repaired;
+            changed += 1;
+        }
+    }
+    if let Some(wallpaper) = snapshot.wallpaper.as_mut() {
+        if let Some(repaired) = repair_url(wallpaper) {
+            tracing::warn!(from = %wallpaper, to = %repaired, "config url repaired");
+            *wallpaper = repaired;
+            changed += 1;
+        }
+    }
+    changed + repair_value(&mut snapshot.raw)
+}
+
+/// 递归纠正一棵 JSON 子树里的地址，返回改动条数（形状不认识的一律跳过）。
+/// 递归形状与 `ghproxy::rewrite_value` 保持一致：那里按主机改写，这里按笔误纠正，
+/// 两条规则各自独立、都不依赖对方先跑过。
+pub fn repair_value(value: &mut Value) -> usize {
+    match value {
+        Value::String(text) => match repair_url(text) {
+            Some(repaired) => {
+                tracing::warn!(from = %text, to = %repaired, "config url repaired");
+                *text = repaired;
+                1
+            }
+            None => 0,
+        },
+        Value::Array(items) => items.iter_mut().map(repair_value).sum(),
+        Value::Object(map) => map.values_mut().map(repair_value).sum(),
+        _ => 0,
+    }
 }
 
 /// `./py/x.py`、`../lib/a.m3u`、`/jar/x.jar` 相对配置来源解析；其余原样返回。
@@ -756,6 +882,83 @@ mod tests {
         assert_eq!(out["headers"][0]["header"]["Referer"], "https://h/");
         assert!(out["headers"][0]["header"].get("Empty").is_none());
         assert_eq!(out["id"], short_hash("https://h/dir/box.json"));
+    }
+
+    #[test]
+    fn repair_url_fixes_deterministic_typos() {
+        // 社区订阅里的真实手误（cluntop/tvbox box.json 第 10 条直播源）。
+        assert_eq!(
+            repair_url("https://https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u"),
+            Some(
+                "https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u".to_string()
+            )
+        );
+        // 多层嵌套保留最内层（贴着主机的）scheme，大小写不动。
+        assert_eq!(
+            repair_url("HTTPS://https://http://host/x"),
+            Some("HTTPS://host/x".to_string())
+        );
+        assert_eq!(
+            repair_url("https:///host/x"),
+            Some("https://host/x".to_string())
+        );
+        assert_eq!(
+            repair_url(" https:// host/x"),
+            Some("https://host/x".to_string())
+        );
+    }
+
+    #[test]
+    fn repair_url_leaves_valid_and_unknown_shapes_alone() {
+        for keep in [
+            // 合法加速前缀：第二段 scheme 前面有 `/`，是代理写法，绝不能动。
+            "https://gh-proxy.com/https://raw.githubusercontent.com/a/b/c.m3u",
+            "https://ghfast.top/https://github.com/a/b/releases/download/v/x.apk",
+            "https://raw.githubusercontent.com/a/b/main/c.m3u",
+            "http://127.0.0.1:9978/proxy?url=https%3A%2F%2Fcdn%2Fx.m3u8",
+            // 非 http(s) 协议与相对路径一律不猜。
+            "magnet:?xt=urn:btih:abc",
+            "ws://host/live",
+            "data:image/png;base64,AAAA",
+            "./lib/iptv.m3u",
+            "host/x.m3u",
+            "",
+            "https://",
+        ] {
+            assert_eq!(repair_url(keep), None, "不该改写 {keep:?}");
+        }
+    }
+
+    #[test]
+    fn import_repairs_malformed_live_urls() {
+        let raw = json!({
+            "lives": [
+                { "name": "YanG", "url": "https://https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u" },
+                { "name": "ok", "url": "https://gh-proxy.com/https://raw.githubusercontent.com/a/b/c.m3u" },
+            ],
+            "sites": [{"key": "a", "api": "https:///h/api"}],
+        });
+        let out = normalize_config(&raw, "https://h/dir/box.json").expect("normalize");
+        assert_eq!(
+            out["lives"][0]["url"],
+            "https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u"
+        );
+        // 合法代理写法原样保留。
+        assert_eq!(
+            out["lives"][1]["url"],
+            "https://gh-proxy.com/https://raw.githubusercontent.com/a/b/c.m3u"
+        );
+        assert_eq!(out["sites"][0]["api"], "https://h/api");
+    }
+
+    #[test]
+    fn malformed_origin_repairs_base_but_not_the_config_id() {
+        // 订阅地址自己写歪时：相对解析要用纠正后的基准，但 id 必须继续按原样派生，
+        // 否则同一个订阅纠正前后会算出两个 id，重新导入变成多出一份重复配置。
+        let raw = json!({ "lives": [{ "name": "本地", "url": "./lib/iptv.m3u" }] });
+        let out = normalize_config(&raw, "https://https://h/dir/box.json").expect("normalize");
+        assert_eq!(out["lives"][0]["url"], "https://h/dir/lib/iptv.m3u");
+        assert_eq!(out["id"], short_hash("https://https://h/dir/box.json"));
     }
 
     #[test]

@@ -210,6 +210,35 @@ impl ConfigStore {
                     db.set_runtime_json(&stored.imported.id, &serde_json::to_string(runtime)?)?;
                 }
             }
+            // 纠正自愈：订阅原文里的畸形地址（`https://https://…` 这类笔误）可能已经
+            // 存在老库里。导入路径不再产出这种数据，这里把存量治好并落库——一次启动
+            // 即收敛，所以请求路径不需要、也没有第二份兜底逻辑。
+            let repaired = normalize::repair_snapshot(&mut stored.imported)
+                + match stored.runtime.as_mut() {
+                    Some(runtime) => normalize::repair_snapshot(runtime),
+                    None => 0,
+                };
+            if repaired > 0 {
+                let imported_json = serde_json::to_string(&stored.imported)?;
+                // 走到这里 runtime 必定已就位（缺失时上面刚从 imported 派生过），
+                // 兜底只是让类型闭合，不代表存在第二种数据形状。
+                let runtime_json =
+                    serde_json::to_string(stored.runtime.as_ref().unwrap_or(&stored.imported))?;
+                let source_json = serde_json::to_string(&stored.source)?;
+                db.update_config(ConfigWrite {
+                    id: &stored.imported.id,
+                    name: &stored.imported.name,
+                    imported_at: &stored.imported.imported_at,
+                    imported_json: &imported_json,
+                    runtime_json: &runtime_json,
+                    source_json: &source_json,
+                })?;
+                tracing::warn!(
+                    id = %stored.imported.id,
+                    repaired,
+                    "stored config urls repaired on load"
+                );
+            }
             entries.push(stored);
         }
         // The active marker is authoritative. If it is missing or stale (older
