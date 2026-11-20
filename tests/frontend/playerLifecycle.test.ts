@@ -114,3 +114,25 @@ describe('history writer attaches after the player instance exists', () => {
     expect(page).toContain('attachSignal: playerRoot,');
   });
 });
+
+describe("episode panel follows an in-flight line switch", () => {
+  // 2026-11-20 CDP 实测：点播放器里的「换下一条线路」后，候选要并发探活
+  // （实测 ~9s）才知道切到哪条线。这期间播放器写着「正在切换线路…」，底部
+  // 选集区却因为 `nextLine` 把 phase 收回 idle 而毫无反馈、仍停在旧线路，
+  // 用户读到的就是「点了没反应 / panel 没立刻切换」。
+  // 契约：面板在途态必须把 nextLineBusy 也算进去。
+  const page = read("src/pages/PlayerPage.tsx");
+  const panel = read("src/components/player/EpisodePanel.tsx");
+
+  it("PlayerPage feeds nextLineBusy into the panel loading state", () => {
+    expect(page).toMatch(
+      /const panelBusy = switching \|\| engine\.switching \|\| nextLineBusy;/,
+    );
+    expect(page).toMatch(/loading=\{panelBusy\}/);
+  });
+
+  it("EpisodePanel renders the loading state it is fed", () => {
+    expect(panel).toContain('player-episodes is-loading');
+    expect(panel).toContain("aria-busy={loading || undefined}");
+  });
+});

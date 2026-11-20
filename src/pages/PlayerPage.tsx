@@ -774,6 +774,15 @@ export default function PlayerPage({
   /** 当前集名：剧集列表到达后用列表里的名字，否则用路由参数。 */
   const nowEpisode = activeEpisode?.name || episodeName;
 
+  /**
+   * 选集区在途态。必须覆盖「换下一条线路」：`nextLine` 为了不让 UI 卡成永久
+   * 转圈，发起时就把 phase 收回 idle（见 usePlaybackController.nextLine），而线路
+   * 候选要**并发探活**才知道最终切到哪条，实测这段约 9s。这期间播放器已经写着
+   * 「正在切换线路…」，底部选集区却毫无反馈、仍停在旧线路，用户读到的就是
+   * 「点了没反应」。`nextLineBusy` 正是这段窗口的信号。
+   */
+  const panelBusy = switching || engine.switching || nextLineBusy;
+
   /** 片头/片尾配置改动统一入口：写 ref + 镜像 state + 齿轮行 tooltip + 即时落库。 */
   const applySkipConfig = (segs: SkipSegment[]) => {
     rememberedSkipRef.current = segs;
@@ -912,7 +921,7 @@ export default function PlayerPage({
             lineIndex={display.lineIndex}
             episodeIndex={display.episodeIndex}
             pendingPick={pendingPick}
-            loading={switching || engine.switching}
+            loading={panelBusy}
             setPanelLine={setPanelLine}
             goToEpisode={selectEpisode}
             onSwitchSource={() => setShowSources(true)}
