@@ -207,6 +207,54 @@
   right: 28px;
 }
 
+/* 自动跳过的「N 秒后跳过 · 取消」提示：占手动按钮同一位置（倒计时期间同类手动按钮已隐藏，不重叠）。 */
+.skip-overlay__auto {
+  position: absolute;
+  bottom: 84px;
+  right: 20px;
+  z-index: 36;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: var(--r-pill);
+  background: rgba(10, 12, 18, 0.66);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: var(--fs-sm);
+}
+
+.skip-overlay__auto-text {
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.skip-overlay__auto-cancel {
+  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.skip-overlay__auto-cancel:hover {
+  background: rgba(20, 24, 34, 0.85);
+  border-color: var(--accent);
+}
+
+.art-fullscreen .skip-overlay__auto,
+.art-fullscreen-web .skip-overlay__auto {
+  bottom: 104px;
+  right: 28px;
+}
+
 /* 「取当前播放时间」快捷按钮（自定义配置弹窗内，与秒数输入同一行）。 */
 .skip-overlay__capture {
   padding: 4px 8px;

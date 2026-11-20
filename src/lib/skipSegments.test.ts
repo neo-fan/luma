@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTO_SKIP_COUNTDOWN_S,
   MAX_SKIP_MS,
   clampSkipMs,
   formatSkipMs,
@@ -8,6 +9,7 @@ import {
   outroStartMs,
   parseSkipConfig,
   serializeSkipConfig,
+  shouldAutoSkipPrompt,
   shouldSkipIntro,
   shouldSkipOutro,
   withSkipMs,
@@ -148,5 +150,50 @@ describe("withSkipMs", () => {
   it("result round-trips through serialize/parse unchanged", () => {
     const next = withSkipMs(base, "intro", 120_000);
     expect(parseSkipConfig(serializeSkipConfig(next))).toEqual(next);
+  });
+});
+
+describe("shouldAutoSkipPrompt", () => {
+  const inWindow = { introMs: 90_000, outroMs: 30_000, inIntro: false, inOutro: false };
+  const cur = (patch: Partial<typeof inWindow>) => ({ ...inWindow, ...patch });
+
+  it("首次报告就落在片头里 → 触发 intro（新集从头播）", () => {
+    expect(shouldAutoSkipPrompt(null, cur({ inIntro: true }))).toBe("intro");
+  });
+
+  it("片头窗口 false→true 边沿 → 触发 intro", () => {
+    expect(shouldAutoSkipPrompt(cur({ inIntro: false }), cur({ inIntro: true }))).toBe("intro");
+  });
+
+  it("已在片头内（无翻转）→ 不重复触发", () => {
+    expect(shouldAutoSkipPrompt(cur({ inIntro: true }), cur({ inIntro: true }))).toBeNull();
+  });
+
+  it("未设片头 → 即便在窗口也不自动提示", () => {
+    expect(shouldAutoSkipPrompt(null, cur({ introMs: 0, inIntro: true }))).toBeNull();
+  });
+
+  it("播放中进入片尾窗口 → 触发 outro", () => {
+    expect(shouldAutoSkipPrompt(cur({ inOutro: false }), cur({ inOutro: true }))).toBe("outro");
+  });
+
+  it("续播点直接落在片尾（首次报告 prev=null）→ 不触发 outro（尊重『上次看到』）", () => {
+    expect(shouldAutoSkipPrompt(null, cur({ inOutro: true }))).toBeNull();
+  });
+
+  it("未设片尾 → 进入窗口也不提示", () => {
+    expect(shouldAutoSkipPrompt(cur({ inOutro: false }), cur({ outroMs: 0, inOutro: true }))).toBeNull();
+  });
+
+  it("cur 为 null（媒体重置）→ 不触发", () => {
+    expect(shouldAutoSkipPrompt(cur({ inIntro: true }), null)).toBeNull();
+  });
+
+  it("intro 与 outro 同时有效时 intro 优先（片头先发生）", () => {
+    expect(shouldAutoSkipPrompt(null, cur({ inIntro: true }))).toBe("intro");
+  });
+
+  it("倒计时秒数是 3（用户要求：3 秒内可取消）", () => {
+    expect(AUTO_SKIP_COUNTDOWN_S).toBe(3);
   });
 });

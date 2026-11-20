@@ -45,8 +45,10 @@ import type {
 import {
   formatSkipSummary,
   introMs,
+  type SkipKind,
   type SkipSegment,
 } from "../lib/skipSegments";
+import { useAutoSkipPrompt } from "../hooks/useAutoSkipPrompt";
 
 interface PlayerPageProps {
   siteKey: string;
@@ -805,6 +807,36 @@ export default function PlayerPage({
   useEffect(() => {
     engine.setSkipSettingTooltip(formatSkipSummary(skipConfig));
   }, [skipConfig, engine]);
+
+  // 自动跳过：进入片头/片尾窗口先给 3 秒可取消倒计时，到点才真正 seek。边沿判定与
+  // 倒计时在 `useAutoSkipPrompt`；这里只给「执行跳转」的动作 + 媒体身份（换集/换源复位）。
+  const doSkipIntro = () => {
+    const v = videoRef.current;
+    const intro = introMs(skipConfig);
+    if (v && intro > 0) {
+      try {
+        v.currentTime = intro / 1000;
+      } catch {
+        /* seek 未就绪时忽略 */
+      }
+    }
+  };
+  const doSkipOutro = () => {
+    const v = videoRef.current;
+    if (v && Number.isFinite(v.duration) && v.duration > 0) {
+      try {
+        v.currentTime = Math.max(0, v.duration - 0.5);
+      } catch {
+        /* seek 未就绪时忽略 */
+      }
+    }
+  };
+  const autoSkipMediaKey = [activeSiteKey, display.vodId, display.lineIndex, display.episodeIndex].join(":");
+  const { pending: autoSkipPending, cancel: cancelAutoSkip } = useAutoSkipPrompt(
+    skipState,
+    autoSkipMediaKey,
+    (kind: SkipKind) => (kind === "intro" ? doSkipIntro() : doSkipOutro()),
+  );
   // 切换在途 → ArtPlayer 原生 loading；收口即隐藏。
   useEffect(() => {
     engine.setLoading(switching || engine.switching);
@@ -845,27 +877,10 @@ export default function PlayerPage({
       <SkipOverlay
         host={playerRoot}
         state={skipState}
-        onSkipIntro={() => {
-          const v = videoRef.current;
-          const intro = introMs(skipConfig);
-          if (v && intro > 0) {
-            try {
-              v.currentTime = intro / 1000;
-            } catch {
-              /* seek 未就绪时忽略 */
-            }
-          }
-        }}
-        onSkipOutro={() => {
-          const v = videoRef.current;
-          if (v && Number.isFinite(v.duration) && v.duration > 0) {
-            try {
-              v.currentTime = Math.max(0, v.duration - 0.5);
-            } catch {
-              /* seek 未就绪时忽略 */
-            }
-          }
-        }}
+        pending={autoSkipPending}
+        onSkipIntro={doSkipIntro}
+        onSkipOutro={doSkipOutro}
+        onCancelAuto={cancelAutoSkip}
       />
       <SkipSettingsDialog
         host={playerRoot}

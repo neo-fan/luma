@@ -906,16 +906,8 @@ export function usePlayerEngine({
     const onFirstMeta = () => {
       video.playbackRate = wantedRate();
       applyResume();
-      // 片头自动跳：仅当续播点没落在片头之后（resumeMs <= intro）才跳，避免
-      // 覆盖用户「上次看到」的位置。直播没有片头概念，跳过。
-      const intro = introMsOf(rememberedSkip?.() ?? []);
-      if (siteKey !== "live" && intro > 0 && resumeMs <= intro) {
-        try {
-          video.currentTime = intro / 1000;
-        } catch {
-          // 首分片未到时 seek 会抛 InvalidStateError，忽略；下一次 timeupdate 会重报窗口态。
-        }
-      }
+      // 片头不再在这里静默瞬移：窗口态由下面的 reportSkipState 上报，交给
+      // PlayerPage 的「3 秒可取消倒计时」统一处理自动跳（见 `useAutoSkipPrompt`）。
     };
     video.addEventListener("loadedmetadata", onFirstMeta, { once: true });
 
