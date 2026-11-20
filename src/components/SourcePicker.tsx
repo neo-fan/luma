@@ -418,6 +418,14 @@ export default function SourcePicker({
                               {remark ? (
                                 <span className="source-item__remark">{remark}</span>
                               ) : null}
+                              {option.lineCount ? (
+                                <span
+                                  className="source-item__counts"
+                                  title={`${option.lineCount} 条线路 · 最全 ${option.episodeCount} 集`}
+                                >
+                                  {option.lineCount} 线路 · {option.episodeCount} 集
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                           <FavStar

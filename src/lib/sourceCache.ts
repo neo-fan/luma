@@ -14,7 +14,7 @@
  * 预建索引。切源需要的详情由 `warmDetails()` 提前写进 数据缓存，切换时
  * 详情页 / 播放页首屏即命中。
  */
-import { normalizeTitle } from "./format";
+import { normalizeTitle, parsePlayLines } from "./format";
 import { api } from "./invoke";
 import {
   collectSourceOptions,
@@ -182,6 +182,29 @@ function sortOptions(options: SourceOption[]): SourceOption[] {
   );
 }
 
+/**
+ * 从一条候选详情（`api.detail` 的 VodInfo[] 返回值）算出「线路数 + 最全线路的
+ * 集数」。集数取各线路的最大值——它代表这个源最完整的更新进度，正是换源时用户要
+ * 比较的东西。解析不出任何线路时返回 null（不显示计数）。
+ */
+export function playCounts(
+  detail: unknown,
+): { lineCount: number; episodeCount: number } | null {
+  const first = Array.isArray(detail) ? (detail[0] as Record<string, unknown> | undefined) : undefined;
+  if (!first) {
+    return null;
+  }
+  const lines = parsePlayLines(first.vod_play_from as string, first.vod_play_url as string);
+  if (lines.length === 0) {
+    return null;
+  }
+  let episodeCount = 0;
+  for (const line of lines) {
+    episodeCount = Math.max(episodeCount, line.episodes.length);
+  }
+  return { lineCount: lines.length, episodeCount };
+}
+
 class MemorySourceCache implements SourceCache {
   private readonly bundles = new Map<string, SourceBundle>();
   private readonly pending = new Map<string, Promise<void>>();
@@ -194,6 +217,11 @@ class MemorySourceCache implements SourceCache {
    */
   private readonly completeKeys = new Map<string, number>();
   private readonly warmed = new Set<string>();
+  /**
+   * `siteKey:vodId → {线路数, 最全线路集数}`，由 `warmDetails` 取回详情时顺带
+   * 填。`view()` 据此给候选补上计数，面板不显示没预热过的候选的计数。
+   */
+  private readonly warmCounts = new Map<string, { lineCount: number; episodeCount: number }>();
   private readonly listeners = new Set<() => void>();
   private readonly fetchRows: NonNullable<SourceCacheOptions["fetchRows"]>;
   private readonly fetchDetail: NonNullable<SourceCacheOptions["fetchDetail"]>;
@@ -333,7 +361,12 @@ class MemorySourceCache implements SourceCache {
       }
     }
 
-    const options = sortOptions([...merged.values()].map((item) => item.option));
+    const options = sortOptions(
+      [...merged.values()].map((item) => {
+        const counts = this.warmCounts.get(`${item.option.siteKey}:${item.option.vodId}`);
+        return counts ? { ...item.option, ...counts } : item.option;
+      }),
+    );
     if (options.length > 0) {
       this.derivedHits += 1;
     }
@@ -474,9 +507,16 @@ class MemorySourceCache implements SourceCache {
         this.warmed.add(`${option.siteKey}:${option.vodId}`);
         if (this.warmed.size > MAX_WARMED) {
           this.warmed.clear();
+          this.warmCounts.clear();
         }
         try {
-          await this.fetchDetail(option.siteKey, option.vodId);
+          const detail = await this.fetchDetail(option.siteKey, option.vodId);
+          const counts = playCounts(detail);
+          if (counts) {
+            this.warmCounts.set(`${option.siteKey}:${option.vodId}`, counts);
+            // 计数到齐就通知面板合并，无需用户手动刷新。
+            this.notify();
+          }
         } catch {
           // 预热是纯优化：失败时切源仍会按需拉详情。
         }
@@ -516,6 +556,7 @@ class MemorySourceCache implements SourceCache {
     this.pending.clear();
     this.completeKeys.clear();
     this.warmed.clear();
+    this.warmCounts.clear();
     this.queue = Promise.resolve();
     this.notify();
   }

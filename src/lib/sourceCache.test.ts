@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSourceCache } from "./sourceCache";
+import { createSourceCache, playCounts } from "./sourceCache";
 import { SOURCE_CACHE_TTL } from "./sourceCache";
 import type { SourceCacheOptions } from "./sourceCache";
 import type { AggregateRow } from "./sources";
@@ -258,5 +258,58 @@ describe("sourceCache 生命周期", () => {
     expect(fetchDetail).toHaveBeenCalledTimes(4);
     await cache.warmDetails(many);
     expect(fetchDetail).toHaveBeenCalledTimes(4);
+  });
+});
+
+function playDetail(from: string, url: string): VodInfo[] {
+  return [{ ...vod(TITLE, "x"), vod_play_from: from, vod_play_url: url }];
+}
+
+describe("sourceCache 候选计数（线路数 / 集数）", () => {
+  it("playCounts：从详情算出线路数与最全线路的集数", () => {
+    const detail = playDetail(
+      "HD$$$4K",
+      "第1集$u1#第2集$u2#第3集$u3$$$第1集$v1#第2集$v2",
+    );
+    expect(playCounts(detail)).toEqual({ lineCount: 2, episodeCount: 3 });
+  });
+
+  it("playCounts：空详情 / 无线路返回 null（不显示占位）", () => {
+    expect(playCounts([])).toBeNull();
+    expect(playCounts([{ ...vod("x", "1"), vod_play_from: "", vod_play_url: "" }])).toBeNull();
+    expect(playCounts(null)).toBeNull();
+  });
+
+  it("warmDetails 取回详情后，view 给已热候选补上 lineCount / episodeCount", async () => {
+    const fetchDetail = vi.fn(async (siteKey: string): Promise<unknown> => {
+      if (siteKey === "s1") return playDetail("HD", "第1集$u1#第2集$u2#第3集$u3");
+      if (siteKey === "s2") return playDetail("HD$$$SD", "第1集$a1#第2集$a2$$$第1集$b1");
+      return [];
+    });
+    const { cache, publishSearch } = setup({ fetchDetail });
+    publishSearch();
+    // s1(match3) 与 s2(match2) 进预热（>=2），s3(match1) 不预热。
+    await cache.warmDetails(cache.view(TITLE, SITES).options);
+
+    const view = cache.view(TITLE, SITES);
+    expect(view.options.find((o) => o.siteKey === "s1")).toMatchObject({
+      lineCount: 1,
+      episodeCount: 3,
+    });
+    expect(view.options.find((o) => o.siteKey === "s2")).toMatchObject({
+      lineCount: 2,
+      episodeCount: 2,
+    });
+    expect(view.options.find((o) => o.siteKey === "s3")?.lineCount).toBeUndefined();
+  });
+
+  it("候选详情解析不出线路时，view 不给该候选补计数", async () => {
+    const { cache, publishSearch } = setup({ fetchDetail: vi.fn(async () => playDetail("", "")) });
+    publishSearch();
+    await cache.warmDetails(cache.view(TITLE, SITES).options);
+    for (const o of cache.view(TITLE, SITES).options) {
+      expect(o.lineCount).toBeUndefined();
+      expect(o.episodeCount).toBeUndefined();
+    }
   });
 });

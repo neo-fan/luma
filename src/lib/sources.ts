@@ -55,6 +55,12 @@ export interface SourceOption {
   pic?: string;
   /** 片名相关度 0..3，见 titleMatchScore。 */
   matchScore: number;
+  /**
+   * 该候选的线路数 / 最全线路的集数。只有 `sourceCache.warmDetails` 已经预热过
+   * 详情的候选才有（面板打开时并发热前几条匹配候选），未热的留空，UI 不显示占位。
+   */
+  lineCount?: number;
+  episodeCount?: number;
 }
 
 export interface SourceSearchStats {

@@ -605,6 +605,20 @@
   color: var(--faint);
 }
 
+/* 换源候选的「线路数 · 集数」：只有预热过详情的候选才有，固定不缩，
+   与片名/备注同处 meta 行，让换源时一眼比出哪个源线路更多、更新更全。 */
+.source-item__counts {
+  flex: 0 0 auto;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.source-item__counts::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--faint);
+}
+
 /* 换源弹窗行内的收藏星：复用 .fav-star 的星形/金色态，尺寸与「切换」按钮同高，
    ／按钮固定 76×32：文案在「切换 / 切换中」之间变化时不再带着整行抖一下 */
 .source-item__fav.fav-star {
