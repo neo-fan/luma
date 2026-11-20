@@ -69,6 +69,16 @@ export interface PlayResolution {
   switching: boolean;
   resolveError: string;
   /**
+   * 这条 `resolveError` **属于哪个 playUrl**。
+   *
+   * `resolveError` 是 state：用户点新台的那一次渲染里它仍是上一轮的旧错误串，
+   * 消费方（直播自动换线 effect）若不加判据就会拿着残留错误把新频道第一条线路
+   * 秒判死（实测换台后 169ms 就 skip 到线路 2）。setter 与 `resolveError` 恒在
+   * 同一同步块写入，所以两者在任一渲染里天然一致：`errorPlayUrl === playUrl`
+   * 才代表「这条错属于当前地址」。空串 = 没有错误归属。
+   */
+  errorPlayUrl: string;
+  /**
    * 解析失败的**原因属于「没定论」**（源侧冷启动 / 忙时超过预算还没答）。
    *
    * 与「源明确说这条线路不能用」严格区分：调用方据此**不得自动换源**——
@@ -131,6 +141,8 @@ export function usePlayResolution({
   const [resolving, setResolving] = useState(true);
   const [stage, setStage] = useState<"parsing" | "connecting" | null>(null);
   const [resolveError, setResolveError] = useState("");
+  /** 与 `resolveError` 配对提交：见接口注释（错误归属地址）。 */
+  const [errorPlayUrl, setErrorPlayUrl] = useState("");
   const [resolveRetryable, setResolveRetryable] = useState(false);
   const [reloading, setReloading] = useState(false);
   /** 保留实例的换地址在途（直播换台/换线）：解析期间控制栏照常可用。 */
@@ -194,6 +206,8 @@ export function usePlayResolution({
       }
       setStage(null);
       setResolving(false);
+      // 归属地址与错误配对：此刻 playUrl 为空，错误不属于任何可播放地址。
+      setErrorPlayUrl(playUrl);
       // 换台/切源会把地址清空：这一轮没有「换流中」可言，否则控制栏会被
       // 永久钉在 loading 态（switching 只在解析 finally 里复位）。
       setSwitching(false);
@@ -219,6 +233,7 @@ export function usePlayResolution({
         const cached = getEpisodePlayCache(siteKey, playFrom, playUrl);
         if (cached) {
           setResolveError("");
+          setErrorPlayUrl("");
           setResolveRetryable(false);
           setVideoError("");
           setResolved(cached);
@@ -248,6 +263,7 @@ export function usePlayResolution({
         setResolved(null);
       }
       setResolveError("");
+      setErrorPlayUrl("");
       setResolveRetryable(false);
       setVideoError("");
       try {
@@ -342,6 +358,7 @@ export function usePlayResolution({
         if (alive) {
           setResolveRetryable(slowTimeout);
           setResolveError(errorMessage(err));
+          setErrorPlayUrl(playUrl);
           log.warn("resolve failed", {
             siteKey,
             vodId,
@@ -398,6 +415,7 @@ export function usePlayResolution({
     reloading,
     switching,
     resolveError,
+    errorPlayUrl,
     resolveRetryable,
     setResolved,
     reload,

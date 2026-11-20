@@ -277,6 +277,7 @@ export default function LivePage({
     reloading,
     switching: streamSwitching,
     resolveError,
+    errorPlayUrl,
     resolveRetryable,
     reload,
   } = usePlayResolution({
@@ -561,9 +562,17 @@ export default function LivePage({
   /**
    * 解析失败也换线路——但要与「源还没答完」区分开。
    * 超时（`resolveRetryable`）保留当前线路让用户刷新；明确失败才顺延。
+   *
+   * 关键判据：错误必须**属于当前这个 playUrl**（`errorPlayUrl === playUrl`）。
+   * 用户点新台的那次渲染，`resolveError` 还是上一台残留的旧错误串，若照常
+   * 顺延就会把新频道第一条线路秒判死（实测换台后 ~169ms 直接跳到线路 2）。
    */
   useEffect(() => {
     if (!channel || resolving || !resolveError || resolveRetryable) {
+      return;
+    }
+    // 错误属于上一个地址：这是「刚换台」的那一拍，旧结论作废，等新一轮自己说话。
+    if (errorPlayUrl !== playUrl) {
       return;
     }
     // 全部线路都试过了：`switchOrFailoverRef` 自己会给结论，别再触发。
@@ -571,7 +580,7 @@ export default function LivePage({
       return;
     }
     void switchOrFailoverRef.current();
-  }, [channel, resolving, resolveError, resolveRetryable, lineIdx]);
+  }, [channel, resolving, resolveError, errorPlayUrl, resolveRetryable, lineIdx, playUrl]);
 
   // 新线路出结果就撤掉「自动换线中」的抑制；12s 兜底防止状态卡住。
   useEffect(() => {
