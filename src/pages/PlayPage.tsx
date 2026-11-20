@@ -65,7 +65,7 @@ export default function PlayPage({ navigate }: PlayPageProps) {
       try {
         const list = await api.historyList();
         if (alive) {
-          // 直播已改为独立播放页、不再写历史；旧记录点进去是空详情页。
+          // 过滤掉 siteKey="live" 的记录：直播没有详情页，这类记录点进去会停在空页。
           setItems(list.filter((item) => item.siteKey !== "live"));
         }
       } catch (err) {

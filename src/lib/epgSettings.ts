@@ -24,11 +24,9 @@ export const DEFAULT_EPG_URL =
   "https://raw.githubusercontent.com/fanmingming/live/main/e.xml";
 
 /**
- * 旧版本的默认值（BurningC4 的 guide.xml）。
- *
- * 它曾经被写进过 localStorage（早期版本把默认值当作用户设置存了下来），
- * 而那份节目单按 `CCTV-1 综合` 命名，与真实直播源的 `CCTV1` 对不上，
- * 表现就是「节目单永远是空的」。读到它按「未设置」处理并清掉。
+ * localStorage 里可能存着这份早期默认值（旧版本把默认值当用户设置写过一次）。
+ * 它指向 BurningC4 的节目单，按 `CCTV-1 综合` 命名、与真实直播源的 `CCTV1`
+ * 对不上，表现为「节目单永远是空的」。读到它一律按「未设置」处理并清掉。
  */
 const LEGACY_DEFAULT_EPG_URL =
   "https://raw.githubusercontent.com/BurningC4/Chinese-IPTV/master/guide.xml";

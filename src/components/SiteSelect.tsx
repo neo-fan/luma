@@ -31,9 +31,8 @@ interface SiteSelectProps {
  * - 收藏源置顶（favoriteFirst 是稳定排序，同组内保持配置原顺序）；
  * - jvm 源标「jar 源」、禁用/屏蔽源置灰并给出原因。
  *
- * DOM 契约（含探针依赖的 `data-value` 定位）统一写在 `AppSelect` 上，
- * 这里不再自定类名 —— 曾经为了迁就探针另起 `.site-select*` 双类名，
- * 结果是多养一份平行实现，见 docs/TESTING.md §6。
+ * DOM 契约（含探针依赖的 `data-value` 定位）统一写在 `AppSelect`，这里直接复用
+ * 同一套类名、不自定义别名，见 docs/TESTING.md §6。
  */
 export default function SiteSelect({
   sites,

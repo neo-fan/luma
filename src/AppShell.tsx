@@ -394,9 +394,8 @@ export default function AppShell() {
   /**
    * 「播放」导航只服务点播会话。
    *
-   * 直播有一次独立的播放页（`/live`），不进 playSession；旧版本留下的
-   * `siteKey="live"` 会话属于脏数据，不能再出现在这个入口里——点进去是
-   * 一个没有直播分支的点播页，只会黑屏。
+   * 直播有独立的播放页（`/live`），不进 playSession。存量的 `siteKey="live"`
+   * 会话是脏数据，不能出现在这个入口：点播页没有直播分支，点进去只会黑屏。
    */
   const vodSession =
     playSession && playSession.siteKey !== "live" ? playSession : null;

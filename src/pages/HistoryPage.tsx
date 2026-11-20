@@ -39,8 +39,8 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
       try {
         const list = await api.historyList();
         if (alive) {
-          // 直播已改为独立播放页、不再写观看历史；但旧版本留过 siteKey="live"
-          // 的记录，点进去是 `/detail/live/xxx`（直播没有详情），会卡在空页。
+          // 过滤掉 siteKey="live" 的记录：直播没有详情页，
+          // 这类记录点进 `/detail/live/xxx` 会停在空页。
           setItems(list.filter((item) => item.siteKey !== "live"));
         }
       } catch (err) {
