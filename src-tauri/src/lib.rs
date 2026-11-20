@@ -105,8 +105,25 @@ fn enable_devtools_port() -> bool {
     false
 }
 
+fn startup_error(stage: &str, err: impl std::fmt::Display) -> AppError {
+    AppError::new(code::INTERNAL, format!("Luma 启动失败：{stage}")).with_cause(err.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Err(err) = run_inner() {
+        tracing::error!(
+            code = %err.code,
+            message = %err.message,
+            cause = ?err.cause,
+            "startup aborted"
+        );
+        eprintln!("Luma 启动失败：{err}");
+        std::process::exit(1);
+    }
+}
+
+fn run_inner() -> Result<(), AppError> {
     // 界面的 build 号取「本次启动时刻」：越早记越好，保证它是进程真正起来的时刻。
     started::mark();
     // 最先做：晚于 WebView2 环境创建就失效（见函数注释）。
@@ -134,9 +151,14 @@ pub fn run() {
     }
     // One SQLite connection shared by both stores: config snapshots, active
     // marker, favourites and history all live in `<data dir>/luma.db`.
-    let database = Arc::new(db::Db::open().expect("open sqlite database"));
+    let database = Arc::new(
+        db::Db::open().map_err(|err| startup_error("打开 SQLite 数据库失败", err))?,
+    );
     tracing::info!(path = %database.path().display(), "sqlite persistence ready");
-    let config_store = ConfigStore::load(database.clone()).expect("load config store");
+    let config_store =
+        ConfigStore::load(database.clone()).map_err(|err| startup_error("加载配置存储失败", err))?;
+    let library_store =
+        LibraryStore::load(database.clone()).map_err(|err| startup_error("加载播放记录存储失败", err))?;
     // 让已导入的配置跟上当前 GitHub 加速前缀。首次带这段代码启动时，老配置
     // 里还是裸 GitHub 地址，这里一次性改写；之后幂等，什么都没变就不写库。
     match config_store.sync_github_proxy() {
@@ -148,10 +170,10 @@ pub fn run() {
             tracing::warn!(code = %err.code, error = %err.message, "github proxy sync failed")
         }
     }
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(config_store)
-        .manage(LibraryStore::load(database.clone()).expect("load library store"))
+        .manage(library_store)
         .setup(|app| {
             // 标题栏跟随主界面深色，避免 Windows 默认浅色/系统深灰与画布色差。
             if let Some(window) = app.get_webview_window("main") {
@@ -288,34 +310,48 @@ pub fn run() {
             clipboard::copy_text,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|_app, event| {
-            // 退出收口：sidecar 优雅关停。以前只有 Job Object 兜底（进程一定
-            // 会被杀，但 Python 的 spider.log 缓冲、qjs-runner 的映像句柄都不
-            // 走体面路径——dev 实测那个映像句柄会锁住 binaries 拷贝，下一次
-            // cargo build 直接 PermissionDenied，2026-11-16 评审 P1）。
-            // Exit 在所有窗口销毁后触发，此时 block_on 不会再与界面任务抢
-            // runtime；两个 shutdown 自身幂等（slot 空则直接返回）。
-            if let tauri::RunEvent::Exit = event {
-                tauri::async_runtime::block_on(async {
-                    let bridge =
-                        tokio::time::timeout(std::time::Duration::from_secs(3), bridge::shutdown())
-                            .await;
-                    let runner = tokio::time::timeout(
-                        std::time::Duration::from_secs(3),
-                        spider::quickjs::shutdown(),
-                    )
-                    .await;
-                    // 关停失败不阻断退出：Job Object 仍是最后兜底。
-                    if bridge.is_err() {
-                        tracing::warn!(
-                            "python adapter shutdown timed out; job object will reap it"
-                        );
-                    }
-                    if runner.is_err() {
-                        tracing::warn!("qjs-runner shutdown timed out; job object will reap it");
-                    }
-                });
-            }
-        });
+        .map_err(|err| startup_error("创建 Tauri 应用失败", err))?;
+    app.run(|_app, event| {
+        // 退出收口：sidecar 优雅关停。以前只有 Job Object 兜底（进程一定
+        // 会被杀，但 Python 的 spider.log 缓冲、qjs-runner 的映像句柄都不
+        // 走体面路径——dev 实测那个映像句柄会锁住 binaries 拷贝，下一次
+        // cargo build 直接 PermissionDenied，2026-11-16 评审 P1）。
+        // Exit 在所有窗口销毁后触发，此时 block_on 不会再与界面任务抢
+        // runtime；两个 shutdown 自身幂等（slot 空则直接返回）。
+        if let tauri::RunEvent::Exit = event {
+            tauri::async_runtime::block_on(async {
+                let bridge =
+                    tokio::time::timeout(std::time::Duration::from_secs(3), bridge::shutdown())
+                        .await;
+                let runner = tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    spider::quickjs::shutdown(),
+                )
+                .await;
+                // 关停失败不阻断退出：Job Object 仍是最后兜底。
+                if bridge.is_err() {
+                    tracing::warn!(
+                        "python adapter shutdown timed out; job object will reap it"
+                    );
+                }
+                if runner.is_err() {
+                    tracing::warn!("qjs-runner shutdown timed out; job object will reap it");
+                }
+            });
+        }
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_error_keeps_stage_and_cause() {
+        let err = startup_error("打开数据库失败", std::io::Error::other("denied"));
+        assert_eq!(err.code, code::INTERNAL);
+        assert_eq!(err.message, "Luma 启动失败：打开数据库失败");
+        assert_eq!(err.cause.as_deref(), Some("denied"));
+    }
 }
