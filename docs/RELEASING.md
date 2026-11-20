@@ -41,6 +41,21 @@ python tools/version_check.py
 
 窗口验收：`node tools/probes/probe_build_stamp.mjs`（需 debug 窗口 + CDP 9222），会断言侧栏与设置页的 build 号相同且为 14 位时间戳。
 
+### 1.2 发布通道与身份
+
+通道身份由 `package.json` 的 `appId` + 后缀派生，三份配置作为可审计副本入库（`tauri.conf.json` / `tauri.beta.conf.json` / `tauri.dev.conf.json`，`tools/version_check.py` 守护一致），数据目录、反代端口、安装身份互不重叠：
+
+| 通道 | identifier | productName | 数据目录 | 反代 | 出包 |
+|---|---|---|---|---|---|
+| stable | `app.luma` | `Luma` | `%APPDATA%\app.luma` | 9978 | `pnpm build:app` |
+| beta | `app.luma.beta` | `Luma Beta` | `%APPDATA%\app.luma.beta` | 9977 | `pnpm build:beta`（按需） |
+| dev | `app.luma.dev` | 不出包 | `%APPDATA%\app.luma.dev` | 9979 | `pnpm dev:app` |
+
+- `dev` 是日常调试，不产安装包；`beta` 只在需要预发布时启用，平时不构建。身份与版本以 `package.json` 为准（`appId` / `productName` / `version`）；三份 overlay 的 identifier 必须等于 `appId + 后缀`，改一处就要同步改三处并由 `version_check.py` 验过。
+- 版本号仍只有一个来源（`package.json`）。预发布用 semver：`2.0.0-beta.1`、`2.0.0-beta.2`。**同一版本号不要重复发布**——NSIS 允许同版本覆盖安装，产物与已安装版本将无法区分。
+- identifier 是系统身份：改它等于换应用（WebView2 profile、卸载注册表项、数据目录全变）。发版后只在引入新的长期通道时才动。
+- 2.0.0 起数据目录就是 identifier 本身；1.x 的 `%APPDATA%\Luma` 不再读取（不兼容旧数据）。
+
 ## 2. 发版前检查清单（按顺序）
 
 ### 2.1 离线回归（无需窗口，必过）
@@ -53,10 +68,10 @@ python tools/check.py
 
 **当前基线（2.0.0 开发中）**：`python tools/check.py` **11/11 全绿**；其中 `pnpm test` 692（81 个文件）、`cargo test --lib` 265 passed / 2 ignored、`qjs-runner cargo test` 7 passed（GBK 编解码纯函数）、`py_compat_check` 19/19、`adapter_isolation` 15/15、`contract_check` 8 类型 + 8 方法对齐、`version_check` 版本全链一致（`tauri.conf.json` 指回 `package.json`、sidecar ping 回报注入的 2.0.0）、`prepare_runtime --check` 8 个 JS 依赖齐全 + 9 个资源字节数/SHA256 通过、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底）。`tsc --noEmit` 零错误（不在 `check.py` 内，单独跑）。
 
-### 2.2 窗口回归（需要 debug 窗口）
+### 2.2 窗口回归（需要 dev 窗口）
 
 ```bash
-corepack pnpm tauri dev            # 官方开发模式，默认开 CDP 9222
+corepack pnpm dev:app              # 官方开发模式，默认开 CDP 9222
 node tools/run_probes.mjs          # 默认全套，不含会切桩配置的 UI 冒烟
 node tools/run_probes.mjs --with-ui
 ```
@@ -69,7 +84,8 @@ node tools/run_probes.mjs --with-ui
 # 1) 先准备随包运行时（python-embed / qjs-runner 二进制 / qjs 资源校验；JVM 运行时已移除）
 python tools/prepare_runtime.py
 # 2) 官方构建：自动 pnpm build + cargo build + 嵌入前端 + 打包 NSIS 安装器
-corepack pnpm tauri build
+corepack pnpm build:app        # stable（app.luma）
+corepack pnpm build:beta       # beta（app.luma.beta），只在预发布时用
 ```
 
 > **为什么两步**：Tauri 官方只负责「把 `dist/` 嵌入 exe + 打包安装器」，它不会替你构建 Python embeddable / qjs-runner 这些 sidecar 运行时。这一步是项目特有的，不是重新造 Tauri 的轮子——`prepare_runtime.py` 只产出 `tauri.conf.json` 里 `bundle.resources` / `bundle.externalBin` 指向的源文件，构建本身仍 100% 交给 `tauri build`。

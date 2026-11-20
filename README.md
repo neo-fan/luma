@@ -66,17 +66,17 @@ Windows 11 x64 桌面端的 **配置兼容播放框架**（空壳播放器，产
 
 未签名安装器首次运行可能触发 SmartScreen：点「更多信息」→「仍要运行」。正式分发需要 OV/EV 代码签名证书。
 
-数据目录：`%APPDATA%\Luma\luma.db`（SQLite，含 `-wal` / `-shm`）。若安装目录整体可写且存在 `data/` 子目录，则自动进入**便携模式**，数据随文件夹移动；删除该目录即清空配置 / 收藏 / 历史。
+数据目录：`%APPDATA%\app.luma\luma.db`（SQLite，含 `-wal` / `-shm`）。若安装目录整体可写且存在 `data/` 子目录，则自动进入**便携模式**，数据随文件夹移动；删除该目录即清空配置 / 收藏 / 历史。
 
 ## 构建（开发者）
 
-构建与打包**全部使用 Tauri 官方工具链**，不手搓脚本：开发用 `tauri dev`，发版用 `tauri build`，图标用 `tauri icon`。
+构建与打包**全部使用 Tauri 官方工具链**，不手搓脚本：开发用 `pnpm dev:app`（`tauri dev` + identifier 隔离配置），发版用 `tauri build`，图标用 `tauri icon`。
 
 ```powershell
 corepack pnpm install                # 依赖（pnpm 版本由 package.json 的 packageManager 锁定）
 python tools/prepare_runtime.py      # 一次性：准备随包运行时（见下）
-corepack pnpm tauri dev              # debug：热重载窗口 + CDP 9222
-corepack pnpm tauri build            # release：嵌前端 + 打包 NSIS 安装器
+corepack pnpm dev:app                # debug：热重载窗口 + CDP 9222（identifier 隔离）
+corepack pnpm build:app              # stable 安装包：嵌前端 + 打包 NSIS 安装器
 ```
 
 ### 为什么还要 `prepare_runtime.py`
@@ -87,8 +87,8 @@ Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会�
 
 | 模式 | 命令 | 产物 |
 |---|---|---|
-| debug | `pnpm tauri dev` | `src-tauri/target/debug/luma.exe`（配合 Vite dev server） |
-| release | `pnpm tauri build` | `src-tauri/target/release/luma.exe`，安装器在 `src-tauri/target/release/bundle/nsis/` |
+| debug | `pnpm dev:app` | `src-tauri/target/debug/luma.exe`（配合 Vite dev server） |
+| release | `pnpm build:app` | `src-tauri/target/release/luma.exe`，安装器在 `src-tauri/target/release/bundle/nsis/` |
 | 前端 | `pnpm build` | `dist/`（`tauri.conf.json` 的 `frontendDist` 指向它） |
 
 `src-tauri/target/`、`dist/`、`sidecars/python-embed/` 均为可重建产物，已 gitignore。Release profile 与 `Cargo.toml` 的 `[profile.dev]` / `[profile.release]` 按 Tauri 官方 [App Size](https://v2.tauri.app/concept/size/) 建议设置。
@@ -104,8 +104,8 @@ Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会�
 | `LUMA_PYTHON` | 覆盖 Python 解释器（缺省用随包 `python-embed`，再缺省 `python`） |
 | `LUMA_QJS_RUNNER` | 覆盖 `qjs-runner.exe` 路径 |
 
-| `LUMA_PROXY_PORT` | 本地反代端口，默认 `9978` |
-| `LUMA_DATA_DIR` | 覆盖数据目录（默认 `%APPDATA%\Luma`；exe 同级有 `data/` 时自动便携） |
+| `LUMA_PROXY_PORT` | 本地反代端口，按通道：stable 9978 / beta 9977 / dev 9979 |
+| `LUMA_DATA_DIR` | 覆盖数据目录（默认 `%APPDATA%\<identifier>`，如 `app.luma`；exe 同级有 `data/` 时自动便携） |
 | `LUMA_RESOURCE_DIR` | 宿主发布给 sidecar 的资源目录，通常无需手工设置 |
 | `LUMA_PROXY_ALLOW_LOCAL` | `1` 时允许反代访问 `127.0.0.1`（仅本地联调） |
 | `LUMA_SELFCHECK` | `1` 时启动自检并写 `data/selfcheck.log` |
@@ -128,7 +128,7 @@ Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会�
 
 ## 日志与诊断
 
-- 位置：安装模式 `%APPDATA%\Luma\logs\luma-YYYY-MM-DD.log`（dev 为 `Luma-debug`），便携模式 `data/logs/`；保留 7 天。
+- 位置：安装模式 `%APPDATA%\app.luma\logs\luma-YYYY-MM-DD.log`（dev 为 `app.luma.dev`），便携模式 `data/logs/`；保留 7 天。
 - 级别：默认 `info`，设 `LUMA_LOG=debug` 后重启看 sidecar / 聚合细节。
 - 隐私：URL 只记 `scheme + host + path`，query（token / 签名）与播放直链不落盘；日志只写本机。
 - 反馈：设置页「复制诊断信息」生成版本 / 平台 / 目录 / 配置规模 / 日志清单的 JSON。

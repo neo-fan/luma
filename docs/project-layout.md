@@ -26,8 +26,8 @@ project-root/
 | 产物 | 唯一位置 | 生成命令 | 是否入库 |
 |---|---|---|---|
 | ① 前端 | `dist/` | `corepack pnpm build`（经 `tauri build` 自动调用） | 否 |
-| ② Rust | `src-tauri/target/` | `cargo build` / `pnpm tauri dev` / `pnpm tauri build` | 否 |
-| ③ 交付包 | `src-tauri/target/release/bundle/nsis/*.exe` | `corepack pnpm tauri build`（官方） | 否 |
+| ② Rust | `src-tauri/target/` | `cargo build` / `pnpm dev:app` / `pnpm build:app` | 否 |
+| ③ 交付包 | `src-tauri/target/release/bundle/nsis/*.exe` | `corepack pnpm build:app`（官方） | 否 |
 
 **注意**：根 `target/` 不会出现（本项目非 Cargo workspace，crate 根在 `src-tauri/`）。此外 `sidecars/qjs-runner/` 是**独立 Cargo crate**，Cargo 会在它自己目录产出 `target/`（`prepare_runtime.py` 依赖 `sidecars/qjs-runner/target/release/qjs-runner.exe`，故只是忽略、不挪位置）；将来新增独立 crate 同理，把其 `target/` 加入 `.gitignore`。所有 Cargo 产物统一原则 = **一律 gitignore，不入库**。
 

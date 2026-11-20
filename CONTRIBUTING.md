@@ -22,8 +22,8 @@ python tools/prepare_runtime.py
 ## 2. 开发回路（Tauri 官方工具链）
 
 ```powershell
-corepack pnpm tauri dev      # debug：热重载窗口 + CDP 9222
-corepack pnpm tauri build    # release：嵌前端 + 打包 NSIS（发版才用）
+corepack pnpm dev:app        # debug：热重载窗口 + CDP 9222（带 identifier 隔离）
+corepack pnpm build:app      # stable 安装包：嵌前端 + 打包 NSIS（发版才用）
 ```
 
 - **不要**用裸 `cargo build --release` 加自写脚本打包：它不会把 `dist/` 嵌进 exe，启动会回退到 `devUrl` 并报连接被拒。

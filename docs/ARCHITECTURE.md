@@ -96,7 +96,7 @@ PlayerPage.resolve_play
 
 ## 6. 本地反代与嗅探
 
-- 反代（`proxy/{mod,handlers,guard,playlist,speed}.rs` + `netrules.rs`）：对源站请求做 UA/Referer/Cookie 透传、m3u8 分片重写、`/image` 封面代理；`speed.rs` 在分片转发途中累计字节做吞吐采样（前端 HUD 每秒轮询 `/meter`，量的是源站真实下载速度而不是回环速度）；`LUMA_PROXY_PORT` release 9978 / debug 9979（绑定后由宿主写回环境变量）。
+- 反代（`proxy/{mod,handlers,guard,playlist,speed}.rs` + `netrules.rs`）：对源站请求做 UA/Referer/Cookie 透传、m3u8 分片重写、`/image` 封面代理；`speed.rs` 在分片转发途中累计字节做吞吐采样（前端 HUD 每秒轮询 `/meter`，量的是源站真实下载速度而不是回环速度）；`LUMA_PROXY_PORT` 按通道分：stable 9978 / beta 9977 / dev 9979（绑定后由宿主写回环境变量）。
 - 嗅探（`sniff.rs`）：隐藏 `sniffer-*` WebView2 加载播放页，用 `WebResourceRequested` 抓取媒体请求；独立 `data_directory` + 覆盖 `--remote-debugging-port=0`（避开 dev 的 9222 冲突）；成功缓存 10 分钟、失败不缓存、串行化避免抢 user data dir。
 - 爬虫自带代理（`handle_spider_proxy`，`spider::proxy_call`）：实现 `Spider.proxy`/`localProxy` 的源（如央视频 yangshipin 的 `live_mode=proxy`）把播放地址回指到 `/proxy`，宿主用 `last_play_site()` 找到上一个点播源、把整张 query 表交给其 `proxy()`，返回 `[contentType, headers, bytes]` 作 HTTP 响应。路由判据：带 `do=py|js|jar` 直接回调；无 `do=` 但 `url=` 为空且带其它参数（FongMi 系 `getProxyUrl()` 基址不含 `do=` 的写法）也回调——空 `url=` 本就不是合法直连。Python 基类 `proxy()` 委派 `localProxy()`（社区源多只实现后者）。
 
@@ -133,8 +133,8 @@ src/types/luma.ts  归一化契约 TS 侧
 | 产物 | 位置 | 生成 | 入库 |
 |---|---|---|---|
 | ① 前端 | `dist/` | `corepack pnpm build` | 否 |
-| ② Rust | `src-tauri/target/` | `cargo build` / `pnpm tauri dev` | 否 |
-| ③ 交付包 | `src-tauri/target/release/bundle/nsis/*.exe` | `corepack pnpm tauri build`（官方） | 否 |
+| ② Rust | `src-tauri/target/` | `cargo build` / `pnpm dev:app` | 否 |
+| ③ 交付包 | `src-tauri/target/release/bundle/nsis/*.exe` | `corepack pnpm build:app`（官方） | 否 |
 
 - 运行时产物（python-embed / qjs-runner 二进制）**不入库**，由 `tools/prepare_runtime.py` 重建后由 `tauri build` 经 `bundle.resources` / `bundle.externalBin` 打包。JVM 运行时已移除，不再产出 JRE / `runner.jar`。
 - 交付形态：**官方 NSIS 安装器**（`tauri build` 产出），`data/` 优先 `exe` 同级、`sidecars/` 来自资源目录。

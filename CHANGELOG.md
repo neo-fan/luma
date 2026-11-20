@@ -9,6 +9,7 @@
 2.0.0 是一次**允许破坏性改造**的大版本：用户会重新初始化配置。主线是「优先主流开源库、去手搓」与「给最脆弱的播放内核建立可测的行为模型」。
 
 ### 破坏性变更（BREAKING）
+- **应用 identifier `dev.luma.desktop` → `app.luma`，并引入 stable / beta / dev 三通道**：旧值是从脚手架默认值演化来的历史包袱，正式包的 bundle id 与 `%LOCALAPPDATA%` 下的 profile 目录一直带着 `dev.` 前缀。现在通道身份由 `package.json` 的 `appId` + 后缀派生，三份 overlay 入库（`tauri.conf.json` / `tauri.beta.conf.json` / `tauri.dev.conf.json`，`version_check.py` 守护一致），stable `app.luma`、beta `app.luma.beta`（按需）、dev `app.luma.dev`（日常调试，不出包）；数据目录随之直接使用 identifier（`%APPDATA%\app.luma` / `app.luma.beta` / `app.luma.dev`），反代端口 9978 / 9977 / 9979，三者可同机并存。WebView2 profile 跟着 identifier 走，升级后前端 localStorage（主题、豆瓣代理等设置）会重置；库/收藏/历史同样落在 identifier 目录下——2.0.0 不兼容旧数据，旧的 `%APPDATA%\Luma` 与 `Luma-debug` 不再读取。
 - **配置 id 哈希 `sha1[..12]` → XXH3（`xxhash-rust`）**：配置快照 id、EPG 磁盘缓存文件名、spider-src 快照文件名统一改用 XXH3，**移除 `sha1` 直接依赖**。换算法会让所有已导入配置换 id、收藏与历史对不上——需重新初始化配置（已授权）。spider-src 原先手搓的 FNV-1a 一并换成 XXH3（非加密的稳定指纹场景，XXH3 比加密哈希更合适、更快）。
 - **豆瓣取数改为「后端主动推」**：移除 1.x 里为「封面两段式」临时加的 `douban_cover` 命令，改为单一入口 `douban_request` + `douban-meta` 事件（四相 `cover`/`full`/`none`/`error`）。并发/限流从前端队列上收到后端优先级调度器（2 worker + 全局令牌桶 + `active` 去重）。前端 `useDoubanMeta` 走中心 store（`useSyncExternalStore`），`fetchDoubanMeta` 保留为同一 store 的 Promise 视图。
 - **播放内核引入 XState 会话状态机（点播 / 直播各一台）**：`vodSessionMachine`（idle/resolving/attaching/buffering/playing/probing/switching/recovering/failed）与 `liveSessionMachine`（无剧集与续播语义），按 `siteKey` 选用，均带 node 行为测试。接管为真源的：会话身份 `switchGeneration → sessionId`、续播取消 `resumeCancelled → resumeAborted`、首帧 `hasPlayed`、切换中 UI（`matches("switching")`，带 15s 兜底）、看门狗判决（见工程一节）。墙钟窗口（音量 ramp、初始化与倍速静默）仍留在解释器。
@@ -55,6 +56,7 @@
 - **首页 hero「电影感暗底」**：背景重模糊 + 近乎去色 + 均匀深遮罩，根治浅色海报糊出的脏棕「泥」背景；「下一张」改为右缘全高常驻热区 + 浅色玻璃圆衬。
 - **播放器「下一集」切换态**：转环取代箭头 + `cursor:not-allowed` 锁定态（旧版描弧叠箭头「不协调」、且点击无「已禁用」反馈）。
 - **豆瓣缓存键保留季标记**：`cache_key` 不再剥掉「第X季」，年份仍是首选区分、季标记兜底。
+- **Tauri 配置正规化**：`app.security.csp` 由 `null` 改为显式策略——生产 `script-src 'self'`、开发 `devCsp` 额外放开 Vite HMR；`img-src` / `media-src` / `connect-src` 仍放通任意 `http(s)`，因为封面与流地址来自用户导入的配置，域名无法枚举，`style-src 'unsafe-inline'` 与 `worker-src blob:` 分别是 ArtPlayer 运行时注入样式、hls.js blob worker 所需。`app.security.capabilities` 显式列出 `main-access`，不再依赖 `capabilities/` 目录扫描。`additionalBrowserArgs` 补回被覆盖掉的 wry 默认 `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`。`bundle` 补 `licenseFile`、`category` 改为 `Video`，窗口加 `center`。开发入口文档统一为 `pnpm dev:app`。
 
 ### 新增
 - **首页分类筛选面板（TVBox `filters` 协议）**：`homeContent` 按 TVBox 标准语义带 `filter=true` 调用，py/js 源返回的筛选定义（豆瓣[py]「电影筛选/电视筛选」的类型/地区/排序/年代等）渲染成分组 chips；点选后以 `categoryContent` 第 4 参 extend 传给源（空值/「全部」不进 extend，尊重源的默认语义）。缓存键按 extend 稳定后缀区分，同条件共享缓存；筛选变化重置已加载页数，切站/切分类清空选中值。新增 `src/lib/categoryFilters.ts` 纯函数层（形状校验/extend 构造/缓存键后缀/默认高亮）+ 10 条单测。实测豆瓣[py]「电影筛选」点「喜剧」从 6 条冷门片变为 19 条正序热门数据。

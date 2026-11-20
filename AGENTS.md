@@ -60,7 +60,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 
 ## 工程铁律
 
-1. **构建与打包只走 Tauri 官方工具链**：`tauri dev`（debug）/ `tauri build`（release）/ `tauri icon`（图标）。裸 `cargo build --release` 不会把 `frontendDist` 嵌进 exe，窗口会回退到 `devUrl` 报 `ERR_CONNECTION_REFUSED`。Cargo profile 用官方 [App Size](https://v2.tauri.app/concept/size/) 建议值，不要加项目私有 tweak。
+1. **构建与打包只走 Tauri 官方工具链**：`pnpm dev:app`（dev，= `tauri dev` + `app.luma.dev`）/ `pnpm build:app`（stable）/ `pnpm build:beta`（beta，按需）/ `tauri icon`（图标）。裸 `cargo build --release` 不会把 `frontendDist` 嵌进 exe，窗口会回退到 `devUrl` 报 `ERR_CONNECTION_REFUSED`。Cargo profile 用官方 [App Size](https://v2.tauri.app/concept/size/) 建议值，不要加项目私有 tweak。
 2. **随包运行时优先**：sidecar 运行时一律走 `paths::sidecar_roots()`，优先级 = 显式环境变量（`LUMA_PYTHON` / `LUMA_QJS_RUNNER`）→ 随包 `sidecars/python-embed`、exe 同目录 `qjs-runner.exe` → 宿主兜底。用户无需安装 Python；`prepare_runtime.py` 禁止硬编码本机路径。
 3. **契约单一真源** `contracts/luma.schema.json`：改字段先改 schema → `src/types/luma.ts` → Rust 序列化（`domain/spider/*`、`domain/config/*`）→ `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。字段 camelCase、`additionalProperties: false`；不许删 TS 字段来「修」校验。
 4. **双快照不可越过**：运行策略只改 `runtime_json`，`imported_json` 一个字段都不许动。
@@ -70,7 +70,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 8. **真实配置 / 密钥不入库**：fixture 必须脱敏且只指向 `127.0.0.1`。
 9. **生产路径禁 `unwrap()`**（Rust 一律 `Result<T, AppError>`）；子进程超时必须进程级可强杀，退出用 Job Object 收尸。
 10. **不替工具链管中间产物**：cargo 管 `target/`、Vite 管 `.vite`；不要手删锁文件、不要设 `CARGO_INCREMENTAL=0`。人工只补环境变量。
-11. **清理与构建只走官方命令，禁止绕过、禁止手搓**：清理编译产物一律 `cargo clean`（可用 `--release` / `--dry-run` / `-p` 等官方选项），**严禁 `rm -rf` / `del` 手删 `target/`**；构建、启动、打包一律 `tauri dev` / `tauri build` / `tauri icon`，**严禁用裸 `cargo build` 绕过**，也**禁止用 `CARGO_TARGET_DIR` 指向新目录、复制预编译产物、关调试信息（D8050 之类）等手搓命令绕开构建锁或环境限制**。遇到构建锁被 dev 会话占用，就等它释放或用官方命令，不手工造命令绕行。
+11. **清理与构建只走官方命令，禁止绕过、禁止手搓**：清理编译产物一律 `cargo clean`（可用 `--release` / `--dry-run` / `-p` 等官方选项），**严禁 `rm -rf` / `del` 手删 `target/`**；构建、启动、打包一律 `pnpm dev:app` / `tauri build` / `tauri icon`，**严禁用裸 `cargo build` 绕过**，也**禁止用 `CARGO_TARGET_DIR` 指向新目录、复制预编译产物、关调试信息（D8050 之类）等手搓命令绕开构建锁或环境限制**。遇到构建锁被 dev 会话占用，就等它释放或用官方命令，不手工造命令绕行。
 
 ## 编码与 Git 约定
 
@@ -91,8 +91,9 @@ python tools/check.py --ci            # 干净机器可跑的便携子集（CI j
 
 # Tauri 官方工具链
 corepack pnpm install
-corepack pnpm tauri dev               # debug：窗口 + CDP 9222
-corepack pnpm tauri build             # release：嵌前端 + NSIS 安装器
+corepack pnpm dev:app                 # dev：窗口 + CDP 9222（app.luma.dev）
+corepack pnpm build:app               # stable 安装包（app.luma）
+corepack pnpm build:beta              # beta 安装包（app.luma.beta，按需）
 corepack pnpm tauri icon <svg>        # 重生成图标
 
 # 前端

@@ -5,7 +5,7 @@
 ## 0. 一句话流程
 
 ```text
-clone → 装依赖 → 准备运行时 → pnpm tauri dev → 改代码热更新
+clone → 装依赖 → 准备运行时 → pnpm dev:app → 改代码热更新
       → 调试（CDP / 日志 / 各 sidecar）→ 按需 verify → 确认后打包
 ```
 
@@ -37,7 +37,7 @@ dev 与安装交付版统一用随包 `sidecars/python-embed/python.exe`（`brid
 ## 2. 日常开发
 
 ```powershell
-corepack pnpm tauri dev        # 出窗口，前端热更新 + Rust 重编译
+corepack pnpm dev:app          # 出窗口，前端热更新 + Rust 重编译
 corepack pnpm build            # 仅前端产物（验证打包无误）
 corepack pnpm test             # 前端单测：src 下与被测模块同目录 33 个 + tests/frontend 6 个跨文件约定
 cargo check  --manifest-path src-tauri/Cargo.toml
@@ -48,30 +48,41 @@ cargo test   --manifest-path src-tauri/Cargo.toml --lib
 
 **交付节奏**：改完**停在 debug 模式**（`pnpm dev:app`）确认即可，**不要每次都 `tauri build` 打包**；`tauri build` 编译 + 打包约 3~4 分钟、反馈回路过长，只在发版时打。发版统一用官方 `tauri build`，不手搓打包脚本。
 
-### 2.1 debug 与正式版必须能同时跑
+### 2.1 三通道：stable / beta / dev
 
-开发时**已安装的正式版常常还开着**（用户在用它看片）。两者不隔离会互相打死，而且报错很难懂：
+`dev` 是日常调试（`tauri dev`，不出安装包）；`beta` 按需启用（预发布时才出包）；`stable` 是常驻交付通道。通道由 identifier 后缀判定（`infra/channel.rs`），三者的身份与资源互不重叠：
 
-| 资源 | release | debug | 冲突后果 |
+| 资源 | stable | beta（按需） | dev（日常调试） |
 |---|---|---|---|
-| 数据目录（库/日志/收藏） | `%APPDATA%\Luma` | `%APPDATA%\Luma-debug`（`store::data_dir` 按 `cfg!(debug_assertions)` 分叉） | 已隔离，dev 折腾不影响真实数据 |
-| WebView2 用户数据目录 | `%LOCALAPPDATA%\dev.luma.desktop` | `%LOCALAPPDATA%\dev.luma.desktop.debug` | **必须隔离**，见下 |
-| 本地反代 | `127.0.0.1:9978` | `127.0.0.1:9979`（`DEFAULT_PORT` 按 `cfg!(debug_assertions)` 分叉；被占仍退临时端口，`proxy::bind_listener`） | 各自固定端口，互不抢占、不再随机漂移 |
-| CDP | 不开 | `127.0.0.1:9222` | release 不占，无冲突 |
+| identifier | `app.luma` | `app.luma.beta` | `app.luma.dev` |
+| 数据目录（库/日志/收藏） | `%APPDATA%\app.luma` | `%APPDATA%\app.luma.beta` | `%APPDATA%\app.luma.dev` |
+| WebView2 用户数据目录 | `%LOCALAPPDATA%\app.luma` | `%LOCALAPPDATA%\app.luma.beta` | `%LOCALAPPDATA%\app.luma.dev` |
+| 本地反代 | `127.0.0.1:9978` | `127.0.0.1:9977` | `127.0.0.1:9979` |
+| CDP | 不开 | 不开 | `127.0.0.1:9222` |
+| 出包命令 | `pnpm build:app` | `pnpm build:beta` | 不出包 |
+
+开发时**已安装的正式版常常还开着**（用户在用它看片）。不隔离会互相打死，而且报错很难懂。
 
 **WebView2 那条是硬约束**：Tauri 在 Windows 上把 webview 的 data dir 钉成 `app_local_data_dir()`（= `%LOCALAPPDATA%\<identifier>`），而 wry 明确要求「**browser args 不同的 webview 必须用不同的 data dir**」。debug 构建会额外注入 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`，于是：
 
-- 先开 release、再 `tauri dev` → debug 侧 `Failed to setup app: … WebView2 error: HRESULT(0x8007139F) "组或资源的状态不是执行请求操作的正确状态"`，窗口起不来；
+- 先开 stable、再 `tauri dev` → dev 侧 `Failed to setup app: … WebView2 error: HRESULT(0x8007139F) "组或资源的状态不是执行请求操作的正确状态"`，窗口起不来；
 - 反过来先 dev 再开安装版，**用户的安装版起不来**——这就是「开发影响本地使用」的真实机制。
 
-隔离办法（纯配置 + 脚本，不改 Rust）：
+隔离办法（overlay 配置，不改 Rust 逻辑）：
 
-- `src-tauri/tauri.dev.conf.json` 只覆盖一个键：`identifier` → `dev.luma.desktop.debug`。Tauri CLI 的 `--config` 会把它合并到 `tauri.conf.json` 之上，identifier 变了，`app_local_data_dir()` 跟着变，WebView2 用户数据目录自然分开。
-- `package.json` 里 `dev:app = tauri dev --config src-tauri/tauri.dev.conf.json`。**debug 一律用 `corepack pnpm dev:app`**；`tauri build` 不读这个文件，安装包的 identifier 仍是 `dev.luma.desktop`。
-- 验收：两个窗口同时开着不打架，且 `%LOCALAPPDATA%` 下同时存在 `dev.luma.desktop\EBWebView`（安装版）与 `dev.luma.desktop.debug\EBWebView`（dev）。
+- 三份配置入库，身份由 `package.json` 的 `appId` + 通道后缀派生：`tauri.conf.json`（stable）、`tauri.beta.conf.json`、`tauri.dev.conf.json`。Tauri CLI 的 `--config` 按 JSON Merge Patch 合并，identifier 变了，`app_local_data_dir()`、数据目录与反代端口跟着变。
+- `package.json`：`dev:app` 用 `tauri dev --config src-tauri/tauri.dev.conf.json`，`build:beta` 用 `tauri build --config src-tauri/tauri.beta.conf.json`。**日常调试一律 `corepack pnpm dev:app`**；裸 `tauri dev` 用的是 stable 身份，与安装版共用 profile。
+- 三份 overlay 的 identifier 必须等于 `appId + 后缀`，由 `tools/version_check.py` 校验；不许只改一处。
+- 验收：dev 窗口与安装版同时开着不打架，且 `%LOCALAPPDATA%` 下同时存在 `app.luma\EBWebView` 与 `app.luma.dev\EBWebView`。
 
 > 顺带：`vite.config.ts` 的 `server.watch.ignored` 排除了 `src-tauri/`、`.agents/`、`.*.tmpdir/`、`.git/`。Node 24 把 `fs.watch` 的 EBUSY 当致命错误，而 `tauri dev` 正在写 `target\debug\luma.exe`、并行会话又在原子写源码，命中任一个都会让 vite 退出、连带 `beforeDevCommand` 失败把整个 dev 拖死。
 
+### 2.2 窗口与安全配置（`tauri.conf.json`）
+
+- **identifier 与通道**：三份 overlay 的 identifier 都由 `package.json` 的 `appId` + 后缀派生（stable `app.luma`、beta `app.luma.beta`、dev `app.luma.dev`），`tools/version_check.py` 负责守护。identifier 决定 `%LOCALAPPDATA%\<identifier>`（WebView2 profile：localStorage、缓存）、卸载注册表项与数据目录名（`%APPDATA%\<identifier>`）。**改 identifier 等于重置前端设置**，发版后不能随便动。`debug_assertions` 优先于 identifier——`tauri build --debug` 一律算 dev，不冒充正式包。
+- **CSP**：`csp`（生产）与 `devCsp`（开发）分开。`img-src` / `media-src` / `connect-src` 放通 `http(s)` 是刻意的——封面与流地址来自用户导入的任意源，域名无法枚举；`style-src 'unsafe-inline'` 是 ArtPlayer 运行时注入 `<style>` 所需；`worker-src blob:` 是 hls.js 的 blob worker。真正收窄的是 `script-src`：生产 `'self'`，开发额外给 `'unsafe-inline' 'unsafe-eval'`（Vite HMR）。改 CSP 后必须开窗口走一遍「列表 → 详情 → 播放」，控制台不能出现 `Refused to`。
+- **capabilities**：显式列出 `main-access`，不依赖 `capabilities/` 目录扫描——新增权限文件不会自动生效。
+- **additionalBrowserArgs**：一旦设置就覆盖 wry 的默认值，必须自己补回 `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`，否则 PDF / SmartScreen 组件会在 webview 里启用。
 
 ## 3. 四端调试
 
@@ -137,7 +148,7 @@ $env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（安装版�
   - `logs/ui/ui.<UTC 日期>.log` —— 前端（React，`tracing` target 固定 `ui`）；
   - `logs/spider/spider.<UTC 日期>.log` —— Python 适配层（第三方源脚本的异常与 traceback）。
 
-  dev/安装模式在 `%APPDATA%\Luma\logs\`；便携模式（exe 同级 `data/`）为 `data/logs\`。每个通道上限 10 MiB，超出先删最旧的一整天，不切正在写的文件。
+  dev/安装模式在 `%APPDATA%\<identifier>\logs\`（如 `app.luma.dev`）；便携模式（exe 同级 `data/`）为 `data/logs\`。每个通道上限 10 MiB，超出先删最旧的一整天，不切正在写的文件。
 - 内容：启动摘要、前端关键操作、IPC 错误、未捕获异常；URL 只记 `scheme+host+path`，查询参数与播放直链不落盘。
 - 反馈：设置页「复制诊断信息」（含版本/平台/目录/配置规模/日志列表 JSON，日志项带 `channel`）+「打开日志目录」+「导出反馈文件」（三类日志各取末尾 400 行）。
 - 存储：设置页「存储与清理」分项显示日志 / 反馈报告 / 封面与页面缓存的占用并可手动清理（`domain/storage.rs`）。日志的当天文件被 writer 持有，删不掉时改为清空内容；用户报「占空间」时的第一现场就是这里，不必再去数据目录手删。
@@ -184,7 +195,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 |---|---|---|
 | `LUMA_PYTHON` | 覆盖 Python 解释器 | 临时切测试解释器 |
 
-| `LUMA_PROXY_PORT` | 本地反代端口（宿主 `proxy::start` 绑定后**写入并注入子进程**，非手填） | release 9978 / debug 9979 |
+| `LUMA_PROXY_PORT` | 本地反代端口（宿主 `proxy::start` 绑定后**写入并注入子进程**，非手填） | stable 9978 / beta 9977 / dev 9979 |
 | `LUMA_DATA_DIR` | 覆盖数据目录 | — |
 | `LUMA_PROXY_ALLOW_LOCAL` | 允许反代访问 `127.0.0.1` | `1`（仅本地联调） |
 | `LUMA_SELFCHECK` | 启动自检写日志 | `1` |
