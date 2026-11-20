@@ -98,9 +98,13 @@ export function createStallWatchdog(options: StallWatchdogOptions): StallWatchdo
     if (isYielded()) {
       return;
     }
-    // 用户主动暂停（不是播完）：没有任何「线路坏了」的证据，绝不能探活换源；
-    // 同时把静默计时推到当下，恢复播放后不会因为「暂停了十分钟」立刻判死。
-    if (video.paused && !video.ended) {
+    // 「暂停」只有两种含义，必须分开：
+    //   1. 播过之后用户主动按停——没有任何「线路坏了」的证据，绝不能探活换源，
+    //      并把静默计时推到当下，恢复播放后不会因为「暂停了十分钟」立刻判死；
+    //   2. 从未出画就停在 paused（自动播放没起来 / 清单下不到）——这不是用户暂停，
+    //      而是「这一条线没在交付」，必须继续累计静默并复核，否则慢/死 CDN 会永远
+    //      卡在 loading 转圈、既不出画也不报错（判死与否仍由状态机定）。
+    if (video.paused && !video.ended && hasPlayed()) {
       markAlive();
       return;
     }

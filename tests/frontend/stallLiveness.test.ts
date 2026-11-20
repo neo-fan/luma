@@ -52,7 +52,10 @@ describe("stall watchdog", () => {
   });
 
   it("never treats a paused video as a dead line", () => {
-    expect(watchdog).toContain("if (video.paused && !video.ended)");
+    // 只有「播过之后用户暂停」才豁免判死；从未出画的 paused（死 CDN / 自动播放
+    // 没起来）必须继续累计静默并复核——否则慢/死线永久卡在 loading 转圈、
+    // 既不出画也不报错（P0 黑洞，2026-11-20 CDP 实测 CCTV 多线通道坐实）。
+    expect(watchdog).toContain("if (video.paused && !video.ended && hasPlayed()) {");
     // 暂停时把存活计时推到当前时刻：恢复播放后重新计窗口，而不是立刻判死。
     expect(watchdog).toContain("markAlive();");
     // 静默只是触发器，不是判决——时间不够就不探。

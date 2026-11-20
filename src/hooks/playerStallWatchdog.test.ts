@@ -74,8 +74,8 @@ describe("stall watchdog", () => {
     expect(h.sent).toEqual([]);
   });
 
-  it("用户暂停：不探活，但把静默计时推回当下；播完结束态不算暂停", () => {
-    const h = harness({ paused: true, ended: false });
+  it("播过之后用户暂停：不探活，但把静默计时推回当下；播完结束态不算暂停", () => {
+    const h = harness({ paused: true, ended: false, hasPlayed: true });
     h.watchdog.tick();
     expect(h.sent).toEqual([]);
     expect(h.markAlive).toHaveBeenCalledOnce();
@@ -83,6 +83,28 @@ describe("stall watchdog", () => {
     const h2 = harness({ paused: true, ended: true });
     h2.watchdog.tick();
     expect(h2.sent[0]).toEqual({ type: "STALL" });
+  });
+
+  it("从未出画就停在 paused（死 CDN / 自动播放没起来）：继续累计静默并复核，不再被当用户暂停永久 markAlive（P0 黑洞）", async () => {
+    const h = harness({ paused: true, ended: false, hasPlayed: false });
+    h.watchdog.tick();
+    // 关键：paused 但从未播过 → 不早退 markAlive，而是报 STALL 把证据交上去
+    expect(h.markAlive).not.toHaveBeenCalled();
+    expect(h.sent[0]).toEqual({ type: "STALL" });
+    await Promise.resolve();
+    await Promise.resolve();
+    // 死源复核结论 = dead，判决仍归机器（看门狗自己不换线）
+    expect(h.sent.some((e) => e.type === "PROBE")).toBe(true);
+  });
+
+  it("从未出画 + paused + 慢而活的线：复核给 ok 也不由看门狗判死（交机器继续等）", async () => {
+    const h = harness({ paused: true, hasPlayed: false, verdict: "ok" });
+    h.watchdog.tick();
+    await Promise.resolve();
+    await Promise.resolve();
+    // 只上报证据，不 markAlive 掩盖、也不自行换线
+    expect(h.sent.map((e) => e.type)).toEqual(["STALL", "PROBE"]);
+    expect(h.logs.map((l) => l[0])).toContain("stall probe alive but slow");
   });
 
   it("已出过画：只撤慢提示，永不报 STALL（红线在解释器的第一道）", () => {
