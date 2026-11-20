@@ -378,6 +378,67 @@ fn is_searchable(site: &Value) -> bool {
 /// `streaming = Some(app)` 时（仅搜索流式），每完成一个站点就向前端 emit
 /// `search-chunk`（payload = 该站的 result 行 JSON），调用方拿到的最终聚合
 /// 与非流式完全一致——事件只是增量预览，真相源仍是 IPC 返回值。
+/// 搜索超时惩罚箱：把反复拖垮聚合搜索的死站临时挪出首轮扇出。
+///
+/// 背景：慢网里一次全站搜索 58/70 站超时、`elapsedMs` 拖到 637s——每轮都让
+/// 这些站重新吃满 15s 单站墙钟是长尾的主因。连续超时 ≥ `STRICKES` 次的站点
+/// 进入 `TTL` 冷却，期间流式搜索**跳过**它（计入 skipped）；任一搜索成功即
+/// 清账。只惩罚「这段时间确实连不上」的站：单次抖动不拉黑，60s 后自动放行，
+/// 且只作用于流式搜索（首页聚合不过滤，避免让用户看到更少的推荐源）。
+struct SearchPenalty {
+    /// key → (连续超时次数, 最近一次超时时刻)
+    entries: HashMap<String, (u32, Instant)>,
+}
+
+const SEARCH_PENALTY_STRICKES: u32 = 2;
+const SEARCH_PENALTY_TTL: Duration = Duration::from_secs(60);
+
+impl SearchPenalty {
+    fn new() -> Self {
+        Self { entries: HashMap::new() }
+    }
+
+    fn cooling(&self, key: &str, now: Instant) -> bool {
+        match self.entries.get(key) {
+            Some((strikes, last)) => {
+                *strikes >= SEARCH_PENALTY_STRICKES
+                    && now.saturating_duration_since(*last) < SEARCH_PENALTY_TTL
+            }
+            None => false,
+        }
+    }
+
+    fn on_timeout(&mut self, key: &str, now: Instant) {
+        let e = self.entries.entry(key.to_string()).or_insert((0, now));
+        e.0 = e.0.saturating_add(1);
+        e.1 = now;
+    }
+
+    fn on_success(&mut self, key: &str) {
+        self.entries.remove(key);
+    }
+}
+
+static SEARCH_PENALTY: OnceLock<StdMutex<SearchPenalty>> = OnceLock::new();
+
+fn search_penalty() -> &'static StdMutex<SearchPenalty> {
+    SEARCH_PENALTY.get_or_init(|| StdMutex::new(SearchPenalty::new()))
+}
+
+/// 流式搜索的**总**墙钟预算（毫秒）。
+///
+/// 扇出是 `MAX_FANOUT` 并发，N 个站需要 `ceil(N / MAX_FANOUT)` 波；每波最多
+/// 吃满单站超时 `per_site_ms`。所以自然上界是 `波次 × 单站超时`，再加一波松弛
+/// 覆盖调度抖动。clamp 到 [45s, 120s]：健康配置（一波就完）不该被拖到 45s 以下
+/// 误杀慢源，也不能让慢网尾段超过 120s（旧实现没有总上限，实测拖到 637s）。
+fn streaming_budget_ms(per_site_ms: u64, site_count: usize, fanout: usize) -> u64 {
+    let fanout = fanout.max(1);
+    let waves = (site_count + fanout - 1) / fanout;
+    let waves = waves.max(1) as u64;
+    let raw = per_site_ms.saturating_mul(waves).saturating_add(per_site_ms);
+    raw.clamp(45_000, 120_000)
+}
+
 async fn aggregate(
     state: &ConfigStore,
     method: SpiderMethod,
@@ -404,13 +465,30 @@ async fn aggregate(
         })
         .collect();
 
+    // 流式搜索（只有它传 `streaming`）：跳过仍在超时惩罚窗里的站点。
+    let search_streaming = streaming.is_some();
+    let mut penalized = 0usize;
+    let sites = if search_streaming {
+        let now = Instant::now();
+        let guard = search_penalty()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (keep, cooled): (Vec<Value>, Vec<Value>) = sites
+            .into_iter()
+            .partition(|s| !guard.cooling(s.get("key").and_then(Value::as_str).unwrap_or(""), now));
+        penalized = cooled.len();
+        keep
+    } else {
+        sites
+    };
+
     if sites.is_empty() {
         return Ok(json!({
             "results": [],
             "ok": 0,
             "failed": 0,
-            "skipped": 0,
-            "total": 0,
+            "skipped": penalized,
+            "total": penalized,
             "tookMs": 0,
         }));
     }
@@ -459,12 +537,12 @@ async fn aggregate(
     // 收尾（search done elapsedMs=637s）。现在改成真正的总预算：
     // 「波次 × 单站超时 + 一波松弛」，clamp 到 45~120s。结果仍逐站上屏；预算
     // 用尽只 abort 还没答完的尾部站点，它们照旧计入 skipped。
-    let is_streaming = streaming.is_some();
-    let rounds = (sites.len() + MAX_FANOUT - 1) / MAX_FANOUT;
-    let streaming_total = timeout
-        .saturating_mul(rounds as u32)
-        .saturating_add(timeout)
-        .clamp(Duration::from_secs(45), Duration::from_secs(120));
+    let is_streaming = search_streaming;
+    let streaming_total = Duration::from_millis(streaming_budget_ms(
+        timeout.as_millis() as u64,
+        sites.len(),
+        MAX_FANOUT,
+    ));
     let budget = if is_streaming {
         streaming_total
     } else {
@@ -480,6 +558,11 @@ async fn aggregate(
             Ok(Some(joined)) => match joined {
                 Ok((site_key, Ok(data))) => {
                     ok += 1;
+                    if search_streaming {
+                        if let Ok(mut guard) = search_penalty().lock() {
+                            guard.on_success(&site_key);
+                        }
+                    }
                     let row = json!({
                         "siteKey": site_key,
                         "ok": true,
@@ -493,6 +576,13 @@ async fn aggregate(
                 }
                 Ok((site_key, Err(err))) => {
                     failed += 1;
+                    // 只有流式搜索记账；非超时类失败（解析/屏蔽）不惩罚——
+                    // 它们快、不拖墙钟，拉黑反而会让下次能用的站被跳过。
+                    if search_streaming && err.code == code::SITE_TIMEOUT {
+                        if let Ok(mut guard) = search_penalty().lock() {
+                            guard.on_timeout(&site_key, Instant::now());
+                        }
+                    }
                     let row = json!({
                         "siteKey": site_key,
                         "ok": false,
@@ -525,8 +615,9 @@ async fn aggregate(
         "results": results,
         "ok": ok,
         "failed": failed,
-        "skipped": sites.len().saturating_sub(ok + failed),
-        "total": sites.len(),
+        // 跳过 = 队列里没答完的（abort）+ 被超时惩罚窗挡在门外的。
+        "skipped": sites.len().saturating_sub(ok + failed).saturating_add(penalized),
+        "total": sites.len().saturating_add(penalized),
         "tookMs": started.elapsed().as_millis() as u64,
     }))
 }
@@ -817,6 +908,39 @@ pub async fn site_health(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streaming_budget_is_a_real_total_not_per_iteration() {
+        // 70 站、20 并发 → 4 波 × 15s + 15s 松弛 = 75s（在 [45,120] 内）。
+        assert_eq!(streaming_budget_ms(15_000, 70, 20), 75_000);
+        // 一波就够（12 站）：15s×1+15s=30s，被下限抬到 45s，别误杀慢源。
+        assert_eq!(streaming_budget_ms(15_000, 12, 20), 45_000);
+        // 巨量站（200 站 → 10 波 → 165s）被上限压到 120s，杜绝 637s 那种长尾。
+        assert_eq!(streaming_budget_ms(15_000, 200, 20), 120_000);
+        // 零站不除零：至少一波。
+        assert_eq!(streaming_budget_ms(15_000, 0, 20), 45_000);
+    }
+
+    #[test]
+    fn search_penalty_cools_only_after_two_timeouts_and_clears_on_success() {
+        let base = Instant::now();
+        let mut box_ = SearchPenalty::new();
+        // 第一次超时不拉黑（偶发抖动）。
+        box_.on_timeout("dead", base);
+        assert!(!box_.cooling("dead", base));
+        // 第二次连续超时进入冷却；健康站不受影响。
+        box_.on_timeout("dead", base + Duration::from_secs(1));
+        assert!(box_.cooling("dead", base + Duration::from_secs(2)));
+        assert!(!box_.cooling("other", base + Duration::from_secs(2)));
+        // 冷却 TTL 过后自动放行。
+        assert!(!box_.cooling("dead", base + Duration::from_secs(2) + SEARCH_PENALTY_TTL));
+        // 期间成功一次即清账，回到「零 strikes」。
+        box_.on_timeout("x", base);
+        box_.on_timeout("x", base + Duration::from_secs(1));
+        box_.on_success("x");
+        assert!(!box_.cooling("x", base + Duration::from_secs(2)));
+        assert!(!box_.cooling("x", base + Duration::from_secs(2) + Duration::from_secs(1)));
+    }
 
     #[test]
     fn routes_by_jar_and_api_suffix() {
