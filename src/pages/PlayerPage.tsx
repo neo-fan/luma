@@ -36,12 +36,12 @@ import { usePlaybackHistory } from "../hooks/usePlaybackHistory";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
 import type {
   EpisodeNavControl,
-  SkipWindowState,
   UsePlayerEngineHandle,
 } from "../hooks/usePlayerEngine";
 import {
   formatSkipSummary,
   introMs,
+  outroMs,
   type SkipKind,
   type SkipSegment,
 } from "../lib/skipSegments";
@@ -164,8 +164,6 @@ export default function PlayerPage({
   const resumeMsRef = useRef(0);
   /** 立即写一次历史：换集 / 换源 / 改倍速后 flush，不等 5 秒节流。 */
   const flushHistoryRef = useRef<(() => void) | null>(null);
-  /** 跳过窗口态：驱动「跳过片头/片尾」浮层按钮的显隐。 */
-  const [skipState, setSkipState] = useState<SkipWindowState | null>(null);
   const [skipSettingsOpen, setSkipSettingsOpen] = useState(false);
   /** 控制栏「刷新」回调：ref 转发，避免它进播放内核的依赖导致实例重建。 */
   const reloadRef = useRef<(() => void) | null>(null);
@@ -524,7 +522,6 @@ export default function PlayerPage({
       flushHistoryRef.current?.();
     },
     rememberedSkip: readRememberedSkip,
-    onSkipState: setSkipState,
     onOpenSkipSettings: () => setSkipSettingsOpen(true),
     resolved,
     resolving,
@@ -790,20 +787,16 @@ export default function PlayerPage({
     engine.notice("没有可接的下一集");
   };
   const autoSkipMediaKey = [activeSiteKey, display.vodId, display.lineIndex, display.episodeIndex].join(":");
-  const { pending: autoSkipPending, cancel: cancelAutoSkip } = useAutoSkipPrompt(
-    // 这部剧关掉跳过：窗口态一律不给（倒计时/自动跳都挂在它上面，源头断掉即可，
-    // 不必在内核与弹窗里各判一次开关）。
-    skipEnabled ? skipState : null,
-    autoSkipMediaKey,
-    (kind: SkipKind) => (kind === "intro" ? doSkipIntro() : doSkipOutro()),
-    () => videoRef.current?.paused ?? false,
-    // 倒计时只在「这一集真的出画」后显示：换集后窗口态在 loadedmetadata 就到，
-    // 那时画面还是上一集的静止帧，倒计时会看着像在跳上一集。
-    () => {
-      const v = videoRef.current;
-      return Boolean(v && !v.paused && v.readyState >= 3);
-    },
-  );
+  const { pending: autoSkipPending, cancel: cancelAutoSkip } = useAutoSkipPrompt({
+    videoRef,
+    mediaKey: autoSkipMediaKey,
+    // 实例重建（换源失败退回整页 / HMR）也是新的一次播放：重新判一次片头。
+    attachSignal: playerRoot,
+    enabled: skipEnabled,
+    introMs: introMs(skipConfig),
+    outroMs: outroMs(skipConfig),
+    onTrigger: (kind: SkipKind) => (kind === "intro" ? doSkipIntro() : doSkipOutro()),
+  });
   // 切换在途 → ArtPlayer 原生 loading；收口即隐藏。
   useEffect(() => {
     engine.setLoading(switching || engine.switching);

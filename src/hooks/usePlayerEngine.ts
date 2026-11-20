@@ -47,11 +47,7 @@ import {
   writePlayerPrefs,
 } from "../lib/playerPrefs";
 import {
-  introMs as introMsOf,
-  outroMs as outroMsOf,
   formatSkipSummary,
-  shouldSkipIntro,
-  shouldSkipOutro,
   type SkipSegment,
 } from "../lib/skipSegments";
 import { createActor } from "xstate";
@@ -142,18 +138,6 @@ export interface EpisodeNavControl {
   switching?: boolean;
 }
 
-/** 片头/片尾跳过窗口态：供调用方渲染浮层按钮。 */
-export interface SkipWindowState {
-  /** 片头时长 ms（0 = 未设）。 */
-  introMs: number;
-  /** 片尾时长 ms（0 = 未设）。 */
-  outroMs: number;
-  /** 当前是否落在片头窗口内。 */
-  inIntro: boolean;
-  /** 当前是否落在片尾窗口内（可「跳过片尾」）。 */
-  inOutro: boolean;
-}
-
 export interface UsePlayerEngineArgs {
   /** ArtPlayer 挂载点；实例会在这个容器里生成真正的 <video>。 */
   containerRef: RefObject<HTMLDivElement>;
@@ -206,11 +190,6 @@ export interface UsePlayerEngineArgs {
     * 由播放页不把窗口态交给倒计时（`useAutoSkipPrompt` 收到 null 即不动作）。
     */
   rememberedSkip?: () => SkipSegment[];
-  /**
-    * 跳过窗口态变化上报（片头/片尾是否正在、各自时长），供调用方渲染
-    * 「跳过片头/片尾」的轻提示。只在窗口态翻转时回调，不每帧刷。
-    */
-  onSkipState?: (state: SkipWindowState) => void;
   /**
    * 点击原生齿轮里「片头/片尾」行：打开调用方提供的自定义配置弹窗。
    * 入口进 ArtPlayer 设置面板，但弹窗是我们自己的（含「取当前播放时间」快捷）。
@@ -296,7 +275,6 @@ export function usePlayerEngine({
   rememberedRate,
   onRememberedRate,
   rememberedSkip,
-  onSkipState,
   onOpenSkipSettings,
   resolved,
   resolving,
@@ -923,40 +901,9 @@ export function usePlayerEngine({
     };
     video.addEventListener("loadedmetadata", onFirstMeta, { once: true });
 
-    // 片头/片尾窗口态上报：驱动自动跳过的轻提示。只在窗口态
-    // 翻转时回调，不每帧刷；配置用取值器懒读（同倍速，绝不进本 effect 依赖）。
-    // `force` 用于新媒体首帧：换集后外部状态可能还停在旧媒体的窗口里，不强制
-    // 上报一次的话，旧窗口的提示会一直挂着。
-    let lastInIntro = false;
-    let lastInOutro = false;
-    const reportSkipState = (force = false) => {
-      if (siteKey === "live") {
-        if (force || lastInIntro || lastInOutro) {
-          lastInIntro = false;
-          lastInOutro = false;
-          onSkipState?.({ introMs: 0, outroMs: 0, inIntro: false, inOutro: false });
-        }
-        return;
-      }
-      const segs = rememberedSkip?.() ?? [];
-      const intro = introMsOf(segs);
-      const outro = outroMsOf(segs);
-      const curMs = video.currentTime * 1000;
-      const durMs = Number.isFinite(video.duration) ? video.duration * 1000 : 0;
-      const inIntro = shouldSkipIntro(curMs, intro);
-      const inOutro = shouldSkipOutro(curMs, durMs, outro);
-      if (force || inIntro !== lastInIntro || inOutro !== lastInOutro) {
-        lastInIntro = inIntro;
-        lastInOutro = inOutro;
-        onSkipState?.({ introMs: intro, outroMs: outro, inIntro, inOutro });
-      }
-    };
-    // 原生事件会把 Event 传进第一个参数；带 `force` 后必须包一层，否则每次
-    // timeupdate 都被当成强制上报。
-    const onSkipMeta = () => reportSkipState(true);
-    const onSkipTick = () => reportSkipState();
-    video.addEventListener("loadedmetadata", onSkipMeta);
-    video.addEventListener("timeupdate", onSkipTick);
+    // 片头/片尾不再由内核上报窗口态：判断「要不要跳」只看这一集此刻播到哪儿，
+// 由 `useAutoSkipPrompt` 直接监听 `<video>` 的 playing / timeupdate 完成。
+// 内核只保留「别再静默瞬移」这条边界（自动跳统一走 5 秒可取消倒计时）。
 
     // 全屏元素是 `.art-video-player` 本身（ArtPlayer 的 `$player`），所以角标
     // 这类要跟着画面走的浮层由调用方 portal 进这个节点，而不是排在 stage 里。
@@ -1395,8 +1342,6 @@ export function usePlayerEngine({
       video.removeEventListener("loadedmetadata", reportMeta);
       video.removeEventListener("resize", reportMeta);
       video.removeEventListener("loadedmetadata", onFirstMeta);
-      video.removeEventListener("loadedmetadata", onSkipMeta);
-      video.removeEventListener("timeupdate", onSkipTick);
       fader.dispose();
       // 先通知上层把 portal 里的角标摘掉，再销毁 ArtPlayer：反过来的话 React
       // 会往一个已经被 remove() 的节点里做移除。

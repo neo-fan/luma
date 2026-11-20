@@ -57,17 +57,32 @@ describe("skip outro notice stays inside the player", () => {
   });
 });
 
-describe("intro countdown waits for the new episode to actually play", () => {
-  it("arms instead of starting when the picture is not there yet", () => {
-    // 换集后窗口态在 loadedmetadata 就到（此时还是上一集的静止帧），
-    // 立刻显示倒计时会读成「跳过片头还是上一集的」。
-    expect(hook).toContain("armedRef.current = kind;");
-    expect(hook).toContain("if (readyRef.current()) {");
-    // 待命期间的轮询：出画即起跑，不必等下一次窗口翻转。
-    expect(hook).toContain("if (!readyRef.current()) {");
+describe("intro countdown is driven by the video, not by state edges", () => {
+  it("starts from the player's own playback events", () => {
+    // 以前靠「窗口态翻转」判边沿：换集时新旧两集都在片头里，true→true 不算边沿，
+    // 整集不跳（第 34/35 集实测）。现在只问一件事——这一集此刻播到哪儿了。
+    expect(hook).toContain('video.addEventListener("playing", check);');
+    expect(hook).toContain('video.addEventListener("timeupdate", check);');
+    expect(hook).toContain("shouldSkipIntro(curMs, introMs)");
+    expect(hook).toContain("shouldSkipOutro(curMs, durMs, outroMs)");
+    // 边沿判定函数与它依赖的窗口态上报一起下线了，别再长回来。
+    expect(hook).not.toContain("shouldAutoSkipPrompt");
+    expect(engine).not.toContain("onSkipState");
   });
 
-  it("treats a not-yet-playing episode as not ready", () => {
-    expect(page).toMatch(/!v\.paused && v\.readyState >= 3/);
+  it("prompts at most once per episode, and never when the switch is off", () => {
+    expect(hook).toContain("doneRef.current = { intro: false, outro: false };");
+    expect(hook).toContain("if (pendingRef.current) {");
+    expect(hook).toContain("if (!video || !enabled || (introMs <= 0 && outroMs <= 0)) {");
+    // 本集「提示过没有」跟着媒体身份复位：换集/换源/实例重建都要重来一次。
+    expect(hook).toContain("}, [mediaKey, attachSignal, cancel]);");
+  });
+});
+
+describe("auto next never overrides a pending pick", () => {
+  it("refuses to advance while the user's selection has not landed", () => {
+    const at = page.indexOf("const advanceToNext = useCallback");
+    expect(at).toBeGreaterThan(-1);
+    expect(page.slice(at, at + 400)).toContain("if (display !== committed) {");
   });
 });

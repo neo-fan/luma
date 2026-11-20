@@ -221,38 +221,3 @@ export const AUTO_SKIP_COUNTDOWN_S = 5;
 export function countdownSeconds(remainingMs: number): number {
   return Math.max(0, Math.ceil(remainingMs / 1000));
 }
-
-/** `useAutoSkipPrompt` 用来判定「刚刚进入某个窗口」的最小窗口快照。 */
-export interface SkipWindowFlags {
-  introMs: number;
-  outroMs: number;
-  inIntro: boolean;
-  inOutro: boolean;
-}
-
-/**
- * 这次窗口态相对上一次，是否应当发起一次「自动跳过倒计时」。
- *
- * - 片头：`inIntro` 由 false（或首次报告 `prev=null`）翻到 true 即触发——新开一集
- *   从头播、进度落在片头里，正是要自动跳的场景。
- * - 片尾：只在**播放中真正进入**片尾窗口（`prev.inOutro` 确为 false 翻到 true）时
- *   触发；`prev=null` 的首次报告若已在片尾里（续播点本就接近结尾），**不**触发——
- *   那是「上次看到」的位置，不该被自动跳覆盖。
- *
- * 纯函数，无定时器 / 无副作用，便于单测。
- */
-export function shouldAutoSkipPrompt(
-  prev: SkipWindowFlags | null,
-  cur: SkipWindowFlags | null,
-): SkipKind | null {
-  if (!cur) {
-    return null;
-  }
-  if (cur.introMs > 0 && cur.inIntro && !prev?.inIntro) {
-    return "intro";
-  }
-  if (cur.outroMs > 0 && cur.inOutro && prev && !prev.inOutro) {
-    return "outro";
-  }
-  return null;
-}
