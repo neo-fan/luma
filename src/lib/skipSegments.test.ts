@@ -240,7 +240,7 @@ describe("shouldAutoSkipPrompt", () => {
     expect(shouldAutoSkipPrompt(null, cur({ inIntro: true }))).toBe("intro");
   });
 
-  it("倒计时秒数是 3（用户要求：3 秒内可取消）", () => {
-    expect(AUTO_SKIP_COUNTDOWN_S).toBe(3);
+  it("倒计时秒数是 5（慢源上 3 秒来不及看清/取消）", () => {
+    expect(AUTO_SKIP_COUNTDOWN_S).toBe(5);
   });
 });

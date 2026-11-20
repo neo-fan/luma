@@ -211,8 +211,11 @@ export function shouldSkipOutro(currentMs: number, durationMs: number, outro: nu
 /**
  * 自动跳过的提示倒计时秒数：配置了片头/片尾后，进入窗口时不立刻跳，而是给
  * 这么多秒的「即将自动跳过 · 可取消」提示，到点才跳。避免「没看清就被瞬移」。
+ *
+ * 5 秒：3 秒在慢源上刚好卡在「画面还在缓冲、提示已经消失」的缝里，来不及看清
+ * 也来不及取消。
  */
-export const AUTO_SKIP_COUNTDOWN_S = 3;
+export const AUTO_SKIP_COUNTDOWN_S = 5;
 
 /** 倒计时显示用：剩余毫秒向上取整到秒（0 = 该跳了）。 */
 export function countdownSeconds(remainingMs: number): number {

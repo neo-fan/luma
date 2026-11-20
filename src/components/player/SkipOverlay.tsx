@@ -2,7 +2,7 @@ import { createPortal } from "react-dom";
 import type { AutoSkipPending } from "../../hooks/useAutoSkipPrompt";
 
 /**
- * 片头/片尾自动跳过的轻提示：进入窗口只显「N 秒后跳过片头」，3 秒到点执行。
+ * 片头/片尾自动跳过的轻提示：进入窗口只显「N 秒后跳过片头」，5 秒到点执行。
  *
  * 不再有常驻的「跳过片头/片尾」按钮——窗口态由引擎上报，自动跳过已经覆盖了
  * 手动按钮的全部用途；取消后本次不跳，也不会留一个显眼的按钮占着画面。

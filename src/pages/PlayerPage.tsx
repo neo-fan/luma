@@ -555,6 +555,11 @@ export default function PlayerPage({
    * 是重复噪声（用户看到的是画面切走 + 顶部弹一条，两处同时动）。
    */
   const advanceToNext = useCallback(() => {
+    // 用户刚点了别的集、意图还没落地：自动接下一集以 `committed` 为基线算，
+    // 这时再跳会把用户的选择直接覆盖掉（实测点第 3 集，5 秒后被切到第 4 集）。
+    if (display !== committed) {
+      return false;
+    }
     if (!canPlayNext || !activeLine) {
       return false;
     }
@@ -568,7 +573,7 @@ export default function PlayerPage({
     engine.notice(`正在播放下一集${next ? `：${next.name}` : ""}`);
     goEpisode(1);
     return true;
-  }, [activeLine, canPlayNext, display.episodeIndex, engine, goEpisode, siteKey, vodId]);
+  }, [activeLine, canPlayNext, committed, display, engine, goEpisode, siteKey, vodId]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -758,7 +763,7 @@ export default function PlayerPage({
     engine.setSkipSettingTooltip(formatSkipSummary(skipConfig, skipEnabled));
   }, [skipConfig, skipEnabled, engine]);
 
-  // 自动跳过：进入片头/片尾窗口先给 3 秒可取消倒计时，到点才真正 seek。边沿判定与
+  // 自动跳过：进入片头/片尾窗口先给 5 秒可取消倒计时，到点才真正 seek。边沿判定与
   // 倒计时在 `useAutoSkipPrompt`；这里只给「执行跳转」的动作 + 媒体身份（换集/换源复位）。
   const doSkipIntro = () => {
     const v = videoRef.current;
@@ -772,6 +777,10 @@ export default function PlayerPage({
     }
   };
   const doSkipOutro = () => {
+    // 用户刚选了别的集：这一轮片尾倒计时作废，别用「下一集」覆盖他的选择。
+    if (pendingPick) {
+      return;
+    }
     // 有下一集就直接接：以前是 seek 到 duration-0.5 等 ended，流末尾不触发
     // ended（或视频刚好暂停）时会停在最后一帧，表现成「跳过片尾就暂停」。
     if (advanceToNext()) {
