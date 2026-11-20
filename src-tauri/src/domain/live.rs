@@ -224,6 +224,9 @@ pub async fn live_epg_warm(
             "epg url must be http(s)",
         ));
     }
+    // 与订阅导入同一个纠正点：用户手填 / 早期存下的畸形地址（`https://https://…`）
+    // 在这里一起治好，之后取数与缓存都用纠正后的地址。
+    let epg_url = crate::config::repair_url(&epg_url).unwrap_or(epg_url);
     load_epg_raw(state.inner(), &epg_url).await?;
     Ok(())
 }
@@ -246,6 +249,8 @@ pub async fn live_epg(
             "epg url must be http(s)",
         ));
     }
+    // 同 `live_epg_warm`：畸形地址在入口治好，取数与结果缓存都用纠正后的地址。
+    let epg_url = crate::config::repair_url(&epg_url).unwrap_or(epg_url);
 
     let raw = load_epg_raw(state.inner(), &epg_url).await?;
 

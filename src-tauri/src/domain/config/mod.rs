@@ -759,6 +759,7 @@ mod normalize;
 mod refresh;
 
 pub(crate) use derive::blocked_reason;
+pub(crate) use normalize::repair_url;
 pub use github::GhProxyState;
 
 #[cfg(test)]
