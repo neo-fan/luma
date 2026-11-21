@@ -236,11 +236,10 @@
   }
 }
 
+/* 列宽比详情页窄一档（播放页正文更宽、格子更多）。分段折叠后同时只铺一段，
+   高度由内容决定，不再给内部滚动——否则页面滚动和格子区滚动叠在一起。 */
 .player-episodes .episode-grid {
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  max-height: 300px;
-  overflow-y: auto;
-  padding-right: 4px;
 }
 
 /* 当前集：右上角一枚状态点（DSH 的 running dot 语义），文字留给读屏。

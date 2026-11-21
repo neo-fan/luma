@@ -8,6 +8,7 @@ import type { Navigate } from "../lib/nav";
 import { useProxiedImage } from "../hooks/useProxiedImage";
 import Empty from "../components/Empty";
 import EpisodeButton from "../components/EpisodeButton";
+import EpisodeGroups from "../components/EpisodeGroups";
 import ErrorBar from "../components/ErrorBar";
 import FavStar from "../components/FavStar";
 import Icon from "../components/Icon";
@@ -1019,16 +1020,18 @@ export default function DetailPage({
               </div>
 
               {line ? (
-                <div className="episode-grid">
-                  {episodes.map((item) => (
+                <EpisodeGroups
+                  items={episodes}
+                  focusIndex={seenEpisode?.index ?? null}
+                  renderItem={(item) => (
                     <EpisodeButton
                       key={`${item.episode.url}-${item.index}`}
                       name={item.episode.name}
                       seen={item === seenEpisode}
                       onClick={() => playEpisode(line, item.episode)}
                     />
-                  ))}
-                </div>
+                  )}
+                />
               ) : null}
               {episodes.length === 0 ? (
                 <Empty

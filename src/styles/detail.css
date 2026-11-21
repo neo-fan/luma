@@ -162,6 +162,78 @@
   gap: 8px;
 }
 
+/* 长剧集分段：段头一行 + 展开后的该段格子。段数不足两段时
+   `EpisodeGroups` 直接输出 `.episode-grid`，不会产生这些节点。 */
+.episode-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.episode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.episode-group__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--h-control);
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.episode-group__head:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.episode-group__head.is-open {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.episode-group__label {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「当前集在这段」：段收起时也能看出进度落在哪，不必逐段点开确认。 */
+.episode-group__here {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+}
+
+.episode-group__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.episode-group__caret {
+  margin-left: auto;
+  color: var(--faint);
+  transition: transform var(--dur) var(--ease);
+}
+
+.episode-group__head.is-open .episode-group__caret {
+  transform: rotate(180deg);
+}
+
 .episode {
   display: block;
   min-height: var(--h-control);

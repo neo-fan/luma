@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import EpisodeButton from "../EpisodeButton";
+import EpisodeGroups from "../EpisodeGroups";
 import IconButton from "../IconButton";
 import { episodePanelView } from "../../lib/catalogState";
 import type { CatalogStatus } from "../../lib/catalogState";
@@ -157,9 +158,17 @@ export default function EpisodePanel({
             </div>
           ) : null}
 
-          <div className="player-episodes__gridwrap">
-            <div className="episode-grid" aria-busy={loading || undefined}>
-              {visible.map(({ episode, index }) => {
+          <div className="player-episodes__gridwrap" aria-busy={loading || undefined}>
+            <EpisodeGroups
+              items={visible}
+              // 别的线路按同一序号定位（集数不够时夹到末集）：展开「对应集」那段，
+              // 换线路后默认看到的位置才不会跳回第一段。
+              focusIndex={
+                panelLine === lineIndex
+                  ? episodeIndex
+                  : Math.min(episodeIndex, episodes.length - 1)
+              }
+              renderItem={({ episode, index }) => {
                 const active = panelLine === lineIndex && index === episodeIndex;
                 const pending = !active &&
                   pendingPick !== null &&
@@ -167,9 +176,11 @@ export default function EpisodePanel({
                   pendingPick.episodeIndex === index;                // 对应集按**索引位置**判定（不靠集名，源之间集名常对不齐）：其它线路里
                 // 同序号那一集标灰点；该线路集数不够（索引越界）时夹到它的最后一集。
                 // 倒序只换展示顺序，`index` 仍是原索引，对应关系不变。
-                const corrIndex = Math.min(episodeIndex, episodes.length - 1);
                 const corresponding =
-                  !active && !pending && panelLine !== lineIndex && index === corrIndex;
+                  !active &&
+                  !pending &&
+                  panelLine !== lineIndex &&
+                  index === Math.min(episodeIndex, episodes.length - 1);
                 return (
                   <EpisodeButton
                     key={`${episode.url}-${index}`}
@@ -180,8 +191,8 @@ export default function EpisodePanel({
                     onClick={() => goToEpisode(panelLine, index)}
                   />
                 );
-              })}
-            </div>
+              }}
+            />
             {loading ? (
               <div className="player-episodes__loading" aria-hidden="true">
                 <span className="player-episodes__loading-spin" />
