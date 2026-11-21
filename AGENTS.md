@@ -70,8 +70,8 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 8. **真实配置 / 密钥不入库**：fixture 必须脱敏且只指向 `127.0.0.1`。
 9. **生产路径禁 `unwrap()`**（Rust 一律 `Result<T, AppError>`）；子进程超时必须进程级可强杀，退出用 Job Object 收尸。
 10. **不替工具链管中间产物**：cargo 管 `target/`、Vite 管 `.vite`；不要手删锁文件、不要设 `CARGO_INCREMENTAL=0`。人工只补环境变量。
-11. **清理与构建只走官方命令，禁止绕过、禁止手搓**：清理编译产物一律 `cargo clean`（可用 `--release` / `--dry-run` / `-p` 等官方选项），**严禁 `rm -rf` / `del` 手删 `target/`**；构建、启动、打包一律 `pnpm dev:app` / `tauri build` / `tauri icon`，**严禁用裸 `cargo build` 绕过**，也**禁止用 `CARGO_TARGET_DIR` 指向新目录、复制预编译产物、关调试信息（D8050 之类）等手搓命令绕开构建锁或环境限制**。
-12. **dev 后台常驻、CDP 探活、按名收尾**：`pnpm dev:app` 放后台跑并落盘日志，用 CDP `:9222` 探测状态，**禁止前台死等**（命令与五态判定见 `docs/DEVELOPMENT.md` §2.3）。dev 进程名是 `Luma_dev.exe`、安装版是 `Luma.exe`，停止直接 `Stop-Process -Name Luma_dev`；`cargo test` / `cargo check` / `check.py` 前必须先停 dev——`target` 锁与 `Luma_dev.exe`/`qjs-runner.exe` 的产物占用都会让构建失败，不等锁、不绕行。
+11. **清理与构建只走官方命令，禁止绕过、禁止手搓**：清理编译产物一律 `cargo clean`（可用 `--release` / `--dry-run` / `-p` 等官方选项），**严禁 `rm -rf` / `del` 手删 `target/`**；构建、启动、打包一律 `pnpm dev:app` / `tauri build` / `tauri icon`，**严禁用裸 `cargo build` 绕过**，也**禁止用 `CARGO_TARGET_DIR` 指向新目录、复制预编译产物、关调试信息（D8050 之类）等手搓命令绕开构建锁或环境限制**。锁被占用只有一条正路：先停 dev（第 12 条），再跑官方命令——**`CARGO_TARGET_DIR` 没有例外条款**，包括 agent 与 CI（`.gitignore` 里的根 `/target/` 仅为兜底忽略，不代表允许产生）。
+12. **dev 后台常驻、CDP 探活、按名收尾**：`pnpm dev:app` 放后台跑并落盘日志，用 CDP `:9222` 探测状态，**禁止前台死等**（命令与五态判定见 `docs/DEVELOPMENT.md` §2.3）。dev 进程名是 `Luma_dev.exe`、安装版是 `Luma.exe`，停止直接 `Stop-Process -Name Luma_dev`；`cargo test` / `cargo check` / `check.py` 前必须先停 dev——`target` 锁与 `Luma_dev.exe`/`qjs-runner.exe` 的产物占用都会让构建失败，不等锁、不绕行。**同一时刻只允许一棵源码树跑 dev**：`app.luma.dev` 数据目录、9979 反代、1420 Vite、9222 CDP 与 `Luma_dev` 单实例互斥体都是全局单值，复制工作树必然互抢；需要并行验证就换通道（`build:beta`），不要复制工作树。
 
 ## 编码与 Git 约定
 

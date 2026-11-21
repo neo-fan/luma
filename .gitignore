@@ -20,8 +20,9 @@ dist/
 #    注意：根 target/ 不会出现（非 workspace），无需忽略。
 src-tauri/target/
 src-tauri/gen/
-#    根 target/ 只在 Agent/CI 侧 cargo check/test 时出现（CARGO_TARGET_DIR 指向
-#    这里，避开 dev 进程持有的 src-tauri/target 锁），同样是可重建产物。
+#    根 target/ 不应出现：铁律 11 禁止用 CARGO_TARGET_DIR 绕开 dev 进程持有的
+#    src-tauri/target 锁，正确做法是先停 dev（铁律 12）再用官方命令。这条忽略
+#    规则只作兜底，防止历史残留或误配置把中间产物提交进来。
 /target/
 
 #    qjs-runner 是独立 crate，Cargo 会在自己目录产出 target/（prepare_runtime.py
