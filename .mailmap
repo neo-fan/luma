@@ -1,0 +1,9 @@
+# 提交身份归并表（git 用它统一 log / shortlog 里的作者显示）。
+#
+# 规范身份：`Luma <neo.fan2165@gmail.com>`——仓库 483 条历史提交都用这个地址，
+# GPG 密钥 UID 也已包含它，保持单一来源，不做历史重写。
+# Gmail 忽略本地部分的点号，`neofan.2165@` 与 `neo.fan2165@` 是同一个信箱，
+# 但 GitHub 的签名校验按字符串精确匹配，所以只认一种写法。
+Luma <neo.fan2165@gmail.com> <neofan.2165@gmail.com>
+Luma <neo.fan2165@gmail.com> luma <neofan.2165@gmail.com>
+Luma <neo.fan2165@gmail.com> luma <neo.fan2165@gmail.com>
