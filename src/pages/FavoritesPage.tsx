@@ -7,7 +7,8 @@ import PlayButton from "../components/PlayButton";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
-import { detailTargetFor } from "../lib/playbackTarget";
+import { detailTargetFor, vodSeedFromRef } from "../lib/playbackTarget";
+import { putDetailSeed } from "../lib/handoff";
 import { usePageState } from "../lib/usePageState";
 import { sameTitle } from "../lib/format";
 import { notify } from "../lib/notify";
@@ -38,6 +39,13 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
   const [reload, setReload] = useState(0);
+
+  /** 进详情前把收藏行的片名/封面交出去，详情页首帧不用等 detailContent。 */
+  const openDetail = (item: FavoriteItem) => {
+    const target = detailTargetFor(item, historyRows);
+    putDetailSeed(target.siteKey, vodSeedFromRef(item, target));
+    navigate(target);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -172,7 +180,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
               <div className="fav-item" key={`${item.siteKey}-${item.vodId}`}>
                 <PlayButton
                   label="播放"
-                  onPlay={() => navigate(detailTargetFor(item, historyRows))}
+                  onPlay={() => openDetail(item)}
                 />
                 <VodCard
                   title={item.name}
@@ -181,7 +189,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
                   resolution={resolutions[`${item.siteKey}:${item.vodId}`]}
                   sub={item.siteName}
                   doubanTitle={item.name}
-                  onOpen={() => navigate(detailTargetFor(item, historyRows))}
+                  onOpen={() => openDetail(item)}
                 />
                 {/* 已收藏用实心金星表示，点它即取消——和详情页那颗星是同一套语言，
                   比一个「×」更能说明「这条已经在收藏里」。 */}

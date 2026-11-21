@@ -32,6 +32,7 @@ import { recallCard } from "../lib/cardIndex";
 import { classifyFailure } from "../lib/failureReason";
 import { noDetailSources } from "../lib/noDetailSource";
 import { usePageState } from "../lib/usePageState";
+import { clearDetailSeed, peekDetailSeed, putPlaySeed } from "../lib/handoff";
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
@@ -68,13 +69,22 @@ export default function DetailPage({
 }: DetailPageProps) {
   const detailKey = cacheKeys.detail(siteKey, vodId);
   /**
-   * 播放页返回时组件会重新挂载：先从数据缓存 / UI 快照直出，命中就完全不发
-   * IPC，也不会闪一下 Spinner。线路、筛选词、倒序、简介展开状态一并保留。
+   * 首帧优先用「上一页交过来的实体」（列表/搜索/收藏/历史页都已经有片名、海报、
+   * 年份），其次才是数据缓存（播放页返回时命中）。两者都没有才出骨架等请求。
+   *
+   * 只用 `peek`：dev StrictMode 会把初始化器跑两次，消费式读取第二次就空了；
+   * 清除放在下面的 effect 里。
    */
   const [vod, setVod] = usePageState<VodInfo | null>(
     `${detailKey}:vod`,
-    peekFresh<VodInfo[]>(detailKey, CACHE_TTL.detail)?.[0] ?? null,
+    peekDetailSeed(siteKey, vodId) ??
+      peekFresh<VodInfo[]>(detailKey, CACHE_TTL.detail)?.[0] ??
+      null,
   );
+  useEffect(() => {
+    // 首帧已经吃下这份交接，之后以请求结果为准（同片重复进入也不会拿到旧值）。
+    clearDetailSeed(siteKey, vodId);
+  }, [siteKey, vodId]);
   /**
    * 空详情时回填的卡片：发现型源（豆瓣[py] 等）的 `detailContent` 恒为空，
    * 但列表卡片自带海报、评分、年份——那是这个源能给出的全部信息。不显示就
@@ -443,6 +453,11 @@ export default function DetailPage({
   }, [lines, resume]);
 
   const playEpisode = (target: PlayLine, episode: Episode) => {
+    // 详情页已经握着完整实体（含播放串）：交给播放页算线路与集定位，首帧直接成型，
+    // 只剩「问源要地址」这一步真正需要等网络。
+    if (vod) {
+      putPlaySeed(siteKey, vod, episode.url);
+    }
     navigate({
       name: "player",
       siteKey,

@@ -7,6 +7,7 @@ import {
   SITE_CACHE_KEY,
 } from "../lib/storageKeys";
 import { narrowLives, narrowSites } from "../lib/invoke";
+import type { PlayTarget } from "../lib/nav";
 import type { LiveSource, Site } from "../types/luma";
 
 /** 首页选中的站点：手动切换与「空站自动顺延」都写这里，跨重启/重开保留。 */
@@ -94,16 +95,12 @@ interface AppStore {
   setMediaPlaying: (kind: "vod" | "live", playing: boolean) => void;
 }
 
-/** 播放会话（与路由 state 同形，AppShell 常驻渲染播放页时用它当 props）。 */
-export interface PlaySession {
-  siteKey: string;
-  vodId: string;
-  vodName: string;
-  playUrl: string;
-  episodeName: string;
-  playFrom?: string;
-  failoverKey?: string;
-}
+/**
+ * 播放会话（与路由载荷同形，AppShell 常驻渲染播放页时用它当 props）。
+ *
+ * 字段定义只有一处（`PlayTarget`）：路由、导航载荷、常驻层共用，加字段不用改三遍。
+ */
+export type PlaySession = PlayTarget;
 
 /**
  * 跨页共享的客户端状态（Zustand）。

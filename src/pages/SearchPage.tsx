@@ -13,6 +13,7 @@ import { api, errorMessage, toAppError } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
 import { rankByTitle, titleMatchScore } from "../lib/format";
 import { favoriteFirst } from "../lib/siteFavorites";
+import { putDetailSeed } from "../lib/handoff";
 import {
   clearSearchHistory,
   pushSearchHistory,
@@ -891,15 +892,17 @@ export default function SearchPage({
                 pic={hit.vod.vod_pic}
                 remarks={hit.vod.vod_remarks}
                 sub={hit.siteName}
-                onOpen={() =>
+                onOpen={() => {
+                  // 搜索结果已经带着片名/海报/年份/豆瓣 id：直接交给详情页做首帧。
+                  putDetailSeed(hit.siteKey, hit.vod);
                   navigate({
                     name: "detail",
                     siteKey: hit.siteKey,
                     vodId: String(hit.vod.vod_id),
                     // 带上片名：详情还没回来就能启动后台换源预取。
                     title: hit.vod.vod_name,
-                  })
-                }
+                  });
+                }}
               />
             ))}
           </div>

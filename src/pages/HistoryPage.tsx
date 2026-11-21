@@ -10,7 +10,8 @@ import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { historyCoverMeta, historySubtitle } from "../lib/history";
-import { detailTargetFor } from "../lib/playbackTarget";
+import { detailTargetFor, vodSeedFromRef } from "../lib/playbackTarget";
+import { putDetailSeed } from "../lib/handoff";
 import { log } from "../lib/logger";
 import { usePageState } from "../lib/usePageState";
 import type { HistoryItem } from "../types/luma";
@@ -115,6 +116,13 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
    */
   const shown = items.filter((item) => item.siteKey !== "live");
 
+  /** 进详情前把这一行的片名/封面交出去，详情页首帧不用等 detailContent。 */
+  const openDetail = (item: HistoryItem) => {
+    const target = detailTargetFor(item, items);
+    putDetailSeed(target.siteKey, vodSeedFromRef(item, target));
+    navigate(target);
+  };
+
   const clearAll = () => {
     if (shown.length === 0) {
       return;
@@ -204,7 +212,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
                     label={
                       watched > 0 ? `继续播放（已看 ${watched}%）` : "播放"
                     }
-                    onPlay={() => navigate(detailTargetFor(item, items))}
+                    onPlay={() => openDetail(item)}
                   />
                   <VodCard
                     title={item.name}
@@ -214,7 +222,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
                     coverMeta={meta}
                     hint={historySubtitle(item)}
                     doubanTitle={item.name}
-                    onOpen={() => navigate(detailTargetFor(item, items))}
+                    onOpen={() => openDetail(item)}
                   />
                   <button
                     type="button"

@@ -26,6 +26,7 @@ import { clearSourceCache, setSourceCacheScope } from "./lib/sourceCache";
 import { noDetailSources } from "./lib/noDetailSource";
 import { forgetCards } from "./lib/cardIndex";
 import { clearPageStates } from "./lib/usePageState";
+import { clearAllHandoffs } from "./lib/handoff";
 import { clearCoverAttempts } from "./lib/coverBackfill";
 import { clearDoubanMetaCache } from "./lib/douban";
 import { clearLiveGroups } from "./lib/liveChannels";
@@ -93,6 +94,7 @@ function resetSessionCaches(
   clearDataCache();
   clearSourceCache();
   clearPageStates();
+  clearAllHandoffs();
   clearCoverAttempts();
   // 卡片索引按 siteKey 存，换配置后旧的 siteKey 再也不会被访问，留着只是漏内存。
   forgetCards();

@@ -20,6 +20,7 @@ import {
   filterDefsFor,
 } from "../lib/categoryFilters";
 import { CACHE_TTL } from "../lib/queryClient";
+import { putDetailSeed } from "../lib/handoff";
 import { notify } from "../lib/notify";
 import { leafClasses } from "../lib/categories";
 import { usableHomeSites } from "../lib/format";
@@ -519,6 +520,8 @@ export default function HomePage({
   /** 推荐区头图/横排与分类区卡片共用同一个进详情入口。 */
   const openVod = useCallback(
     (vod: VodInfo) => {
+      // 手上的卡片直接交给详情页做首帧，落地不必先等 detailContent。
+      putDetailSeed(siteKey, vod);
       navigate({
         name: "detail",
         siteKey,

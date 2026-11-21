@@ -1,4 +1,5 @@
 import { sameTitle } from "./format";
+import type { VodInfo } from "../types/luma";
 
 /**
  * 播放数据单源解析（收藏 / 历史两个入口共用的真相）。
@@ -48,4 +49,26 @@ export function detailTargetFor<T extends PlayIdentity>(
 ): DetailTarget {
   const record = resolvePlayRecord(entry, history);
   return { name: "detail", siteKey: record.siteKey, vodId: record.vodId, title: record.name };
+}
+
+/**
+ * 收藏 / 历史行 → 详情实体（用于进详情前的一次性数据交接）。
+ *
+ * 行里本来就有片名、封面、备注，足够让详情页首帧出画面；`vod_id` 用**目标**那条
+ * （`resolvePlayRecord` 可能把入口换到另一条源上）。播放串没有，派生不出线路——
+ * 那部分仍由详情请求补。
+ */
+export function vodSeedFromRef(
+  ref: { name: string; pic?: string; remarks?: string },
+  target: DetailTarget,
+): VodInfo {
+  return {
+    vod_id: target.vodId,
+    vod_name: target.title || ref.name,
+    vod_pic: ref.pic ?? "",
+    vod_remarks: ref.remarks,
+    // 收藏/历史行没有播放串：空串 = 「还没有目录」，详情请求到达后补。
+    vod_play_from: "",
+    vod_play_url: "",
+  };
 }

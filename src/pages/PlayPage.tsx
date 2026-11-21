@@ -21,6 +21,8 @@ import { api, errorMessage } from "../lib/invoke";
 import { historyCoverMeta, historySubtitle } from "../lib/history";
 import { log } from "../lib/logger";
 import { usePageState } from "../lib/usePageState";
+import { putDetailSeed } from "../lib/handoff";
+import { vodSeedFromRef, type DetailTarget } from "../lib/playbackTarget";
 import type { Navigate } from "../lib/nav";
 import type { HistoryItem } from "../types/luma";
 
@@ -92,12 +94,14 @@ export default function PlayPage({ navigate }: PlayPageProps) {
   const rest = shown.slice(1, 13);
 
   const openDetail = (item: HistoryItem) => {
-    navigate({
+    const target: DetailTarget = {
       name: "detail",
       siteKey: item.siteKey,
       vodId: item.vodId,
       title: item.name,
-    });
+    };
+    putDetailSeed(target.siteKey, vodSeedFromRef(item, target));
+    navigate(target);
   };
 
   const resume = (item: HistoryItem) => {

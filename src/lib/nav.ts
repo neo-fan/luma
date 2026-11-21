@@ -16,22 +16,29 @@ export type View =
   | { name: "home" }
   | { name: "search"; /** 从空详情页「全站搜索此片」跳进来时带上片名，落地即搜 */ keyword?: string }
   | { name: "detail"; siteKey: string; vodId: string; /** 搜索/列表已知片名，用于提前预取换源候选 */ title?: string }
-  | {
-      name: "player";
-      siteKey: string;
-      vodId: string;
-      vodName: string;
-      playUrl: string;
-      episodeName: string;
-      /** TVBox 线路名（vod_play_from），playerContent 的第一个参数。 */
-      playFrom?: string;
-      /** 自动换线记账本的 key（首轮=原片名，跨站跳转透传），缺省用 vodName。 */
-      failoverKey?: string;
-    }
+  | ({ name: "player" } & PlayTarget)
   | { name: "live" }
   | { name: "favorites" }
   | { name: "history" }
   | { name: "settings" };
+
+/**
+ * 一次播放会话的身份（路由 / 导航载荷 / 常驻播放器共用一份定义）。
+ *
+ * 以前这三处各写一遍字段，加一个 `failoverKey` 要改三个地方、漏一个就丢字段；
+ * 现在只在这里加，`PlayerNavState` 与 `PlaySession` 都是它的别名。
+ */
+export interface PlayTarget {
+  siteKey: string;
+  vodId: string;
+  vodName: string;
+  playUrl: string;
+  episodeName: string;
+  /** TVBox 线路名（vod_play_from），playerContent 的第一个参数。 */
+  playFrom?: string;
+  /** 自动换线记账本的 key（首轮=原片名，跨站跳转透传），缺省用 vodName。 */
+  failoverKey?: string;
+}
 
 /** replace=true 时替换栈顶，用于同页切换剧集，避免返回键回退到上一集。 */
 export type Navigate = (view: View, replace?: boolean) => void;
@@ -42,12 +49,12 @@ export interface DetailNavState {
 }
 
 /** player 路由随 history.state 携带的载荷（大字段不进 URL）。 */
-export interface PlayerNavState {
-  vodName: string;
-  playUrl: string;
-  episodeName: string;
-  playFrom?: string;
-  failoverKey?: string;
+export type PlayerNavState = PlayTarget;
+
+/** 从 `View.player` 取出会话身份（去掉 `name`），单一映射点。 */
+export function toPlayTarget(view: { name: "player" } & PlayTarget): PlayTarget {
+  const { siteKey, vodId, vodName, playUrl, episodeName, playFrom, failoverKey } = view;
+  return { siteKey, vodId, vodName, playUrl, episodeName, playFrom, failoverKey };
 }
 
 /** View → react-router 目标（pathname + search + state）。 */
@@ -84,17 +91,10 @@ export function viewToLocation(view: View): AppLocation {
         state: { title: view.title } satisfies DetailNavState,
       };
     case "player": {
-      const state: PlayerNavState = {
-        vodName: view.vodName,
-        playUrl: view.playUrl,
-        episodeName: view.episodeName,
-        playFrom: view.playFrom,
-        failoverKey: view.failoverKey,
-      };
       return {
         pathname: `/player/${encodeURIComponent(view.siteKey)}/${encodeURIComponent(view.vodId)}`,
         search: "",
-        state,
+        state: toPlayTarget(view),
       };
     }
   }
