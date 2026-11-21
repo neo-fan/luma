@@ -14,7 +14,15 @@ interface PlayerAboutProps {
   episodeLabel?: string;
   /** 豆瓣补全结果：命中时元数据用豆瓣，源站只负责播放链路。 */
   douban?: DoubanMeta | null;
-  /** 直播频道没有「换源」概念，传 undefined 即不渲染该按钮。 */
+  /**
+   * 目录还在读取：简介区显示「正在读取」，而不是一个没有封面、没有简介的空壳。
+   * 这与播放地址解析无关——地址失败时这里仍可能正在读，或已经读到。
+   */
+  loading?: boolean;
+  /** 目录读取失败的原因：在简介位显示，并给一个「重试」出口。 */
+  detailError?: string;
+  onRetryDetail?: () => void;
+  /** 换源：与剧集列表是否有数据无关，必须始终可用（数据不在时它是唯一出路）。 */
   onSwitchSource?: () => void;
   /** 外部播放开关关闭时由调用方传 undefined，按钮整体不渲染。 */
   onPlayExternal?: () => void;
@@ -33,19 +41,35 @@ export default function PlayerAbout({
   lineName,
   episodeLabel,
   douban,
+  loading = false,
+  detailError = "",
+  onRetryDetail,
   onSwitchSource,
   onPlayExternal,
 }: PlayerAboutProps) {
+  /**
+   * 简介位的兜底文案分三种：读取中 / 读取失败 / 真有详情但源站没写简介。
+   * 早先统一留白，用户无法区分「还没到」和「没了」。
+   */
+  const descriptionFallback = loading
+    ? "正在读取影片详情…"
+    : detailError
+      ? `影片信息获取失败：${detailError}`
+      : undefined;
   return (
     <VodMetaHero
       variant="player"
       vod={vod}
       douban={douban}
       fallbackName={fallbackName}
-      posterPlaceholder="无封面"
+      posterPlaceholder={loading ? "读取中" : detailError ? "未获取" : "无封面"}
+      descriptionFallback={descriptionFallback}
       titleActions={
-        onSwitchSource || onPlayExternal ? (
+        onSwitchSource || onPlayExternal || (detailError && onRetryDetail) ? (
           <>
+            {detailError && onRetryDetail ? (
+              <IconButton name="refresh" label="重试读取详情" onClick={onRetryDetail} />
+            ) : null}
             {onSwitchSource ? (
               <IconButton name="swap" label="换源" onClick={onSwitchSource} />
             ) : null}

@@ -30,6 +30,7 @@ import { pickMatchingEpisode } from "../../lib/sources";
 import type { SourceOption } from "../../lib/sources";
 import { locateEpisode, seedFromCachedDetail } from "../../lib/episodeSeed";
 import type { EpisodeSeed } from "../../lib/episodeSeed";
+import type { CatalogStatus } from "../../lib/catalogState";
 import { invalidateEpisodePlayCache } from "../../lib/episodePlayCache";
 import { peekPlaySeed } from "../../lib/handoff";
 import { resolveEpisodePlay } from "./episodePlayResolve";
@@ -93,6 +94,17 @@ export interface PlaybackController {
   committed: PlaybackTarget;
   lines: PlayLine[];
   vod: VodInfo | null;
+  /**
+   * 目录数据链的独立状态（简介 / 线路 / 剧集）。
+   *
+   * 与播放地址解析**完全无关**：解析失败不影响 `catalogStatus`，目录失败也不
+   * 影响播放。UI 必须分开消费这两条链，否则又回到「地址拿不到 → 底下全没了」。
+   */
+  catalogStatus: CatalogStatus;
+  /** 目录读取的失败原因（`catalogStatus === "error"` 时有值，可直接给用户看）。 */
+  catalogError: string;
+  /** 重读目录：绕过 10 分钟详情缓存，用户手动重试 / 换源失败回退时用。 */
+  retryCatalog: () => void;
   panelLine: number;
   setPanelLine: (value: number) => void;
   phase: PlaybackPhase;
@@ -171,6 +183,11 @@ export function usePlaybackController(
   const [state, dispatch] = useReducer(playbackReducer, initialPlaybackState);
 
   const [vod, setVod] = useState<VodInfo | null>(seed?.vod ?? null);
+  /** 目录数据链状态：与 `resolved`（播放地址）无关，各自失败各自表达。 */
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(
+    seed ? "ready" : "loading",
+  );
+  const [catalogError, setCatalogError] = useState("");
   const [panelLine, setPanelLineState] = useState(seed?.locus.line ?? 0);
   const [phase, setPhase] = useState<PlaybackPhase>("idle");
   const [nextLineBusy, setNextLineBusy] = useState(false);
@@ -263,53 +280,103 @@ export function usePlaybackController(
     resumeIntentRef.current = Boolean(video && !video.paused && !video.ended);
   }, [videoRef]);
 
+  /**
+   * 目录代次：换源 / 手动重试 / 卸载都会递增，在途的旧响应回来时直接丢弃，
+   * 不让「上一次的失败」覆盖「这一次的加载中」。
+   */
+  const catalogGen = useRef(0);
+
+  /**
+   * 读目录（详情 + 线路 + 剧集）。
+   *
+   * 这是**独立数据链**：不等待播放地址、不因播放失败而中止、失败也不清空
+   * 用户已能看到的东西（只有真正换源时才整体替换）。失败必须留下
+   * `catalogStatus="error"` + 原因，让 UI 给出「重试 / 换源」两个出口——
+   * 早先这里 catch 后静默 `setVod(null)`，用户看到的就是「简介和换集凭空消失」。
+   */
+  const loadCatalog = useCallback(async (force: boolean) => {
+    const d = depsRef.current;
+    if (d.siteKey === "live") {
+      setVod(null);
+      dispatch({ type: "catalog", lines: [] });
+      setCatalogStatus("ready");
+      setCatalogError("");
+      return;
+    }
+    const gen = ++catalogGen.current;
+    setCatalogStatus("loading");
+    setCatalogError("");
+    try {
+      const list = await api.detail(d.siteKey, d.vodId, force);
+      if (gen !== catalogGen.current) {
+        return;
+      }
+      const first = list && list.length > 0 ? list[0] : null;
+      setVod(first);
+      const lines = first ? parsePlayLines(first.vod_play_from, first.vod_play_url) : [];
+      const locus = locateEpisode(lines, d.playUrl, d.episodeName, d.playFrom);
+      dispatch({
+        type: "reset",
+        target: {
+          siteKey: d.siteKey,
+          siteName: d.siteName ?? "",
+          vodId: d.vodId,
+          vodName: d.vodName,
+          lines,
+          lineIndex: locus.line,
+          episodeIndex: locus.episode,
+        },
+      });
+      setPanelLineState(locus.line);
+      if (first && lines.length > 0) {
+        setCatalogStatus("ready");
+        return;
+      }
+      // 有详情没线路 / 干脆空 list：这一源给不出可播目录。它不是播放错误，
+      // 但也必须可见（否则简介区是空壳、选集区是空白，用户无从判断）。
+      setCatalogStatus("error");
+      setCatalogError(first ? "该源没有返回可播放的剧集" : "没有取到影片信息");
+    } catch (err) {
+      if (gen !== catalogGen.current) {
+        return;
+      }
+      const message = errorMessage(err);
+      setVod(null);
+      dispatch({ type: "catalog", lines: [] });
+      setCatalogStatus("error");
+      setCatalogError(message);
+      log.warn("player catalog failed", {
+        siteKey: d.siteKey,
+        vodId: d.vodId,
+        message,
+      });
+    }
+  }, []);
+
+  /** 手动重试：`force` 绕过 10 分钟详情缓存（缓存里那份可能正是失败前的空结果）。 */
+  const retryCatalog = useCallback(() => {
+    void loadCatalog(true);
+  }, [loadCatalog]);
+
   // 目录拉取：组件按 siteKey:vodId:playUrl 重建，这里首次挂载跑一次即可。
   useEffect(() => {
     if (siteKey === "live") {
       setVod(null);
       dispatch({ type: "catalog", lines: [] });
+      setCatalogStatus("ready");
       return;
     }
     if (seed) {
       // 首帧种子已把 lines / 定位写进初始 state，无需再读一次同一条缓存。
       setVod(seed.vod);
+      setCatalogStatus("ready");
+      setCatalogError("");
       return;
     }
-    let alive = true;
-    void (async () => {
-      try {
-        const list = await api.detail(siteKey, vodId);
-        if (!alive) {
-          return;
-        }
-        const first = list && list.length > 0 ? list[0] : null;
-        setVod(first);
-        const lines = first
-          ? parsePlayLines(first.vod_play_from, first.vod_play_url)
-          : [];
-        const locus = locateEpisode(lines, playUrl, episodeName, playFrom);
-        dispatch({
-          type: "reset",
-          target: {
-            siteKey,
-            siteName,
-            vodId,
-            vodName,
-            lines,
-            lineIndex: locus.line,
-            episodeIndex: locus.episode,
-          },
-        });
-        setPanelLineState(locus.line);
-      } catch {
-        if (alive) {
-          setVod(null);
-          dispatch({ type: "catalog", lines: [] });
-        }
-      }
-    })();
+    void loadCatalog(false);
     return () => {
-      alive = false;
+      // 卸载 / 换身份：在途结果作废，避免旧源的目录写进新页面。
+      catalogGen.current += 1;
     };
     // seed 是挂载快照；sites/siteName 变化不该重拉详情。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -512,11 +579,13 @@ export function usePlaybackController(
       d.setSwitchTip(`正在切换到「${option.siteName}」…`);
 
       let nextLines: PlayLine[] = [];
+      let nextVod: VodInfo | null = null;
       let matched: ReturnType<typeof pickMatchingEpisode> | null = null;
       try {
         const list = await api.detail(option.siteKey, option.vodId);
-        nextLines = list && list[0]
-          ? parsePlayLines(list[0].vod_play_from, list[0].vod_play_url)
+        nextVod = list && list[0] ? list[0] : null;
+        nextLines = nextVod
+          ? parsePlayLines(nextVod.vod_play_from, nextVod.vod_play_url)
           : [];
         matched = pickMatchingEpisode(nextLines, {
           name: current.lines[current.lineIndex]?.episodes[current.episodeIndex]?.name ?? episodeName,
@@ -554,6 +623,12 @@ export function usePlaybackController(
         episodeIndex: match.index,
       };
       dispatch({ type: "intent", target: nextTarget });
+      // 换源也换了「简介 / 封面 / 演职员」的归属：不跟着换，信息卡会一直显示
+      // 上一个源的元数据（片名相同、简介与封面却是别人的）。
+      catalogGen.current += 1;
+      setVod(nextVod);
+      setCatalogStatus("ready");
+      setCatalogError("");
       // 面板线路立即跟到新源：display 已换新源 lines，panelLine 若仍是旧索引
       // 会越界（面板显示空或错线）。落地 commit 时再写一次，幂等。
       setPanelLineState(lineIndex);
@@ -666,6 +741,9 @@ export function usePlaybackController(
     committed,
     lines: display.lines,
     vod,
+    catalogStatus,
+    catalogError,
+    retryCatalog,
     panelLine,
     setPanelLine,
     phase,

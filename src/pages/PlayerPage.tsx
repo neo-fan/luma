@@ -207,6 +207,10 @@ export default function PlayerPage({
     display,
     committed,
     lines,
+    vod,
+    catalogStatus,
+    catalogError,
+    retryCatalog,
     panelLine,
     setPanelLine,
     switching,
@@ -218,7 +222,6 @@ export default function PlayerPage({
     switchSource,
     nextLine,
   } = controller;
-  const vod = controller.vod;
 
   /** 显示真源：乐观意图优先，否则已落地。 */
   const activeSiteKey = display.siteKey;
@@ -887,12 +890,20 @@ export default function PlayerPage({
           lineName={activeLine?.name}
           episodeLabel={nowEpisode || undefined}
           douban={doubanMeta}
+          loading={catalogStatus === "loading"}
+          detailError={catalogStatus === "error" ? catalogError : ""}
+          onRetryDetail={retryCatalog}
+          // 换源入口必须独立于剧集数据存在：目录没取到时它是唯一可用的出路，
+          // 不能跟着选集区一起消失（「地址拿不到 → 换源也没了」就是这么做出来的）。
+          onSwitchSource={sites.length > 0 ? () => setShowSources(true) : undefined}
           onPlayExternal={
             EXTERNAL_PLAY_ENABLED ? () => void playExternal() : undefined
           }
         />
 
-        {lines.length > 0 ? (
+        {/* 选集区同样按目录状态独立渲染：加载中有占位、失败有原因与重试，
+            不再「没有剧集就整块消失」——那会让用户以为换集功能坏了。 */}
+        {lines.length > 0 || catalogStatus !== "ready" ? (
           <EpisodePanel
             lines={lines}
             panelLine={panelLine}
@@ -900,9 +911,12 @@ export default function PlayerPage({
             episodeIndex={display.episodeIndex}
             pendingPick={pendingPick}
             loading={panelBusy}
+            status={catalogStatus}
+            error={catalogError}
+            onRetry={retryCatalog}
             setPanelLine={setPanelLine}
             goToEpisode={selectEpisode}
-            onSwitchSource={() => setShowSources(true)}
+            onSwitchSource={sites.length > 0 ? () => setShowSources(true) : undefined}
           />
         ) : null}
 

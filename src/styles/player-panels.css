@@ -177,6 +177,33 @@
   margin: 10px 0 0;
 }
 
+/* 目录没取到时的空态（加载中 / 失败）。选集区保留原有高度节奏，不让页面
+   因为「没有剧集」而塌成一块空白——那会被读成「功能没了」。 */
+.player-episodes__state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel-2, transparent);
+}
+
+.player-episodes__state .tip {
+  margin: 0;
+}
+
+.player-episodes__state--error .tip {
+  color: var(--text-soft);
+}
+
+.player-episodes__state-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* 换源/换集在途：选集区整体罩一层轻加载（半透明 + 小 spinner），与播放器画面的
    「加载中」同时出现——两处都能看到「这一下已生效」。pointer-events:none：面板
    保持可点，再点一次就是新意图（令牌会抢占旧解析）。 */
