@@ -159,9 +159,15 @@ function Start-Dev {
 
     # 启动器写盘，由它自己把 pnpm 输出重定向到日志；调用方**不带** -Redirect*，
     # 否则文件句柄会传给子进程，Bash 工具会一直等句柄关闭（实测挂满超时）。
+    #
+    # 清掉 shell 注入的代理变量：从带代理的终端启动时，Python sidecar 会继承
+    # HTTP(S)_PROXY，代理进程一退就变成「每个请求先撞一个拒绝连接的端口」，
+    # 全部源一起变慢直到 15s 超时。系统代理设置（注册表）仍由系统代理客户端
+    # 管理，这里只清环境变量这一层。
     $launcherPath = Join-Path $OutDir 'dev-launcher.ps1'
     $launcherBody = @"
 Set-Location '$Root'
+Remove-Item Env:HTTP_PROXY,Env:HTTPS_PROXY,Env:ALL_PROXY,Env:http_proxy,Env:https_proxy,Env:all_proxy -ErrorAction SilentlyContinue
 corepack pnpm dev:app 1> '$LogPath' 2> '$ErrPath'
 "@
     Set-Content -LiteralPath $launcherPath -Value $launcherBody -Encoding utf8
