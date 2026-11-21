@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
 import { ledgerSuccess } from "../lib/failoverLedger";
 import { resolutionFromVideo } from "../lib/resolution";
+import { episodeNumber } from "../lib/sources";
 import { api } from "../lib/invoke";
 import { parseSkipConfig, parseSkipEnabled, serializeSkipConfig } from "../lib/skipSegments";
 import type { SkipSegment } from "../lib/skipSegments";
@@ -27,8 +28,19 @@ export interface UsePlaybackHistoryOptions {
   lastMediaRef: MutableRefObject<{ positionMs: number; durationMs?: number }>;
   /** 封面 / 备注 / 站点名（详情晚到时由 5 秒节流写入补上）。 */
   historyMetaRef: MutableRefObject<{ pic: string; remarks: string; siteName: string }>;
-  /** 当前集名 / 线路名（随剧集列表异步确定，用 ref 不进 effect 依赖）。 */
-  historyLabelRef: MutableRefObject<{ episodeName: string; playFrom: string }>;
+  /** 当前集名 / 线路名 / 当前集源地址（随剧集列表异步确定，用 ref 不进 effect 依赖）。 */
+  historyLabelRef: MutableRefObject<{
+    episodeName: string;
+    playFrom: string;
+    /**
+     * 当前真正在播那一集的源地址。
+     *
+     * 原地换集不改路由，页面的 `playUrl` 参数只代表**进入时**那一集；用它写
+     * 历史会拼出「第 40 集的地址 + 第 37 集的集名」，详情页遂两集同时标
+     * 「上次看到」。所以写回一律取这里。
+     */
+    playUrl: string;
+  }>;
   /**
    * 立即写一次历史的通道：由页面创建并同时交给切换编排（换集/换源前 flush），
    * 这里在进度 effect 里挂上实现。外部持有是为了解开「编排要 flush、历史要
@@ -205,6 +217,7 @@ export function usePlaybackHistory({
       }
       lastWrite = now;
       knownResolution = resolutionFromVideo(video) || knownResolution;
+      const label = historyLabelRef.current;
       const item: HistoryItem = {
         siteKey: activeSiteKey,
         vodId: activeVodId,
@@ -212,9 +225,12 @@ export function usePlaybackHistory({
         pic: historyMetaRef.current.pic,
         remarks: historyMetaRef.current.remarks,
         siteName: historyMetaRef.current.siteName,
-        playUrl,
-        episodeName: historyLabelRef.current.episodeName,
-        playFrom: historyLabelRef.current.playFrom,
+        // 当前在播那一集的地址（不是进入播放页时的路由地址，见 ref 类型注释）。
+        playUrl: label.playUrl || playUrl,
+        episodeName: label.episodeName,
+        playFrom: label.playFrom,
+        // 语义集号：跨源续播按集号匹配，比集名「第37集 / 37 / EP37」稳。
+        episodeNumber: episodeNumber(label.episodeName) ?? undefined,
         resolution: knownResolution,
         // 0 = 这次写入没带倍速，宿主侧不会覆盖库里已有的值。
         rate: rememberedRateRef.current,

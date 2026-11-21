@@ -405,6 +405,34 @@ export default function DetailPage({
   }, [line, episodeQuery, reverse]);
 
   /**
+   * 「上次看到」一次只允许一格。
+   *
+   * 早先逐格做 `地址 || 集名` 的 OR 判定：历史一旦存成「第 40 集的地址 +
+   * 第 37 集的集名」（原地换集时把路由地址写进了历史），详情页会按地址命中
+   * 一集、按集名再命中一集，两格同时亮。现在先定唯一目标再渲染——集名（同
+   * 线路）优先，地址只作跨线路兜底。
+   */
+  const seenEpisode = useMemo(() => {
+    if (!resume || !line) {
+      return null;
+    }
+    if (resume.playFrom === line.name && resume.episodeName) {
+      const byName = episodes.find(
+        ({ episode }) => episode.name === resume.episodeName,
+      );
+      if (byName) {
+        return byName;
+      }
+    }
+    if (resume.playUrl) {
+      return (
+        episodes.find(({ episode }) => episode.url === resume.playUrl) ?? null
+      );
+    }
+    return null;
+  }, [resume, line, episodes]);
+
+  /**
    * 打开详情页就定位到「上次用的那条线路」：历史记录里存的是线路名
    * （`playFrom`），源调整线路顺序后按名字仍找得准。定位只在**进入 / 换源**
    * 时执行一次，之后用户手动点 chip 不会被拉回去。历史读取是本地 SQLite
@@ -928,23 +956,14 @@ export default function DetailPage({
 
               {line ? (
                 <div className="episode-grid">
-                  {episodes.map(({ episode, index }) => {
-                    // 地址可能被源换过 CDN，地址匹配不上时用「同线路 + 同集名」兜底。
-                    const seen = resume
-                      ? resume.playUrl === episode.url ||
-                        (!!resume.episodeName &&
-                          resume.playFrom === line.name &&
-                          resume.episodeName === episode.name)
-                      : false;
-                    return (
-                      <EpisodeButton
-                        key={`${episode.url}-${index}`}
-                        name={episode.name}
-                        seen={seen}
-                        onClick={() => playEpisode(line, episode)}
-                      />
-                    );
-                  })}
+                  {episodes.map((item) => (
+                    <EpisodeButton
+                      key={`${item.episode.url}-${item.index}`}
+                      name={item.episode.name}
+                      seen={item === seenEpisode}
+                      onClick={() => playEpisode(line, item.episode)}
+                    />
+                  ))}
                 </div>
               ) : null}
               {episodes.length === 0 ? (

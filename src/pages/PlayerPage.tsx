@@ -312,10 +312,14 @@ export default function PlayerPage({
    * 历史写入需要「当前线路名 / 当前集名」，用 ref 取值避免把 lines 放进
    * 历史 effect 依赖（那会重建监听并立刻写一次）。
    */
-  const historyLabelRef = useRef({ episodeName: "", playFrom: "" });
+  const historyLabelRef = useRef({ episodeName: "", playFrom: "", playUrl: "" });
   historyLabelRef.current = {
     episodeName: activeEpisodeName,
     playFrom: activeLine?.name || playFrom || "",
+    // 原地换集不改路由：路由里的 playUrl 只代表进入时那一集。写历史必须用
+    // 当前在播那一集的源地址，否则会存出「地址是第40集、集名是第37集」，
+    // 详情页按地址 + 集名各命中一次，两集同时标「上次看到」。
+    playUrl: activeEpisode?.url || playUrl,
   };
 
   /**
