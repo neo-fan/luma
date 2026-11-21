@@ -1,7 +1,7 @@
 # 发布流程（RELEASING）
 
 > 发版唯一入口。调试见 `docs/DEVELOPMENT.md`，日常维护/升级见 `docs/MAINTENANCE.md`，目录约定见 `docs/project-layout.md`，架构见 `docs/ARCHITECTURE.md`。
-> **构建与打包全部走 Tauri 官方工具链，不手搓**：本地 commit **不 push**；发版用官方 `tauri build` 产出 NSIS 安装器。
+> **构建与打包全部走 Tauri 官方工具链，不手搓**：发版用官方 `tauri build` 产出 NSIS 安装器；CI 侧由 `.github/workflows/release.yml` 承担同样的链路并挂到 GitHub Release。
 
 ## 1. 版本单一来源与同步清单
 
@@ -129,7 +129,7 @@ corepack pnpm build:beta       # beta（app.luma.beta），只在预发布时用
 
 - 更新 `CHANGELOG.md`（能力变更 / 已知限制 / 工程改动）。
 - `git add` 只本次改动的文件；`git commit` 由开发者自己写，**不 push**。
-- **tag**：本地 `git tag -a vX.Y.Z -m "release X.Y.Z"`，**tag 与 commit 都不 push，不上传任何云端资源**；需要发布到远端时由发布者手工决定。
+- **tag**：本地 `git tag -a vX.Y.Z -m "release X.Y.Z"`。推 tag 会触发 `.github/workflows/release.yml`，由 CI 构建 NSIS 安装器并挂到同名 GitHub Release（也可在 Actions 手动 `workflow_dispatch`，留空 tag 则按 `package.json` 版本补发）。CI 会拒绝与 `package.json` 版本不一致的 tag。
 
 ## 3. 回滚
 
