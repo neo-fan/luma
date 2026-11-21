@@ -321,6 +321,53 @@ export default function LivePage({
     reload();
   };
 
+  /**
+   * 与点播页对齐的 revive：从点播回直播时，点播播放器创建前的全局唯一守卫
+   * （`lib/playerRegistry`）会硬停「非本容器」的 `<video>`。直播常驻层不卸载，
+   * 但里面的 ArtPlayer 可能已经被摘掉 src / 销毁，而 `resolved` 没变 → 引擎
+   * effect 不会重跑，于是 `.live-host` 可见、选台列表都在，唯独画面黑屏、控件
+   * 一个都没有（实测）。这里在回到直播页后轮询确认：实例还活着就不动；被摘掉
+   * 就重新解析同一条流，用户看到的是原地恢复，不是空白页。
+   */
+  const lastReviveAt = useRef(0);
+  useEffect(() => {
+    if (!liveActive || !resolved) {
+      return;
+    }
+    if (Date.now() - lastReviveAt.current < 4000) {
+      return;
+    }
+    let stopped = false;
+    let tries = 0;
+    let timer = 0;
+    const check = () => {
+      if (stopped) {
+        return;
+      }
+      const video = containerRef.current?.querySelector("video") ?? null;
+      if (video && (video.getAttribute("src") || video.currentSrc)) {
+        stopped = true;
+        return;
+      }
+      // video 还在但 src 被清空 = 被守卫硬停；前几次没有 video 只是实例还没建，
+      // 多给几轮，别把正常冷启误判成「被杀」而反复重解析。
+      const killed = Boolean(video) || tries >= 3;
+      if (killed) {
+        stopped = true;
+        lastReviveAt.current = Date.now();
+        reloadRef.current?.();
+        return;
+      }
+      tries += 1;
+      timer = window.setTimeout(check, 500);
+    };
+    timer = window.setTimeout(check, 500);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [liveActive, resolved, reload]);
+
   /** 本频道这一轮已经试过的线路：避免「A→B→A」来回切。 */
   const triedRef = useRef<Set<number>>(new Set());
   /** 单线路「判死」的延迟结论计时器：期间出画就撤回，见 `switchOrFailover`。 */
