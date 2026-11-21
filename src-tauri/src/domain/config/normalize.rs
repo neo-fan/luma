@@ -461,9 +461,18 @@ fn is_scheme(text: &str) -> bool {
 }
 
 /// `http://x` / `https://x`（大小写不限）→ 去掉 scheme 后的剩余；否则 None。
+///
+/// 比的是**字节**而不是 `str` 切片：`rest` 是外部数据，`://` 后面完全可能是
+/// 中文域名（`http://饭太硬.top/…`）。`rest[..8]` 按字节切，一旦落进多字节
+/// 字符内部就 panic，而 release 是 `panic = "abort"` → 整个进程直接退出。
+/// scheme 本身是纯 ASCII，字节前缀相等就必然落在字符边界上，`&rest[len..]`
+/// 因此安全。
 fn strip_scheme_prefix(rest: &str) -> Option<&str> {
+    let bytes = rest.as_bytes();
     for scheme in ["https://", "http://"] {
-        if rest.len() >= scheme.len() && rest[..scheme.len()].eq_ignore_ascii_case(scheme) {
+        if bytes.len() >= scheme.len()
+            && bytes[..scheme.len()].eq_ignore_ascii_case(scheme.as_bytes())
+        {
             return Some(&rest[scheme.len()..]);
         }
     }
@@ -927,6 +936,40 @@ mod tests {
         ] {
             assert_eq!(repair_url(keep), None, "不该改写 {keep:?}");
         }
+    }
+
+    #[test]
+    fn repair_url_survives_non_ascii_host() {
+        // cluntop/tvbox 的 jsm.json 顶层 wallpaper 就是中文域名：`://` 后面紧跟
+        // `饭太硬`（9 字节）。按字节切 `[..8]` 会落进 `硬`（bytes 6..9）内部，
+        // release 是 panic=abort，导入直接变成进程退出。这类地址本身不归
+        // repair_url 管（合法 URL，只是 IDN），只能原样返回。
+        for keep in [
+            "http://饭太硬.top/深色壁纸/api.php",
+            "https://中文域名.中国/x",
+            "http://中",
+            "https://a中bc/x",
+        ] {
+            assert_eq!(repair_url(keep), None, "不该改写 {keep:?}");
+        }
+        // 真正需要修的笔误在中文域名上同样要修得动。
+        assert_eq!(
+            repair_url("https://https://饭太硬.top/深色壁纸/api.php"),
+            Some("https://饭太硬.top/深色壁纸/api.php".to_string())
+        );
+    }
+
+    #[test]
+    fn import_keeps_idn_wallpaper_and_does_not_panic() {
+        // 端到端守卫：normalize_config 会对快照里每个字符串跑 repair_value，
+        // 这里确保走到 wallpaper 时不再 panic，且值原样保留。
+        let raw = json!({
+            "sites": [],
+            "wallpaper": "http://饭太硬.top/深色壁纸/api.php",
+        });
+        let out = normalize_config(&raw, "https://raw.githubusercontent.com/cluntop/tvbox/refs/heads/main/jsm.json")
+            .expect("IDN wallpaper must not abort the import");
+        assert_eq!(out["wallpaper"], "http://饭太硬.top/深色壁纸/api.php");
     }
 
     #[test]
