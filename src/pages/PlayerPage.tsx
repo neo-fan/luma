@@ -404,9 +404,7 @@ export default function PlayerPage({
     attachSignal: playerRoot,
   });
 
-  /**
-   * 详情没到就点了收藏 → 当时只能存空封面。等详情到达后补一次元数据。
-   */
+  /** 详情没到就点了收藏，只能存空封面：等详情到达后补一次元数据。 */
   const favNeedsCover = useRef(false);
   useEffect(() => {
     if (!favNeedsCover.current || !favorite || !vod?.vod_pic?.trim()) {
@@ -793,7 +791,7 @@ export default function PlayerPage({
     if (pendingPick) {
       return;
     }
-    // 有下一集就直接接：以前是 seek 到 duration-0.5 等 ended，流末尾不触发
+    // 有下一集就直接接：seek 到 duration-0.5 等 ended 不可靠，流末尾不触发
     // ended（或视频刚好暂停）时会停在最后一帧，表现成「跳过片尾就暂停」。
     if (advanceToNext()) {
       return;

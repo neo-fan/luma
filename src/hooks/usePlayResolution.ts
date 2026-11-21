@@ -283,13 +283,12 @@ export function usePlayResolution({
         // （weiguan://、PAN1-…、6105_0_1），必须让 spider 的 playerContent
         // 解析出真实直链再交给本地代理。编排细节收在 lib/episodeResolve，
         // 与播放页的换线路 / 换源探测共用同一份规则。用户手选的线路给
-        // 15s 超时：慢源（多多影院实测 4~5s，忙时更久）不该在首次解析
-        // 就被判死跳走；探测/换线链路保持 8s 不变。
+        // 15s 超时：慢源典型 4~5s，忙时更久，不该在首次解析就被判死跳走；
+        // 探测/换线链路保持 8s 不变。
         const target = await Promise.race([
           resolveEpisodeTarget(siteKey, playFrom, playUrl, {
             playerContentTimeoutMs: FIRST_PLAY_PLAYER_CONTENT_MS,
-            // 首次解析是用户主动点播：坏线路标记只代表「源曾经忙时超时」，
-            // 不能拦住用户重新点播（否则被误封的线路 30 分钟内点不开）。
+            // 手动点播不受坏线路标记限制：那是探测链路的结论，不该挡住用户重试。
             ignoreBadLineMark: true,
           }),
           hardCap,
@@ -310,9 +309,9 @@ export function usePlayResolution({
         });
         setStage("connecting");
         if (target.timedOut) {
-          // 慢失败必须先说清楚：这不是「网盘 token」，重试就能好。
-          // 同时标记成「无定论」：上层不许因为这一条自动换源（用户实测：
-          // 再等十几秒就能出画，换走了反而把能播的线路丢掉）。
+          // 慢失败要说清楚：这不是「网盘 token」，重试就能好。同时标成「无定论」：
+          // 上层不许因为这一条自动换源——多等十几秒常常就能出画，换走了反而丢掉
+          // 能播的线路。
           slowTimeout = true;
           throw new Error(
             "源响应超时（首次加载源侧冷启动较慢），已保留当前线路，点刷新可重试",
@@ -320,11 +319,10 @@ export function usePlayResolution({
         }
         if (target.unresolvable) {
           // 源给的 token 连它自己的 playerContent 都不认（网盘 / 专用插件线路）。
-          // 说清原因，别把 INVALID_ARGUMENT 的原文抛给用户。fail-fast，不进 resolvePlay。
-          // 「源明确拒绝」与「源没答完」要分开说：前者是线路停用 / 要源侧账号，
-          // 过一阵可能恢复，文案必须留「重试」这条路，不能写成没救。
+          // 说清原因，别把 INVALID_ARGUMENT 的原文抛给用户；fail-fast，不进 resolvePlay。
+          // 「源明确拒绝」与「源没答完」分开说：前者可能过一阵恢复，文案要留「重试」。
           if (target.transient) {
-            // 这次只是没答好（连接重置 / 脚本报错 / 非 JSON）：用户刷新一下就能过，
+            // 这次只是没答好（连接重置 / 脚本报错 / 非 JSON）：刷新一下就能过，
             // 不要写成「源站没有解析这条线路」那种像永久失败的结论。
             slowTimeout = true;
             throw new Error(

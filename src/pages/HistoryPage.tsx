@@ -63,8 +63,8 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reload]);
 
-  // 早先写入的历史没有封面：按需回查详情补一次。后端不动 updatedAt，
-  // 补封面不会把这些记录顶到列表最前。
+  // 历史可能没有封面：按需回查详情补一次。后端不动 updatedAt，补封面不会把这些
+  // 记录顶到列表最前。
   useEffect(() => {
     if (items.length === 0) {
       return;

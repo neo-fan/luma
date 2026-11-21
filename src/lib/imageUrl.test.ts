@@ -47,7 +47,8 @@ describe("needsProxy", () => {
   });
 
   it("proxies protocol-relative pics after normalization", () => {
-    // 以前 `//host/x.jpg` 落入「非 http」分支，被直接当 src 用 → 生产下 tauri://。
+    // `//host/x.jpg` 要先归一化成绝对地址再判定：否则落进「非 http」分支被当 src
+    // 直用，生产下就成了 tauri://。
     expect(needsProxy("//cdn/x.jpg")).toBe(true);
   });
 });

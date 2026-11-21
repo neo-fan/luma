@@ -289,10 +289,9 @@ export function usePlaybackController(
   /**
    * 读目录（详情 + 线路 + 剧集）。
    *
-   * 这是**独立数据链**：不等待播放地址、不因播放失败而中止、失败也不清空
-   * 用户已能看到的东西（只有真正换源时才整体替换）。失败必须留下
-   * `catalogStatus="error"` + 原因，让 UI 给出「重试 / 换源」两个出口——
-   * 早先这里 catch 后静默 `setVod(null)`，用户看到的就是「简介和换集凭空消失」。
+   * 独立数据链：不等待播放地址、不因播放失败而中止。失败落成
+   * `catalogStatus="error"` 加原因，由 UI 给出「重试 / 换源」两个出口；不静默
+   * 清空，否则简介与选集一起消失，用户无从判断是源没给还是自己网络的问题。
    */
   const loadCatalog = useCallback(async (force: boolean) => {
     const d = depsRef.current;

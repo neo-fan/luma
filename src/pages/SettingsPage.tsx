@@ -236,10 +236,9 @@ export default function SettingsPage({
   ];
 
   // 目录高亮跟随滚动：以**滚动位置**为准——点亮「最后一个已越过判线的区块」，
-  // 滚到底时末块哪怕很短也算（判线够不到它）。此前用 IntersectionObserver 的
-  // 进入事件点亮：连续快速滚动时批量回调里最后处理到的 entry 未必是最上的区块，
-  // 且够到页面底部后末块不再产生新事件——实测高亮停在「诊断」、内容已是
-  // 「存储与清理」（2026-11-20 全页体检）。位置驱动没有这两类竞态。
+  // 滚到底时末块哪怕很短也算（判线够不到它）。IntersectionObserver 的进入事件在
+  // 快速滚动时会把批量回调里最后处理到的 entry 当成当前区块，够到页面底部后末块
+  // 也不再产生新事件，高亮会停在上一节。位置驱动没有这两类竞态。
   useEffect(() => {
     const scroller = document.querySelector(".page-body");
     if (!scroller) {

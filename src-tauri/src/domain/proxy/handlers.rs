@@ -84,7 +84,7 @@ const IMAGE_TIMEOUT: Duration = Duration::from_secs(8);
 /// 非 `image/*` 响应最多攒这么多字节再嗅探，超过不往内存里读。
 const MAX_SNIFF_BYTES: usize = 8 * 1024 * 1024;
 /// m3u8 清单的读取上限。正常清单几十 KB；给 8 MB 是防「CDN 错误页 / 重定向到
-/// 视频文件」时把整条响应吃进内存（此前这里是 `bytes()`，没有上限）。
+/// 视频文件」时把整条响应吃进内存（`bytes()` 没有上限，对内存峰值形同虚设）。
 const MAX_PLAYLIST_BYTES: usize = 8 * 1024 * 1024;
 
 /// 流式读 body，最多收集 `cap + 1` 字节：多留的 1 字节只用于判断「确实超限」。

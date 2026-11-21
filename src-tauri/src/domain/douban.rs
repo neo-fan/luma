@@ -962,10 +962,9 @@ struct DoubanBucket {
 static DOUBAN_GATE: OnceLock<Mutex<DoubanBucket>> = OnceLock::new();
 /// 限流惩罚槽：`(解除时刻, 连续被限流次数)`。
 ///
-/// 次数存在是为了**指数退避**：此前固定 180s 窗口，前端队列每过 ~3 分钟就把
-/// 同一批标题重新送进来、再撞一次限流、再开一个 180s——实测同一部片每
-/// 195s 反复 `douban search throttled`，既刷日志又白耗配额。连续 nth 次惩罚
-/// `THROTTLE_COOLDOWN × 2^(n-1)`，封顶 30 分钟；任一搜索确认成功即清零。
+/// 次数存在是为了**指数退避**：固定窗口下，前端队列每隔几分钟就把同一批标题
+/// 重新送进来，撞一次限流、再开一个新窗口，反复刷日志又白耗配额。连续第 n 次
+/// 惩罚 `THROTTLE_COOLDOWN × 2^(n-1)`，封顶 30 分钟；任一搜索确认成功即清零。
 static DOUBAN_COOLDOWN: OnceLock<Mutex<(Option<Instant>, u32)>> = OnceLock::new();
 
 fn douban_bucket() -> &'static Mutex<DoubanBucket> {

@@ -96,7 +96,7 @@ export default function DiagnosticSection({ reload }: DiagnosticSectionProps) {
         <span>通道</span>
         <code>{diag?.channel ?? "读取中…"}</code>
         {/* 前后端共用一个 build 号：宿主本次启动时刻（Diagnostics.startedAt）。
-            以前分「前端构建 / 后端构建」两行，dev 下必然对不上，已合并。 */}
+            不分前端 / 后端两行——dev 下两者必然对不上。 */}
         <span>构建号</span>
         <code title={readableBuildTime(diag?.startedAt) || undefined}>
           {diag

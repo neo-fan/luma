@@ -25,8 +25,9 @@ export type View =
 /**
  * 一次播放会话的身份（路由 / 导航载荷 / 常驻播放器共用一份定义）。
  *
- * 以前这三处各写一遍字段，加一个 `failoverKey` 要改三个地方、漏一个就丢字段；
- * 现在只在这里加，`PlayerNavState` 与 `PlaySession` 都是它的别名。
+ * 路由 / 导航载荷 / 常驻播放器共用这一份定义：`PlayerNavState` 与 `PlaySession` 都是
+ * 它的别名，加字段只改这里。三处各写一遍的话，加一个 `failoverKey` 要改三处，漏一处
+ * 就丢字段。
  */
 export interface PlayTarget {
   siteKey: string;

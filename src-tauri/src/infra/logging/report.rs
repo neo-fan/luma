@@ -6,9 +6,8 @@ const REPORT_TAIL_LINES: usize = 400;
 
 /// 反馈文件的时间戳：系统时区，文件名用紧凑格式（Windows 文件名不能带 `:`）。
 ///
-/// 以前这里手搓了一套 UTC 天文日换算（`civil_from_days`）来拼文件名和标题，
-/// 与日志行的时间口径还不一致：标题写着 UTC，用户按本地时间读。现在统一走
-/// `chrono::Local`，日志行、文件名、标题三者同一个时钟。
+/// 日志行、文件名、标题统一走 `chrono::Local` 同一个时钟，避免标题按 UTC 写、
+/// 用户按本地时间读的错位。
 fn local_stamp() -> String {
     chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
 }

@@ -144,9 +144,8 @@ pub async fn import_from_raw(raw: &str, origin: &str) -> Result<ConfigSnapshot, 
 
 /// 解密（含 JSONC 清洗）并留一条可复盘的耗时记录。
 ///
-/// 以前这一步是一次 sidecar 往返，1.0.1 那次「config.decrypt exceeded 15000ms」
-/// 就是排队 + 超时；现在解密是进程内的纯计算，微秒级，日志仍保留大小与耗时，
-/// 便于以后核对「是不是又退化成 IO」。
+/// 解密是进程内的纯计算，微秒级；日志仍记大小与耗时，用来核对它有没有退化成
+/// 一次 sidecar 往返（那样的排队会直接撞上 RPC 超时）。
 fn decrypt_plain(raw: &str) -> Result<String, AppError> {
     let started = std::time::Instant::now();
     let outcome = decrypt::decrypt(raw);

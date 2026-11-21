@@ -146,11 +146,11 @@ pub(super) fn pinned_resolver() -> Arc<PinnedResolver> {
 /// 每一跳重定向的同步校验（`reqwest::redirect::Policy` 的回调运行在请求
 /// 线程上，不能 `await`）。
 ///
-/// 反代此前只在**初始 URL** 上跑 `check_target`，而 reqwest 默认自动跟随
-/// ≤10 次 30x——一个过审的外网地址可以用 `302 → http://127.0.0.1:9222/…`
-/// 把宿主打到任何仅监听 loopback 的服务（dev 的 CDP、本机 HTTP），再把
-/// 响应以 `access-control-allow-origin: *` 流回网页。scheme/IP 字面量在这一
-/// 层拦下；域名跳点由 `PinnedResolver` 在建连时审查（同一标准、无二次解析）。
+/// 只在**初始 URL** 上跑 `check_target` 不够：reqwest 默认自动跟随 ≤10 次 30x，
+/// 一个过审的外网地址可以用 `302 → http://127.0.0.1:9222/…` 把宿主打到任何仅监听
+/// loopback 的服务（dev 的 CDP、本机 HTTP），再把响应以
+/// `access-control-allow-origin: *` 流回网页。scheme/IP 字面量在这一层拦下；
+/// 域名跳点由 `PinnedResolver` 在建连时审查（同一标准、无二次解析）。
 /// 用 `error`（而非 `stop`）失败——`stop` 会把裸 302 透给播放器，hls.js
 /// 对重定向响应没有处理能力。
 pub(super) fn redirect_guard(allow_local: bool) -> reqwest::redirect::Policy {

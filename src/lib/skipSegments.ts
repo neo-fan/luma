@@ -92,8 +92,8 @@ export function parseSkipConfig(raw: string | null | undefined): SkipSegment[] {
 }
 
 /**
- * 这部剧的「跳过」开关。旧格式（裸数组）与缺字段都按**开**读——手写或继承来的
- * 配置里没有这个键时，行为必须和以前一致，不能因为少一个键就把跳过关掉。
+ * 这部剧的「跳过」开关。旧格式（裸数组）与缺字段都按**开**读：手写或继承来的配置
+ * 里没有这个键时，不能因为少一个键就把跳过关掉。
  */
 export function parseSkipEnabled(raw: string | null | undefined): boolean {
   if (!raw || !raw.trim()) {

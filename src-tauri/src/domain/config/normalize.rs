@@ -90,8 +90,8 @@ pub fn route(site: &Map<String, Value>, global_spider: Option<&str>) -> &'static
     {
         return "jvm";
     }
-    // 分组分隔条（`{"key":"1","name":"--- 1 ---"}`）什么源都不是。它们以前会继承
-    // 全局 spider 被当成 jvm 站点（旧版会因此白烧一次必然失败的调用）。
+    // 分组分隔条（`{"key":"1","name":"--- 1 ---"}`）什么源都不是。让它继承全局
+    // spider 会被当成 jvm 站点，白烧一次必然失败的调用。
     if api.is_empty() && !truthy(site.get("ext")) && !truthy(site.get("jar")) {
         return "none";
     }

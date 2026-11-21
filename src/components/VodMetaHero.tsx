@@ -14,11 +14,10 @@ export interface VodMetaHeroProps {
   /** 豆瓣补全结果：命中时评分 / 年份 / 类型 / 导演 / 主演 / 简介都用豆瓣。 */
   douban?: DoubanMeta | null;
   /**
-   * 片名兜底（路由带过来的片名 / 列表卡片上的片名）。
+   * 片名兜底（路由片名 / 列表卡片片名）。
    *
-   * 必须传：TVBox 生态里有源把 `vod_name` 恒定写空（如「爱瓜TV[py]」的
-   * detailContent 只回播放串），只认 `vod.vod_name` 就会把整页标题渲染成
-   * 「未命名」——明明上一页卡片上是有片名的。
+   * 有些源把 `vod_name` 恒写成空串（detailContent 只回播放串），只认
+   * `vod.vod_name` 时整页标题会退化成「未命名」。
    */
   fallbackName?: string;
   /** 片名行尾的附加内容（详情页的收藏星）。 */

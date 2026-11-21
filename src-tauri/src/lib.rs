@@ -84,8 +84,8 @@ use tauri::{Emitter, Manager};
 
 /// dev（debug）默认打开 WebView2 远程调试口 9222，返回是否由本函数设置。
 ///
-/// `tools/*.mjs` 里的探针全部靠 CDP 直连界面，以前每次启动都要手工注入
-/// `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`，忘了就只能摸黑排查。
+/// `tools/*.mjs` 里的探针全部靠 CDP 直连界面。这个变量必须在 WebView2 环境创建
+/// 之前写好，手工注入容易漏，漏了就只能摸黑排查。
 ///
 /// 三条约束：
 /// 1. **必须在任何 WebView2 环境创建之前调用**——wry 只在
@@ -361,10 +361,9 @@ fn run_inner() -> Result<(), AppError> {
         .build(context)
         .map_err(|err| startup_error("创建 Tauri 应用失败", err))?;
     app.run(|_app, event| {
-        // 退出收口：sidecar 优雅关停。以前只有 Job Object 兜底（进程一定
-        // 会被杀，但 Python 的 spider.log 缓冲、qjs-runner 的映像句柄都不
-        // 走体面路径——dev 实测那个映像句柄会锁住 binaries 拷贝，下一次
-        // cargo build 直接 PermissionDenied，2026-11-16 评审 P1）。
+        // 退出收口：sidecar 优雅关停。只靠 Job Object 能保证进程被杀，但 Python 的
+        // spider.log 缓冲、qjs-runner 的映像句柄都不走体面路径；后者会锁住 binaries
+        // 拷贝，下一次 `cargo build` 直接 PermissionDenied。
         // Exit 在所有窗口销毁后触发，此时 block_on 不会再与界面任务抢
         // runtime；两个 shutdown 自身幂等（slot 空则直接返回）。
         if let tauri::RunEvent::Exit = event {

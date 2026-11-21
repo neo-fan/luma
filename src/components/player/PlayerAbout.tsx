@@ -49,8 +49,8 @@ export default function PlayerAbout({
   onPlayExternal,
 }: PlayerAboutProps) {
   /**
-   * 简介位的兜底文案分三种：读取中 / 读取失败 / 真有详情但源站没写简介。
-   * 早先统一留白，用户无法区分「还没到」和「没了」。
+   * 简介位的兜底文案分三种：读取中 / 读取失败 / 有详情但源站没写简介。
+   * 三者要能区分，空白会把「还没到」和「没了」混成一种。
    */
   const descriptionFallback = loading
     ? "正在读取影片详情…"

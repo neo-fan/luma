@@ -64,12 +64,8 @@ export default function LiveEpgPanel({
 }: LiveEpgPanelProps) {
   const [data, setData] = useState<EpgResult | null>(null);
   /**
-   * 默认展开（折叠会把节目单挤到画面下方，展开时视线直接落在上面）。
-   *
-   * 旧版默认收起，是因为展开时节目单高度能顶到 400px，把 16:9 的画面挤成一条
-   * （当时右列是自滚容器、画面可被 flex 压缩）。现在画面锁死 16:9、节目单跟着
-   * 页面滚，展开不会再压画面；既然它已经挪到画面正下方，默认就该把节目单摊开，
-   * 想看别的台时再点标题收起。
+   * 默认展开。节目单在画面正下方，观众来这一页主要就是看它；想看别的台时点标题
+   * 收起即可。画面锁死 16:9、节目单跟着页面滚，展开不会压画面。
    */
   const [expanded, setExpanded] = useState(true);
   const [loading, setLoading] = useState(false);

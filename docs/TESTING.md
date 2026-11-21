@@ -92,8 +92,8 @@ corepack pnpm dev:app
 
 1. **契约集中、实现单一**：新增/修改契约，同一笔提交里改本文档 + 受影响的探针。
 2. **不为探针新增类名**。能用 `role` / `aria-label` / `data-value` 表达的，不用自造 BEM 名。
-   教训：站点选择器曾为迁就探针在通用下拉之外另养一套 `.site-select*` 双类名，
-   结果多出一个 105 行的平行组件和一套只为契约存在的类名（2026-11-16 收敛进 `AppSelect`）。
+   为迁就探针在通用下拉之外另养一套 `.site-select*` 双类名，代价是一个平行组件加一套
+   只为契约存在的类名，现在收在 `AppSelect` 里。
 3. **同类控件必须共用一个组件**。通用组件缺能力时补通用组件，不要在调用方复制实现。
 4. 探针**只读**这些属性；产品改版时先判定「是口径过期还是真回归」，禁止为了让探针变绿放宽断言。
 
@@ -134,5 +134,5 @@ corepack pnpm dev:app
 | 错误条 | `.error-bar__text`（人话）/ `.error-bar__raw`（技术详情 `<pre>`） | `ErrorBar.tsx` |
 
 > 比对 `instance` / `sessionId` 时注意 `SESSION` 快照的形状：`sessionId` 在 `context`
-> 里，取顶层 `sessionId` 恒为 `undefined`，断言会**假绿**（2026-11-17 踩过一次）。
+> 里，取顶层 `sessionId` 恒为 `undefined`，断言会**假绿**。
 

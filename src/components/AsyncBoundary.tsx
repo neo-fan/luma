@@ -48,9 +48,9 @@ interface AsyncBoundaryProps {
  *   3. 已结束且空 → 空态
  *   4. 有数据（!isEmpty）→ children
  *
- * 错误文案在这里统一「归类 + 折叠原文」：调用方照旧只传 `errorMessage(err)`，
- * 不必各自判断哪些报错能露脸——以前漏一处就会出现
- * `fetch https://… failed` 直出界面。
+ * 错误文案在这里统一「归类 + 折叠原文」：调用方只传 `errorMessage(err)`，不必各自
+ * 判断哪些报错能露脸。各写一份迟早会漏，一次疏漏就会让 `fetch https://… failed`
+ * 直出界面。
  */
 export default function AsyncBoundary({
   loading,

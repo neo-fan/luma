@@ -68,6 +68,7 @@ let pendingRecoveryNotice: string | null = null;
  * 与历史名，存进去之后永远叫「未命名」。路由带的片名是「这部片一定叫什么」的
  * 直接证据，所以只在源站缺字段时补，绝不覆盖源站已经给出的名字。
  */
+/** 源站片名为空时用已知片名回填；已有片名不覆盖。 */
 function withKnownName(vod: VodInfo, name: string): VodInfo {
   const known = name.trim();
   if (!known || vod.vod_name?.trim()) {
@@ -88,49 +89,44 @@ export default function DetailPage({
 }: DetailPageProps) {
   const detailKey = cacheKeys.detail(siteKey, vodId);
   /**
-   * 源站没给片名时这一屏「一定叫什么」的证据，优先级：路由片名 → 列表卡片。
+   * 源站没给片名时，这一屏还能依据的片名：路由片名 → 列表卡片。
    *
-   * 两者都没有（直接输 URL）时只能是空串，此时页面上就是「未命名」——不编。
+   * 两者都没有（直接输 URL）时是空串，页面按「未命名」占位。
    */
   const knownName =
     (title || "").trim() || (recallCard(siteKey, vodId)?.vod_name ?? "").trim();
 
   /**
    * 首帧数据的两种来源，语义不同：
-   * - **详情缓存**（10 分钟内抓过）：权威、可直接用，不发请求；
-   * - **交接实体**（上一页交过来的卡片）：够渲染但**没有播放串**，标 `needFetch`
+   * - **详情缓存**（10 分钟内抓过）：权威，可直接用，不发请求；
+   * - **交接实体**（上一页交过来的卡片）：够渲染但没有播放串，标 `needFetch`
    *   让首屏后照样问一次源。
    *
-   * 顺序是「缓存优先」而不是「交接优先」：两者是同一部剧时，缓存里的那份信息更全
-   * （有播放串），交接只是它缺席时的补位。
-   *
-   * 不写进 `usePageState`（那层没有 TTL，会把十分钟前的详情当成现在还新鲜），
-   * 也不在 effect 里「消费」交接——dev StrictMode 会把组件挂载两次，两次之间清掉
-   * 就等于第二次读到空。交接层本身有身份匹配 + 2 分钟保质期，够安全。
+   * 缓存优先于交接：同一部剧时缓存那份信息更全（有播放串），交接只是它缺席时的
+   * 补位。不写进 `usePageState`（那层没有 TTL，会把十分钟前的详情当成还新鲜），
+   * 也不在 effect 里「消费」交接：dev StrictMode 会挂载两次，两次之间清掉就等于
+   * 第二次读到空。交接层本身有身份匹配与 2 分钟保质期。
    */
   const [bootstrap] = useState(() => {
     const cached = peekFresh<VodInfo[]>(detailKey, CACHE_TTL.detail)?.[0] ?? null;
     if (cached) {
-      // 缓存里也可能是「源站片名为空」的那一份：这里同样补，否则秒开路径
-      // 又把「未命名」带回来（播放种子、收藏、历史都读这份）。
+      // 缓存里也可能是源站片名为空的那一份：同样补，否则秒开路径又把「未命名」
+      // 带回来（播放种子、收藏、历史都读这份）。
       return { vod: withKnownName(cached, knownName), needFetch: false };
     }
     const seed = peekDetailSeed(siteKey, vodId);
-    // 缓存与交接实体都没有（直接输 URL / 分享链接 / WebView 恢复会话）时，
-    // **仍然必须问一次源**。早先这里写的是 `seed !== null`，于是「什么都没有」
-    // 反而永不发请求，详情页稳定停在「当前源没有返回影片详情」，点一次重试才
-    // 正常——正是 fc666fa 引入的回归。
+    // 缓存与交接实体都没有（直接输 URL / 分享链接 / WebView 恢复会话）：没有首帧
+    // 数据就必须问一次源，否则页面停在「当前源没有返回影片详情」，只有手动重试
+    // 才会加载。
     return { vod: seed ? withKnownName(seed, knownName) : null, needFetch: true };
   });
   const [vod, setVod] = useState<VodInfo | null>(bootstrap.vod);
   /** 手上这份是否只是交接实体（没有播放串）：是则首屏后仍要取一次详情。 */
   const [needFetch, setNeedFetch] = useState(bootstrap.needFetch);
   /**
-   * 空详情时回填的卡片：发现型源（豆瓣[py] 等）的 `detailContent` 恒为空，
-   * 但列表卡片自带海报、评分、年份——那是这个源能给出的全部信息。不显示就
-   * 等于把「有」说成「没有」。来源是 `cardIndex`（列表拉取时顺手记下）。
-   * 这正是 FongMi 的 `Vod.checkPic/checkName`（详情字段空就用卡片兜底）在
-   * 我们这套「详情页独立成页」架构里的等价物。
+   * 空详情时回填的卡片：发现型源（豆瓣[py] 等）的 `detailContent` 恒为空，但列表
+   * 卡片自带海报、评分、年份，那是这个源能给出的全部信息。来源是 `cardIndex`
+   * （列表拉取时顺手记下）。
    */
   const [emptyCard, setEmptyCard] = useState<VodInfo | null>(null);
   /**
@@ -444,10 +440,9 @@ export default function DetailPage({
   /**
    * 「上次看到」一次只允许一格。
    *
-   * 早先逐格做 `地址 || 集名` 的 OR 判定：历史一旦存成「第 40 集的地址 +
-   * 第 37 集的集名」（原地换集时把路由地址写进了历史），详情页会按地址命中
-   * 一集、按集名再命中一集，两格同时亮。现在先定唯一目标再渲染——集名（同
-   * 线路）优先，地址只作跨线路兜底。
+   * 先定唯一目标再渲染：集名（同线路）优先，地址只作跨线路兜底。逐格用
+   * `地址 || 集名` 做 OR 会双亮——历史存成「第 40 集的地址 + 第 37 集的集名」时，
+   * 地址命中一格、集名又命中另一格。
    */
   const seenEpisode = useMemo(() => {
     if (!resume || !line) {
@@ -968,8 +963,8 @@ export default function DetailPage({
             )
           ) : (
             <>
-              {/* `chip-row--lines` 是给探针/脚本的稳定锚点：分类 chip 也在这页
-                用 `.chip-row .chip`，早先的探针因此把「2026」「大陆」当成线路点。 */}
+              {/* `chip-row--lines` 是给探针/脚本的稳定锚点：分类 chip 也用
+                `.chip-row .chip`，混在一起会把「2026」「大陆」当成线路点。 */}
               <div className="chip-row chip-row--lines">
                 {lines.map((item, index) => {
                   const lastUsed = resume?.playFrom === item.name;

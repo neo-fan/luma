@@ -335,8 +335,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_same_url_downloads_once() {
         // moka `try_get_with` 的核心承诺：同 key 并发首次访问只跑一次求值。
-        // 这一条以前靠自研 flights 保证，现在由库兑现 —— 测试守住的是
-        // 「我们确实接到了这个保证」，而不是重测库本身。
+        // 这条保证由库兑现，测试守的是「我们确实接到了它」，而不是重测库本身。
         let hits = Arc::new(AtomicUsize::new(0));
         let (url, task) = stub("ok", hits.clone()).await;
         let site = json!({ "api": url });

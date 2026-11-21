@@ -278,16 +278,15 @@ impl Write for CappedWriter {
         // 落盘前的最后一道统一闸：任何通道的字节里出现 http(s) URL 都要去掉
         // query/fragment（签名直链、带 token 的取数地址都在其中）。
         //
-        // 以前只有 UI 通道在写入侧调 `sanitize`，宿主通道是裸 `fmt::layer()`：
-        // 反代 / http 取数失败的报错把完整 URL 写进 `url = %target`、错误 cause
-        // 也带整串地址，而「一键诊断」打包的正是这些日志——等于把令牌外泄
-        // （2026-11-16 评审 P1）。放在这里而不是每个调用点，是为了让「新增
+        // 只在 UI 通道脱敏不够：宿主通道的 `fmt::layer()` 会把反代 / http 取数
+        // 失败里的完整 URL（`url = %target`、错误 cause）原样写进日志，而「一键
+        // 诊断」打包的正是这些日志。放在这一层而不是每个调用点，是为了让「新增
         // 一条日志」默认就是安全的。
         //
         // ⚠️ 返回值必须是「消费了 buf.len() 个输入字节」，不是实际落盘字节数：
         // 脱敏后的串比输入短，若按输出长度返回，`write_all` 会把原文剩下的
-        // 尾巴（正是 query）继续写进来——回归测试 `capped_writer_redacts_...`
-        // 抓到过这个自伤。实际写入量单独用于容量核算。
+        // 尾巴（正是 query）继续写进来。`capped_writer_redacts_...` 钉住这一点；
+        // 实际写入量单独用于容量核算。
         if contains_url(buf) {
             let owned = crate::logging::redact_urls(&String::from_utf8_lossy(buf)).into_bytes();
             self.write_raw(&owned)?;

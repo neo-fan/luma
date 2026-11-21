@@ -31,28 +31,26 @@ export interface EpisodeTarget {
    */
   unresolvable?: boolean;
   /**
-   * 源**明确拒绝了这次解析**（不是超时）：`playerContent` 把 token 原样吐回、
-   * 或返回空串，而原地址本身也不是 URL。布布追剧的 `zijianm3u8` 实测就是站点
-   * 回了「线路暂时停用 / 当前账户无可用套餐」——这类原因可能过一会儿恢复，
-   * 所以要给用户「重试 / 换线路」的出口，而不是当成永久坏线路。
+   * 源**明确拒绝**了这次解析（不是超时）：`playerContent` 把 token 原样吐回或
+   * 返回空串，而原地址本身不是 URL。
+   *
+   * 这类拦截多半是临时的（线路停用、账户无套餐），仍要给「重试 / 换线路」的
+   * 出口，只封 30 分钟而不是永久。
    */
   rejected?: boolean;
   /**
    * `playerContent` 没在超时内返回，但**不能据此判定线路坏**。
    *
-   * 2026-11-14 实测 py_bubuzhuiju 的 zijianm3u8：进程内首次调用 18.3s（源侧
-   * 解析接口冷启动 + 重试），第二次起 1.8~2.0s。按「超时就 markLineBad」处理
-   * 会把一条完全能播的线路封 30 分钟，用户看到的就是「点了没反应 / 一直停在
-   * 正在连接」。慢 ≠ 坏，只有源**明确回了一个不能用**的结果才算坏。
+   * 源侧解析接口冷启动要 18s 以上、热调用约 2s：慢与坏是两件事，只有源明确
+   * 回了「不能用」才算坏。
    */
   timedOut?: boolean;
   /**
-   * 这一次调用失败了，但源**没有给出「不能播」的确定结论**。
+   * 这次调用失败了，但源**没有给出「不能播」的结论**：连接重置、脚本抛错、
+   * 上游 5xx、响应不是 JSON 都属于这一类。
    *
-   * 成因是连接重置、脚本抛错、上游 5xx、响应不是 JSON 这一类瞬时故障。与
-   * `rejected` 严格区分：`rejected` 是「源明确说不」，`transient` 是「源这次
-   * 没答好」。后者不许写坏线路标记（否则一次偶发失败会让整条线路在 30 分钟
-   * 内被换集/换源路径 fail-fast），文案也必须留「重试」而不是「换线路」。
+   * 与 `rejected` 的区别是「没答好」与「说不」：`transient` 不写坏线路标记，
+   * 提示文案也要留「重试」这条路。
    */
   transient?: boolean;
 }
@@ -72,18 +70,14 @@ const HTTP_URL = /^https?:\/\//i;
 
 export interface EpisodeResolveOptions {
   /**
-   * `playerContent` 的超时。探测/换线链路用缺省 8s（失败就换下一条，快是
-   * 第一位的）；用户手选线路的首次解析应传 15s——慢源（如多多影院的上游
-   * API）典型耗时 4~5s，忙时会越过 8s，被判超时后回退拿原始 token 只会
-   * 得到 `play url is invalid` 然后白白跳走（实测日志）。
+   * `playerContent` 超时。探测 / 换线用缺省 8s（失败就换下一条，速度优先）；
+   * 用户手选线路的首次解析传 15s：慢源典型 4~5s，忙时越过 8s 会被判超时，
+   * 回退拿原始 token 只会得到 `play url is invalid`。
    */
   playerContentTimeoutMs?: number;
   /**
-   * 用户**主动**点播时忽略「坏线路」标记（2026-11-14 实测根因）：源偶发超时
-   * 会被 lineHealth 记 bad 并盖过几秒前的 good，此后 30 分钟内所有走本模块
-   * 的解析（包括用户重新点播）都直接 fail-fast 报「网盘 token」——布布追剧
-   * zijianm3u8 就是这样被误封的。探测/自动换线仍按默认 fail-fast（快是第一位）；
-   * 手动播放给一次重试机会，成功即 markLineGood 解封。
+   * 用户**主动**点播时忽略「坏线路」标记：手动操作本身就是一次重试，成功即
+   * `markLineGood` 解封。探测 / 自动换线不传，保持 fail-fast。
    */
   ignoreBadLineMark?: boolean;
 }
@@ -121,19 +115,15 @@ export async function resolveEpisodeTarget(
       siteKey,
       method: "playerContent",
       args: [playFrom, playUrl, []],
-      // 探测链路 8s：成功的解码实测都在 5 秒内（PAN1 约 1.9 s、zijian 成功时
-      // 约 4.2 s），而网盘 token 线路在源侧忙时会一直挂到超时——多等的那 7 秒
-      // 只会推迟「换下一条线路」，用户看到的就是「点了没反应」。用户手选线路
-      // 的首播由调用方放宽（见 EpisodeResolveOptions）。
+      // 探测链路 8s：成功的解码都在 5 秒内（PAN1 约 1.9s、zijian 成功时约 4.2s），
+      // 而网盘 token 线路在源侧忙时会一直挂到超时，多等只会推迟「换下一条线路」。
+      // 用户手选线路的首播由调用方放宽（见 EpisodeResolveOptions）。
       timeoutMs: playerContentTimeoutMs,
     })) as PlayerContentResult | null;
   } catch {
-    // 调用失败只说明「这一次没答好」——连接重置、脚本抛错、上游 5xx、响应不是
-    // JSON 都属于这一类，**不等于源明确说这条线路不能播**。早先这里把「快失败」
-    // 一律判成 `rejected` 并写 30 分钟坏标记，于是源侧一次偶发异常就让整条线路
-    // 在换集 / 换源路径上被 fail-fast：用户看到「无法解析播放地址」，点刷新
-    // 又好了（刷新走 `ignoreBadLineMark` 的冷路径）。现在统一记为 transient：
-    // 不写坏标记、不谎称「源拒绝」，文案留给「重试」。
+    // 调用失败只说明「这一次没答好」：连接重置、脚本抛错、上游 5xx、响应不是
+    // JSON 都属于这一类，不等于源说这条线路不能播。记为 transient——不写坏标记，
+    // 文案留「重试」，不谎称「源拒绝」。
     const elapsed = Date.now() - startedAt;
     const slow = elapsed >= playerContentTimeoutMs * 0.7;
     return {
