@@ -21,7 +21,7 @@ native-tls = "0.2"
 url = "2"
 percent-encoding = "2"
 # `req(..., {buffer: 2})` returns base64; TVBox sources use it for binaries.
-base64 = "0.22"
+base64 = "0.23"
 # Explicit charset override (<meta charset=gbk> pages) when the server omits it.
 encoding_rs = "0.8"
 # `md5X` host helper — a 10-line crate instead of evaluating a 204 KB UMD bundle.
