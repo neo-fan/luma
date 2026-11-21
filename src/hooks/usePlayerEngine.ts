@@ -224,6 +224,14 @@ export interface UsePlayerEngineArgs {
    */
   onSlowNotice?: (text: string | null) => void;
   setVideoError: Dispatch<SetStateAction<string>>;
+  /**
+   * 播放最终判死（hls fatal / 解码失败 / 看门狗判死，已含内核的就地重连）。
+   *
+   * 调用方用它作废这一集的解析缓存：判死说明**这个地址**不可信，不能让 3 分钟
+   * 内的下一次点击又命中同一个坏地址（表现就是「刚点开就失败」）。
+   * 只在这一刻回调——内核自己的重连成功不会走到这里。
+   */
+  onPlayFailed?: (cause: FailoverCause) => void;
 }
 
 export interface UsePlayerEngineHandle {
@@ -285,6 +293,7 @@ export function usePlayerEngine({
   onPlayerRoot,
   onSlowNotice,
   setVideoError,
+  onPlayFailed,
 }: UsePlayerEngineArgs): UsePlayerEngineHandle {
   /** 控制栏「下一集」按钮的 DOM：mounted 时拿到，供禁用态同步用。 */
   const nextButtonRef = useRef<HTMLElement | null>(null);
@@ -296,6 +305,9 @@ export function usePlayerEngine({
   /** 海报同理：封面晚于实例创建到达时不重建实例，只在下次建实例时生效。 */
   const posterRef = useRef(poster);
   posterRef.current = poster;
+  /** 判死回调同理：身份每帧都变，只走 ref，不进内核 effect 依赖。 */
+  const onPlayFailedRef = useRef(onPlayFailed);
+  onPlayFailedRef.current = onPlayFailed;
   /** 「打开自定义片头片尾弹窗」回调放 ref：身份每帧都变，绝不进内核 effect 依赖。 */
   const openSkipSettingsRef = useRef(onOpenSkipSettings);
   openSkipSettingsRef.current = onOpenSkipSettings;
@@ -687,6 +699,7 @@ export function usePlayerEngine({
         failover: (cause: FailoverCause, detail: string) => {
           sessionActorRef.current?.send({ type: "FAILED", cause, detail });
         },
+        invalidateAddress: () => onPlayFailedRef.current?.("hlsFatal"),
       },
       lifecycle: {
         setTeardown: (fn: () => void) => {
@@ -1009,6 +1022,8 @@ export function usePlayerEngine({
       // 线路已判死：冻结帧的使命结束，撤掉后把画面留给错误态，绝不让静帧盖住它。
       posterHold.finish(false);
       setVideoError(message);
+      // 判死即作废该集的解析缓存：地址已经不可信，不能让下一次点击再命中它。
+      onPlayFailedRef.current?.(cause);
     };
     /**
      * 挂起的续播重试（`canplay` / `pause` 两个 once 监听 + play()）。

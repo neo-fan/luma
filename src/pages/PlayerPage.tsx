@@ -12,7 +12,7 @@ import { usePlaybackController } from "../hooks/playback/usePlaybackController";
 import { sameTitle, toVodRef } from "../lib/format";
 import { EXTERNAL_PLAY_ENABLED } from "../lib/features";
 import { resolveEpisodeTarget } from "../lib/episodeResolve";
-import { setEpisodePlayCache } from "../lib/episodePlayCache";
+import { invalidateEpisodePlayCache, setEpisodePlayCache } from "../lib/episodePlayCache";
 import { buildImageUrl, needsProxy, normalizePic } from "../lib/imageUrl";
 import { getProxyBaseUrl, resolveProxiedImageSync } from "../hooks/useProxiedImage";
 import {
@@ -533,6 +533,12 @@ export default function PlayerPage({
     onPlayerRoot: setPlayerRoot,
     onSlowNotice: (text) => setSlowNotice(text ?? ""),
     setVideoError,
+    onPlayFailed: () => {
+      // 判死的是「真正在播的那一集」（原地换集后路由 playUrl 不变，不能用 props）。
+      const id = controller.playingEpisodeRef.current;
+      invalidateEpisodePlayCache(id.siteKey, id.playFrom, id.url);
+      log.info("episode play cache invalidated", { siteKey: id.siteKey, playFrom: id.playFrom });
+    },
   });
   engineRef.current = engine;
 

@@ -62,6 +62,13 @@ export interface DecoderHost {
   session: {
     hasPlayed: () => boolean;
     failover: (cause: FailoverCause, detail: string) => void;
+    /**
+     * 只作废「这一集解析出来的地址」，不动会话状态。
+     *
+     * 已经出画之后的致命错误不判线路死（多半只是网络抖），但**地址本身要作废**：
+     * 否则三分钟内的下一次点击会命中同一条坏地址，表现成「刚点开就失败」。
+     */
+    invalidateAddress: () => void;
   };
   lifecycle: {
     /** 内核用它保证「先停旧解码器再挂新的」，也供卸载时兜底。 */
@@ -286,6 +293,8 @@ export function attachHlsDecoder(host: DecoderHost, url: string): void {
     if (host.session.hasPlayed()) {
       // 已经在播的流突然致命：网络抖一下的概率远高于线路真坏了，
       // 自动跳走会把用户正在看的内容切没。只提示，由用户决定。
+      // 这一条地址作废掉，但会话与线路都不判死。
+      host.session.invalidateAddress();
       host.ui.error(
         `网络波动导致播放中断：${reason}，已重连 ${RETRY_DELAYS_MS.length} 次仍未恢复`,
       );
