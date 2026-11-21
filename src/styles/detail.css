@@ -162,50 +162,83 @@
   gap: 8px;
 }
 
-/* 长剧集分段：段头一行 + 展开后的该段格子。段数不足两段时
+/* 长剧集分段：段头是一行轻量的章节标题，展开后接该段的格子。段数不足两段时
    `EpisodeGroups` 直接输出 `.episode-grid`，不会产生这些节点。 */
 .episode-groups {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
 }
 
 .episode-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
+.episode-group + .episode-group {
+  margin-top: 10px;
+}
+
+/* 不做整行按钮：无边框无底色，靠文字层级与右侧的细线划分段落。 */
 .episode-group__head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  min-height: var(--h-control);
-  padding: 0 12px;
-  border: 1px solid var(--border);
+  min-height: 28px;
+  padding: 0 2px;
+  border: 0;
   border-radius: var(--r-sm);
-  background: var(--panel-2);
-  color: var(--text-soft);
+  background: none;
+  color: var(--muted);
   font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
+  transition: color var(--dur) var(--ease);
 }
 
-.episode-group__head:hover {
-  border-color: var(--border-strong);
+.episode-group__head:hover,
+.episode-group__head.is-open {
   color: var(--text);
 }
 
 .episode-group__head.is-open {
-  border-color: var(--border-strong);
+  font-weight: var(--fw-medium);
+}
+
+/* 全局没有 outline，焦点态与其他控件同口径：靠颜色变化表达。 */
+.episode-group__head:focus-visible {
   color: var(--text);
 }
 
+.episode-group__head:focus-visible .episode-group__label::before {
+  background: var(--accent);
+}
+
+/* 段落标记：收起时是中性竖条，展开时点亮为强调色。 */
 .episode-group__label {
+  position: relative;
+  padding-left: 10px;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.episode-group__label::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 1px;
+  background: var(--border-strong);
+  transition: background var(--dur) var(--ease);
+}
+
+.episode-group__head.is-open .episode-group__label::before {
+  background: var(--accent);
 }
 
 /* 「当前集在这段」：段收起时也能看出进度落在哪，不必逐段点开确认。 */
@@ -224,10 +257,31 @@
   background: var(--accent);
 }
 
+/* 标题到箭头的引导线，向右淡出，省掉整行边框又不让行看起来悬空。 */
+.episode-group__line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border) 0%, transparent 100%);
+  opacity: 0.7;
+  transition: opacity var(--dur) var(--ease);
+}
+
+/* 展开段的标题下面就是内容，引导线再划一道反而多余。 */
+.episode-group__head.is-open .episode-group__line {
+  opacity: 0.3;
+}
+
 .episode-group__caret {
-  margin-left: auto;
   color: var(--faint);
-  transition: transform var(--dur) var(--ease);
+  opacity: 0.55;
+  transition: transform var(--dur) var(--ease), color var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+
+.episode-group__head:hover .episode-group__caret,
+.episode-group__head.is-open .episode-group__caret {
+  color: var(--text-soft);
+  opacity: 1;
 }
 
 .episode-group__head.is-open .episode-group__caret {

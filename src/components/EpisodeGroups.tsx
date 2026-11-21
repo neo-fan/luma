@@ -79,6 +79,7 @@ export default function EpisodeGroups<T extends { index: number }>({
                   当前
                 </span>
               ) : null}
+              <span className="episode-group__line" aria-hidden="true" />
               <Icon name="chevron" size={14} className="episode-group__caret" />
             </button>
             {open ? (
