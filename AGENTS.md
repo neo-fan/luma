@@ -88,7 +88,7 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 python tools/check.py                 # 12 项：契约 / 版本一致性 / 发布收口 / py 兼容 / py 框架 / 适配层健壮性 / py 语法 / 前端单测 / cargo test / 运行时候检 / qjs-runner 单测 / qjs 引擎(GBK+ds)
 python tools/check.py --quick         # 跳过 cargo test
 python tools/check.py --full          # 追加 pnpm build
-python tools/check.py --ci            # 干净机器可跑的便携子集（CI job "checks"）
+python tools/check.py --ci            # 便携子集（5 项，`.github/workflows/checks.yml` 的 checks 作业跑它）
 
 # Tauri 官方工具链
 corepack pnpm install

@@ -1,0 +1,47 @@
+name: checks
+
+# 合入前的最低门禁：契约 / 版本一致性 / 发布脚本回归 / Python 语法 / 前端单测。
+# 这里跑的是 `check.py --ci` 的可移植子集——不依赖随包 python-embed、不跑 Rust 单测，
+# 因此能在 ubuntu-latest 上稳定执行；Rust 侧仍由本地 `python tools/check.py` 把关。
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一分支连续推送时只保留最新一次，避免排队浪费 runner 分钟。
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # 脚本里有中文输出，显式固定编码，避免 runner 默认 locale 下 UnicodeEncodeError。
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm 版本由 package.json 的 packageManager 决定，不在这里重复声明。
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Offline checks (portable subset)
+        run: python tools/check.py --ci
