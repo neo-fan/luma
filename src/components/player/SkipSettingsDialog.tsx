@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   clampSkipMs,
@@ -15,7 +16,12 @@ import {
  * 时间**：
  *   - 片头 = 当前时间点（开头到这里算片头）；
  *   - 片尾 = 当前到结尾的剩余时长（从这里到结束算片尾）。
- * 改动即时交给 `onConfigChange`（PlayerPage 写回这部剧的 history.skipJson）。
+ *
+ * 弹窗内改的是**草稿**：输入秒数 / 取点只动本地 state，点「完成」才交给
+ * `onConfigChange`（PlayerPage 写回这部剧的 history.skipJson 并驱动跳转判定），
+ * 点「×」直接丢弃。早先每次按键都即时提交，用户还在填片头时长，播放器已经
+ * 按半截配置把画面跳到新片头了。
+ *
  * portal 进播放器根，跟画面走、全屏时仍在画面内。
  */
 interface Props {
@@ -43,26 +49,57 @@ export function SkipSettingsDialog({
   onConfigChange,
   onClose,
 }: Props) {
+  /**
+   * 草稿：打开时以外部配置为基线，弹窗内所有改动只落这里。
+   * hooks 必须在提前 return 之前，否则关闭态/无 host 时 hook 数量会变。
+   */
+  const [draft, setDraft] = useState<SkipSegment[]>(config);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    // 只在「打开」这一下同步基线：弹窗开着的期间外部配置不应再被人改动，
+    // 若把 config 放进依赖，点完成触发的写入会反过来重置草稿。
+    if (open && !wasOpen.current) {
+      setDraft(config);
+    }
+    wasOpen.current = open;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   if (!host || !open) {
     return null;
   }
 
-  const introSec = Math.round(introMs(config) / 1000);
-  const outroSec = Math.round(outroMs(config) / 1000);
+  const introSec = Math.round(introMs(draft) / 1000);
+  const outroSec = Math.round(outroMs(draft) / 1000);
   const head = getPlayhead();
   const canCaptureIntro = !!head && head.currentMs > 1000;
   const canCaptureOutro =
     !!head && Number.isFinite(head.durationMs) && head.durationMs > head.currentMs + 1000;
 
-  const setInput = (sec: number) => onConfigChange(withSkipMs(config, "intro", clampSkipMs((Number(sec) || 0) * 1000)));
-  const setOutro = (sec: number) => onConfigChange(withSkipMs(config, "outro", clampSkipMs((Number(sec) || 0) * 1000)));
+  const setInput = (sec: number) =>
+    setDraft((prev) =>
+      withSkipMs(prev, "intro", clampSkipMs((Number(sec) || 0) * 1000)),
+    );
+  const setOutro = (sec: number) =>
+    setDraft((prev) =>
+      withSkipMs(prev, "outro", clampSkipMs((Number(sec) || 0) * 1000)),
+    );
   const captureIntro = () => {
     if (!head) return;
-    onConfigChange(withSkipMs(config, "intro", Math.round(head.currentMs)));
+    setDraft((prev) =>
+      withSkipMs(prev, "intro", clampSkipMs(Math.round(head.currentMs))),
+    );
   };
   const captureOutro = () => {
     if (!head) return;
-    onConfigChange(withSkipMs(config, "outro", Math.round(head.durationMs - head.currentMs)));
+    setDraft((prev) =>
+      withSkipMs(prev, "outro", clampSkipMs(Math.round(head.durationMs - head.currentMs))),
+    );
+  };
+  /** 完成 = 提交草稿并关闭；× 关闭 = 丢弃草稿。 */
+  const commit = () => {
+    onConfigChange(draft);
+    onClose();
   };
 
   return createPortal(
@@ -129,7 +166,7 @@ export function SkipSettingsDialog({
         </button>
       </div>
 
-      <button type="button" className="skip-overlay__close" onClick={onClose}>
+      <button type="button" className="skip-overlay__close" onClick={commit}>
         完成
       </button>
     </div>,
