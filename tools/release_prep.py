@@ -49,6 +49,12 @@ CRATE = "luma"
 
 # 本脚本唯一有写权限的四个文件；发布提交只包含它们。
 TARGETS = (PACKAGE_JSON, CARGO_TOML, CARGO_LOCK, CHANGELOG)
+# 版本载体：只能由本脚本改写，因此发版前必须是干净的。
+VERSION_TARGETS = (PACKAGE_JSON, CARGO_TOML, CARGO_LOCK)
+
+
+def changelog_name() -> str:
+    return CHANGELOG.relative_to(ROOT).as_posix()
 
 # 只接受不带前导零的数字段，prerelease 字符集按 semver 放宽到 [0-9A-Za-z.-]。
 SEMVER_RE = re.compile(
@@ -329,29 +335,42 @@ def git(*args: str, check: bool = True, timeout: float | None = 60.0) -> subproc
     return result
 
 
-def require_clean_tree(allow_dirty: bool) -> list[str]:
-    """目标文件必须干净；其它文件的脏改动默认也拦截，`--allow-dirty` 时只告警。
+def classify_status(lines: list[str]) -> tuple[list[str], list[str]]:
+    """把 `git status --porcelain` 的行分成 (版本载体的脏改动, 其它文件)。
 
+    `CHANGELOG.md` 两边都不算：`Unreleased` 里待发布的条目本来就写好在工作区、
+    由这一次发布提交带走，要求它先单独提交会把一条发版拆成两笔。
+    """
+    carriers = {path.relative_to(ROOT).as_posix() for path in VERSION_TARGETS}
+    log_name = changelog_name()
+    blocked: list[str] = []
+    others: list[str] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        path = line[3:].strip().strip('"')
+        if " -> " in path:
+            path = path.split(" -> ")[-1]
+        if path in carriers:
+            blocked.append(line)
+        elif path == log_name:
+            continue
+        else:
+            others.append(line)
+    return blocked, others
+
+
+def require_clean_tree(allow_dirty: bool) -> list[str]:
+    """版本载体必须干净；其它文件的脏改动默认也拦截，`--allow-dirty` 时只告警。
+
+    `CHANGELOG.md` 不参与判定：它的未提交内容就是这次要发布的条目。
     返回未提交的无关文件列表（供调用方打印），不阻断。
     """
     result = git("status", "--porcelain", check=False)
     if result.returncode != 0:
         raise ReleaseError("不在 git 工作树内")
 
-    target_names = {path.relative_to(ROOT).as_posix() for path in TARGETS}
-    blocked: list[str] = []
-    others: list[str] = []
-    for line in result.stdout.splitlines():
-        if not line.strip():
-            continue
-        path = line[3:].strip().strip('"')
-        if " -> " in path:
-            path = path.split(" -> ")[-1]
-        if path in target_names:
-            blocked.append(line)
-        else:
-            others.append(line)
-
+    blocked, others = classify_status(result.stdout.splitlines())
     if blocked:
         raise ReleaseError(
             "版本文件里有未提交的改动，先把它们提交或还原：\n" + "\n".join(blocked)
@@ -479,6 +498,10 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     staged = [path.relative_to(ROOT).as_posix() for path, _ in changed]
+    # CHANGELOG 始终入提交：Unreleased 的条目可能已经写在工作区但还没提交，
+    # 提升后即便只有日期行变化，也要和版本号一起进这一笔发布提交。
+    if changelog_name() not in staged:
+        staged.append(changelog_name())
     message = f"chore(release): 版本升至 {version}"
     try:
         git("add", "--", *staged)

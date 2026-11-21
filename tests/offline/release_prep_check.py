@@ -241,6 +241,25 @@ check(
 )
 
 # --------------------------------------------------------------------------- #
+# 工作区状态判定
+# --------------------------------------------------------------------------- #
+
+blocked, others = rp.classify_status(
+    [
+        " M src-tauri/Cargo.toml",
+        " M CHANGELOG.md",
+        "?? tools/scratch.py",
+    ]
+)
+check("版本载体脏改动被拦截", any("Cargo.toml" in line for line in blocked), str(blocked))
+check("CHANGELOG 未提交不拦截", not any("CHANGELOG" in line for line in blocked + others), str(blocked + others))
+check("无关文件仍算脏", any("scratch.py" in line for line in others), str(others))
+
+blocked, others = rp.classify_status([" M package.json", " M CHANGELOG.md"])
+check("仅 CHANGELOG 与版本载体混合时只拦载体", blocked == [" M package.json"], str(blocked))
+check("仅 CHANGELOG 时其它文件为空", others == [], str(others))
+
+# --------------------------------------------------------------------------- #
 # 结果
 # --------------------------------------------------------------------------- #
 

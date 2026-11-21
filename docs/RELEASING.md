@@ -24,6 +24,8 @@
 
 **升版本用一条命令收口**（`tools/release_prep.py`）：依次做预检 → 改 `package.json` / `Cargo.toml` / `Cargo.lock` 三处 → 把 CHANGELOG 的 Unreleased 提升为版本段 → 提交 `chore(release): 版本升至 X.Y.Z` → 打 annotated tag。任一步失败则整体不落盘，**版本号与 tag 在同一次操作里产生**，不存在「tag 已推、CHANGELOG 还写未发布」的窗口。
 
+`Unreleased` 的条目写在工作区即可，**不必先单独提交**：脚本把 CHANGELOG 的提升连同三处版本改写放进同一笔 `chore(release)` 提交，一次发版只有一笔提交。版本载体（`package.json` / `Cargo.toml` / `Cargo.lock`）仍要求干净——它们只能由脚本改写，手改过会先被拦下。
+
 ```bash
 python tools/release_prep.py 2.1.0 --dry-run   # 预览 diff 与将要改动的文件
 python tools/release_prep.py 2.1.0             # 落盘 + commit + tag（不 push）
@@ -75,7 +77,7 @@ python tools/check.py
 
 `check.py` 串行执行并汇总（12 项）：契约校验、版本一致性、发布收口、Python 兼容、py 框架、适配层健壮性、`py_compile`、`prepare_runtime.py --check`、qjs-runner 单测、qjs 引擎帧校验、前端单测、`cargo test --lib`。任一失败即非零退出。
 
-**当前基线（2.0.4）**：`python tools/check.py` **12/12 全绿**；其中 `pnpm test` 740（91 个文件）、`cargo test --lib` 280 passed / 2 ignored、`qjs-runner cargo test` 7 passed（GBK 编解码纯函数）、`py_compat_check` 19/19、`adapter_isolation` 15/15、`contract_check` 8 类型 + 8 方法对齐、`version_check` 版本全链一致（`tauri.conf.json` 指回 `package.json`、sidecar ping 回报注入的 2.0.4）、`release_prep_check` 43 断言（semver 比较 / 三处载体改写 / CHANGELOG 提升与阻断）、`prepare_runtime --check` 8 个 JS 依赖齐全 + 9 个资源字节数/SHA256 通过、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底）。`tsc --noEmit` 零错误（不在 `check.py` 内，单独跑）。
+**当前基线（2.0.4）**：`python tools/check.py` **12/12 全绿**；其中 `pnpm test` 740（91 个文件）、`cargo test --lib` 280 passed / 2 ignored、`qjs-runner cargo test` 7 passed（GBK 编解码纯函数）、`py_compat_check` 19/19、`adapter_isolation` 15/15、`contract_check` 8 类型 + 8 方法对齐、`version_check` 版本全链一致（`tauri.conf.json` 指回 `package.json`、sidecar ping 回报注入的 2.0.4）、`release_prep_check` 48 断言（semver 比较 / 三处载体改写 / CHANGELOG 提升与阻断 / 工作区状态判定）、`prepare_runtime --check` 8 个 JS 依赖齐全 + 9 个资源字节数/SHA256 通过、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底）。`tsc --noEmit` 零错误（不在 `check.py` 内，单独跑）。
 
 ### 2.2 窗口回归（需要 dev 窗口）
 
