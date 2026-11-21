@@ -2,10 +2,11 @@
 """发布收口：一条命令完成版本提升、CHANGELOG 校验、原子 commit 与 tag。
 
 为什么需要它：`package.json` 的 `version` 是唯一数值来源，但 `Cargo.toml` 只能写
-字面量、`Cargo.lock` 要跟着改、`CHANGELOG` 得有人写、tag 必须与版本号相等。手工做
-这四步的任何一步漏掉，都只会在打包或发布时才暴露（`build.rs` 的编译期断言、CI 的
-tag 校验、`latest.json` 的 notes 截取各守一段）。本脚本把四步收成一次原子操作：
-预检全部通过才落盘，落盘后立刻 commit 与 tag，中间不留人工窗口。
+字面量、`Cargo.lock` 要跟着改、`AGENTS.md` 的「版本」行要被校验、`CHANGELOG` 得有
+人写、tag 必须与版本号相等。手工做这几步的任何一步漏掉，都只会在打包或发布时才暴露
+（`build.rs` 的编译期断言、CI 的 tag 校验、`latest.json` 的 notes 截取、`version_check`
+的文档断言各守一段）。本脚本把它们收成一次原子操作：预检全部通过才落盘，落盘后立刻
+commit 与 tag，中间不留人工窗口——一次发版只有一笔提交。
 
 用法：
     python tools/release_prep.py 2.1.0 --dry-run    # 只预览，不写任何文件
@@ -14,7 +15,7 @@ tag 校验、`latest.json` 的 notes 截取各守一段）。本脚本把四步�
     python tools/release_prep.py 2.1.0 --no-commit  # 只改文件，不提交
 
 前置条件（不满足直接退出，不写任何文件）：
-- 工作区干净（`git status --porcelain` 为空）
+- 版本载体干净（`package.json` / `Cargo.toml` / `Cargo.lock` / `AGENTS.md` 的版本行）
 - 目标版本是合法 semver，且大于当前版本
 - 当前 `package.json` / `Cargo.toml` / `Cargo.lock` 三处版本已经一致（基线无漂移）
 - `v<version>` tag 本地不存在，远端能查到时也一并拒绝
@@ -27,6 +28,8 @@ tag 校验、`latest.json` 的 notes 截取各守一段）。本脚本把四步�
   `tools/version_check.py` 的读取口径对称；跑 cargo 会引入 target 锁与等待。
 - 不判断 CHANGELOG 条目的版本归属。哪个条目属于哪个版本是人写的语义，脚本只搬运
   Unreleased 的正文，不做内容归并。
+- 不改 `AGENTS.md` 的「回归基线」「发布状态」两行：前者随开发提交更新，后者不写死
+  版本号，发版后无需再补一笔文档提交。
 """
 
 from __future__ import annotations
@@ -45,12 +48,13 @@ PACKAGE_JSON = ROOT / "package.json"
 CARGO_TOML = ROOT / "src-tauri" / "Cargo.toml"
 CARGO_LOCK = ROOT / "src-tauri" / "Cargo.lock"
 CHANGELOG = ROOT / "CHANGELOG.md"
+AGENTS = ROOT / "AGENTS.md"
 CRATE = "luma"
 
-# 本脚本唯一有写权限的四个文件；发布提交只包含它们。
-TARGETS = (PACKAGE_JSON, CARGO_TOML, CARGO_LOCK, CHANGELOG)
+# 本脚本有写权限的文件；发布提交只包含它们。
+TARGETS = (PACKAGE_JSON, CARGO_TOML, CARGO_LOCK, AGENTS, CHANGELOG)
 # 版本载体：只能由本脚本改写，因此发版前必须是干净的。
-VERSION_TARGETS = (PACKAGE_JSON, CARGO_TOML, CARGO_LOCK)
+VERSION_TARGETS = (PACKAGE_JSON, CARGO_TOML, CARGO_LOCK, AGENTS)
 
 
 def changelog_name() -> str:
@@ -219,6 +223,33 @@ def bump_cargo_lock(text: str, version: str, crate: str = CRATE) -> str:
         blocks[index] = new_block
         return "[[package]]".join(blocks)
     raise ReleaseError(f'Cargo.lock 里找不到 name = "{crate}" 的包')
+
+
+# --------------------------------------------------------------------------- #
+# AGENTS.md 的「版本」行
+# --------------------------------------------------------------------------- #
+
+# 与 `tools/version_check.py::agents_version` 同一口径：表格行首列是「版本」时，
+# 反引号里的内容即版本快照。
+AGENTS_VERSION_RE = re.compile(r"(?m)^\|\s*版本\s*\|\s*`([^`]+)`")
+
+
+def agents_version(text: str) -> str | None:
+    match = AGENTS_VERSION_RE.search(text)
+    return match.group(1) if match else None
+
+
+def bump_agents_version(text: str, version: str) -> str:
+    """只改「版本」行的反引号内容，其余表格列原样保留。"""
+    pattern = re.compile(r"(?m)^(\|\s*版本\s*\|\s*`)([^`]+)(`)")
+    new_text, count = pattern.subn(
+        lambda match: match.group(1) + version + match.group(3), text, count=1
+    )
+    if count != 1:
+        raise ReleaseError("AGENTS.md 里找不到唯一的「版本」表格行")
+    if agents_version(new_text) != version:
+        raise ReleaseError("AGENTS.md 改写后版本快照未生效")
+    return new_text
 
 
 # --------------------------------------------------------------------------- #
@@ -427,6 +458,7 @@ def run(args: argparse.Namespace) -> int:
     cargo_text = read_text(CARGO_TOML)
     lock_text = read_text(CARGO_LOCK)
     log_text = read_text(CHANGELOG)
+    agents_text = read_text(AGENTS)
 
     current = package_version(pkg_text)
     if compare_semver(version, current) <= 0:
@@ -456,6 +488,7 @@ def run(args: argparse.Namespace) -> int:
     new_pkg = bump_package_json(pkg_text, version)
     new_cargo = bump_cargo_toml(cargo_text, version)
     new_lock = bump_cargo_lock(lock_text, version)
+    new_agents = bump_agents_version(agents_text, version)
     new_log, log_note = prepare_changelog(log_text, version, date)
     warnings = changelog_warnings(new_log)
 
@@ -464,6 +497,7 @@ def run(args: argparse.Namespace) -> int:
         (PACKAGE_JSON, pkg_text, new_pkg),
         (CARGO_TOML, cargo_text, new_cargo),
         (CARGO_LOCK, lock_text, new_lock),
+        (AGENTS, agents_text, new_agents),
         (CHANGELOG, log_text, new_log),
     ):
         if before != after:
@@ -473,6 +507,7 @@ def run(args: argparse.Namespace) -> int:
     print(f"  package.json          {version}")
     print(f"  src-tauri/Cargo.toml  {version}")
     print(f"  src-tauri/Cargo.lock  {version}")
+    print(f"  AGENTS.md「版本」行   {version}")
     print(f"  CHANGELOG.md          {log_note}")
     for warning in warnings:
         print(f"  提醒：{warning}")
@@ -524,7 +559,7 @@ def run(args: argparse.Namespace) -> int:
     print(f"tag     {tag}（annotated）")
     print()
     print("下一步（确认无误后手动推送，tag 会触发 release 工作流出包）：")
-    print(f"  git push && git push origin {tag}")
+    print(f"  git push --follow-tags origin main     # 提交与 tag v{version} 一起推")
     return 0
 
 

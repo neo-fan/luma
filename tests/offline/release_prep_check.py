@@ -143,6 +143,31 @@ check(
 check_error("Cargo.lock 缺目标包时报错", lambda: rp.bump_cargo_lock('[[package]]\nname = "other"\nversion = "1.0.0"\n', "1.1.0"))
 
 # --------------------------------------------------------------------------- #
+# AGENTS.md 的「版本」行
+# --------------------------------------------------------------------------- #
+
+AGENTS_DOC = """## 当前状态
+
+| 项 | 值 |
+|---|---|
+| 版本 | `1.0.0`（`package.json` 唯一来源） |
+| 回归基线 | `pnpm test` 740 |
+"""
+
+agents_bumped = rp.bump_agents_version(AGENTS_DOC, "1.1.0")
+check("AGENTS.md 版本行已改", rp.agents_version(agents_bumped) == "1.1.0", rp.agents_version(agents_bumped) or "")
+check(
+    "AGENTS.md 其它行不动",
+    "| 回归基线 | `pnpm test` 740 |" in agents_bumped
+    and "（`package.json` 唯一来源）" in agents_bumped,
+    "非版本行被改写",
+)
+check_error(
+    "AGENTS.md 缺版本行时报错",
+    lambda: rp.bump_agents_version("## 当前状态\n\n没有版本表。\n", "1.1.0"),
+)
+
+# --------------------------------------------------------------------------- #
 # CHANGELOG
 # --------------------------------------------------------------------------- #
 
@@ -258,6 +283,10 @@ check("无关文件仍算脏", any("scratch.py" in line for line in others), str
 blocked, others = rp.classify_status([" M package.json", " M CHANGELOG.md"])
 check("仅 CHANGELOG 与版本载体混合时只拦载体", blocked == [" M package.json"], str(blocked))
 check("仅 CHANGELOG 时其它文件为空", others == [], str(others))
+
+blocked, others = rp.classify_status([" M CHANGELOG.md", " M AGENTS.md"])
+check("AGENTS.md 脏改动被拦截", blocked == [" M AGENTS.md"], str(blocked))
+check("AGENTS.md 不落到无关文件里", others == [], str(others))
 
 # --------------------------------------------------------------------------- #
 # 结果

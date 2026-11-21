@@ -19,12 +19,14 @@
 | `src-tauri/Cargo.lock` | `luma` 包版本 | `cargo` 自动同步（提交前确认） |
 | `src-tauri/tauri.conf.json` `version` | 安装器元数据 | 写 `"../package.json"`，直接引用 |
 | `sidecars/py/main.py` `VERSION` | 适配层 `ping` 返回值 | 宿主注入 `LUMA_VERSION`；离线回退 `package.json` |
-| `AGENTS.md`「版本」行 | 文档快照 | `tools/version_check.py` 校验 |
+| `AGENTS.md`「版本」行 | 文档快照 | `tools/release_prep.py` 改写，`tools/version_check.py` 校验 |
 | `CHANGELOG.md` / `README.md` | 发版说明 | 发版时人工 |
 
-**升版本用一条命令收口**（`tools/release_prep.py`）：依次做预检 → 改 `package.json` / `Cargo.toml` / `Cargo.lock` 三处 → 把 CHANGELOG 的 Unreleased 提升为版本段 → 提交 `chore(release): 版本升至 X.Y.Z` → 打 annotated tag。任一步失败则整体不落盘，**版本号与 tag 在同一次操作里产生**，不存在「tag 已推、CHANGELOG 还写未发布」的窗口。
+**升版本用一条命令收口**（`tools/release_prep.py`）：依次做预检 → 改 `package.json` / `Cargo.toml` / `Cargo.lock` 三处 → 改 `AGENTS.md` 的「版本」行 → 把 CHANGELOG 的 Unreleased 提升为版本段 → 提交 `chore(release): 版本升至 X.Y.Z` → 打 annotated tag。任一步失败则整体不落盘，**版本号与 tag 在同一次操作里产生**，不存在「tag 已推、CHANGELOG 还写未发布」的窗口。
 
-`Unreleased` 的条目写在工作区即可，**不必先单独提交**：脚本把 CHANGELOG 的提升连同三处版本改写放进同一笔 `chore(release)` 提交，一次发版只有一笔提交。版本载体（`package.json` / `Cargo.toml` / `Cargo.lock`）仍要求干净——它们只能由脚本改写，手改过会先被拦下。
+`Unreleased` 的条目写在工作区即可，**不必先单独提交**：脚本把 CHANGELOG 的提升连同版本改写放进同一笔 `chore(release)` 提交，一次发版只有一笔提交。版本载体（`package.json` / `Cargo.toml` / `Cargo.lock` / `AGENTS.md`）仍要求干净——它们只能由脚本改写，手改过会先被拦下。
+
+发版前把回归基线刷完（`AGENTS.md` 的「回归基线」行随开发提交更新，不在发版时补），发版后不需要再为文档补提交：「发布状态」行不写死版本号，指向 GitHub Releases 与 `git tag`。
 
 ```bash
 python tools/release_prep.py 2.1.0 --dry-run   # 预览 diff 与将要改动的文件
@@ -77,7 +79,7 @@ python tools/check.py
 
 `check.py` 串行执行并汇总（12 项）：契约校验、版本一致性、发布收口、Python 兼容、py 框架、适配层健壮性、`py_compile`、`prepare_runtime.py --check`、qjs-runner 单测、qjs 引擎帧校验、前端单测、`cargo test --lib`。任一失败即非零退出。
 
-**当前基线（2.0.4）**：`python tools/check.py` **12/12 全绿**；其中 `pnpm test` 740（91 个文件）、`cargo test --lib` 280 passed / 2 ignored、`qjs-runner cargo test` 7 passed（GBK 编解码纯函数）、`py_compat_check` 19/19、`adapter_isolation` 15/15、`contract_check` 8 类型 + 8 方法对齐、`version_check` 版本全链一致（`tauri.conf.json` 指回 `package.json`、sidecar ping 回报注入的 2.0.4）、`release_prep_check` 48 断言（semver 比较 / 三处载体改写 / CHANGELOG 提升与阻断 / 工作区状态判定）、`prepare_runtime --check` 8 个 JS 依赖齐全 + 9 个资源字节数/SHA256 通过、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底）。`tsc --noEmit` 零错误（不在 `check.py` 内，单独跑）。
+**当前基线（2.0.4）**：`python tools/check.py` **12/12 全绿**；其中 `pnpm test` 740（91 个文件）、`cargo test --lib` 280 passed / 2 ignored、`qjs-runner cargo test` 7 passed（GBK 编解码纯函数）、`py_compat_check` 19/19、`adapter_isolation` 15/15、`contract_check` 8 类型 + 8 方法对齐、`version_check` 版本全链一致（`tauri.conf.json` 指回 `package.json`、sidecar ping 回报注入的 2.0.4）、`release_prep_check` 53 断言（semver 比较 / 四处载体改写 / CHANGELOG 提升与阻断 / 工作区状态判定）、`prepare_runtime --check` 8 个 JS 依赖齐全 + 9 个资源字节数/SHA256 通过、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底）。`tsc --noEmit` 零错误（不在 `check.py` 内，单独跑）。
 
 ### 2.2 窗口回归（需要 dev 窗口）
 
@@ -138,16 +140,31 @@ corepack pnpm build:beta       # beta（app.luma.beta），只在预发布时用
 3. **自检**：`LUMA_SELFCHECK=1` 启动，检查日志里 `ping ok`，且子进程指向安装目录内的 `sidecars/python-embed`。
 4. **日志**：确认 `data/logs/app|luma.<本地日期>.log`、`ui/ui.<本地日期>.log`、`spider/spider.<本地日期>.log` 三个通道都有生成（行首时间戳同为系统时区），且 URL 无查询参数落盘。
 
-### 2.6 记录与提交
+### 2.6 记录与闭环
 
-- 更新 `CHANGELOG.md`（能力变更 / 已知限制 / 工程改动），条目写在 `## [Unreleased]` 下。
-- 推荐直接跑 `python tools/release_prep.py X.Y.Z`：一次完成「改三处版本 → 提升 CHANGELOG → 提交 → 打 tag」，要求工作区干净，**不 push**；只想做其中一段时用 `--no-commit` / `--no-tag`。
-- 手工等价步骤：`git add` 只本次改动的文件；`git commit` 用 `chore(release): 版本升至 X.Y.Z`；本地 `git tag -a vX.Y.Z -m "release X.Y.Z"`。
-- **推送**：`git push && git push origin vX.Y.Z`。推 tag 会触发 `.github/workflows/release.yml`，由 CI 构建 NSIS 安装器并挂到同名 GitHub Release（也可在 Actions 手动 `workflow_dispatch`，留空 tag 则按 `package.json` 版本补发）。CI 会拒绝与 `package.json` 版本不一致的 tag。
+发版就是三件事：本地验证过 → 写 CHANGELOG → 一笔提交 + tag 推上去让 CI 出包。
+
+```bash
+# 1) 本地验证（§2.1 全绿；窗口回归按 §2.2 需要时再做）
+python tools/check.py
+
+# 2) 往 CHANGELOG 的 ## [Unreleased] 写条目（不提交）
+
+# 3) 一条命令收口：版本三处 + AGENTS.md 版本行 + CHANGELOG 提升 → 一笔提交 → tag
+python tools/release_prep.py X.Y.Z
+
+# 4) 推提交与 tag，release.yml 出包并挂 Release
+git push --follow-tags origin main
+```
+
+- 脚本**不 push**：tag 一落地 CI 就开始出包，这一步留给人工确认。
+- 只想做其中一段时用 `--dry-run`（预览 diff）/ `--no-commit`（只改文件）/ `--no-tag`（只提交）。
+- 手工等价步骤：`git add` 只本次改动的文件；`git commit` 用 `chore(release): 版本升至 X.Y.Z`；本地 `git tag -a vX.Y.Z -m "release X.Y.Z"`；`git push --follow-tags origin main`。
+- CI 会拒绝与 `package.json` 版本不一致的 tag；也可在 Actions 手动 `workflow_dispatch`，留空 tag 则按 `package.json` 版本补发。
 
 ## 3. 回滚
 
-版本升级只改 `package.json` + `src-tauri/Cargo.toml` 两处（其余引用/断言自动跟随），代码无迁移逻辑（无旧数据兼容负担）。回滚 = 还原版本字符串并重新 `tauri build`；`data/luma.db` 不随版本变更，无需迁移脚本。
+版本升级只改 `package.json` + `src-tauri/Cargo.toml` 两处（`Cargo.lock` 与 `AGENTS.md` 的版本行随 `release_prep.py` 一起改，`tauri.conf.json` 引用 `package.json`），代码无迁移逻辑（无旧数据兼容负担）。回滚 = 还原版本字符串并重新 `tauri build`；`data/luma.db` 不随版本变更，无需迁移脚本。
 
 ## 4. 常见失败与对策
 
