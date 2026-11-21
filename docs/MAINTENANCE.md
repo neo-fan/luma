@@ -107,9 +107,23 @@
 
 4. 四端协议靠约定 + 5 类结构校验，未做代码生成。
 5. **套件级状态耦合**：约 20 条探针共用一个 dev 窗口与进程级可变状态（active 配置、缓存、历史、常驻播放层），
-    单跑绿不代表套件绿，失败集会随轮次漂移（实测：同一轮里 `artplayer`/`session_machine` 绿、
-    `flv`/`page_cache` 红，而 `flv` 单独跑过）。修法在 harness：`run_probes.mjs` 中央快照/还原 + 独立数据集，
-    禁止靠放宽断言收敛。
+   单跑绿不代表套件绿，失败集会随轮次漂移（实测：同一轮里 `artplayer`/`session_machine` 绿、
+   `flv`/`page_cache` 红，而 `flv` 单独跑过）。修法在 harness：`run_probes.mjs` 中央快照/还原 + 独立数据集，
+   禁止靠放宽断言收敛。
+6. **依赖告警余额（5 条，评过、不是漏了）**：Dependabot 在 2026-11-21 报的 30 条里 25 条已随
+   `vite 6.4.6` / `vitest 4.1.12` 清掉，剩下 5 条都升级不了，理由写在下面，GitHub 上按这些理由
+   dismiss（`glib` → not used；`hickory-*` → tolerable risk），要重开随时可以：
+   - **`glib`（medium，`VariantStrIter` 的 `Iterator` 实现有 UB）**：来自 tauri 2 的 gtk-rs 0.18
+     Linux 栈，修复版本 0.20 要整栈升级（gtk-rs 0.18 → 0.20 是 tauri 的事，不是我们的）。
+     `.github/workflows/release.yml` 只出 Windows NSIS 包，Linux 侧代码在本仓库**没有编译产物**，
+     也不会有调用路径。
+   - **`hickory-proto` / `hickory-resolver`（2 high + 2 medium）**：修复版本 0.26 需要 `reqwest` 0.13，
+     而 `reqwest` 0.13 现在升不了——封面缓存的 `http-cache-reqwest` 0.16 钉死 `reqwest ^0.12`
+     （支持 0.13 的只有 `1.0.0-alpha.11`，alpha 不进生产）。两条 high 都只在开启 DNSSEC 校验时
+     可达（`DnssecDnsHandle`，本仓库的 resolver 不启用 DNSSEC）；medium 是 CNAME 放大与编码 O(n²)，
+     前提是恶意 DNS 服务器。出口有两条，都要单开一轮：等 `http-cache-reqwest` 1.0 稳定后连
+     `reqwest` 一起升；或把 `proxy/guard.rs` 的 `PinnedResolver`（SSRF 钉 IP）换成
+     `ClientBuilder::resolve_to_addrs` + 按 host 缓存客户端，彻底去掉 `hickory-dns` 特性。
 
 ## 10. 已还的债（留档，避免重复讨论）
 
