@@ -66,7 +66,7 @@ python tools/check.py
 
 `check.py` 串行执行并汇总（11 项）：契约校验、版本一致性、Python 兼容、py 框架、适配层健壮性、`py_compile`、`prepare_runtime.py --check`、qjs-runner 单测、qjs 引擎帧校验、前端单测、`cargo test --lib`。任一失败即非零退出。
 
-**当前基线（2.0.0 开发中）**：`python tools/check.py` **11/11 全绿**；其中 `pnpm test` 714（86 个文件）、`cargo test --lib` 273 passed / 2 ignored、`qjs-runner cargo test` 7 passed（GBK 编解码纯函数）、`py_compat_check` 19/19、`adapter_isolation` 15/15、`contract_check` 8 类型 + 8 方法对齐、`version_check` 版本全链一致（`tauri.conf.json` 指回 `package.json`、sidecar ping 回报注入的 2.0.0）、`prepare_runtime --check` 8 个 JS 依赖齐全 + 9 个资源字节数/SHA256 通过、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底）。`tsc --noEmit` 零错误（不在 `check.py` 内，单独跑）。
+**当前基线（2.0.3 开发中）**：`python tools/check.py` **11/11 全绿**；其中 `pnpm test` 724（89 个文件）、`cargo test --lib` 279 passed / 2 ignored、`qjs-runner cargo test` 7 passed（GBK 编解码纯函数）、`py_compat_check` 19/19、`adapter_isolation` 15/15、`contract_check` 8 类型 + 8 方法对齐、`version_check` 版本全链一致（`tauri.conf.json` 指回 `package.json`、sidecar ping 回报注入的 2.0.0）、`prepare_runtime --check` 8 个 JS 依赖齐全 + 9 个资源字节数/SHA256 通过、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底）。`tsc --noEmit` 零错误（不在 `check.py` 内，单独跑）。
 
 ### 2.2 窗口回归（需要 dev 窗口）
 

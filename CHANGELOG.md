@@ -4,6 +4,22 @@
 
 ---
 
+## [2.0.3] - 2026-11-21
+
+预计下一版，尚未打 tag / 发布安装包。
+
+### 新增
+
+- 更新过程可视化与结果回执：检查 / 下载 / 安装阶段增加转环与状态文案，下载条流光；静默安装的目标版本记在本机，下次启动回执成功或失败。详见下方 Unreleased 同名条目。
+- 长列表内存预算：搜索结果限制显示前 1200 条（统计按全量），首页分类限制 20 页 / 1200 条，推荐快照改为最近 6 站 LRU。详见下方 Unreleased 同名条目。
+
+### 修复
+
+- 从点播切回直播黑屏、控件消失：两个常驻播放器共用全局唯一守卫，创建点播实例时会硬停直播视频；直播页缺少点播页已有的 revive 逻辑，`resolved` 不变时引擎不会重建。已在 `LivePage` 对齐点播页的 revive（回到直播后确认实例是否被摘 src，必要时重新解析同一条流），并补 `liveHandoff.test.ts` 钉住两侧契约。
+- **反代断流韧性**：m3u8 成功解析后按「目标 URL + 代理端口 + 透传头」保留最近一份重写清单（上限 64 条、30 分钟有效期），上游 5xx / 超时 / 读失败 / 非清单响应时回退旧清单并用 `x-luma-proxy: playlist-stale` 标记；媒体请求在响应头发出前对建连失败与 2KB 嗅探期早 EOF 各做一次有界重试（超时不重试，发出头后不重试）。新增 `playlist_cache.rs` 与 5 条 Rust 单测（含本地上游 200→503 的端到端 stale 回退），回归基线更新为 `cargo test --lib` 279 passed / 2 ignored。
+
+---
+
 ## [2.0.2] - 2026-11-21
 
 ### 修复
@@ -39,6 +55,7 @@
 - **手搓页面缓存 `pageCache` → TanStack Query**：首页 / 分类 / 搜索 / 详情 / 直播解析的读结果缓存，从自研 `pageCache`（TTL + 上限 60 条 LRU + 手写 in-flight 去重 + 配置 scope 整体失效）迁到 `@tanstack/react-query` 的 `QueryClient`。保留 `api.*` **命令式门面**、没有改成 `useQuery`：`home`/`category`/`detail` 各自背着「空结果不缓存 / 按名自愈回查写回 / 命中也要 `rememberCards` / 空结果强制重试一次」这些历史 bug 修复逻辑，是 effect 与事件驱动的读取，命令式 `fetchQuery` 比声明式 hook 更忠实。适配层：`loadCached`（`fetchQuery` + `staleTime`/`force`，内置并发去重）、`peekFresh`（首帧直出，自带 TTL 闸门——`useEpisodeList` 靠它「命中种子即不回源」，把过期当命中会漏一次必要请求）、`putCached`（自愈回查写回）、`dropCached`（空结果不缓存 / 重试前清旧）、`resetCacheForScope`（换配置整体作废、同 id 幂等）。**行为差异**：容量上界从「60 条 LRU」换成「30 分钟 `gcTime`」的时间维度回收（条目都是小 JSON，足以覆盖「看几部再切回来仍秒开」）。删除 `pageCache.ts` 与其单测，新增 `queryClient.test.ts` 覆盖适配层手搓语义（force / 并发去重 / TTL 过期 / 错误不写缓存 / `peekFresh` TTL 闸门 / scope 幂等）。
 
 ### 新增
+- **长列表内存预算**：搜索结果与首页分类不再无限增长。新增 `src/lib/listLimits.ts`，统一 `capItems` / `clampLoadedPages` / LRU 快照语义；搜索页所有 hits 写入收敛到 `commitHits`，全量统计照旧、显示最多前 1200 条并在摘要里明示截断；首页分类限制 20 页 / 1200 条，到限停止翻页并提示刷新重来，返回详情再不会重放超限页数；首页推荐快照由「每站一份」改为单快照内最近 6 站 LRU（73 个站点不再各留一张推荐表）。`cards.css` 的 `content-visibility` 与滚动恢复保持原样。新增 `listLimits.test.ts`（6）与 `listBudget.test.ts`（2），回归基线更新为 `pnpm test` 722（88 文件）、`cargo test --lib` 273 passed / 2 ignored。
 - **更新过程可视化与结果回执**：检查 / 下载 / 安装三个阶段现在都有统一的旋转指示与文字状态，下载进度条加流光，下载很快时也能看到「正在推进」；点「安装并退出」后先显示「正在准备安装，应用即将退出…」，后端改为异步等待 1.2 秒再退出，不再用同步 sleep 占住命令线程。静默安装无法在当前会话回报结果，改为点安装时在本机记下目标版本，下次启动比对当前版本后明确提示「已更新到 X」或「更新未完成，可重试」。新增 `isVersionAtLeast` 与 `updatePrefs.pendingVersion` 及 6 条单测；顺带修正 `historyLine.test.ts` 对旧字面量的漂移。回归基线更新为 `pnpm test` 714（86 文件）、`cargo test --lib` 273 passed / 2 ignored。
 - **QuickJS 宿主补 ds 协议注入函数（针对性垫片，不换引擎）**：捆绑的 drpy2 `3.9.51beta2` 引擎不定义、而新版 ds 规则会引用的 drpy-NODE 服务端全局，此前一旦命中即 ReferenceError、整站中断。`HOST_JS`（`sidecars/qjs-runner/src/main.rs`）现补齐：真实现 `batchFetch`（数组逐项串行走 `req`、返回 `{code,content,headers}` 数组）、`reqs`（委托 `req`）、`toBeijingTime`、`jsonToCookie`、`cookieToJson`；对依赖 Node/Java 桥、无法忠实复刻的 `executeParse/rsaX/aesX/desX/js2Proxy/cachedRequest/JSProxyStream/JSFile/AIS/XMLHttpRequest/jsoup/pq/pj/pjfa/pjfh/pdfl` 给一次性 `console.warn` 空兜底（降级出空结果而非崩）。实测：`tools/check.py` 9/9 全绿无回归；`batchFetch` 对 `example.com` 返回 code 200、`toBeijingTime` 东八区换算正确、空兜底均不再中断。**限制**：真·ds 服务端规则的完整能力（并发代理/原生加解密桥）仍受 QuickJS 宿主所限，垫片只保证「不整站崩 + 可诊断」；引擎本体维持 LGPL-3.0 的 drpy2 不变。
 - **片头/片尾跳过（按剧配置）**：后端 `skip_json`（DB 列 + `history.rs` 跨源继承）早已就绪、Rust 注释指名前端 `lib/skipSegments.ts` 负责校验，但该模块从未创建、`skipJson` 在播放器里没被读取/应用、也无配置 UI。本次补齐整条前端链路：`skipSegments.ts`（`SkipSegment` 类型 + 安全解析/校验/序列化 + 片头/片尾判定纯函数，12 单测）；`usePlayerEngine` 在 `loadedmetadata` 续播之后做**片头自动跳**（仅当续播点未落进片头之后才跳，尊重「上次看到」；直播不跳），`timeupdate` 上报窗口态；`PlayerPage` 读/写 `HistoryItem.skipJson`；`SkipOverlay.tsx` 只承载「跳过片头/片尾」动作按钮（落在窗口才显）；配置入口在 **ArtPlayer 原生设置齿轮**的「片头/片尾」行（tooltip 汇总当前配置，点行收起原生面板），打开自定义弹窗 `SkipSettingsDialog`：按秒设置片头/片尾 + 「取当前 / 到结尾」从播放进度一键取点（片头=当前时间、片尾=时长−当前时间），改动即时落库。选集面板集数点语义：绿点=正在播线路里正在播的那一集、灰点=其它线路同序号的对应集（集数不够夹到最后一集，倒序只换展示不改索引）。CDP 端到端实测：注入 intro=10s 重播，video ready=4、currentTime 自动跳到 10.7s。（倍速保存经核查早已完整实现——`HistoryItem.rate` 按剧记忆 + `playerPrefsWriter` + 引擎应用，本次未重造。）
