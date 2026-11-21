@@ -601,3 +601,61 @@ fn propagate_site_urlencodes_non_ascii_key() {
     let out = handlers::propagate_site_to_playlist(text, "央视频源1");
     assert!(out.contains("slug=a&site=%E5%A4%AE"), "site key should be percent-encoded: {out}");
 }
+
+#[tokio::test]
+async fn proxy_serves_last_good_playlist_when_upstream_fails() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use axum::body::to_bytes;
+
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+
+    async fn upstream() -> Response {
+        let n = HITS.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            (
+                [("content-type", "application/vnd.apple.mpegurl")],
+                "#EXTM3U\nseg.ts\n",
+            )
+                .into_response()
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
+    }
+
+    let app = Router::new().route("/live.m3u8", get(upstream));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let dir = std::env::temp_dir().join(format!("luma-playlist-stale-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let state = Arc::new(ProxyState {
+        port: AtomicU16::new(9978),
+        allow_local: true,
+        client: streaming_builder(true).build().expect("client"),
+        image_client: Arc::new(ProxyState::image_client_in(&dir)),
+    });
+    let target = format!("http://{addr}/live.m3u8?n={}", std::process::id());
+    let query = format!("url={}", urlencode(&target));
+
+    let first = handle_proxy(
+        State(state.clone()),
+        RawQuery(Some(query.clone())),
+        HeaderMap::new(),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK, "first fetch must succeed");
+    let first_body = to_bytes(first.into_body(), 4096).await.expect("first body");
+    assert!(String::from_utf8_lossy(&first_body).contains("127.0.0.1:9978/proxy"));
+
+    let second = handle_proxy(State(state), RawQuery(Some(query)), HeaderMap::new()).await;
+    assert_eq!(second.status(), StatusCode::OK, "stale playlist should win over 503");
+    assert_eq!(second.headers()["x-luma-proxy"], "playlist-stale");
+    let second_body = to_bytes(second.into_body(), 4096).await.expect("second body");
+    assert!(String::from_utf8_lossy(&second_body).contains("seg.ts"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

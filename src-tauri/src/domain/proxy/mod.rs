@@ -25,6 +25,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
+mod playlist_cache;
+
 // Channel-scoped fixed port; see `infra::channel`.
 fn default_port() -> u16 {
     crate::channel::current().proxy_port()

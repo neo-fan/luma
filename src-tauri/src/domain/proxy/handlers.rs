@@ -1,5 +1,7 @@
 use super::*;
+use futures_util::Stream;
 use std::collections::HashSet;
+use std::pin::Pin;
 use std::sync::{Mutex, OnceLock};
 
 /// 记住已经记过 warn 的图床域名，返回「这是本机第一次失败」。
@@ -429,6 +431,86 @@ pub(super) async fn handle_options() -> Response {
         .unwrap_or_else(|_| StatusCode::NO_CONTENT.into_response())
 }
 
+/** 统一盒装，便于「正常直连」与「先 peek 再回放」两条路径共用同一个变量类型。 */
+type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static>>;
+
+/** 在响应发出前读一小段头部；这段失败还能重建请求重试，一旦发出头就收不回来了。 */
+async fn peek_media_prefix(
+    upstream: reqwest::Response,
+    cap: usize,
+) -> Result<(Vec<u8>, ByteStream), reqwest::Error> {
+    let mut stream = upstream.bytes_stream();
+    let mut head = Vec::new();
+    while head.len() < cap {
+        match stream.next().await {
+            Some(Ok(chunk)) => head.extend_from_slice(&chunk),
+            Some(Err(err)) => return Err(err),
+            None => break,
+        }
+    }
+    Ok((head, Box::pin(stream)))
+}
+
+/** 重取响应元数据；`bytes_stream()` 会拿走 Response，所以必须在建流前抓完。 */
+fn response_meta(
+    upstream: &reqwest::Response,
+) -> (StatusCode, String, Vec<(&'static str, String)>) {
+    let status = upstream.status();
+    let content_type = upstream
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let carried = DOWNSTREAM
+        .iter()
+        .filter_map(|name| {
+            upstream
+                .headers()
+                .get(*name)
+                .and_then(|value| value.to_str().ok())
+                .map(|text| (*name, text.to_string()))
+        })
+        .collect();
+    (status, content_type, carried)
+}
+
+fn header_safe(reason: &str) -> String {
+    reason
+        .chars()
+        .take(120)
+        .map(|ch| {
+            if matches!(ch, '\n' | '\r' | '\t') {
+                ' '
+            } else if ch.is_ascii_graphic() || ch == ' ' {
+                ch
+            } else {
+                '?'
+            }
+        })
+        .collect()
+}
+
+/** 清单失败时优先回最近一份成功清单；没有才落原来的 deny。 */
+fn stale_or_deny(playlist_key: Option<&str>, reason: &str, status: StatusCode) -> Response {
+    if let Some(key) = playlist_key {
+        if let Some(rewritten) = playlist_cache::stale(key) {
+            tracing::warn!(reason, "serving stale m3u8 after upstream failure");
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/vnd.apple.mpegurl")
+                .header("cache-control", "no-store")
+                .header("access-control-allow-origin", "*")
+                .header("access-control-expose-headers", "*")
+                .header("x-luma-proxy", "playlist-stale")
+                .header("x-luma-proxy-reason", header_safe(reason))
+                .body(Body::from(rewritten))
+                .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "stale response build failed"));
+        }
+    }
+    deny(status, reason)
+}
+
 pub(super) async fn handle_proxy(
     State(state): State<Arc<ProxyState>>,
     RawQuery(raw): RawQuery,
@@ -526,45 +608,57 @@ pub(super) async fn handle_proxy(
         }
     }
 
-    let upstream = match request.send().await {
-        Ok(response) => response,
-        Err(err) => {
-            let status = if err.is_timeout() {
-                StatusCode::GATEWAY_TIMEOUT
-            } else {
-                StatusCode::BAD_GATEWAY
-            };
-            return deny(status, &format!("upstream failed: {err}"));
+    let playlist_hint = target.path().to_ascii_lowercase().ends_with(".m3u8");
+    let playlist_key = playlist_hint.then(|| playlist_cache::key(&target, state.port(), &fwd));
+    // GET 没有 body，try_clone 一定可用；留一份给「响应发出前」的有界重试。
+    let mut retry_request = request.try_clone();
+    let mut retried = false;
+
+    let upstream = loop {
+        match request.send().await {
+            Ok(response) => break response,
+            Err(err) => {
+                let retryable = !retried && !err.is_timeout() && err.is_connect();
+                if retryable {
+                    if let Some(next) = retry_request.take() {
+                        retried = true;
+                        tracing::warn!(url = %target, error = %err, "upstream connect failed, retrying once");
+                        request = next;
+                        continue;
+                    }
+                }
+                let status = if err.is_timeout() {
+                    StatusCode::GATEWAY_TIMEOUT
+                } else {
+                    StatusCode::BAD_GATEWAY
+                };
+                let reason = format!("upstream failed: {err}");
+                return stale_or_deny(playlist_key.as_deref(), &reason, status);
+            }
         }
     };
 
-    let status = upstream.status();
-    let content_type = upstream
-        .headers()
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let is_playlist = target.path().to_ascii_lowercase().ends_with(".m3u8")
-        || content_type.to_ascii_lowercase().contains("mpegurl");
+    let (mut status, content_type, mut carried) = response_meta(&upstream);
+    let is_playlist = playlist_hint || content_type.to_ascii_lowercase().contains("mpegurl");
 
-    if is_playlist && status.is_success() {
+    if is_playlist && !status.is_success() {
+        let reason = format!("upstream status {status}");
+        return stale_or_deny(playlist_key.as_deref(), &reason, status);
+    }
+
+    if is_playlist {
         // Relative segment URIs must be rewritten, otherwise hls.js resolves
         // them against 127.0.0.1:9978 and every segment 404s.
         let body = match read_capped(upstream, MAX_PLAYLIST_BYTES).await {
             Ok(bytes) => bytes,
             Err(err) => {
-                return deny(
-                    StatusCode::BAD_GATEWAY,
-                    &format!("playlist read failed: {err}"),
-                )
+                let reason = format!("playlist read failed: {err}");
+                return stale_or_deny(playlist_key.as_deref(), &reason, StatusCode::BAD_GATEWAY);
             }
         };
         if body.len() > MAX_PLAYLIST_BYTES {
-            return deny(
-                StatusCode::BAD_GATEWAY,
-                &format!("playlist too large (>{} bytes)", MAX_PLAYLIST_BYTES),
-            );
+            let reason = format!("playlist too large (>{} bytes)", MAX_PLAYLIST_BYTES);
+            return stale_or_deny(playlist_key.as_deref(), &reason, StatusCode::BAD_GATEWAY);
         }
         let text = crate::textio::decode(&body);
         // A 200 with a non-playlist body is the normal shape of a dead source:
@@ -576,12 +670,13 @@ pub(super) async fn handle_proxy(
         if !looks_like_playlist(&text) {
             let preview = preview_text(&text, 160);
             tracing::warn!(url = %target, preview = %preview, "upstream answered with a non-playlist body");
-            return deny(
-                StatusCode::BAD_GATEWAY,
-                &format!("upstream returned a non-playlist body: {preview}"),
-            );
+            let reason = format!("upstream returned a non-playlist body: {preview}");
+            return stale_or_deny(playlist_key.as_deref(), &reason, StatusCode::BAD_GATEWAY);
         }
         let rewritten = rewrite_playlist(&text, &target, state.port(), &fwd);
+        if let Some(key) = playlist_key.as_deref() {
+            playlist_cache::remember(key.to_string(), rewritten.clone());
+        }
         return Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/vnd.apple.mpegurl")
@@ -598,34 +693,55 @@ pub(super) async fn handle_proxy(
     //
     // 注意：`bytes_stream()` 会拿走 `upstream` 的所有权，所以响应头必须在
     // 建流之前抓完。
-    let carried: Vec<(&'static str, String)> = DOWNSTREAM
-        .iter()
-        .filter_map(|name| {
-            upstream
-                .headers()
-                .get(*name)
-                .and_then(|value| value.to_str().ok())
-                .map(|text| (*name, text.to_string()))
-        })
-        .collect();
     let wants_range = headers.contains_key("range");
-    let mut upstream_stream = upstream.bytes_stream();
+    const PEEK: usize = 2048;
     let mut head: Vec<u8> = Vec::new();
-    let mut stripped = false;
-    if !wants_range {
-        const PEEK: usize = 2048;
-        while head.len() < PEEK {
-            match upstream_stream.next().await {
-                Some(Ok(chunk)) => head.extend_from_slice(&chunk),
-                Some(Err(err)) => {
-                    return deny(
-                        StatusCode::BAD_GATEWAY,
-                        &format!("upstream body failed: {err}"),
-                    )
+    let upstream_stream: ByteStream = if wants_range {
+        Box::pin(upstream.bytes_stream())
+    } else {
+        match peek_media_prefix(upstream, PEEK).await {
+            Ok((bytes, stream)) => {
+                head = bytes;
+                stream
+            }
+            Err(err) => {
+                let retryable = !retried && !err.is_timeout() && retry_request.is_some();
+                if !retryable {
+                    let reason = format!("upstream body failed: {err}");
+                    return stale_or_deny(playlist_key.as_deref(), &reason, StatusCode::BAD_GATEWAY);
                 }
-                None => break,
+                let next = retry_request.take().expect("retry_request checked above");
+                tracing::warn!(url = %target, error = %err, "upstream body stopped early, retrying once");
+                let second = match next.send().await {
+                    Ok(response) => response,
+                    Err(err2) => {
+                        let status2 = if err2.is_timeout() {
+                            StatusCode::GATEWAY_TIMEOUT
+                        } else {
+                            StatusCode::BAD_GATEWAY
+                        };
+                        let reason = format!("upstream retry failed: {err2}");
+                        return stale_or_deny(playlist_key.as_deref(), &reason, status2);
+                    }
+                };
+                let (second_status, _second_content_type, second_carried) = response_meta(&second);
+                status = second_status;
+                carried = second_carried;
+                match peek_media_prefix(second, PEEK).await {
+                    Ok((bytes, stream)) => {
+                        head = bytes;
+                        stream
+                    }
+                    Err(err2) => {
+                        let reason = format!("upstream retry body failed: {err2}");
+                        return stale_or_deny(playlist_key.as_deref(), &reason, StatusCode::BAD_GATEWAY);
+                    }
+                }
             }
         }
+    };
+    let mut stripped = false;
+    if !wants_range {
         if let Some(offset) = disguised_ts_offset(&head) {
             tracing::info!(
                 url = %target,
@@ -1092,4 +1208,36 @@ pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[test]
+    fn header_safe_replaces_controls_and_caps_length() {
+        assert_eq!(header_safe("boom\nnext"), "boom next");
+        assert_eq!(header_safe(&"x".repeat(200)).len(), 120);
+    }
+
+    #[tokio::test]
+    async fn stale_or_deny_serves_last_good_playlist() {
+        let target = Url::parse("https://cdn.example/live/stale-test.m3u8").unwrap();
+        let key = playlist_cache::key(&target, 9978, &Fwd::default());
+        playlist_cache::remember(key.clone(), "#EXTM3U\nseg.ts\n".to_string());
+
+        let response = stale_or_deny(Some(&key), "upstream 503", StatusCode::BAD_GATEWAY);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-luma-proxy"], "playlist-stale");
+        assert_eq!(response.headers()["x-luma-proxy-reason"], "upstream 503");
+        let body = to_bytes(response.into_body(), 1024).await.expect("body");
+        assert_eq!(&body[..], b"#EXTM3U\nseg.ts\n");
+    }
+
+    #[tokio::test]
+    async fn stale_or_deny_without_cache_keeps_the_error() {
+        let response = stale_or_deny(None, "upstream failed", StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    }
 }
