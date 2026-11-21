@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canFailover,
   formatDuration,
+  lineLabel,
   parseEpisodes,
   parsePlayLines,
   rankByTitle,
@@ -56,6 +57,29 @@ describe("parsePlayLines", () => {
 
   it("returns empty for missing input", () => {
     expect(parsePlayLines(null, null)).toEqual([]);
+  });
+});
+
+describe("lineLabel", () => {
+  it("strips the anti-scrape decoration some sources append", () => {
+    // 「爱瓜TV[py]」三条线路的原始名字，原样渲染就是一串乱码。
+    expect(lineLabel("书生玩剣ⁱ·*₁＇")).toBe("书生玩剣");
+    expect(lineLabel("名妓读经ⁱ·*₁＇")).toBe("名妓读经");
+  });
+
+  it("leaves normal line names untouched", () => {
+    for (const name of ["线路一", "m3u8", "zijianm3u8", "CO4K", "第 2 线路"]) {
+      expect(lineLabel(name)).toBe(name);
+    }
+  });
+
+  it("keeps the raw name when it is only decoration", () => {
+    expect(lineLabel("ⁱ·*₁＇")).toBe("ⁱ·*₁＇");
+  });
+
+  it("handles empty input", () => {
+    expect(lineLabel("")).toBe("");
+    expect(lineLabel(undefined)).toBe("");
   });
 });
 

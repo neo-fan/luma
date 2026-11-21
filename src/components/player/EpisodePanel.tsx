@@ -3,7 +3,7 @@ import EpisodeButton from "../EpisodeButton";
 import IconButton from "../IconButton";
 import { episodePanelView } from "../../lib/catalogState";
 import type { CatalogStatus } from "../../lib/catalogState";
-import type { PlayLine } from "../../lib/format";
+import { lineLabel, type PlayLine } from "../../lib/format";
 
 interface EpisodePanelProps {
   lines: PlayLine[];
@@ -126,11 +126,11 @@ export default function EpisodePanel({
                     }
                     setPanelLine(index);
                   }}
-                  title={`查看 ${item.name}（${item.episodes.length} 集）${
+                  title={`查看 ${lineLabel(item.name)}（${item.episodes.length} 集）${
                     index === lineIndex ? " · 正在播放的线路" : ""
                   }`}
                 >
-                  {item.name}（{item.episodes.length}）
+                  {lineLabel(item.name)}（{item.episodes.length}）
                 </button>
               ))}
             </div>

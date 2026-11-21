@@ -1,6 +1,7 @@
 import IconButton from "../IconButton";
 import VodMetaHero from "../VodMetaHero";
 import type { DoubanMeta } from "../../lib/douban";
+import { lineLabel } from "../../lib/format";
 import type { VodInfo } from "../../types/luma";
 
 interface PlayerAboutProps {
@@ -90,7 +91,8 @@ export default function PlayerAbout({
           </span>
           {lineName ? (
             <span className="player-about__now">
-              {lineName}
+              {/* 线路名可能带源站的防抓取装饰字符，只清展示、不动数据。 */}
+              {lineLabel(lineName)}
               {episodeLabel ? ` · ${episodeLabel}` : ""}
             </span>
           ) : null}

@@ -56,6 +56,36 @@ export function parseEpisodes(raw: string | null | undefined): Episode[] {
   return episodes;
 }
 
+/**
+ * 线路名的展示清洗。
+ *
+ * 部分源会给线路名挂一串「防抓取」装饰字符（如「爱瓜TV[py]」的
+ * `书生玩剣ⁱ·*₁＇`、`名妓读经ⁱ·*₁＇`），原样渲染就是一串乱码，看着像页面解析
+ * 失败。这里只清装饰：不可见字符、上下标与修饰字母、收尾的符号串。
+ *
+ * **只用于显示**：`PlayLine.name` 会原样作为 `flag` 发给 `playerContent`，
+ * 换掉就可能被源当成另一条线路，所以数据层一个字都不动。
+ */
+export function lineLabel(name: string | null | undefined): string {
+  const raw = (name ?? "").trim();
+  if (!raw) {
+    return raw;
+  }
+  const cleaned = raw
+    // 控制字符、零宽、双向控制、软连字符这类「看得见才怪」的东西
+    .replace(
+      /[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g,
+      "",
+    )
+    // 上下标与修饰字母：ⁱ ₁ ᵃ …
+    .replace(/[\u2070-\u209F\u02B0-\u02FF]/g, "")
+    // 收尾装饰符号串：`·*＇` / ` - ` / `（` 之类（含全角引号与星号）
+    .replace(/[\s·・*＊'"‘’“”＂＇`~^|/,;:，。、]+$/g, "")
+    .trim();
+  // 整条都是装饰时保留原文，宁可难看也别给出一片空白。
+  return cleaned || raw;
+}
+
 /** `vod_play_from` + `vod_play_url` → 线路数组；无剧集的线路跳过。 */
 export function parsePlayLines(
   from: string | null | undefined,
