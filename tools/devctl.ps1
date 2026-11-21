@@ -58,7 +58,9 @@ function Get-CdpState {
 
 function Get-LauncherPid {
     if (-not (Test-Path -LiteralPath $PidPath)) { return $null }
-    $raw = (Get-Content -LiteralPath $PidPath -Raw -ErrorAction SilentlyContinue).Trim()
+    $raw = Get-Content -LiteralPath $PidPath -Raw -ErrorAction SilentlyContinue
+    if (-not $raw) { return $null }
+    $raw = $raw.Trim()
     if (-not $raw) { return $null }
     $procId = 0
     if ([int]::TryParse($raw, [ref]$procId) -and (Get-Process -Id $procId -ErrorAction SilentlyContinue)) {
@@ -155,11 +157,18 @@ function Start-Dev {
     Set-Content -LiteralPath $LogPath -Value '' -NoNewline
     Set-Content -LiteralPath $ErrPath -Value '' -NoNewline
 
+    # 启动器写盘，由它自己把 pnpm 输出重定向到日志；调用方**不带** -Redirect*，
+    # 否则文件句柄会传给子进程，Bash 工具会一直等句柄关闭（实测挂满超时）。
+    $launcherPath = Join-Path $OutDir 'dev-launcher.ps1'
+    $launcherBody = @"
+Set-Location '$Root'
+corepack pnpm dev:app 1> '$LogPath' 2> '$ErrPath'
+"@
+    Set-Content -LiteralPath $launcherPath -Value $launcherBody -Encoding utf8
+
     $launcher = Start-Process -FilePath 'pwsh' `
-        -ArgumentList '-NoProfile', '-Command', "Set-Location '$Root'; corepack pnpm dev:app" `
+        -ArgumentList '-NoProfile', '-WindowStyle', 'Hidden', '-File', $launcherPath `
         -WindowStyle Hidden `
-        -RedirectStandardOutput $LogPath `
-        -RedirectStandardError $ErrPath `
         -PassThru
     Set-Content -LiteralPath $PidPath -Value $launcher.Id -NoNewline
     Write-Output "STARTED launcher=$($launcher.Id)"
