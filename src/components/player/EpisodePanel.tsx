@@ -72,7 +72,12 @@ export default function EpisodePanel({
           <button
             key={`${item.name}-${index}`}
             type="button"
-            className={index === panelLine ? "chip is-active" : "chip"}
+            className={[
+              index === panelLine ? "chip is-active" : "chip",
+              index === lineIndex ? "is-last" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             // 点线路 = 只切换下方的剧集列表（浏览哪条线路），不换播放源。
             // 真正换流只发生在点某条线路下的「某一集」时——切线却刷新播放会打断
             // 当前画面，且线路与集数两件事被混成一次操作。要换这条线的流，
@@ -83,7 +88,9 @@ export default function EpisodePanel({
               }
               setPanelLine(index);
             }}
-            title={`查看 ${item.name}（${item.episodes.length} 集）`}
+            title={`查看 ${item.name}（${item.episodes.length} 集）${
+              index === lineIndex ? " · 正在播放的线路" : ""
+            }`}
           >
             {item.name}（{item.episodes.length}）
           </button>

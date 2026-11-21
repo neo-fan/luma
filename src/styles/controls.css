@@ -665,10 +665,22 @@
 }
 
 /* 详情页线路 chip 上的「上次」角标：历史记录的线路名命中这一条。 */
-.chip__flag {
-  margin-left: 5px;
-  color: var(--ok);
-  font-size: var(--fs-2xs);
+/* 「上次使用的线路」不再挂文字角标：chip 右上角一个绿点，与剧集格的
+   「上次看到」同一套语义。激活态也保留绿点——autoLine 会把上次线路直接
+   激活，隐藏掉就等于没标记。 */
+.chip.is-last {
+  position: relative;
+}
+
+.chip.is-last::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
 }
 
 /* 直播频道 chip：inline-flex 包裹按钮，承载多线路徽标。 */

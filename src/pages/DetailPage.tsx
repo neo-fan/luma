@@ -907,25 +907,30 @@ export default function DetailPage({
               {/* `chip-row--lines` 是给探针/脚本的稳定锚点：分类 chip 也在这页
                 用 `.chip-row .chip`，早先的探针因此把「2026」「大陆」当成线路点。 */}
               <div className="chip-row chip-row--lines">
-                {lines.map((item, index) => (
-                  <button
-                    key={`${item.name}-${index}`}
-                    type="button"
-                    className={index === lineIndex ? "chip is-active" : "chip"}
-                    data-line={item.name}
-                    onClick={() => setLineIndex(index)}
-                    title={
-                      resume?.playFrom === item.name
-                        ? `${item.episodes.length} 集 · 上次观看的线路`
-                        : `${item.episodes.length} 集`
-                    }
-                  >
-                    {item.name}（{item.episodes.length}）
-                    {resume?.playFrom === item.name ? (
-                      <span className="chip__flag">上次</span>
-                    ) : null}
-                  </button>
-                ))}
+                {lines.map((item, index) => {
+                  const lastUsed = resume?.playFrom === item.name;
+                  return (
+                    <button
+                      key={`${item.name}-${index}`}
+                      type="button"
+                      className={[
+                        index === lineIndex ? "chip is-active" : "chip",
+                        lastUsed ? "is-last" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      data-line={item.name}
+                      onClick={() => setLineIndex(index)}
+                      title={
+                        lastUsed
+                          ? `${item.episodes.length} 集 · 上次观看的线路`
+                          : `${item.episodes.length} 集`
+                      }
+                    >
+                      {item.name}（{item.episodes.length}）
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="detail-episode-tools">
