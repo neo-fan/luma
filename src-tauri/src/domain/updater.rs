@@ -155,11 +155,8 @@ async fn load_manifest(prefixes: Vec<String>) -> Result<(String, Manifest), AppE
             Err(err) => errors.push(format!("task join failed: {err}")),
         }
     }
-    Err(AppError::new(
-        code::UPDATE_FAIL,
-        "检查更新失败：所有通道都不可用",
-    )
-    .with_cause(errors.join(" · ")))
+    Err(AppError::new(code::UPDATE_FAIL, "所有通道都不可用")
+        .with_cause(errors.join(" · ")))
 }
 
 fn parse_version(raw: &str) -> Option<semver::Version> {
@@ -293,7 +290,7 @@ pub async fn download(app: &tauri::AppHandle, current_prefix: &str) -> Result<St
             Err(err) => errors.push(err),
         }
     }
-    Err(AppError::new(code::UPDATE_FAIL, "下载安装包失败：所有通道都不可用")
+    Err(AppError::new(code::UPDATE_FAIL, "所有通道都不可用")
         .with_cause(errors.join(" · ")))
 }
 
