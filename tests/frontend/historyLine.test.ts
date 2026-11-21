@@ -86,8 +86,9 @@ describe("player favourites & history line contract", () => {
     // 写回装配在 usePlaybackHistory；「当前线路/集名」的取值仍在播放页
     // （historyLabelRef 的赋值处）。
     const historyHook = read("src/hooks/usePlaybackHistory.ts");
-    expect(historyHook).toContain("episodeName: historyLabelRef.current.episodeName");
-    expect(historyHook).toContain("playFrom: historyLabelRef.current.playFrom");
+    expect(historyHook).toContain("const label = historyLabelRef.current;");
+    expect(historyHook).toContain("episodeName: label.episodeName");
+    expect(historyHook).toContain("playFrom: label.playFrom");
     const page = read("src/pages/PlayerPage.tsx");
     // 自动换线路时 navigate 不带 playFrom，必须优先取当前线路名。
     expect(page).toContain("activeLine?.name || playFrom");

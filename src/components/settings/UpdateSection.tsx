@@ -8,8 +8,8 @@ import { APP_VERSION, IS_DEV_BUILD, formatVersion } from "../../lib/version";
 import type { UpdateInfo, UpdateProgress } from "../../types/luma";
 import { formatBytes } from "./settingsShared";
 
-/** 下载阶段：idle → downloading → ready（安装包已落盘并校验通过）。 */
-type Phase = "idle" | "checking" | "downloading" | "ready";
+/** 更新阶段：idle → checking/downloading → ready → installing（应用即将退出）。 */
+type Phase = "idle" | "checking" | "downloading" | "ready" | "installing";
 
 /**
  * 关于与更新。
@@ -119,14 +119,26 @@ export default function UpdateSection() {
   };
 
   const install = async () => {
+    if (phase === "installing") {
+      return;
+    }
     setConfirming(false);
     if (!installer) {
       return;
     }
+    setPhase("installing");
+    setError("");
+    setTip("");
+    // 静默安装后应用直接退出；记下目标版本，下次启动据此回执更新结果。
+    writeUpdatePrefs({ pendingVersion: info?.latest ?? "" });
     try {
       await api.updateInstall(installer);
       // 正常路径下应用会立刻退出，这里不会继续执行。
+      setTip("安装器已启动，应用即将退出。");
     } catch (err) {
+      // 安装根本没启动，撤销标记，下次启动不要误报失败。
+      writeUpdatePrefs({ pendingVersion: "" });
+      setPhase("ready");
       setError(`启动安装失败：${errorMessage(err)}`);
     }
   };
@@ -135,6 +147,17 @@ export default function UpdateSection() {
     progress && progress.total > 0
       ? Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
       : 0;
+
+  const statusText =
+    phase === "checking"
+      ? "正在检查更新…"
+      : phase === "downloading"
+        ? progress
+          ? `正在下载更新 · ${percent}%`
+          : "正在连接更新服务器…"
+        : phase === "installing"
+          ? "正在准备安装，应用即将退出…"
+          : "";
 
   const latestLabel = info ? formatVersion(info.latest) : "尚未检查";
 
@@ -191,19 +214,33 @@ export default function UpdateSection() {
         <button
           type="button"
           className="btn"
-          disabled={phase === "checking" || phase === "downloading"}
+          disabled={phase === "checking" || phase === "downloading" || phase === "installing"}
           onClick={() => void check()}
         >
-          {phase === "checking" ? "检查中…" : "检查更新"}
+          {phase === "checking" ? (
+            <>
+              <span className="update-spinner" aria-hidden="true" />
+              检查中…
+            </>
+          ) : (
+            "检查更新"
+          )}
         </button>
         {info?.hasUpdate && phase !== "ready" ? (
           <button
             type="button"
             className="btn btn--primary"
-            disabled={phase === "downloading"}
+            disabled={phase === "downloading" || phase === "installing"}
             onClick={() => void download()}
           >
-            {phase === "downloading" ? "下载中…" : "下载更新"}
+            {phase === "downloading" ? (
+              <>
+                <span className="update-spinner" aria-hidden="true" />
+                下载中…
+              </>
+            ) : (
+              "下载更新"
+            )}
           </button>
         ) : null}
         {phase === "ready" && !IS_DEV_BUILD ? (
@@ -217,8 +254,22 @@ export default function UpdateSection() {
         ) : null}
       </div>
 
+      {statusText ? (
+        <div className="update-status" role="status" aria-live="polite">
+          <span className="update-spinner" aria-hidden="true" />
+          <span>{statusText}</span>
+        </div>
+      ) : null}
+
       {phase === "downloading" ? (
-        <div className="update-progress" role="progressbar" aria-valuenow={percent}>
+        <div
+          className="update-progress"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          aria-valuetext={progress ? `${percent}%` : "正在连接"}
+        >
           <span className="update-progress__bar" style={{ width: `${percent}%` }} />
           <span className="update-progress__text">
             {progress

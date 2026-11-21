@@ -16,7 +16,9 @@
 //!
 //! 安装包是项目自己产出的 NSIS（`currentUser` 模式），`/S` 静默安装即可；
 //! 模板保留 `CheckIfAppIsRunning`，会结束旧进程。安装完成后不自动拉起应用
-//! （静默模式不显示完成页），界面上要明确提示用户重新打开。
+//! （静默模式不显示完成页），界面上要明确提示用户重新打开。点安装后先在 UI
+//! 显示「正在准备安装」动画，再异步等待一小段时间退出；安装结果由前端记下目标
+//! 版本，在下次启动时核对并回执。
 
 use crate::error::{code, AppError};
 use crate::ghproxy;
@@ -321,7 +323,7 @@ pub async fn update_download(
 /// 只允许执行下载目录里的 `.exe`：命令虽然只由自己的前端调用，但把
 /// 「任意路径 → 任意可执行文件」的口子留在 IPC 表里没有必要。
 #[tauri::command]
-pub fn update_install(app: tauri::AppHandle, path: String) -> Result<(), AppError> {
+pub async fn update_install(app: tauri::AppHandle, path: String) -> Result<(), AppError> {
     let target = Path::new(&path);
     if !target.starts_with(updates_dir())
         || target.extension().and_then(|ext| ext.to_str()) != Some("exe")
@@ -332,15 +334,16 @@ pub fn update_install(app: tauri::AppHandle, path: String) -> Result<(), AppErro
             "安装包路径不合法，请重新下载",
         ));
     }
-    std::process::Command::new(target)
+    let _child = std::process::Command::new(target)
         .arg("/S")
         .spawn()
         .map_err(|err| {
             AppError::new(code::UPDATE_FAIL, "启动安装器失败")
                 .with_cause(err.to_string())
         })?;
-    // 给安装器一点时间接管，再走正常退出流程（sidecar 优雅关停也在这里）。
-    std::thread::sleep(Duration::from_millis(400));
+    // 给安装器接管时间，也让前端把「正在准备安装」动画画出来。用 async 等待，
+    // 不阻塞主线程；随后走正常退出流程（sidecar 优雅关停也在这里）。
+    tokio::time::sleep(Duration::from_millis(1200)).await;
     app.exit(0);
     Ok(())
 }

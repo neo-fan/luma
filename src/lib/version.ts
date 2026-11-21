@@ -70,3 +70,36 @@ export function formatVersion(raw?: string | null): string {
     .replace(/-beta(\.\d+)?$/i, (_, seq?: string) => `.b${seq ? seq.slice(1) : ""}`)
     .replace(/-rc(\.\d+)?$/i, (_, seq?: string) => `.rc${seq ? seq.slice(1) : ""}`);
 }
+
+/**
+ * 比较两段版本号的主版本部分（忽略 `v` 前缀与 `-alpha/-beta/-rc` 后缀）。
+ * 只用于「更新是否落地」这类粗粒度判断，不追求完整 semver 优先级。
+ */
+export function compareVersions(left: string, right: string): number {
+  const parts = (raw: string): number[] =>
+    (raw ?? "")
+      .trim()
+      .replace(/^v/i, "")
+      .split(/[-+]/, 1)[0]
+      .split(".")
+      .map((part) => {
+        const value = Number.parseInt(part, 10);
+        return Number.isFinite(value) && value >= 0 ? value : 0;
+      });
+  const a = parts(left);
+  const b = parts(right);
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i += 1) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/** 当前版本是否已达到（或超过）目标版本。 */
+export function isVersionAtLeast(current: string, target: string): boolean {
+  return compareVersions(current, target) >= 0;
+}

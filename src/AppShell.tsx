@@ -36,6 +36,7 @@ import {
   BUILD_TIME,
   formatVersion,
   IS_DEV_BUILD,
+  isVersionAtLeast,
   readableBuildTime,
 } from "./lib/version";
 import { currentChannel, currentStartedAt, loadRuntimeInfo, unifiedBuildStamp } from "./lib/appInfo";
@@ -189,6 +190,31 @@ export default function AppShell() {
         });
     }, 6_000);
     return () => window.clearTimeout(timer);
+  }, []);
+
+  /**
+   * 安装结果回执：静默安装会让应用立刻退出，结果只能在下次启动时核对。
+   * 用户点「安装并退出」时记下目标版本；这里比对当前版本后清标记，成功/失败
+   * 都给一条明确提示，避免「点了以后什么都不知道了」。
+   */
+  useEffect(() => {
+    if (IS_DEV_BUILD) {
+      return;
+    }
+    const target = readUpdatePrefs().pendingVersion;
+    if (!target) {
+      return;
+    }
+    writeUpdatePrefs({ pendingVersion: "" });
+    if (isVersionAtLeast(APP_VERSION, target)) {
+      notify.success(`已更新到 ${formatVersion(target)}`, {
+        description: "新版本已安装完成。",
+      });
+    } else {
+      notify.warn("更新未完成", {
+        description: `当前仍是 ${formatVersion(APP_VERSION)}，可到设置里重试。`,
+      });
+    }
   }, []);
 
   /**
