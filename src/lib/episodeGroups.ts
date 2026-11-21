@@ -21,29 +21,41 @@ export interface EpisodeGroup<T> {
   items: T[];
 }
 
+function makeGroup<T extends { index: number }>(items: T[]): EpisodeGroup<T> {
+  const first = Math.min(...items.map((item) => item.index + 1));
+  const last = Math.max(...items.map((item) => item.index + 1));
+  return {
+    key: `${first}-${last}`,
+    first,
+    last,
+    label: first === last ? `第 ${first} 集` : `第 ${first}–${last} 集`,
+    items,
+  };
+}
+
 /**
  * 把展示序列切成连续段。
  *
  * 传入的是**已经过滤、排好序**的列表：段内顺序即展示顺序，段标题按原始集号
  * 取区间，所以倒序时第一段是「第 172–221 集」而不是「第 1–50 集」。
+ *
+ * 不足一段半（默认 75 集）整条平铺：51 集切成「1–50」+「51」只是多一行标题、
+ * 多一次点击，换不来定位便利。短剧与筛选后的少量结果都走这条路。
  */
 export function groupEpisodes<T extends { index: number }>(
   visible: T[],
   size: number = EPISODE_GROUP_SIZE,
 ): EpisodeGroup<T>[] {
+  if (visible.length === 0) {
+    return [];
+  }
   const step = Math.max(1, Math.floor(size));
+  if (visible.length < step * 1.5) {
+    return [makeGroup(visible)];
+  }
   const groups: EpisodeGroup<T>[] = [];
   for (let offset = 0; offset < visible.length; offset += step) {
-    const items = visible.slice(offset, offset + step);
-    const first = Math.min(...items.map((item) => item.index + 1));
-    const last = Math.max(...items.map((item) => item.index + 1));
-    groups.push({
-      key: `${first}-${last}`,
-      first,
-      last,
-      label: first === last ? `第 ${first} 集` : `第 ${first}–${last} 集`,
-      items,
-    });
+    groups.push(makeGroup(visible.slice(offset, offset + step)));
   }
   return groups;
 }

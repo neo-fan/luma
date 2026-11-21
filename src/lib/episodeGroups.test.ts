@@ -28,15 +28,22 @@ describe("groupEpisodes", () => {
     expect(groups[4].label).toBe("第 1–21 集");
   });
 
-  it("keeps short lists in a single group", () => {
+  it("keeps shows under one and a half chunks flat", () => {
     expect(groupEpisodes(episodes(50))).toHaveLength(1);
-    expect(groupEpisodes(episodes(51))).toHaveLength(2);
+    // 51 集拆成 50 + 1 只是多一行标题，不值得分组。
+    expect(groupEpisodes(episodes(51))).toHaveLength(1);
+    expect(groupEpisodes(episodes(74))).toHaveLength(1);
+    expect(groupEpisodes(episodes(75))).toHaveLength(2);
     expect(groupEpisodes([])).toEqual([]);
   });
 
   it("names a single-episode group without a range", () => {
-    const groups = groupEpisodes(episodes(51));
-    expect(groups[1].label).toBe("第 51 集");
+    const groups = groupEpisodes(episodes(5), 2);
+    expect(groups.map((group) => group.label)).toEqual([
+      "第 1–2 集",
+      "第 3–4 集",
+      "第 5 集",
+    ]);
   });
 
   it("takes filtered lists as-is and keeps keys unique", () => {
