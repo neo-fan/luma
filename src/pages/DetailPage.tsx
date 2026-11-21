@@ -32,6 +32,7 @@ import { recallCard } from "../lib/cardIndex";
 import { classifyFailure } from "../lib/failureReason";
 import { noDetailSources } from "../lib/noDetailSource";
 import { usePageState } from "../lib/usePageState";
+import { useAppStore } from "../stores/appStore";
 import { peekDetailSeed, putPlaySeed } from "../lib/handoff";
 import { prefetchEpisodePlay } from "../hooks/playback/episodePlayResolve";
 import { prefetchSources } from "../lib/sourceCache";
@@ -101,6 +102,11 @@ export default function DetailPage({
    * 我们这套「详情页独立成页」架构里的等价物。
    */
   const [emptyCard, setEmptyCard] = useState<VodInfo | null>(null);
+  /**
+   * 后台正在播的那条会话。详情请求失败时用它判断「这部片其实正在播」——
+   * 播放器是常驻层，切到详情页后流还在走，前台再报「没有影片详情」自相矛盾。
+   */
+  const playSession = useAppStore((state) => state.playSession);
   // 空态卡片的封面也走同一套 /image 代理：豆瓣的 pic 带内联 `@Referer=`，
   // 直连会被防盗链挡成 403。
   const emptyCardImage = useProxiedImage(emptyCard?.vod_pic);
@@ -612,6 +618,18 @@ export default function DetailPage({
     const cardTitle = (emptyCard?.vod_name || title || "").trim();
     /** 豆瓣也命中时，用它补上卡片/路由都没给出的片名。 */
     const searchWord = (cardTitle || doubanMeta?.title || "").trim();
+    /**
+     * 前台详情与后台会话是不是同一部片。
+     *
+     * 换源后 `siteKey + vodId` 会变，所以先按身份比，再退回片名（收藏/历史
+     * 直链进详情时通常只剩片名这一条线索）。
+     */
+    const playingThis =
+      !!playSession &&
+      ((playSession.siteKey === siteKey && playSession.vodId === vodId) ||
+        (!!playSession.vodName &&
+          !!searchWord &&
+          sameTitle(playSession.vodName, searchWord)));
     const emptyMeta = [
       emptyCard?.vod_remarks,
       emptyCard?.vod_year,
@@ -712,21 +730,25 @@ export default function DetailPage({
                 ) : null}
                 <div className="detail-empty__body">
                   <p className="detail-empty__title">
-                    {cardTitle
-                      ? `《${cardTitle}》`
-                      : known
-                        ? `「${siteName || siteKey}」不提供播放列表`
-                        : "当前源没有返回影片详情"}
+                    {playingThis
+                      ? `《${playSession?.vodName || cardTitle}》正在后台播放`
+                      : cardTitle
+                        ? `《${cardTitle}》`
+                        : known
+                          ? `「${siteName || siteKey}」不提供播放列表`
+                          : "当前源没有返回影片详情"}
                   </p>
                   {emptyMeta ? (
                     <p className="detail-empty__meta">{emptyMeta}</p>
                   ) : null}
                   <p className="detail-empty__desc">
-                    {emptyCard
-                      ? `「${siteName || siteKey}」是榜单/推荐型源：能给出片名、海报和评分，但没有影片详情与播放地址。想看这部片，换一个有片源的站点即可。`
-                      : known
-                        ? "这类源只提供榜单/推荐（海报、评分、片名），点任何影片都不会有剧集，换片也一样。"
-                        : "可能是影片 id 失效或站点临时波动，也可能是这个源只做发现/推荐。"}
+                    {playingThis
+                      ? "播放器还在播这部片；这个源这次没返回详情，可以直接回去接着看，或换一个有片源的站点。"
+                      : emptyCard
+                        ? `「${siteName || siteKey}」是榜单/推荐型源：能给出片名、海报和评分，但没有影片详情与播放地址。想看这部片，换一个有片源的站点即可。`
+                        : known
+                          ? "这类源只提供榜单/推荐（海报、评分、片名），点任何影片都不会有剧集，换片也一样。"
+                          : "可能是影片 id 失效或站点临时波动，也可能是这个源只做发现/推荐。"}
                   </p>
                   {fallback === "searching" || fallback === "none" ? (
                     <p className="detail-empty__hint">
@@ -736,7 +758,15 @@ export default function DetailPage({
                     </p>
                   ) : null}
                   <div className="detail-empty__actions">
-                    {cardTitle ? (
+                    {playingThis && playSession ? (
+                      <button
+                        type="button"
+                        className="btn btn--primary btn--sm"
+                        onClick={() => navigate({ name: "player", ...playSession })}
+                      >
+                        回到播放
+                      </button>
+                    ) : cardTitle ? (
                       <button
                         type="button"
                         className="btn btn--primary btn--sm"
@@ -749,7 +779,7 @@ export default function DetailPage({
                     ) : null}
                     <button
                       type="button"
-                      className={`btn btn--sm ${cardTitle ? "btn--ghost" : "btn--primary"}`}
+                      className={`btn btn--sm ${cardTitle || playingThis ? "btn--ghost" : "btn--primary"}`}
                       onClick={openSources}
                     >
                       换源
