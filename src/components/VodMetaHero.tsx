@@ -13,7 +13,13 @@ export interface VodMetaHeroProps {
   vod: VodInfo | null;
   /** 豆瓣补全结果：命中时评分 / 年份 / 类型 / 导演 / 主演 / 简介都用豆瓣。 */
   douban?: DoubanMeta | null;
-  /** 详情还没回来时的片名兜底（路由参数）。 */
+  /**
+   * 片名兜底（路由带过来的片名 / 列表卡片上的片名）。
+   *
+   * 必须传：TVBox 生态里有源把 `vod_name` 恒定写空（如「爱瓜TV[py]」的
+   * detailContent 只回播放串），只认 `vod.vod_name` 就会把整页标题渲染成
+   * 「未命名」——明明上一页卡片上是有片名的。
+   */
   fallbackName?: string;
   /** 片名行尾的附加内容（详情页的收藏星）。 */
   titleExtra?: ReactNode;
@@ -87,7 +93,13 @@ export default function VodMetaHero({
   const [overflowing, setOverflowing] = useState(false);
   const contentRef = useRef<HTMLParagraphElement | null>(null);
 
-  const title = vod?.vod_name?.trim() || fallbackName?.trim() || "未命名";
+  // 片名优先级：源站 → 路由/卡片兜底 → 豆瓣。豆瓣放最后是因为它只在本片
+  // 命中时才有值，而源站与路由是「这部片一定叫什么」的直接证据。
+  const title =
+    vod?.vod_name?.trim() ||
+    fallbackName?.trim() ||
+    douban?.title?.trim() ||
+    "未命名";
   const votes = douban && douban.ratingCount > 0 ? formatVotes(douban.ratingCount) : "";
   // 发现型源（豆瓣[py] 等）把评分写进 `vod_remarks`（「电影评分 8.6」）。豆瓣
   // 命中时评分已由 chips 第一项给出，这句只是重复信息，去掉。

@@ -17,6 +17,7 @@ import DetailSkeleton from "../components/DetailSkeleton";
 import VodMetaHero from "../components/VodMetaHero";
 import {
   formatDuration,
+  lineLabel,
   parsePlayLines,
   sameTitle,
   toVodRef,
@@ -59,6 +60,22 @@ const skipCrossSource = new Set<string>();
 /** 跨源成功后的一次性提示（模块级变量够用，不必写 sessionStorage）。 */
 let pendingRecoveryNotice: string | null = null;
 
+/**
+ * 源站把 `vod_name` 写空时，用已知片名补上。
+ *
+ * 「爱瓜TV[py]」这类源的 `detailContent` 只回播放串，片名/封面/简介/演员恒为空：
+ * 不补的话标题就是「未命名」，更要紧的是 `toVodRef` 直接拿 `vod_name` 当收藏名
+ * 与历史名，存进去之后永远叫「未命名」。路由带的片名是「这部片一定叫什么」的
+ * 直接证据，所以只在源站缺字段时补，绝不覆盖源站已经给出的名字。
+ */
+function withKnownName(vod: VodInfo, name: string): VodInfo {
+  const known = name.trim();
+  if (!known || vod.vod_name?.trim()) {
+    return vod;
+  }
+  return { ...vod, vod_name: known };
+}
+
 /** 详情页：影片信息 + 收藏 + 线路/剧集选择 + 手动换源。 */
 export default function DetailPage({
   siteKey,
@@ -70,6 +87,14 @@ export default function DetailPage({
   onBack,
 }: DetailPageProps) {
   const detailKey = cacheKeys.detail(siteKey, vodId);
+  /**
+   * 源站没给片名时这一屏「一定叫什么」的证据，优先级：路由片名 → 列表卡片。
+   *
+   * 两者都没有（直接输 URL）时只能是空串，此时页面上就是「未命名」——不编。
+   */
+  const knownName =
+    (title || "").trim() || (recallCard(siteKey, vodId)?.vod_name ?? "").trim();
+
   /**
    * 首帧数据的两种来源，语义不同：
    * - **详情缓存**（10 分钟内抓过）：权威、可直接用，不发请求；
@@ -86,10 +111,16 @@ export default function DetailPage({
   const [bootstrap] = useState(() => {
     const cached = peekFresh<VodInfo[]>(detailKey, CACHE_TTL.detail)?.[0] ?? null;
     if (cached) {
-      return { vod: cached, needFetch: false };
+      // 缓存里也可能是「源站片名为空」的那一份：这里同样补，否则秒开路径
+      // 又把「未命名」带回来（播放种子、收藏、历史都读这份）。
+      return { vod: withKnownName(cached, knownName), needFetch: false };
     }
     const seed = peekDetailSeed(siteKey, vodId);
-    return { vod: seed, needFetch: seed !== null };
+    // 缓存与交接实体都没有（直接输 URL / 分享链接 / WebView 恢复会话）时，
+    // **仍然必须问一次源**。早先这里写的是 `seed !== null`，于是「什么都没有」
+    // 反而永不发请求，详情页稳定停在「当前源没有返回影片详情」，点一次重试才
+    // 正常——正是 fc666fa 引入的回归。
+    return { vod: seed ? withKnownName(seed, knownName) : null, needFetch: true };
   });
   const [vod, setVod] = useState<VodInfo | null>(bootstrap.vod);
   /** 手上这份是否只是交接实体（没有播放串）：是则首屏后仍要取一次详情。 */
@@ -254,7 +285,7 @@ export default function DetailPage({
           })();
           return;
         }
-        setVod(first);
+        setVod(withKnownName(first, knownName));
         setFallback("idle");
         setEmpty(false);
       } catch (err) {
@@ -877,6 +908,9 @@ export default function DetailPage({
           variant="detail"
           vod={vod}
           douban={doubanMeta}
+          // 源站片名可能为空（见 withKnownName）：路由/卡片带过来的片名是这一屏
+          // 唯一的「叫什么」证据，必须传下去，否则整页标题是「未命名」。
+          fallbackName={knownName || emptyCard?.vod_name || ""}
           descriptionFallback="暂无简介"
           posterPlaceholder={vod.vod_pic || doubanMeta?.pic ? "无封面" : ""}
           titleExtra={
@@ -957,7 +991,7 @@ export default function DetailPage({
                           : `${item.episodes.length} 集`
                       }
                     >
-                      {item.name}（{item.episodes.length}）
+                      {lineLabel(item.name)}（{item.episodes.length}）
                     </button>
                   );
                 })}
