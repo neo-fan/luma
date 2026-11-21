@@ -58,6 +58,31 @@ fn urlencode_keeps_unreserved_only() {
     );
 }
 
+/// 固定端口被占时必须失败，不能退到临时端口：py/js 适配层按固定端口拼
+/// `getProxyUrl()`，静默退让会让它们指向另一个实例或干脆连不上，而现场只
+/// 留一行 `warn!`。
+#[test]
+fn bind_listener_fails_fast_instead_of_falling_back_to_ephemeral() {
+    let port = default_port();
+    let occupied = std::net::TcpListener::bind(("127.0.0.1", port))
+        .expect("测试需要通道端口空闲：先停掉 dev（tools/devctl.ps1 stop）");
+
+    let err = bind_listener().expect_err("被占的固定端口不得回退");
+    assert_eq!(err.code, code::INTERNAL);
+    assert!(
+        err.message.contains(&port.to_string()),
+        "错误信息必须点名端口，否则用户无从下手：{}",
+        err.message
+    );
+    assert!(
+        err.message.contains("同通道") || err.message.contains("临时占用"),
+        "错误信息应给出可行动的原因：{}",
+        err.message
+    );
+
+    drop(occupied);
+}
+
 #[test]
 fn parse_vod_pic_plain_and_data_are_not_parsed() {
     assert!(parse_vod_pic_url("https://img/x.jpg").is_none());

@@ -473,8 +473,9 @@ impl SpiderRuntime for QuickJsRuntime {
             "api": api,
             "headers": site.get("headers").cloned().unwrap_or_else(|| json!({})),
             "site_key": site.get("key").and_then(Value::as_str).unwrap_or(""),
-            // `getProxyUrl()` must point at the port we actually bound; a busy
-            // 9978 falls back to an ephemeral one.
+            // `getProxyUrl()` must point at the port we actually bound. Binding
+            // is fail-fast, so this is the channel's fixed port (9978/9977/9979)
+            // whenever the app got this far.
             "proxy_port": crate::proxy::active_port(),
             "script_kind": "auto",
         });

@@ -58,11 +58,16 @@ cargo test   --manifest-path src-tauri/Cargo.toml --lib
 | 数据目录（库/日志/收藏） | `%APPDATA%\app.luma` | `%APPDATA%\app.luma.beta` | `%APPDATA%\app.luma.dev` |
 | WebView2 用户数据目录 | `%LOCALAPPDATA%\app.luma` | `%LOCALAPPDATA%\app.luma.beta` | `%LOCALAPPDATA%\app.luma.dev` |
 | 本地反代 | `127.0.0.1:9978` | `127.0.0.1:9977` | `127.0.0.1:9979` |
+| 单实例锁（命名互斥体） | `app.luma-sim` | `app.luma.beta-sim` | `app.luma.dev-sim` |
 | CDP | 不开 | 不开 | `127.0.0.1:9222` |
 | 进程名 / 描述（任务管理器） | `Luma.exe` / `Luma` | `Luma Beta.exe` / `Luma Beta` | `Luma_dev.exe` / `Luma Dev` |
 | 出包命令 | `pnpm build:app` | `pnpm build:beta` | 不出包 |
 
 开发时**已安装的正式版常常还开着**（用户在用它看片）。不隔离会互相打死，而且报错很难懂。
+
+**同通道重复启动**由 `tauri-plugin-single-instance` 挡住：锁名是 `{identifier}-sim` 命名互斥体，按 identifier 各一把，于是重复双击只会把已有窗口叫到前台（不开第二个进程、不二次打开 `luma.db`、不抢同一个反代端口），而三通道仍可同机并存、互不踢出。反代端口是 **fail-fast** 的：固定端口被占就中止启动并写明「哪个端口、可能被谁占着」（`proxy::bind_listener`），不再退回临时端口。
+
+**并行开发注意**：`app.luma.dev`、9979、Vite 1420、CDP 9222 都是全局单值，`Luma_dev.exe` 的互斥体也只有一把——所以**同一时刻只允许一棵源码树跑 dev**。需要同时验证两条改动时用不同通道（`build:beta`），不要复制工作树。
 
 **WebView2 那条是硬约束**：Tauri 在 Windows 上把 webview 的 data dir 钉成 `app_local_data_dir()`（= `%LOCALAPPDATA%\<identifier>`），而 wry 明确要求「**browser args 不同的 webview 必须用不同的 data dir**」。debug 构建会额外注入 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`，于是：
 

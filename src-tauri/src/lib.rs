@@ -186,6 +186,17 @@ fn run_inner() -> Result<(), AppError> {
         }
     }
     let app = tauri::Builder::default()
+        // 必须第一个注册：单实例锁要在其它插件与我们的 setup 之前拿到，第二个
+        // 实例走到这里就转发参数并退出（不会开库、不会抢反代端口）。锁按
+        // identifier 派生，因此每个通道各自一把，stable/beta/dev 互不影响。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 用户重复启动时把已有窗口叫到前台，而不是静默退出让人以为没反应。
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .manage(config_store)
         .manage(library_store)
@@ -232,14 +243,37 @@ fn run_inner() -> Result<(), AppError> {
             }
 
             // 7.5: the local reverse proxy is started by the Rust host only.
-            match proxy::start() {
-                Ok(state) => {
-                    app.manage(state);
-                }
+            // 端口绑定是 fail-fast 的（见 `domain::proxy` 模块文档）：py/js 适配层
+            // 按固定端口拼 `getProxyUrl()`，退到临时端口等于让它们指向另一个实例
+            // 或干脆连不上。既然没有可用端口，继续启动只会让每次播放都失败且无从
+            // 解释，不如在这里中止——单实例锁保证端口冲突只可能来自外部进程，
+            // 属于需要人看一眼的故障。
+            //
+            // setup 返回 Err 会被 Tauri 变成 panic（release 下没有控制台），所以
+            // 先把原因落到日志，再让消息本身带上门诊信息：报错文本里必须能直接
+            // 看出是哪个端口、可能被谁占着。
+            let proxy = match proxy::start() {
+                Ok(state) => state,
                 Err(err) => {
-                    tracing::error!(error = %err, "local proxy failed to start");
+                    tracing::error!(
+                        code = %err.code,
+                        message = %err.message,
+                        cause = ?err.cause,
+                        "local proxy failed to start"
+                    );
+                    return Err(AppError::new(
+                        code::INTERNAL,
+                        format!(
+                            "Luma 启动失败：{}。反代是播放链路的必经环节，没有它 py/js \
+                             适配层拿不到可用端口，因此不再继续启动。",
+                            err.message
+                        ),
+                    )
+                    .with_cause(err.cause.unwrap_or_default())
+                    .into());
                 }
-            }
+            };
+            app.manage(proxy);
 
             // 订阅定时刷新：60s 一次轻量判定，到期才真正回拉配置。间隔由
             // 设置页控制（0 = 关闭），改设置后下一个 tick 立即生效，不需要

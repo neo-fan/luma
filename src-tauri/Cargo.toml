@@ -36,6 +36,11 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
+# 同一通道只能有一个实例：第二个 Luma_dev 会同时写 `luma.db`（WAL 多写者会撞
+# SQLITE_BUSY）、抢同一个固定反代端口。插件的锁名由 `app.config().identifier`
+# 派生（Windows 上是 `{identifier}-sim` 命名互斥体），而 identifier 逐通道不同
+# （`app.luma` / `.beta` / `.dev`），所以三通道仍可同机并存，不会互相踢掉。
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Single-file persistence for configs / favourites / history. `bundled` compiles

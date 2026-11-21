@@ -288,7 +288,7 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 | `qjs-runner` | 新增 `PROXY_JS`：按 `[contentType, headers, body]` / 数字状态码前缀 / `{contentType, headers, body}` / 裸字符串四种形态归一化为 `{contentType, headers, text\|b64}`；字节体经 `__luma_bytes_b64` 转 base64 过 JSON 帧 |
 | `qjs-runner` | `HOST_JS` 的 `getProxyUrl(from)` 改为返回 `http://127.0.0.1:<宿主真实端口>/proxy?do=js[&from=…]`；端口由帧字段 `proxy_port` 注入 |
 | Rust 宿主 | `SpiderMethod::Proxy`（wire 名 `proxy`）；`QuickJsRuntime::proxy()` 走同一把 runner 串行锁，响应经 `proxy_payload_from_js()` 还原成 `ProxyPayload` |
-| Rust 宿主 | `proxy::active_port()`：9978 被占用而回退到临时端口时，sidecar 拿到的是**实际**端口，不是配置值 |
+| Rust 宿主 | `proxy::active_port()`：返回本通道实际绑定的端口（9978/9977/9979）；绑定失败即启动中止，不再回退临时端口，所以 sidecar 拿到的永远是通道固定端口 |
 | 前端 | 无需改动——`usePlayResolution` 早就把 `127.0.0.1:<port>/proxy…` 原样透传，`resolve_play` 也对该路径不做二次包裹 |
 
 验收（`p1.py --adapter`，21 项全通过）：

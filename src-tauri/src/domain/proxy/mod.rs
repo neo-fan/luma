@@ -1,10 +1,14 @@
 //! Local HTTP reverse proxy (spec 7.5 / T-08).
 //!
-//! Binds `127.0.0.1:<default_port()>` — stable 9978 / beta 9977 / dev 9979, so
-//! channels running side by side never steal each other's fixed port and a
-//! spider defaulting to one of them never points at the wrong instance; when
-//! even that port is taken it falls back to an ephemeral port and publishes the
-//! real one through `proxy_status`.
+//! Binds exactly `127.0.0.1:<default_port()>` — stable 9978 / beta 9977 / dev
+//! 9979, so channels running side by side never steal each other's fixed port
+//! and a spider defaulting to one of them never points at the wrong instance.
+//!
+//! **No fallback to an ephemeral port.** A silent fallback leaves every py/js
+//! adapter that hardcodes the fixed port talking to another instance or to
+//! nothing, and the only trace is one `warn!` line nobody reads. If the fixed
+//! port is taken we fail the bind instead, and `start()`'s caller turns that
+//! into a startup error with an actionable message.
 //! Only loopback is bound. Targets are validated against a whitelist that
 //! rejects loopback / private / link-local / multicast addresses, unless
 //! `LUMA_PROXY_ALLOW_LOCAL=1` is set (development and stub tests only).
@@ -105,9 +109,10 @@ fn wrap_image(base: reqwest::Client, dir: &std::path::Path) -> ClientWithMiddlew
         .build()
 }
 
-/// Port the proxy actually bound. Sidecars need it to build
-/// `getProxyUrl()` / `proxy?do=…` URLs; the requested `PROXY_PORT` is only a
-/// preference (a busy port falls back to an ephemeral one).
+/// Port the proxy bound. Sidecars need it to build
+/// `getProxyUrl()` / `proxy?do=…` URLs; it always equals `default_port()`
+/// because binding is fail-fast (see the module doc). `0` only means "not
+/// started yet", which is why the getter still falls back to the channel port.
 static ACTIVE_PORT: AtomicU16 = AtomicU16::new(0);
 
 pub fn active_port() -> u16 {
@@ -221,27 +226,31 @@ pub fn start() -> Result<Arc<ProxyState>, AppError> {
 }
 
 fn bind_listener() -> Result<std::net::TcpListener, AppError> {
-    let primary = format!("127.0.0.1:{}", default_port());
-    match std::net::TcpListener::bind(&primary) {
-        Ok(listener) => {
-            listener.set_nonblocking(true).map_err(|err| {
-                AppError::new(code::INTERNAL, "proxy set_nonblocking failed")
-                    .with_cause(err.to_string())
-            })?;
-            Ok(listener)
-        }
-        Err(err) => {
-            tracing::warn!(port = default_port(), error = %err, "proxy port busy, falling back to ephemeral port");
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|err| {
-                AppError::new(code::INTERNAL, "proxy bind failed").with_cause(err.to_string())
-            })?;
-            listener.set_nonblocking(true).map_err(|err| {
-                AppError::new(code::INTERNAL, "proxy set_nonblocking failed")
-                    .with_cause(err.to_string())
-            })?;
-            Ok(listener)
-        }
-    }
+    let port = default_port();
+    let addr = format!("127.0.0.1:{port}");
+    let listener = std::net::TcpListener::bind(&addr).map_err(|err| {
+        // A completed connect means a real listener owns the port (almost
+        // certainly another instance of this channel); a refused connect means
+        // something else transient holds it. The two need different fixes, so
+        // say which one it is instead of a bare "address in use".
+        let hint = if std::net::TcpStream::connect(&addr).is_ok() {
+            "同通道可能已有实例在运行，先关闭它再启动"
+        } else {
+            "端口被其它进程临时占用，稍后重试"
+        };
+        AppError::new(
+            code::INTERNAL,
+            format!("本地反代端口 {port} 绑定失败：{hint}"),
+        )
+        .with_cause(err.to_string())
+    })?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|err| {
+            AppError::new(code::INTERNAL, "proxy set_nonblocking failed")
+                .with_cause(err.to_string())
+        })?;
+    Ok(listener)
 }
 
 /// Build the player-facing proxy URL for one playable item (spec 7.5).
