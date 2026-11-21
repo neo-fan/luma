@@ -32,7 +32,8 @@ import { recallCard } from "../lib/cardIndex";
 import { classifyFailure } from "../lib/failureReason";
 import { noDetailSources } from "../lib/noDetailSource";
 import { usePageState } from "../lib/usePageState";
-import { clearDetailSeed, peekDetailSeed, putPlaySeed } from "../lib/handoff";
+import { peekDetailSeed, putPlaySeed } from "../lib/handoff";
+import { prefetchEpisodePlay } from "../hooks/playback/episodePlayResolve";
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
@@ -69,22 +70,29 @@ export default function DetailPage({
 }: DetailPageProps) {
   const detailKey = cacheKeys.detail(siteKey, vodId);
   /**
-   * 首帧优先用「上一页交过来的实体」（列表/搜索/收藏/历史页都已经有片名、海报、
-   * 年份），其次才是数据缓存（播放页返回时命中）。两者都没有才出骨架等请求。
+   * 首帧数据的两种来源，语义不同：
+   * - **详情缓存**（10 分钟内抓过）：权威、可直接用，不发请求；
+   * - **交接实体**（上一页交过来的卡片）：够渲染但**没有播放串**，标 `needFetch`
+   *   让首屏后照样问一次源。
    *
-   * 只用 `peek`：dev StrictMode 会把初始化器跑两次，消费式读取第二次就空了；
-   * 清除放在下面的 effect 里。
+   * 顺序是「缓存优先」而不是「交接优先」：两者是同一部剧时，缓存里的那份信息更全
+   * （有播放串），交接只是它缺席时的补位。
+   *
+   * 不写进 `usePageState`（那层没有 TTL，会把十分钟前的详情当成现在还新鲜），
+   * 也不在 effect 里「消费」交接——dev StrictMode 会把组件挂载两次，两次之间清掉
+   * 就等于第二次读到空。交接层本身有身份匹配 + 2 分钟保质期，够安全。
    */
-  const [vod, setVod] = usePageState<VodInfo | null>(
-    `${detailKey}:vod`,
-    peekDetailSeed(siteKey, vodId) ??
-      peekFresh<VodInfo[]>(detailKey, CACHE_TTL.detail)?.[0] ??
-      null,
-  );
-  useEffect(() => {
-    // 首帧已经吃下这份交接，之后以请求结果为准（同片重复进入也不会拿到旧值）。
-    clearDetailSeed(siteKey, vodId);
-  }, [siteKey, vodId]);
+  const [bootstrap] = useState(() => {
+    const cached = peekFresh<VodInfo[]>(detailKey, CACHE_TTL.detail)?.[0] ?? null;
+    if (cached) {
+      return { vod: cached, needFetch: false };
+    }
+    const seed = peekDetailSeed(siteKey, vodId);
+    return { vod: seed, needFetch: seed !== null };
+  });
+  const [vod, setVod] = useState<VodInfo | null>(bootstrap.vod);
+  /** 手上这份是否只是交接实体（没有播放串）：是则首屏后仍要取一次详情。 */
+  const [needFetch, setNeedFetch] = useState(bootstrap.needFetch);
   /**
    * 空详情时回填的卡片：发现型源（豆瓣[py] 等）的 `detailContent` 恒为空，
    * 但列表卡片自带海报、评分、年份——那是这个源能给出的全部信息。不显示就
@@ -137,9 +145,19 @@ export default function DetailPage({
    */
   const [doubanMeta, setDoubanMeta] = useState<DoubanMeta | null>(null);
 
+  /** 重新问一次源（错误页与「有内容但刷新失败」共用）。 */
+  const retryDetail = () => {
+    fallbackCancelRef.current = true;
+    // 手动重试意味着用户不接受「这个源没详情」，把记忆清掉重新判定。
+    noDetailSources.forget(siteKey);
+    setReload((value) => value + 1);
+  };
+
   useEffect(() => {
     // reload>0 是用户点了刷新图标；此时忽略缓存强制拉取最新播放列表。
-    if (vod && reload === 0) {
+    // `needFetch` 由首帧来源决定（交接实体必须补一次），因此不进依赖：它只在
+    // 请求回来后置假，进依赖会让 effect 在「刚拿完结果」时再跑一轮。
+    if (!needFetch && reload === 0) {
       return;
     }
     let alive = true;
@@ -160,6 +178,8 @@ export default function DetailPage({
         if (!alive) {
           return;
         }
+        // 源已经给过答复（有或没有）：不再需要补取。
+        setNeedFetch(false);
         const first = list && list.length > 0 ? list[0] : null;
         if (!first) {
           setVod(null);
@@ -233,7 +253,8 @@ export default function DetailPage({
         setEmpty(false);
       } catch (err) {
         if (alive) {
-          setVod(null);
+          // 不把已有内容清成白板：交接实体（或上一次的缓存）本来就够看，
+          // 请求失败只报错，保留画面。
           setError(errorMessage(err));
           log.warn("detail failed", {
             siteKey,
@@ -452,6 +473,27 @@ export default function DetailPage({
       : null;
   }, [lines, resume]);
 
+  /**
+   * 「继续播放」目标预取：用户从历史回来时十有八九就点它，先替源站把
+   * playerContent + resolve_play 跑完写进集级缓存，播放页命中即省掉 1~18s。
+   *
+   * 只在有 `resume` 时做——没看过这部剧时「从第一集开始」的意图弱得多，
+   * 不值得每次进详情都无条件打一次源。每个集地址一次，避免状态抖动反复触发。
+   */
+  const prefetchedRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!resume || !quickPlay) {
+      return;
+    }
+    const episode = quickPlay.episode;
+    const key = `${siteKey}|${quickPlay.line.name}|${episode.url}`;
+    if (prefetchedRef.current.has(key)) {
+      return;
+    }
+    prefetchedRef.current.add(key);
+    void prefetchEpisodePlay(siteKey, quickPlay.line.name, episode.url);
+  }, [resume, quickPlay, siteKey]);
+
   const playEpisode = (target: PlayLine, episode: Episode) => {
     // 详情页已经握着完整实体（含播放串）：交给播放页算线路与集定位，首帧直接成型，
     // 只剩「问源要地址」这一步真正需要等网络。
@@ -506,7 +548,7 @@ export default function DetailPage({
     );
   };
 
-  if (loading) {
+  if (loading && !vod) {
     return (
       <section className="page">
         <header className="page-head">
@@ -520,7 +562,8 @@ export default function DetailPage({
         </header>
         <div className="page-body">
           {/* 骨架复刻真实版式：从收藏 / 历史点进来时，等待期间就能看出
-              「马上出现的是海报 + 简介 + 剧集」，而不是一片空白里转个圈。 */}
+              「马上出现的是海报 + 简介 + 剧集」，而不是一片空白里转个圈。
+              只在**手上什么都没有**时用它——交接实体会自带 hero，不能压成骨架。 */}
           <DetailSkeleton />
         </div>
       </section>
@@ -528,12 +571,7 @@ export default function DetailPage({
   }
 
   if (error || !vod) {
-    const retry = () => {
-      fallbackCancelRef.current = true;
-      // 手动重试意味着用户不接受「这个源没详情」，把记忆清掉重新判定。
-      noDetailSources.forget(siteKey);
-      setReload((value) => value + 1);
-    };
+    const retry = retryDetail;
     const openSources = () => {
       fallbackCancelRef.current = true;
       setShowSources(true);
@@ -761,6 +799,15 @@ export default function DetailPage({
         {recoveryNotice ? (
           <p className="tip tip--ok">{recoveryNotice}</p>
         ) : null}
+        {error ? (
+          // 有内容（交接实体或上一次的缓存）但请求失败：保留画面，只报错。
+          <ErrorBar
+            message="详情加载失败"
+            hint={classifyFailure(undefined, error).label}
+            detail={error}
+            onRetry={retryDetail}
+          />
+        ) : null}
         {site?.changeable === false ? (
           <p className="tip">
             该源声明
@@ -809,15 +856,24 @@ export default function DetailPage({
           <div className="section-head">
             <h2 className="section-title">播放线路</h2>
             <span className="page-meta">
-              {/* 与播放页选集面板同口径：各线路是独立剧集表，不做跨线路累加。 */}
-              {lines.length} 条线路 · 当前线路 {line?.episodes.length ?? 0} 集
+              {/* 与播放页选集面板同口径：各线路是独立剧集表，不做跨线路累加。
+                  还没有目录时不占位，下面的正文只给一句「正在获取剧集…」。 */}
+              {lines.length === 0
+                ? null
+                : `${lines.length} 条线路 · 当前线路 ${line?.episodes.length ?? 0} 集`}
             </span>
           </div>
           {lines.length === 0 ? (
-            <Empty
-              title="暂无可播放剧集"
-              description="该影片没有提供播放地址，可试试手动换源。"
-            />
+            loading ? (
+              // 交接实体只有片名/海报，没有播放串：这里必须说清在等什么，
+              // 否则「暂无可播放剧集」会把人误判成这个源没有片。
+              <p className="page-meta">正在获取剧集…</p>
+            ) : (
+              <Empty
+                title="暂无可播放剧集"
+                description="该影片没有提供播放地址，可试试手动换源。"
+              />
+            )
           ) : (
             <>
               {/* `chip-row--lines` 是给探针/脚本的稳定锚点：分类 chip 也在这页

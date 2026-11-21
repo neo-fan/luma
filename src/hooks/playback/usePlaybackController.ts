@@ -31,7 +31,7 @@ import type { SourceOption } from "../../lib/sources";
 import { locateEpisode, seedFromCachedDetail } from "../../lib/episodeSeed";
 import type { EpisodeSeed } from "../../lib/episodeSeed";
 import { invalidateEpisodePlayCache } from "../../lib/episodePlayCache";
-import { clearPlaySeed, peekPlaySeed } from "../../lib/handoff";
+import { peekPlaySeed } from "../../lib/handoff";
 import { resolveEpisodePlay } from "./episodePlayResolve";
 import { playerRoute } from "./playerRoute";
 import { log } from "../../lib/logger";
@@ -110,8 +110,10 @@ export interface PlaybackController {
 }
 
 /**
- * 首帧种子：优先用详情页交过来的实体（一跳），其次才是数据缓存（刷新/深链/返回）。
- * 两种来源都走同一个纯函数算线路与集定位，调用方不必关心它从哪来。
+ * 首帧种子：**详情缓存优先**，其次才是详情页交过来的实体。
+ *
+ * 两者是同一部剧时缓存那份更全（有播放串），交接是它缺席时的补位（例如详情缓存
+ * 已过期、但用户刚从详情页点进来）。两种来源都走同一个纯函数算线路与集定位。
  */
 function readSeed(
   siteKey: string,
@@ -123,11 +125,12 @@ function readSeed(
   if (siteKey === "live" || !vodId.trim()) {
     return null;
   }
-  const handed = peekPlaySeed(siteKey, vodId, playUrl);
-  const cached = handed
-    ? [handed]
-    : peekFresh<VodInfo[]>(cacheKeys.detail(siteKey, vodId), CACHE_TTL.detail);
-  return seedFromCachedDetail(cached, playUrl, episodeName, playFrom);
+  const cached = peekFresh<VodInfo[]>(cacheKeys.detail(siteKey, vodId), CACHE_TTL.detail);
+  const source = cached ?? (() => {
+    const handed = peekPlaySeed(siteKey, vodId, playUrl);
+    return handed ? [handed] : undefined;
+  })();
+  return seedFromCachedDetail(source, playUrl, episodeName, playFrom);
 }
 
 export function usePlaybackController(
@@ -152,10 +155,6 @@ export function usePlaybackController(
   const [seed] = useState<EpisodeSeed | null>(() =>
     readSeed(siteKey, vodId, playUrl, episodeName, playFrom),
   );
-  // 交接层只服务首帧：读进 seed 后按身份清掉，同一集再次进入不会拿到上一轮的实体。
-  useEffect(() => {
-    clearPlaySeed(siteKey, vodId, playUrl);
-  }, [siteKey, vodId, playUrl]);
 
   const initialPlaybackState: PlaybackState = {
     committed: {

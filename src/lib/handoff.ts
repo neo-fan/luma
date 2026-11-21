@@ -90,19 +90,10 @@ export function peekDetailSeed(siteKey: string, vodId: string): VodInfo | null {
   return peekHandoff("detail", keyOf(siteKey, vodId));
 }
 
-/** 落地页在 effect 里清；按 key 清，避免把隔壁那次导航刚写入的交接一起清掉。 */
-export function clearDetailSeed(siteKey: string, vodId: string): void {
-  clearHandoff("detail", keyOf(siteKey, vodId));
-}
-
 export function putPlaySeed(siteKey: string, vod: VodInfo, playUrl: string): void {
   putHandoff("play", keyOf(siteKey, vod.vod_id, playUrl), vod);
 }
 
 export function peekPlaySeed(siteKey: string, vodId: string, playUrl: string): VodInfo | null {
   return peekHandoff("play", keyOf(siteKey, vodId, playUrl));
-}
-
-export function clearPlaySeed(siteKey: string, vodId: string, playUrl: string): void {
-  clearHandoff("play", keyOf(siteKey, vodId, playUrl));
 }

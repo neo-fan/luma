@@ -16,6 +16,7 @@
  * 「换源能播、换集白屏」这种只在特定入口复现的缺陷；改缓存口径也要改两遍。
  */
 import { api } from "../../lib/invoke";
+import { log } from "../../lib/logger";
 import { resolveEpisodeTarget } from "../../lib/episodeResolve";
 import { getEpisodePlayCache, setEpisodePlayCache } from "../../lib/episodePlayCache";
 import type { PlayResolved } from "../../types/luma";
@@ -50,4 +51,44 @@ export async function resolveEpisodePlay(
   }
   setEpisodePlayCache(siteKey, playFrom, episodeUrl, play);
   return play;
+}
+
+/**
+ * 预取：把「用户大概率马上要点的那一集」提前解析好写进集级缓存。
+ *
+ * 与 `resolveEpisodePlay` 的唯一区别是**不知道当前内核的播放类型**，因此不做
+ * `expectedKind` 断言——写进缓存的仍是完整 `PlayResolved`，播放页命中后照旧按
+ * kind 复核，不一致就当未命中（不会把 page 型地址塞给 hls）。
+ *
+ * 全部失败静默：真正的错误由用户点击时的正常链路负责报。
+ */
+export async function prefetchEpisodePlay(
+  siteKey: string,
+  playFrom: string | undefined,
+  episodeUrl: string,
+): Promise<void> {
+  if (getEpisodePlayCache(siteKey, playFrom, episodeUrl)) {
+    return;
+  }
+  try {
+    const target = await resolveEpisodeTarget(siteKey, playFrom, episodeUrl);
+    if (target.unresolvable) {
+      return;
+    }
+    const play = await api.resolvePlay({
+      siteKey,
+      url: target.url,
+      ua: target.ua,
+      referer: target.referer,
+      cookie: target.cookie,
+    });
+    // 页面型地址还要过嗅探，缓存它对下一次点击没有帮助。
+    if (play.kind === "page") {
+      return;
+    }
+    setEpisodePlayCache(siteKey, playFrom, episodeUrl, play);
+    log.info("episode play prefetched", { siteKey, playFrom, kind: play.kind });
+  } catch {
+    /* 预取失败不影响任何用户路径 */
+  }
 }

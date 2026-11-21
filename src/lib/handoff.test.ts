@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearAllHandoffs,
-  clearDetailSeed,
-  clearPlaySeed,
+  clearHandoff,
   peekDetailSeed,
   peekPlaySeed,
   putDetailSeed,
@@ -56,16 +55,16 @@ describe("handoff", () => {
 
   it("清除按身份进行，不会顺手抹掉另一次导航的交接", () => {
     putDetailSeed("site_a", vod("1"));
-    clearDetailSeed("site_a", "2");
+    clearHandoff("detail", "site_a|2");
     expect(peekDetailSeed("site_a", "1")).not.toBeNull();
-    clearDetailSeed("site_a", "1");
+    clearHandoff("detail", "site_a|1");
     expect(peekDetailSeed("site_a", "1")).toBeNull();
   });
 
   it("两类交接互不影响", () => {
     putDetailSeed("site_a", vod("1"));
     putPlaySeed("site_a", vod("1"), "https://cdn/1.m3u8");
-    clearPlaySeed("site_a", "1", "https://cdn/1.m3u8");
+    clearHandoff("play");
     expect(peekPlaySeed("site_a", "1", "https://cdn/1.m3u8")).toBeNull();
     expect(peekDetailSeed("site_a", "1")).not.toBeNull();
   });

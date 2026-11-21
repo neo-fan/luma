@@ -116,13 +116,31 @@ src/AppShell.tsx    布局壳：侧栏/配置同步/命令面板/Esc 返回/滚�
 src/pages/          首页/分类/搜索/详情/播放/直播/收藏/历史/设置
 src/hooks/          跨页复用 hook（usePlayerEngine / usePlayResolution / usePlaybackHistory /
                     useLiveCatalog）+ playback/（单一播放目标 + 切换编排，见 §5.1）
-src/lib/            invoke（唯一 IPC）、queryClient、usePageState、playerPrefs、sources、sourceCache、format、logger、clipboard、nav
+src/lib/            invoke（唯一 IPC）、queryClient、handoff、usePageState、playerPrefs、sources、sourceCache、format、logger、clipboard、nav
 src/stores/         zustand：只收编跨页共享态（cache/preferredSite/sidebarCollapsed）
 src/components/     ErrorBar / Spinner / SourcePicker / player/* / settings/*
 src/types/luma.ts  归一化契约 TS 侧
 ```
 - hash 路由下 `pathname` 恒为 `/`，探针按 URL 选 target 不受影响。
 - 提示分层：事件→toast；需决策错误→`ErrorBar`（图标+主文案+归因+折叠技术详情+复制/重试+倒计时）；说明→`.tip`。
+
+### 8.1 数据分层与失效契约
+
+页面之间传的是**实体**，不是「让对方再去取一次」。四层职责固定，越界即视为缺陷：
+
+| 层 | 模块 | 放什么 | 有效期 / 上限 | 何时失效 | 允许谁依赖 |
+|---|---|---|---|---|---|
+| L0 身份 | URL + `history.state`（`lib/nav.ts`）、SQLite `playback` | 重建会话的最小集：`siteKey/vodId/playUrl/episodeName/playFrom` | 持久 | 配置切换重建 | 任何地方 |
+| L1 交接 | `lib/handoff.ts` | 上一页已握住的 `VodInfo`（详情跳/播放跳各一槽） | 单跳、2 分钟 | 落地页 effect 按身份清；配置切换 `clearAllHandoffs()` | **落地首帧只能读它** |
+| L2 回访 | `lib/queryClient.ts`（TanStack） | `detail` 10min / `home`·`category`·`live` 5min / `search` 2min | `gcTime` 30min | 配置切换 `resetCacheForScope`；空结果 `dropCached` | 只做兜底，不做跳转依赖 |
+| L3 派生索引 | `lib/cardIndex.ts`、`lib/sourceCache.ts` | 列表卡片 slim（6h / 3000 条）、换源候选（10min / 8 bundle / 512 预热） | 见左 | 配置切换 `forgetCards` / `clearSourceCache` | 只做「同一实体在别处出现」的兜底 |
+| L4 时效凭据 | `lib/episodePlayCache.ts` | `PlayResolved`（带 token 的直链/反代地址） | 3min / 64 条 | 播放 fatal、手动刷新即作废 | **只有播放器读**，不参与首帧 |
+
+另有两条**不是数据源**的存储，别拿它们当真相：
+- `lib/usePageState.ts`：UI 快照（选中线路、筛选词、倒序、展开态、滚动），无 TTL，配置切换整体清空。**网络数据/详情不写这里**（写了就没有失效点）。
+- zustand `playSession`：当前会话身份，等价于 L0 的内存镜像。
+
+判据：首帧出不来内容 = 缺 L1 交接；看到旧内容 = 数据被写进了没有 TTL 的层；`刚点就解析失败` = L4 命中临界过期凭据。
 
 ## 9. Rust 分层（`src-tauri/src`）
 
