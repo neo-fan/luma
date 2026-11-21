@@ -3,7 +3,7 @@
  * 播放会话状态机与现实行为的一致性。
  *
  * 机器测试只证明模型自洽，这里用真实点播比对「引擎是否把事件喂对了」：
- * 出画、健康播放、换集、判死交棒四段各钉不变量。
+ * 出画、健康播放、换集、判死上报四段各钉不变量。
  *
  * 换集有两条合法路径，分别断言：
  *   A. 原地换集：同一个 actor，须出现 switching 且收口后 sessionId 自增 1；
@@ -13,7 +13,8 @@
  *   - 源不可用 / 没出画 → SKIP（exit 0，环境依赖）；
  *   - 出画后状态与现实不符（没进 playing、hasPlayed 未置位、健康播放中出现
  *     probing/recovering 或计数非 0、原地换集不进 switching 或不收口）→ FAIL；
- *   - 注入坏源后既不进 recovering 也没有判死红条，或 30s 无人接手 → FAIL。
+ *   - 注入坏源后没进 failed、没有判死原因，或判死后又自动换了会话 → FAIL
+ *     （2.0.0 已关闭自动换线/换源，恢复必须由用户的 UI 选择发起）。
  */
 import { connect, finish } from "./lib/cdp.mjs";
 
@@ -238,10 +239,9 @@ if (!clicked) {
   }
 }
 
-// 5) 交棒链实测：2.0.0 起「撤海报 / 挂红条 / 交棒换线」不再由各调用点手写，
-//    而是机器进入 recovering 时回调解释器唯一的实现。这条断言整条链真的通：
-//    对正在播的 <video> 塞一个坏 src → 触发 error → 引擎报 FAILED → 机器进
-//    recovering → 错误条出现判死文案 → 上层换线/换源接管（会话身份变化）。
+// 5) 判死上报实测：对正在播的 <video> 塞坏 src → 解码报错 → 机器进 failed
+//    → reportFailure 撤海报、上报失败原因（提示只在播放器内）→ 停在那里等用户操作。自动换线/换源
+//    已于 a4d2d5a 下线，因此这里钉的是「上报且不自作主张」，不是旧交棒链。
 if (chainReady) {
   const before = await cdp.eval(SESSION);
   const forced = await cdp.eval(`(() => {
@@ -259,61 +259,50 @@ if (chainReady) {
   if (forced !== "forced") {
     problems.push(`无法注入坏源：${forced}`);
   } else {
-    const seen = await until(
-      `(() => {
-        const s = window.__lumaPlayerSession;
-        const bar = document.querySelector('.error-bar__text');
-        return {
-          state: s ? s.value : null,
-          instance: s ? s.instance : null,
-          sessionId: s ? (s.context && s.context.sessionId) : null,
-          cause: s ? (s.context && s.context.failoverCause) : null,
-          bar: bar ? bar.textContent.trim() : null,
-        };
-      })()`,
-      // 交棒是同步发生的（XState 在 send 里执行 action），所以 recovering 与红条
-      // 谁先被采样到都算链通；两者都没抓到才算断链。
-      (r) => r.state === "recovering" || r.cause === "mediaDecode" || (r.bar || "").includes("播放器加载失败"),
-      8000,
-      150,
-    );
+    const FAILURE_SNAPSHOT = `(() => {
+      const s = window.__lumaPlayerSession;
+      const bar = document.querySelector('.error-bar__text');
+      return {
+        state: s ? s.value : null,
+        instance: s ? s.instance : null,
+        sessionId: s ? (s.context && s.context.sessionId) : null,
+        cause: s ? (s.context && s.context.failoverCause) : null,
+        bar: bar ? bar.textContent.trim() : null,
+      };
+    })()`;
+    // 机器与红条谁先被采样到都算上报链通；两者都没抓到才算断链。
+    const failureSeen = (r) =>
+      r.state === "failed" || r.cause !== null || (r.bar || "").includes("播放器加载失败");
+    const seen = await until(FAILURE_SNAPSHOT, failureSeen, 8000, 150);
     console.log("交棒链:", JSON.stringify(seen.value));
     if (!seen.ok) {
       problems.push(`注入坏源后 8s 内既没进 recovering、也没有判死红条：${JSON.stringify(seen.value)}`);
     }
-    // 交棒之后必须有人接管：换线 / 换源会开新一轮（重建实例 → instance 变，
-    // 或同实例重新 LOAD → ctx.sessionId 变）。卡死在 recovering 说明机器发起了
-    // 但上层没接住。注意 `SESSION` 的 sessionId 在 ctx 里，别拿顶层字段比 ——
-    // 取顶层字段恒为 undefined，断言会形同虚设。
     const preInstance = before.instance;
     const preSession = before.ctx?.sessionId;
-    let stuckSince = Date.now();
-    let handed = { ok: false, value: null };
-    // recovering 的出口是 LOAD / USER_SWITCH / FAILED；换线秒级，但**跨源
-    // 自愈**要走一次聚合搜索找候选（实测 20~40s），20s 窗口对它过紧。
-    // 60s 连续卡在 recovering 才判「上层没接住」。
-    const chainDeadline = Date.now() + 75000;
-    while (Date.now() < chainDeadline) {
-      const r = await cdp.eval(SESSION);
-      if (r.state !== "recovering") {
-        stuckSince = Date.now();
-      }
-      if (r.instance !== preInstance || r.ctx?.sessionId !== preSession) {
-        handed = { ok: true, value: r };
-        break;
-      }
-      if (Date.now() - stuckSince > 60000) {
-        problems.push(`交棒后机器卡在 recovering 超过 60s，上层没有接住：${JSON.stringify(r.ctx)}`);
-        break;
-      }
-      await cdp.sleep(400);
+    // 判死的终点是 failed：红条保留、原因写进 ctx，不会再自动开新会话。
+    const failed = await until(FAILURE_SNAPSHOT, (r) => r.state === "failed", 8000, 150);
+    if (!failed.ok) {
+      problems.push(`注入坏源后 8s 内机器没有停在 failed：${JSON.stringify(failed.value)}`);
     }
-    if (!handed.ok && problems.length === 0) {
-      problems.push("交棒后 75s 内没有新会话接手（既没重建实例也没自增 sessionId）");
-    } else if (handed.ok) {
+    // 自动换线/换源已下线：观察 10s，会话身份（实例 / sessionId）不该自己变化。
+    // 注意 SESSION 的 sessionId 在 ctx 里，拿顶层字段比会恒为 undefined、断言形同虚设。
+    const stableDeadline = Date.now() + 10000;
+    let drift = null;
+    while (Date.now() < stableDeadline) {
+      const r = await cdp.eval(SESSION);
+      if (r.instance !== preInstance || r.ctx?.sessionId !== preSession) {
+        drift = r;
+        break;
+      }
+      await cdp.sleep(300);
+    }
+    if (drift) {
+      problems.push(`判死后 10s 内会话自己变了（自动换线/换源没关干净）：${JSON.stringify(drift.ctx)}`);
+    } else {
       console.log(
-        "新会话:",
-        JSON.stringify({ state: handed.value.state, instance: handed.value.instance, sessionId: handed.value.ctx?.sessionId }),
+        "判死后停在 failed，无自动换线/换源:",
+        JSON.stringify({ state: failed.value?.state, cause: failed.value?.cause, bar: failed.value?.bar }),
       );
     }
   }

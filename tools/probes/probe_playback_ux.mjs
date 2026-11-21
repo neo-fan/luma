@@ -396,27 +396,35 @@ try {
     v && v.dispatchEvent(new Event('ended'));
     return true;
   })()`);
+  // 提示在 b365d6b 起只走播放器内 notice（art-notice-inner），两秒后自动消失；
+  // 必须在派发 ended 后立刻采样，等「第2集」标题落地就已经被换集冲掉了。
+  const tip = await cdp.eval(
+    WAIT(`const t = document.querySelector('.art-notice-inner')?.textContent?.trim() || ''; return /下一集/.test(t) ? t.slice(0, 40) : null;`, 5000),
+  );
+  assert(!!tip, "auto-next tip shown", String(tip));
   const ep2 = await cdp.eval(
     WAIT(`const s = document.querySelector('.page-title__sub')?.textContent?.trim() || ''; return /第2集/.test(s) ? s : null;`, 25000),
   );
   assert(!!ep2, "auto-advanced to episode 2", String(ep2));
-  const tip = await cdp.eval(
-    WAIT(`const t = [...document.querySelectorAll('[data-sonner-toast]')].map((x) => x.textContent).join(' ') || ''; return /自动播放下一集/.test(t) ? t.slice(0, 40) : null;`, 10000),
-  );
-  assert(!!tip, "auto-next tip shown", String(tip));
 
   // ---- C. 跨集沿用：新一集 <video> 的音量 / 倍速与上一集一致 ----------------
   // 换集会销毁重建 ArtPlayer + hls.js，<video> 是全新元素；宽限到 60s 等它带 src。
   // 注意：WAIT 已用 `(() => { <expr> })()` 包了一层，<expr> 里必须直接写语句 +
   // return；再嵌套一个 IIFE 会让 return 出不了外层，永远拿到 undefined。
-  // 先等新一集 video 带 src（换集时 ArtPlayer 销毁重建，最多给 60s）。
+  // 先等新一集 video 带**不同的** src：换集时 ArtPlayer 销毁重建，旧 video 在
+  // 过渡期仍可能带 src；只判「有 src」会让后面的倍速/音量采样打到上一集上。
   await cdp.eval(
-    WAIT(`const v = document.querySelector('video'); return v && (v.currentSrc || v.src) ? 'OK' : null;`, 60000),
+    WAIT(`const v = document.querySelector('video'); const s = v && (v.currentSrc || v.src); return s && s !== ${JSON.stringify(mediaSrc)} ? 'OK' : null;`, 60000),
   );
   // 再等倍速被纠正回记忆值：PlayerPage 在初始化静默期内会即时纠正 ArtPlayer
   // 的倍速重置，另有 1.2s 延迟重放兜底。上限 5s，超时则带实际值由断言暴露。
   await cdp.eval(
     WAIT(`const v = document.querySelector('video'); return v && Math.abs(v.playbackRate - 1.5) < 0.02 ? 'OK' : null;`, 5000),
+  );
+  // 新集起播有 200ms 音量渐入 + 400ms 静默窗（playerVolumeFade），渐入中途采样
+  // 会拿到 0.05 这种过渡值；等音量收敛到记忆值再取，别把探针采样时机当产品回归。
+  await cdp.eval(
+    WAIT(`const v = document.querySelector('video'); return v && Math.abs(v.volume - 0.35) < 0.02 ? 'OK' : null;`, 5000),
   );
   const carried = await cdp.eval(`(() => {
     const v = document.querySelector('video');

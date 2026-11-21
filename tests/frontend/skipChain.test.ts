@@ -72,10 +72,18 @@ describe("intro countdown is driven by the video, not by state edges", () => {
 
   it("prompts at most once per episode, and never when the switch is off", () => {
     expect(hook).toContain("doneRef.current = { intro: false, outro: false };");
-    expect(hook).toContain("if (pendingRef.current) {");
+    expect(hook).toContain("const pendingKind = pendingRef.current?.kind;");
     expect(hook).toContain("if (!video || !enabled || (introMs <= 0 && outroMs <= 0)) {");
     // 本集「提示过没有」跟着媒体身份复位：换集/换源/实例重建都要重来一次。
     expect(hook).toContain("}, [mediaKey, attachSignal, cancel]);");
+  });
+
+  it("drops the countdown when playback leaves the segment (resume seek)", () => {
+    // `playing` 可能在历史续播 seek 之前于第 0 秒触发；若只判断「有 pending 就 return」，
+    // 5 秒后会把用户从续播点拽回片头末尾。倒计时要跟着播放头走。
+    expect(hook).toContain('if (pendingKind === "intro" && !shouldSkipIntro(curMs, introMs)) {');
+    expect(hook).toContain('if (pendingKind === "outro" && !shouldSkipOutro(curMs, durMs, outroMs)) {');
+    expect(page).toContain("if (v && intro > 0 && v.currentTime * 1000 < intro) {");
   });
 });
 

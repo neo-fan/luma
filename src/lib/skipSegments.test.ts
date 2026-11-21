@@ -10,6 +10,7 @@ import {
   outroMs,
   outroStartMs,
   parseSkipConfig,
+  parseSkipEnabled,
   serializeSkipConfig,
   shouldSkipIntro,
   shouldSkipOutro,
@@ -61,8 +62,14 @@ describe("parseSkipConfig", () => {
 });
 
 describe("serializeSkipConfig", () => {
-  it("writes [] for an empty config (backend inheritance default)", () => {
-    expect(serializeSkipConfig([])).toBe("[]");
+  it("writes the enabled envelope even for an empty config", () => {
+    // 按剧开关入字段后，空配置写的是 {enabled, segments}；仍能被 parseSkipConfig
+    // 读成空段、被 parseSkipEnabled 读成开，旧裸数组格式也继续兼容。
+    const json = serializeSkipConfig([]);
+    expect(json).toBe('{"enabled":true,"segments":[]}');
+    expect(parseSkipConfig(json)).toEqual([]);
+    expect(parseSkipEnabled(json)).toBe(true);
+    expect(serializeSkipConfig([], false)).toBe('{"enabled":false,"segments":[]}');
   });
 
   it("round-trips and re-validates on the way out", () => {

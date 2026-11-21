@@ -94,7 +94,7 @@
 
 1. **CI 首次远端运行待验证**：`.github/workflows/check.yml` 已落地（`checks` / `rust` / `py-adapter` 三个 job），但本机没有远端仓库，尚未在 GitHub runner 上实跑过；首次推送后要按实际报错调（重点看 `rust` job 的 `pnpm build` + 资源桩是否够用）。
 2. Rust `#[path]` 是物理分层，逻辑模块名仍是 `crate::config`，依赖方向不受编译器约束（刻意取舍，第二阶段再做前缀化）。
-3. 超长文件：`usePlayerEngine.ts`（1433）、`hooks/playback/usePlaybackController.ts`（958）、`PlayerPage.tsx`（939）、`domain/spider/mod.rs`（957）、`domain/spider/quickjs.rs`（774）。
+3. 超长文件：`usePlayerEngine.ts`（1391）、`hooks/playback/usePlaybackController.ts`（672）、`PlayerPage.tsx`（917）、`domain/spider/mod.rs`（1086）、`domain/spider/quickjs.rs`（771）。
    2.0.0 从 `usePlayerEngine` 拆出五个模块：`playerVolumeFade` / `playerPosterHold` / `playerPrefsWriter` /
    `playerStallWatchdog` / `playerThroughputMeter`，判决部分进 `lib/{vod,live}SessionMachine`，各带 node 行为测试。
    剩余部分是 ArtPlayer 实例装配、`customType` 里的解码器挂载与原地换集 promise：三者共享 `art` / `video` /
@@ -102,7 +102,7 @@
    挂载找一层所有权边界。
    `usePlaybackController` 同理：换集 / 换源 / 换线共享同一组 ref（代次、提交门、队列、账本），已把纯逻辑
    （`playbackTarget` / `episodePlayResolve` / `playerRoute`）与令牌（`switchToken` / `switchQueue`）拆出去，
-   剩下的 958 行是编排时序本身，再切会把「谁先谁后」拆散到两个文件、反而更难读。
+   剩下的 672 行是编排时序本身，再切会把「谁先谁后」拆散到两个文件、反而更难读。
    （`domain/config`、`domain/proxy`、`infra/db`、`infra/logging` 已按职责拆分，见 §10。）
 
 4. 四端协议靠约定 + 5 类结构校验，未做代码生成。
