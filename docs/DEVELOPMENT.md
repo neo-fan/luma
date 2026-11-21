@@ -232,7 +232,7 @@ $env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（安装版�
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 corepack pnpm test
-python tools/check.py                          # 11 项一键（契约 / 版本 / py 兼容 / py 框架 / 适配层 / 语法 / 前端 / cargo / 运行时 / qjs-runner 单测 / qjs 引擎）
+python tools/check.py                          # 12 项一键（契约 / 版本 / 发布收口 / py 兼容 / py 框架 / 适配层 / 语法 / 前端 / cargo / 运行时 / qjs-runner 单测 / qjs 引擎）
 python tests/offline/py_compat_check.py        # TVBox py 脚本通用兼容 / 子进程信封
 python tests/offline/py_base_spider_check.py   # py 框架与原生对齐
 python tools/prepare_runtime.py --check        # 随包 Python 依赖齐全度（JVM 运行时已移除，不再检查 JRE）

@@ -18,22 +18,21 @@
 | 层 | 命令 | 依赖 | 用途 |
 |---|---|---|---|
 | 离线（必过） | `python tools/check.py` | 无窗口、无外网 | 每次改动的**最低门槛** |
-| CI | `.github/workflows/check.yml` | 干净 runner（GitHub Actions） | 推送/PR 自动跑：`--ci` 子集 + rust 单测 + py 适配层 |
 | 窗口探针 | `node tools/run_probes.mjs` | debug 窗口 + CDP 9222 + Vite 1420 | 改 UI / 播放 / 配置链路后 |
 | 阶段断言 | `python tests/acceptance/p0.py` ~ `p3.py` | stub + 运行中的应用 | 改 sidecar / 打包后 |
 | 真实配置 | 导入 → 搜索 → 详情 → 播放 | 外网 | 源兼容结论（外网抖动不算回归） |
 
-`check.py` 覆盖（11 项）：契约、版本一致性、Python 兼容、py 框架、适配层健壮性、Python 语法、运行时产物体检、qjs-runner 单测、qjs 引擎（GBK + ds）、前端单测、Rust 单测。加 `--full` 会额外跑 `pnpm build`。
+`check.py` 覆盖（12 项）：契约、版本一致性、发布收口、Python 兼容、py 框架、适配层健壮性、Python 语法、运行时产物体检、qjs-runner 单测、qjs 引擎（GBK + ds）、前端单测、Rust 单测。加 `--full` 会额外跑 `pnpm build`。
 
 新增/调整用例前先看 `docs/TESTING.md`：单测（`src/**`、Rust 内联）/ 离线检查（`tests/offline/`）/ 阶段验收（`tests/acceptance/`）/ 窗口探针（`tools/`）的边界与命令都在那一份里，加进 `check.py` 要同步本表与那里的清单。
 
-`--ci` 是**便携子集**（契约 + Python 语法 + 前端单测），只挑「任何干净机器都能跑」的检查：
+`--ci` 是**便携子集**（契约 + Python 语法 + 前端单测）：只挑「任何干净机器都能跑」的检查，给没有构建产物、没有 pip 依赖的环境用。
 
-- py 适配层断言要 pip 依赖（lxml / pyquery / pycryptodome）→ 由 CI 的 `py-adapter` job 单独装 `tools/python-requirements.txt` 后跑；
-- Rust 单测需要 `dist/` 与 `bundle.resources` 路径（`tauri-build` 每次构建都复制，缺路径直接失败）→ 由 `rust` job 先 `pnpm build`、再用空目录/空文件补齐 `sidecars/python-embed` 与 `src-tauri/binaries/qjs-runner-<triple>.exe` 后跑；
-- 运行时产物体检只对**本机已 prepare 过**的仓库有意义，CI 里没有这些产物。
+- py 适配层断言要 pip 依赖（lxml / pyquery / pycryptodome），装了 `tools/python-requirements.txt` 才跑；
+- Rust 单测需要 `dist/` 与 `bundle.resources` 路径（`tauri-build` 每次构建都复制，缺路径直接失败），要先 `pnpm build`；
+- 运行时产物体检只对**本机已 prepare 过**的仓库有意义。
 
-**窗口探针不进 CI**：需要 debug 窗口 + CDP 9222，仍留在发版手工清单（`docs/RELEASING.md` §2.2）。
+窗口探针需要 debug 窗口 + CDP 9222，走发版手工清单（`docs/RELEASING.md` §2.2），不进 `check.py`。
 
 ## 3. 契约变更流程（最容易踩）
 
@@ -92,7 +91,7 @@
 
 ## 9. 已知工程债（按优先级）
 
-1. **CI 首次远端运行待验证**：`.github/workflows/check.yml` 已落地（`checks` / `rust` / `py-adapter` 三个 job），但本机没有远端仓库，尚未在 GitHub runner 上实跑过；首次推送后要按实际报错调（重点看 `rust` job 的 `pnpm build` + 资源桩是否够用）。
+1. **没有 CI 门禁（刻意取舍）**：`.github/workflows/` 只有 `release.yml` 与 `pages.yml`，回归靠本地 `check.py`。代价是推送前不跑检查没有任何拦截，全凭提交习惯；要加回来就得接受每次推送都等 runner。
 2. Rust `#[path]` 是物理分层，逻辑模块名仍是 `crate::config`，依赖方向不受编译器约束（刻意取舍，第二阶段再做前缀化）。
 3. 超长文件：`usePlayerEngine.ts`（1391）、`hooks/playback/usePlaybackController.ts`（672）、`PlayerPage.tsx`（917）、`domain/spider/mod.rs`（1086）、`domain/spider/quickjs.rs`（771）。
    2.0.0 从 `usePlayerEngine` 拆出五个模块：`playerVolumeFade` / `playerPosterHold` / `playerPrefsWriter` /
@@ -107,12 +106,10 @@
 
 4. 四端协议靠约定 + 5 类结构校验，未做代码生成。
 5. **套件级状态耦合**：约 20 条探针共用一个 dev 窗口与进程级可变状态（active 配置、缓存、历史、常驻播放层），
-   单跑绿不代表套件绿，失败集会随轮次漂移（实测：同一轮里 `artplayer`/`session_machine` 绿、
-   `flv`/`page_cache` 红，而 `flv` 单独跑过）。修法在 harness：`run_probes.mjs` 中央快照/还原 + 独立数据集，
+   单跑绿不代表套件绿，失败集会随轮次漂移。修法在 harness：`run_probes.mjs` 中央快照/还原 + 独立数据集，
    禁止靠放宽断言收敛。
-6. **依赖告警余额（5 条，评过、不是漏了）**：Dependabot 在 2026-11-21 报的 30 条里 25 条已随
-   `vite 6.4.6` / `vitest 4.1.12` 清掉，剩下 5 条都升级不了，理由写在下面，GitHub 上按这些理由
-   dismiss（`glib` → not used；`hickory-*` → tolerable risk），要重开随时可以：
+6. **依赖告警 5 条（已评估，不是漏了）**：都升不上去，理由见下；GitHub 上已按这些理由 dismiss
+   （`glib` → not used；`hickory-*` → tolerable risk），上游条件变了要重开：
    - **`glib`（medium，`VariantStrIter` 的 `Iterator` 实现有 UB）**：来自 tauri 2 的 gtk-rs 0.18
      Linux 栈，修复版本 0.20 要整栈升级（gtk-rs 0.18 → 0.20 是 tauri 的事，不是我们的）。
      `.github/workflows/release.yml` 只出 Windows NSIS 包，Linux 侧代码在本仓库**没有编译产物**，
@@ -131,9 +128,9 @@
 - `domain/config.rs`（2,154 行 god module）→ 已拆为 `config/{mod,derive,naming,import,github,refresh}.rs`，命令层与实现分离。
 - `domain/proxy.rs`（1,105 行）→ 已拆为 `proxy/{mod,handlers,guard,playlist}.rs` + `proxy/tests.rs`；`mod.rs` 留状态/路由/命令层，handler、目标校验、播放列表改写各自成文件。
 - `infra/db.rs`（1,026 行）→ 已拆为 `db/{mod,schema,meta,configs,playback}.rs` + `db/tests.rs`；行结构体留 `mod.rs`，每个子模块一个 `impl Db`。2.0 把收藏与历史合并为单表 `playback`（收藏只是 `favorite` 标记），原 `favorites.rs` / `history.rs` 的读写并入 `playback.rs`。
-- **播放页「当前播放目标」四套状态并存** → 已收成一份真源：`hooks/playback/{playbackTarget,usePlaybackController}.ts`（`intent ?? committed` + 代次令牌 + 串行提交门 + 手动持有），删除 `useEpisodeList.ts` / `usePlaybackSwitchCore.ts` 与 `pendingPick/manualPick/switchedSource` 派生链。之后又把换集/换源各自手写一遍的「集级解析 + 类型校验 + 提交」抽成 `episodePlayResolve.ts` / `applySwitch`，四条出口的 `player` 路由收敛到 `playerRoute.ts`——这段曾经两处各写一份，只有一处补了类型校验，症状是「换源能播、换集白屏」。
+- **播放页「当前播放目标」四套状态并存** → 已收成一份真源：`hooks/playback/{playbackTarget,usePlaybackController}.ts`（`intent ?? committed` + 代次令牌 + 串行提交门 + 手动持有），删除 `useEpisodeList.ts` / `usePlaybackSwitchCore.ts` 与 `pendingPick/manualPick/switchedSource` 派生链。换集/换源各自手写一遍的「集级解析 + 类型校验 + 提交」也抽成了 `episodePlayResolve.ts` / `applySwitch`，四条出口的 `player` 路由收敛到 `playerRoute.ts`：两处各写一份时只有一处补了类型校验，症状是「换源能播、换集白屏」。
 - `infra/logging.rs`（587 行）→ 已拆为 `logging/{mod,redact,ui,diagnostics,report}.rs` + `logging/tests.rs`；`mod.rs` 留目录解析/初始化/级别解析与 4 个命令，脱敏规则、诊断采集、反馈文件各成文件（按日滚动原本没有独立 `writer.rs`，写入逻辑一直在 `mod.rs`）。
-- `probe_page_cache` 注入点：随 TanStack 迁移（`63b70f9`）已改挂 `lib/queryClient.ts` 的 `fetchQuery` spy（按 `queryKey[0]` 前缀计数、`staleTime===0` 判 force），「缓存复用不重复回源 + ↻刷新强制回源」契约重新钉住；实测 `node tools/probes/probe_page_cache.mjs` 全绿（c1=cPlay=c2、c3≥c2+1、无未捕获异常）。原 §9.5「必然红」的描述已过时。
+- `probe_page_cache` 注入点挂在 `lib/queryClient.ts` 的 `fetchQuery` spy 上（按 `queryKey[0]` 前缀计数、`staleTime===0` 判 force），钉住「缓存复用不重复回源 + ↻ 刷新强制回源」这条契约。
 
 ## 11. 第三方库替换清单的逐项结论
 

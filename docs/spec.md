@@ -171,9 +171,9 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 | 层 | 命令 | 基线 |
 | --- | --- | --- |
-| 离线门禁（11 项） | `python tools/check.py` | 全 PASS：契约 / 版本一致性 / py 兼容 / py 框架 / 适配层健壮性 / 运行时候检 / py 语法 / 前端单测 / Rust 单测 / qjs-runner 单测 / qjs 引擎(GBK+ds) |
-| 前端单测 | `corepack pnpm test` | 602 / 73 文件 |
-| Rust 单测 | `cargo test --lib` | 239 passed / 2 ignored |
+| 离线门禁（12 项） | `python tools/check.py` | 全 PASS：契约 / 版本一致性 / 发布收口 / py 兼容 / py 框架 / 适配层健壮性 / 运行时候检 / py 语法 / 前端单测 / Rust 单测 / qjs-runner 单测 / qjs 引擎(GBK+ds) |
+| 前端单测 | `corepack pnpm test` | 全部通过 |
+| Rust 单测 | `cargo test --lib` | 全部通过（2 项联网回归 ignored） |
 | 验收脚本 | `python tests/acceptance/p0.py`、`p1.py --adapter` | 见脚本输出；p1 适配层阶段只断言 `ping` + `spider.py`，并反向断言已删方法 |
 | 窗口探针 | `node tools/run_probes.mjs` | 需 debug 窗口 + CDP 9222 |
 

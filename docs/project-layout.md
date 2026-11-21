@@ -1,7 +1,7 @@
 # 项目目录结构与编码约定
 
 > 本文只约定「文件放哪、怎么写、产物归哪」。架构见 `docs/ARCHITECTURE.md`，调试见 `docs/DEVELOPMENT.md`，发布见 `docs/RELEASING.md`。
-> 当前状态（2026-11-20）：2.0.0 收尾——播放切换编排收成单一真源、收藏/历史合并为 `playback` 单表，真实配置「导入 → 搜索 → 详情 → 播放」跑通；前端 React + react-router + zustand，Rust 后端按 `infra/` + `domain/` 物理分层。
+> 形态：前端 React + react-router + zustand，Rust 后端按 `infra/` + `domain/` 物理分层，Python / QuickJS 两类爬虫走 sidecar。
 
 ## 1. 标准 Tauri v2 结构与本项目对齐
 
@@ -43,7 +43,9 @@ luma/
 ├── SECURITY.md                            # 安全模型与漏洞报告
 ├── THIRD-PARTY-NOTICES.md                 # 随仓库分发的第三方组件与许可
 ├── .gitignore                             # 产物 / 运行时 / 敏感数据忽略规则
-├── .github/workflows/check.yml            # CI：离线回归三 job（checks / rust / py-adapter），不跑窗口探针
+├── .github/workflows/release.yml          # 打 v* tag 时构建 NSIS 安装器并发布
+├── .github/workflows/pages.yml            # 把 site/ 部署到 GitHub Pages
+├── .github/dependabot.yml                 # 依赖更新 PR（只开 PR，不拦推送）
 ├── package.json / pnpm-lock.yaml          # 前端依赖与锁文件（pnpm 9.15.4）
 ├── tsconfig.json / vite.config.ts         # 构建配置（dev 端口 1420）
 ├── index.html  public/                    # 前端入口与静态资源（含 icon.svg）
@@ -129,7 +131,7 @@ luma/
     ├── prepare_runtime.py                 # 重建 python-embed 等产物；含 Python 依赖安装 + .pth 修正
     ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
     ├── inspect_config.py                  # 离线解码配置（图种 / 方言），只读不发网络
-    ├── check.py                           # 离线一键回归（11 项门禁）
+    ├── check.py                           # 离线一键回归（12 项）
     ├── run_probes.mjs                     # 窗口探针一键回归（唯一入口）
     ├── bundle_report.mjs                  # 前端体积对比
     ├── probes/                            # 窗口探针：probe_*.mjs（56 个，按功能命名）
