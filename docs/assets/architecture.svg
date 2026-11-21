@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" width="1200" height="520" role="img" aria-label="Luma 架构示意图：前端通过唯一 IPC 出口调用 Rust 主进程，主进程再与配置、sidecar 与本地反代交互">
+  <title>Luma 架构示意图（原创绘制）</title>
+  <defs>
+    <linearGradient id="archBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F6F8FE"/>
+      <stop offset="1" stop-color="#EAEFFB"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#6E8BFF"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="520" rx="26" fill="url(#archBg)"/>
+  <text x="48" y="54" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="20" font-weight="600" fill="#26324C">一条 IPC 出口，解析与配置全在主进程</text>
+  <text x="48" y="78" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="12" fill="#77839C">原创示意图 · 与 docs/ARCHITECTURE.md 一致</text>
+
+  <!-- 前端 -->
+  <rect x="48" y="108" width="300" height="318" rx="18" fill="#FFFFFF" stroke="#DCE3F3" stroke-width="1.5"/>
+  <rect x="48" y="108" width="300" height="48" rx="18" fill="#E9EEFF"/>
+  <rect x="48" y="136" width="300" height="20" fill="#E9EEFF"/>
+  <text x="72" y="139" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="15" font-weight="600" fill="#3C4A78">前端 · React 18 + Vite</text>
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#5A6682">
+    <rect x="72" y="180" width="252" height="42" rx="10" fill="#F4F6FC"/>
+    <text x="88" y="206">路由 / 页面（hash router）</text>
+    <rect x="72" y="232" width="252" height="42" rx="10" fill="#F4F6FC"/>
+    <text x="88" y="258">zustand 跨页共享状态</text>
+    <rect x="72" y="284" width="252" height="42" rx="10" fill="#F4F6FC"/>
+    <text x="88" y="310">ArtPlayer / hls.js / mpegts.js</text>
+    <rect x="72" y="336" width="252" height="52" rx="10" fill="#6E8BFF"/>
+    <text x="88" y="359" fill="#FFFFFF" font-weight="600">src/lib/invoke.ts</text>
+    <text x="88" y="378" fill="#DDE4FF" font-size="11">唯一 IPC 出口（禁止直连 Node）</text>
+  </g>
+
+  <!-- 主进程 -->
+  <rect x="440" y="108" width="320" height="318" rx="18" fill="#FFFFFF" stroke="#DCE3F3" stroke-width="1.5"/>
+  <rect x="440" y="108" width="320" height="48" rx="18" fill="#E9EEFF"/>
+  <rect x="440" y="136" width="320" height="20" fill="#E9EEFF"/>
+  <text x="464" y="139" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="15" font-weight="600" fill="#3C4A78">宿主 · Tauri v2 / Rust</text>
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#5A6682">
+    <rect x="464" y="180" width="272" height="38" rx="9" fill="#F4F6FC"/>
+    <text x="480" y="204">40 个 command（闭集注册）</text>
+    <rect x="464" y="226" width="272" height="38" rx="9" fill="#F4F6FC"/>
+    <text x="480" y="250">配置归一化 / 双快照派生</text>
+    <rect x="464" y="272" width="272" height="38" rx="9" fill="#F4F6FC"/>
+    <text x="480" y="296">CMS / M3U / EPG 进程内解析</text>
+    <rect x="464" y="318" width="272" height="38" rx="9" fill="#F4F6FC"/>
+    <text x="480" y="342">SQLite 单库（WAL + 事务）</text>
+    <rect x="464" y="364" width="272" height="38" rx="9" fill="#F4F6FC"/>
+    <text x="480" y="388">本地反代 :9978（重写分片）</text>
+  </g>
+
+  <!-- 外部与 sidecar -->
+  <rect x="852" y="108" width="300" height="318" rx="18" fill="#FFFFFF" stroke="#DCE3F3" stroke-width="1.5"/>
+  <rect x="852" y="108" width="300" height="48" rx="18" fill="#E9EEFF"/>
+  <rect x="852" y="136" width="300" height="20" fill="#E9EEFF"/>
+  <text x="876" y="139" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="15" font-weight="600" fill="#3C4A78">用户配置与随包运行时</text>
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#5A6682">
+    <rect x="876" y="180" width="252" height="58" rx="9" fill="#F4F6FC"/>
+    <text x="892" y="203">用户自备订阅</text>
+    <text x="892" y="224" font-size="11" fill="#8490A8">api.json / box.json 及变体</text>
+    <rect x="876" y="246" width="252" height="58" rx="9" fill="#F4F6FC"/>
+    <text x="892" y="269">Python 3.11 embeddable</text>
+    <text x="892" y="290" font-size="11" fill="#8490A8">仅执行第三方 spider.py</text>
+    <rect x="876" y="312" width="252" height="58" rx="9" fill="#F4F6FC"/>
+    <text x="892" y="335">qjs-runner（QuickJS）</text>
+    <text x="892" y="356" font-size="11" fill="#8490A8">仅执行 JS 源脚本</text>
+    <rect x="876" y="378" width="252" height="30" rx="8" fill="#FDECEC"/>
+    <text x="892" y="398" font-size="12" fill="#B45252">jar 站点：识别并屏蔽</text>
+  </g>
+
+  <!-- 连接线 -->
+  <line x1="352" y1="268" x2="434" y2="268" stroke="#6E8BFF" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="348" y="236" width="90" height="22" rx="11" fill="#FFFFFF" stroke="#D8E0F5"/>
+  <text x="393" y="251" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="11" fill="#5A6682">invoke</text>
+  <line x1="764" y1="268" x2="846" y2="268" stroke="#6E8BFF" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="748" y="236" width="114" height="22" rx="11" fill="#FFFFFF" stroke="#D8E0F5"/>
+  <text x="805" y="251" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="11" fill="#5A6682">stdio JSON-RPC</text>
+
+  <rect x="48" y="452" width="1104" height="42" rx="12" fill="#E4EAFB"/>
+  <text x="70" y="479" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#4B5A80">imported_json 是导入原件，永不被运行策略改写；运行时策略只派生 runtime_json，扇出 / 播放 / 缓存只读后者。</text>
+</svg>

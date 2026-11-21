@@ -8,6 +8,10 @@ React 18 + TypeScript + Vite · Tauri v2（Rust）· WebView2 · Python 3.11 / Q
 > 本项目只提供播放框架，不提供任何音视频内容或源站地址。导入的配置与脚本由使用者自行
 > 判断合法性并承担使用责任。不收集遥测、不上传配置、不内置账号体系。
 
+![Luma 界面示意图：订阅导入、聚合搜索与统一播放入口](docs/assets/overview.svg)
+
+*上图为原创绘制的界面示意：所有条目均为占位内容，不含真实片源、海报或任何第三方版权素材。*
+
 ## 功能
 
 - **订阅导入**：URL / 本地文件 / 内联文本，兼容 JSONC、base64 图片种、gzip 包装等方言。
@@ -17,8 +21,8 @@ React 18 + TypeScript + Vite · Tauri v2（Rust）· WebView2 · Python 3.11 / Q
 - **聚合搜索**：一次关键词覆盖当前配置全部站点，按站流式上屏、可中断，失败按原因分组
   并支持单站重试。
 - **播放**：ArtPlayer + hls.js / mpegts.js；本地反代重写 m3u8 相对分片并透传
-  UA / Referer / Cookie。失败自动换线、换源（有次数上限），页面型地址走隐藏 WebView2
-  嗅探。支持播放偏好记忆与自动下一集。
+  UA / Referer / Cookie。失败先在同一地址按退避重连 4 次；仍失败则上报，由用户选择
+  换线 / 换源，页面型地址可走隐藏 WebView2 嗅探。支持播放偏好记忆与自动下一集。
 - **直播**：m3u / m3u8 解析与代理重写、多线路切换、XMLTV EPG、台标。
 - **数据**：SQLite 单库（配置快照 / active / 收藏 / 历史），WAL 模式。
 - **诊断**：三通道结构化日志（按天轮转、URL 脱敏）、一键复制诊断信息、打开日志目录、
@@ -38,6 +42,19 @@ React 18 + TypeScript + Vite · Tauri v2（Rust）· WebView2 · Python 3.11 / Q
 | 配置级 `headers[]` | ✅ | 按 host 注入 UA / Referer |
 | 直播（`lives`） | ✅ | m3u8 经本地代理重写后播放 |
 | jar（`csp_*` / 全局 `spider` jar） | ❌ | 社区 jar 是 Android dex，依赖 Android 运行时，在 Windows x64 无法执行；导入时标记 `runtime=jvm` 并屏蔽 |
+
+## 架构一览
+
+前端只有一条 IPC 出口；配置解密、归一化、站点路由与 m3u8 / EPG 解析都在 Rust 主进程内完成。
+Python 与 QuickJS 两个 sidecar 只执行用户自备的第三方源脚本，通过 stdio JSON-RPC 通信。
+
+![Luma 架构示意图：前端、Rust 主进程与随包运行时](docs/assets/architecture.svg)
+
+## 播放链路
+
+播放失败先重连同一地址，不把「慢」误判为「死」；是否换线 / 换源由用户在界面上决定。
+
+![Luma 播放链路示意图：取地址、反代、解码、重连与失败兜底](docs/assets/playback.svg)
 
 ## 系统要求
 
@@ -117,6 +134,7 @@ node tools/run_probes.mjs --list       # 窗口探针清单（需 debug 窗口 +
 
 ## 文档
 
+- [项目主页](https://neo-fan.github.io/luma/) —— GitHub Pages 静态站点，本页内容的网页版
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) —— 进程模型、源路由、数据流与 ADR
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) —— 环境准备、调试、日志与常见问题
 - [docs/TESTING.md](docs/TESTING.md) —— 测试分层、用例归属与门禁

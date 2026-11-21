@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="1200" height="760" role="img" aria-label="Luma 界面示意图：左侧导航、首页推荐与聚合搜索入口">
+  <title>Luma 界面示意图（原创绘制，非真实内容）</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F4F7FF"/>
+      <stop offset="1" stop-color="#E7ECF9"/>
+    </linearGradient>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2D3A63"/>
+      <stop offset="0.55" stop-color="#252C49"/>
+      <stop offset="1" stop-color="#1B2033"/>
+    </linearGradient>
+    <linearGradient id="posterA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6E8BFF"/>
+      <stop offset="1" stop-color="#9A8CFF"/>
+    </linearGradient>
+    <linearGradient id="posterB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4C7D8A"/>
+      <stop offset="1" stop-color="#2F5364"/>
+    </linearGradient>
+    <linearGradient id="posterC" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9A6C8F"/>
+      <stop offset="1" stop-color="#5F466E"/>
+    </linearGradient>
+    <linearGradient id="posterD" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B8895A"/>
+      <stop offset="1" stop-color="#6B4A3A"/>
+    </linearGradient>
+    <linearGradient id="posterE" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4A8C7B"/>
+      <stop offset="1" stop-color="#2E5A57"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="760" rx="28" fill="url(#bg)"/>
+  <circle cx="1080" cy="60" r="150" fill="#D9E2FF" opacity="0.5"/>
+  <circle cx="70" cy="720" r="120" fill="#E1D9FF" opacity="0.45"/>
+
+  <!-- 窗口主体 -->
+  <rect x="56" y="72" width="1088" height="616" rx="20" fill="#121620" stroke="#2B3242" stroke-width="1.5"/>
+  <rect x="56" y="72" width="1088" height="56" rx="20" fill="#1A1F2B"/>
+  <rect x="56" y="104" width="1088" height="24" fill="#1A1F2B"/>
+  <circle cx="90" cy="100" r="5" fill="#FF6B6B"/>
+  <circle cx="112" cy="100" r="5" fill="#FFC46B"/>
+  <circle cx="134" cy="100" r="5" fill="#5BD6A8"/>
+  <rect x="500" y="89" width="200" height="22" rx="11" fill="#252C3B"/>
+  <text x="600" y="104" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="12" fill="#9AA6BE">Luma · 配置兼容播放器</text>
+
+  <!-- 侧边导航 -->
+  <rect x="56" y="128" width="104" height="560" fill="#161B25"/>
+  <line x1="160" y1="128" x2="160" y2="688" stroke="#252C3A" stroke-width="1"/>
+  <rect x="72" y="154" width="72" height="40" rx="10" fill="#26304A"/>
+  <rect x="82" y="166" width="12" height="12" rx="3" fill="#6E8BFF"/>
+  <text x="102" y="177" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="12" fill="#E8EDFF">首页</text>
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="12" fill="#8F9AB1">
+    <rect x="82" y="222" width="12" height="12" rx="3" fill="#4B5670"/>
+    <text x="102" y="233">直播</text>
+    <rect x="82" y="278" width="12" height="12" rx="3" fill="#4B5670"/>
+    <text x="102" y="289">播放</text>
+    <rect x="82" y="334" width="12" height="12" rx="3" fill="#4B5670"/>
+    <text x="102" y="345">搜索</text>
+    <rect x="82" y="390" width="12" height="12" rx="3" fill="#4B5670"/>
+    <text x="102" y="401">收藏</text>
+    <rect x="82" y="446" width="12" height="12" rx="3" fill="#4B5670"/>
+    <text x="102" y="457">历史</text>
+    <rect x="82" y="502" width="12" height="12" rx="3" fill="#4B5670"/>
+    <text x="102" y="513">设置</text>
+  </g>
+  <rect x="76" y="646" width="64" height="24" rx="12" fill="#1F2634"/>
+  <text x="108" y="662" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" fill="#7F8AA2">v2.0</text>
+
+  <!-- 内容区标题 -->
+  <text x="196" y="190" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="22" font-weight="600" fill="#F2F5FF">首页</text>
+  <rect x="280" y="166" width="62" height="28" rx="14" fill="#2C3654"/>
+  <text x="311" y="185" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="12" fill="#DFE6FF">推荐</text>
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="12" fill="#8792AA">
+    <text x="360" y="185">电影</text>
+    <text x="418" y="185">剧集</text>
+    <text x="476" y="185">动漫</text>
+    <text x="534" y="185">综艺</text>
+  </g>
+  <rect x="900" y="166" width="216" height="28" rx="14" fill="#1E2533" stroke="#31394C"/>
+  <text x="1008" y="185" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="11" fill="#98A4BD">订阅已导入 · 7 个站点可用</text>
+
+  <!-- 焦点位 -->
+  <rect x="196" y="212" width="916" height="210" rx="16" fill="url(#hero)"/>
+  <rect x="220" y="236" width="132" height="162" rx="10" fill="url(#posterA)"/>
+  <path d="M 250 300 L 286 268 L 322 300 L 322 372 L 250 372 Z" fill="#FFFFFF" opacity="0.16"/>
+  <circle cx="286" cy="278" r="14" fill="#FFFFFF" opacity="0.28"/>
+  <rect x="236" y="344" width="100" height="8" rx="4" fill="#FFFFFF" opacity="0.55"/>
+  <rect x="244" y="360" width="84" height="6" rx="3" fill="#FFFFFF" opacity="0.3"/>
+  <rect x="382" y="252" width="286" height="18" rx="9" fill="#EEF2FF" opacity="0.92"/>
+  <rect x="382" y="283" width="404" height="10" rx="5" fill="#C6D0F5" opacity="0.6"/>
+  <rect x="382" y="305" width="352" height="10" rx="5" fill="#C6D0F5" opacity="0.45"/>
+  <rect x="382" y="327" width="292" height="10" rx="5" fill="#C6D0F5" opacity="0.35"/>
+  <rect x="382" y="356" width="116" height="34" rx="17" fill="#6E8BFF"/>
+  <text x="440" y="378" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#FFFFFF">立即播放</text>
+  <g fill="#8D99B5">
+    <circle cx="1004" cy="396" r="4" fill="#6E8BFF"/>
+    <circle cx="1020" cy="396" r="4"/>
+    <circle cx="1036" cy="396" r="4"/>
+    <circle cx="1052" cy="396" r="4"/>
+  </g>
+
+  <!-- 推荐位 -->
+  <text x="196" y="464" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="16" font-weight="600" fill="#E6EBFA">为你推荐</text>
+  <rect x="886" y="444" width="226" height="26" rx="13" fill="#1C2230" stroke="#333C50"/>
+  <text x="999" y="461" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="11" fill="#93A0B9">原创示意图 · 非真实内容</text>
+
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif">
+    <!-- 卡片 1 -->
+    <rect x="196" y="484" width="172" height="112" rx="10" fill="url(#posterA)"/>
+    <circle cx="282" cy="528" r="24" fill="#FFFFFF" opacity="0.18"/>
+    <path d="M 212 580 L 258 538 L 300 580 Z" fill="#FFFFFF" opacity="0.14"/>
+    <text x="206" y="616" font-size="13" fill="#CFD7EC">示例条目 01</text>
+    <rect x="206" y="626" width="96" height="6" rx="3" fill="#404A61"/>
+    <!-- 卡片 2 -->
+    <rect x="384" y="484" width="172" height="112" rx="10" fill="url(#posterB)"/>
+    <rect x="410" y="516" width="120" height="8" rx="4" fill="#FFFFFF" opacity="0.4"/>
+    <rect x="410" y="534" width="88" height="8" rx="4" fill="#FFFFFF" opacity="0.25"/>
+    <circle cx="470" cy="560" r="20" fill="#FFFFFF" opacity="0.14"/>
+    <text x="394" y="616" font-size="13" fill="#CFD7EC">示例条目 02</text>
+    <rect x="394" y="626" width="80" height="6" rx="3" fill="#404A61"/>
+    <!-- 卡片 3 -->
+    <rect x="572" y="484" width="172" height="112" rx="10" fill="url(#posterC)"/>
+    <path d="M 590 590 L 630 520 L 666 566 L 700 510 L 726 590 Z" fill="#FFFFFF" opacity="0.16"/>
+    <text x="582" y="616" font-size="13" fill="#CFD7EC">示例条目 03</text>
+    <rect x="582" y="626" width="104" height="6" rx="3" fill="#404A61"/>
+    <!-- 卡片 4 -->
+    <rect x="760" y="484" width="172" height="112" rx="10" fill="url(#posterD)"/>
+    <circle cx="846" cy="540" r="30" fill="#FFFFFF" opacity="0.14"/>
+    <circle cx="846" cy="540" r="16" fill="#FFFFFF" opacity="0.1"/>
+    <text x="770" y="616" font-size="13" fill="#CFD7EC">示例条目 04</text>
+    <rect x="770" y="626" width="90" height="6" rx="3" fill="#404A61"/>
+    <!-- 卡片 5 -->
+    <rect x="948" y="484" width="164" height="112" rx="10" fill="url(#posterE)"/>
+    <path d="M 964 578 Q 1030 500 1096 578 Z" fill="#FFFFFF" opacity="0.16"/>
+    <text x="958" y="616" font-size="13" fill="#CFD7EC">示例条目 05</text>
+    <rect x="958" y="626" width="84" height="6" rx="3" fill="#404A61"/>
+  </g>
+
+  <text x="600" y="730" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#66728C">订阅导入 · 聚合搜索 · 反代播放 · 直播 EPG —— 全部界面元素为原创示意</text>
+</svg>

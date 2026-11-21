@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400" role="img" aria-label="Luma 播放链路示意图：取播放地址、本地反代重写、播放器解码、失败重连、用户选择换线换源或嗅探">
+  <title>Luma 播放链路示意图（原创绘制）</title>
+  <defs>
+    <linearGradient id="flowBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F7F9FF"/>
+      <stop offset="1" stop-color="#EAF0FD"/>
+    </linearGradient>
+    <marker id="flowArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#8894B4"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="400" rx="26" fill="url(#flowBg)"/>
+  <text x="48" y="52" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="20" font-weight="600" fill="#26324C">播放链路：先重连，再交给用户选择</text>
+  <text x="48" y="76" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="12" fill="#77839C">原创示意图 · 与 docs/spec.md 的播放分支一致</text>
+
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif">
+    <!-- 步骤 1 -->
+    <rect x="40" y="122" width="192" height="176" rx="16" fill="#FFFFFF" stroke="#DCE3F3" stroke-width="1.5"/>
+    <circle cx="70" cy="154" r="15" fill="#6E8BFF"/>
+    <text x="70" y="159" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">1</text>
+    <text x="94" y="159" font-size="14" font-weight="600" fill="#35426A">取播放地址</text>
+    <text x="58" y="196" font-size="12" fill="#68748F">playerContent</text>
+    <text x="58" y="218" font-size="12" fill="#68748F">playUrl + headers</text>
+    <text x="58" y="252" font-size="11" fill="#98A3B9">站点结果统一走</text>
+    <text x="58" y="270" font-size="11" fill="#98A3B9">Rust 解析链</text>
+
+    <!-- 步骤 2 -->
+    <rect x="272" y="122" width="192" height="176" rx="16" fill="#FFFFFF" stroke="#DCE3F3" stroke-width="1.5"/>
+    <circle cx="302" cy="154" r="15" fill="#6E8BFF"/>
+    <text x="302" y="159" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">2</text>
+    <text x="326" y="159" font-size="14" font-weight="600" fill="#35426A">本地反代</text>
+    <text x="290" y="196" font-size="12" fill="#68748F">重写 m3u8 分片</text>
+    <text x="290" y="218" font-size="12" fill="#68748F">透传 UA / Referer</text>
+    <text x="290" y="252" font-size="11" fill="#98A3B9">超时只看建连与</text>
+    <text x="290" y="270" font-size="11" fill="#98A3B9">读空闲，不用墙钟</text>
+
+    <!-- 步骤 3 -->
+    <rect x="504" y="122" width="192" height="176" rx="16" fill="#FFFFFF" stroke="#DCE3F3" stroke-width="1.5"/>
+    <circle cx="534" cy="154" r="15" fill="#6E8BFF"/>
+    <text x="534" y="159" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">3</text>
+    <text x="558" y="159" font-size="14" font-weight="600" fill="#35426A">播放器解码</text>
+    <text x="522" y="196" font-size="12" fill="#68748F">ArtPlayer</text>
+    <text x="522" y="218" font-size="12" fill="#68748F">hls.js / mpegts.js</text>
+    <text x="522" y="252" font-size="11" fill="#98A3B9">片头片尾、倍速、</text>
+    <text x="522" y="270" font-size="11" fill="#98A3B9">自动下一集</text>
+
+    <!-- 步骤 4 -->
+    <rect x="736" y="122" width="192" height="176" rx="16" fill="#FFFFFF" stroke="#DCE3F3" stroke-width="1.5"/>
+    <circle cx="766" cy="154" r="15" fill="#9A8CFF"/>
+    <text x="766" y="159" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">4</text>
+    <text x="790" y="159" font-size="14" font-weight="600" fill="#35426A">就地重连</text>
+    <text x="754" y="196" font-size="12" fill="#68748F">同一地址 ×4</text>
+    <text x="754" y="218" font-size="12" fill="#68748F">800 / 1600 /</text>
+    <text x="754" y="240" font-size="12" fill="#68748F">3200 / 6400 ms</text>
+    <text x="754" y="270" font-size="11" fill="#98A3B9">超时不算 dead</text>
+
+    <!-- 步骤 5 -->
+    <rect x="968" y="122" width="192" height="176" rx="16" fill="#FFFFFF" stroke="#DCE3F3" stroke-width="1.5"/>
+    <circle cx="998" cy="154" r="15" fill="#9A8CFF"/>
+    <text x="998" y="159" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">5</text>
+    <text x="1022" y="159" font-size="14" font-weight="600" fill="#35426A">失败兜底</text>
+    <text x="986" y="196" font-size="12" fill="#68748F">用户选择换线 / 换源</text>
+    <text x="986" y="218" font-size="12" fill="#68748F">或隐藏 WebView2</text>
+    <text x="986" y="240" font-size="12" fill="#68748F">做页面嗅探</text>
+    <text x="986" y="270" font-size="11" fill="#98A3B9">无外部播放器兜底</text>
+  </g>
+
+  <g stroke="#8894B4" stroke-width="2" marker-end="url(#flowArrow)">
+    <line x1="236" y1="210" x2="266" y2="210"/>
+    <line x1="468" y1="210" x2="498" y2="210"/>
+    <line x1="700" y1="210" x2="730" y2="210"/>
+    <line x1="932" y1="210" x2="962" y2="210"/>
+  </g>
+
+  <rect x="40" y="326" width="1120" height="46" rx="12" fill="#E4EAFB"/>
+  <text x="62" y="355" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="13" fill="#4B5A80">换线只认证据：4xx/5xx、非 #EXTM3U、首分片是图片/HTML 才算 dead；超时记为 unknown，连续 3 次才换。慢 ≠ 死。</text>
+</svg>
