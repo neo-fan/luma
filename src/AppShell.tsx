@@ -40,8 +40,13 @@ import {
 } from "./lib/version";
 import { currentChannel, currentStartedAt, loadRuntimeInfo, unifiedBuildStamp } from "./lib/appInfo";
 import { navBack, registerNav, viewToLocation, type View } from "./lib/nav";
+import {
+  readUpdatePrefs,
+  shouldAutoCheck,
+  writeUpdatePrefs,
+} from "./lib/updatePrefs";
 import { useAppStore, useSiteState, selectLives } from "./stores/appStore";
-import type { ConfigSnapshot, LiveSource } from "./types/luma";
+import type { ConfigSnapshot, LiveSource, UpdateInfo } from "./types/luma";
 
 /**
  * 直播播放页按需加载（ArtPlayer + hls.js 约 750 kB，不能挂在启动路径上），
@@ -159,9 +164,35 @@ export default function AppShell() {
     }
   }, [isLiveRoute]);
 
+  /* ---------- 更新提醒 ---------- */
   /**
-   * 滚动锚点：当前路由页自己的 `.page-body`。
-   *
+   * 启动后延迟静默检查：过早会与首页/配置拉取抢带宽，太晚用户已经开着播放在看。
+   * 有新版只在侧栏留一条可点提示，不弹窗、不占播放器画面。检查失败完全静默——
+   * 代理不可用不该在启动时给用户看红条。
+   */
+  const [updateAvailable, setUpdateAvailable] = useState<UpdateInfo | null>(null);
+  useEffect(() => {
+    if (IS_DEV_BUILD || !shouldAutoCheck()) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void api
+        .updateCheck(false)
+        .then((info) => {
+          writeUpdatePrefs({ lastCheckAt: Date.now() });
+          if (info.hasUpdate && readUpdatePrefs().dismissedVersion !== info.latest) {
+            setUpdateAvailable(info);
+          }
+        })
+        .catch(() => {
+          // 静默：网络与代理都在用户控制之下，不在启动路径上报错。
+        });
+    }, 6_000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  /**
+   * 滚动锚点：当前路由页自己的 `.page-body`。   *
    * `.content` 是 `overflow:hidden`（layout.css:300-308），改版后滚动一律发生在
    * 每个页面的 `.page-body` 里（layout.css:296 已把这条写成约定），所以这里必须
    * 认 `.page-body`，否则保存到的永远是 0。
@@ -471,6 +502,24 @@ export default function AppShell() {
             })}
           </nav>
           <div className="sidebar__bottom">
+            {updateAvailable ? (
+              <button
+                type="button"
+                className="sidebar__update"
+                title={`当前 ${formatVersion(APP_VERSION)}，可更新到 ${formatVersion(updateAvailable.latest)}`}
+                onClick={() => {
+                  // 点开设置即视为已读：同一个版本不再重复提醒。
+                  writeUpdatePrefs({ dismissedVersion: updateAvailable.latest });
+                  setUpdateAvailable(null);
+                  rNav("/settings#s-update");
+                }}
+              >
+                <span className="sidebar__update-dot" aria-hidden="true" />
+                <span className="sidebar__update-text">
+                  新版本 {formatVersion(updateAvailable.latest)}
+                </span>
+              </button>
+            ) : null}
             <button
               type="button"
               className="sidebar__collapse"

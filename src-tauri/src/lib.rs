@@ -72,6 +72,8 @@ pub mod sniff;
 pub mod spider;
 #[path = "domain/storage.rs"]
 pub mod storage;
+#[path = "domain/updater.rs"]
+pub mod updater;
 
 pub use error::{code, AppError};
 
@@ -318,6 +320,9 @@ fn run_inner() -> Result<(), AppError> {
             storage::storage_usage,
             storage::storage_clear,
             clipboard::copy_text,
+            updater::update_check,
+            updater::update_download,
+            updater::update_install,
         ])
         .build(context)
         .map_err(|err| startup_error("创建 Tauri 应用失败", err))?;

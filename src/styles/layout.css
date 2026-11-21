@@ -247,6 +247,53 @@
   transform: rotate(180deg);
 }
 
+/* 新版本提示：侧栏底部的一行轻提示。不弹窗、不进播放器画面——用户点开设置
+   就直接落到「关于与更新」，点一次即视为已读。 */
+.sidebar__update {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px 6px;
+  padding: 7px 10px;
+  border: 1px solid rgba(91, 124, 250, 0.35);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: var(--fs-2xs);
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.sidebar__update:hover {
+  border-color: var(--accent);
+}
+
+.sidebar__update:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sidebar__update-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.sidebar__update-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 收起态没有文字空间，整条隐藏（展开后仍会重新出现）。 */
+.sidebar.is-collapsed .sidebar__update {
+  display: none;
+}
+
 .sidebar__foot {
   display: flex;
   flex-direction: column;

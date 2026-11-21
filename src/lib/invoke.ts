@@ -51,6 +51,8 @@ import type {
   ClearOutcome,
   StorageTarget,
   StorageUsage,
+  UpdateInfo,
+  UpdateProgress,
 } from "../types/luma";
 
 /** 把 invoke 抛出的任意错误收敛成 AppError。 */
@@ -331,6 +333,28 @@ export const api = {
   /** 并发探测全部候选（返回顺序与 choices 一致）。 */
   ghProxyTest(): Promise<GhProbeResult[]> {
     return call("gh_proxy_test");
+  },
+
+  /**
+   * 检查更新。清单走 GitHub Release 的静态文件，后端按「当前加速前缀 →
+   * 其余内置前缀 → 直连」依次回退；`force` 跳过后端 10 分钟缓存。
+   */
+  updateCheck(force = false): Promise<UpdateInfo> {
+    return call("update_check", { force });
+  },
+
+  /** 下载最新安装包，返回本地 exe 路径；进度见 `onUpdateProgress`。 */
+  updateDownload(): Promise<string> {
+    return call("update_download");
+  },
+
+  /** 启动安装器并退出应用。只接受 `updateDownload` 给出的下载目录路径。 */
+  updateInstall(path: string): Promise<void> {
+    return call("update_install", { path });
+  },
+
+  onUpdateProgress(handler: (progress: UpdateProgress) => void): Promise<UnlistenFn> {
+    return listen<UpdateProgress>("update-progress", (event) => handler(event.payload));
   },
 
   /**

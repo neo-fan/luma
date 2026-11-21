@@ -159,6 +159,13 @@ src/types/luma.ts  归一化契约 TS 侧
 - 运行时产物（python-embed / qjs-runner 二进制）**不入库**，由 `tools/prepare_runtime.py` 重建后由 `tauri build` 经 `bundle.resources` / `bundle.externalBin` 打包。JVM 运行时已移除，不再产出 JRE / `runner.jar`。
 - 交付形态：**官方 NSIS 安装器**（`tauri build` 产出），`data/` 优先 `exe` 同级、`sidecars/` 来自资源目录。
 
+### 10.1 自动升级（`domain/updater.rs`）
+
+- 版本清单是 Release 上的静态资产 `latest.json`（`version` / `tag` / `notes` / `asset{name,size,sha256}`），由发布工作流生成。客户端**不调 GitHub API**：三家内置加速前缀实测都不支持 `api.github.com`。
+- 候选通道 = 用户当前加速前缀 → 其余内置前缀 → 直连。清单并发竞速取最先成功者，安装包逐前缀串行回退（某个代理被掐不会卡死）。
+- 下载边写边算 SHA256，与清单比对 + 校验字节数后原子改名；安装走项目自己产出的 NSIS（`/S`，`currentUser` 模式不需要提权），随后应用退出——静默模式不显示完成页，界面要提示用户重新打开。
+- 前端：`UpdateSection` 负责手动检查 / 下载 / 安装；`lib/updatePrefs.ts` 只在本机 localStorage 存「自动检查开关 / 上次检查时间 / 已读版本」。启动后延迟 6 秒静默检查一次，每天最多一次，有新版只在侧栏留轻提示。
+
 ## 11. 硬边界（不可逾越）
 
 - 不内置/硬编码任何配置地址、片源、直播源、API Key。

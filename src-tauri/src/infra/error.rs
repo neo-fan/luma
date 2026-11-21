@@ -17,6 +17,8 @@ pub mod code {
     pub const RUNTIME_RESTART: &str = "RUNTIME_RESTART";
     pub const PLAY_RESOLVE_FAIL: &str = "PLAY_RESOLVE_FAIL";
     pub const SIGNATURE_MISMATCH: &str = "SIGNATURE_MISMATCH";
+    /// 应用自升级：清单不可达、下载中断、校验失败或安装器启动失败。
+    pub const UPDATE_FAIL: &str = "UPDATE_FAIL";
     pub const INVALID_ARGUMENT: &str = "INVALID_ARGUMENT";
     pub const INTERNAL: &str = "INTERNAL";
 }

@@ -575,6 +575,85 @@
   margin-bottom: 10px;
 }
 
+/* ---- 关于与更新 ---------------------------------------------------------- */
+
+/* 自动检查开关：说明文字换行到第二行，复选框与第一行文字对齐。 */
+.update-auto {
+  align-items: flex-start;
+  margin: 4px 0 12px;
+}
+
+.update-auto input {
+  margin-top: 2px;
+}
+
+.update-auto__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.update-auto__note {
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+}
+
+/* 下载进度：细条做背景，百分比居中压在条上——比单独一行数字更容易扫到。 */
+.update-progress {
+  position: relative;
+  overflow: hidden;
+  height: 24px;
+  margin: 2px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel-sunken);
+}
+
+.update-progress__bar {
+  display: block;
+  height: 100%;
+  background: var(--accent-soft);
+  transition: width 0.18s linear;
+}
+
+.update-progress__text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+
+/* 更新说明：默认折叠，展开后限高滚动，避免长 CHANGELOG 把设置页拉散。 */
+.update-notes {
+  margin: 2px 0 10px;
+  font-size: var(--fs-sm);
+}
+
+.update-notes > summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.update-notes > pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel-sunken);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* 站点体检：顶部操作条 + 可滚动清单，全部走 health-* 前缀，避免碰到窗口探针依赖的类 */
 .health-bar {
   display: flex;

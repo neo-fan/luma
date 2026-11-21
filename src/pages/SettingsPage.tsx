@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import AppSelect from "../components/AppSelect";
 import ErrorBar from "../components/ErrorBar";
 import ConfigImportSection from "../components/settings/ConfigImportSection";
@@ -9,6 +10,7 @@ import EpgsSection from "../components/settings/EpgsSection";
 import GhProxySection from "../components/settings/GhProxySection";
 import HealthCheckSection from "../components/settings/HealthCheckSection";
 import StorageSection from "../components/settings/StorageSection";
+import UpdateSection from "../components/settings/UpdateSection";
 import ProxySection from "../components/settings/ProxySection";
 import {
   DOUBAN_PROXY_OPTIONS,
@@ -38,6 +40,7 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: "s-health", label: "站点体检" },
   { id: "s-diagnostic", label: "诊断" },
   { id: "s-storage", label: "存储与清理" },
+  { id: "s-update", label: "关于与更新" },
 ];
 
 /**
@@ -64,6 +67,21 @@ export default function SettingsPage({
   const [reload, setReload] = useState(0);
   const bumpReload = () => setReload((value) => value + 1);
   const [activeId, setActiveId] = useState(SECTIONS[0].id);
+  const location = useLocation();
+
+  /**
+   * 侧栏「发现新版本」带着 `#s-update` 跳过来：等一帧布局完成再滚动，
+   * 否则目标区块还没挂载、scrollIntoView 无声失败，用户会停在页面顶部。
+   */
+  useEffect(() => {
+    if (location.hash !== "#s-update") {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      document.getElementById("s-update")?.scrollIntoView({ block: "start" });
+    }, 60);
+    return () => window.clearTimeout(timer);
+  }, [location.hash]);
 
   /**
    * 豆瓣补全偏好：纯前端展示设置，落在 localStorage（不进 Rust、不进配置快照）。
@@ -214,6 +232,7 @@ export default function SettingsPage({
       id: "s-storage",
       node: <StorageSection onError={setError} onNotice={setNotice} />,
     },
+    { id: "s-update", node: <UpdateSection /> },
   ];
 
   // 目录高亮跟随滚动：以**滚动位置**为准——点亮「最后一个已越过判线的区块」，

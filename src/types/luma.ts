@@ -501,6 +501,26 @@ export interface GhProxyState {
   snapshot?: ConfigSnapshot | null;
 }
 
+/** 自升级：检查结果（`update_check`）。 */
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  hasUpdate: boolean;
+  /** CI 从 CHANGELOG 截取的版本说明（纯文本）。 */
+  notes: string;
+  publishedAt: string;
+  size: number;
+  assetName: string;
+  /** 命中的 GitHub 加速前缀；空串 = 直连。 */
+  source: string;
+}
+
+/** 自升级：下载进度（`update-progress` 事件）。 */
+export interface UpdateProgress {
+  downloaded: number;
+  total: number;
+}
+
 /** 一个本机目录的占用（设置页「存储与清理」）。 */
 export interface DirUsage {
   bytes: number;

@@ -2206,7 +2206,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "luma"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2215,6 +2215,7 @@ dependencies = [
  "encoding_rs",
  "flate2",
  "futures-util",
+ "hex",
  "http-cache-reqwest",
  "moka",
  "percent-encoding",
@@ -2223,8 +2224,10 @@ dependencies = [
  "reqwest 0.12.28",
  "reqwest-middleware",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",

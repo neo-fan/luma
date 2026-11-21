@@ -92,6 +92,8 @@ corepack pnpm build:beta       # beta（app.luma.beta），只在预发布时用
 
 产物：`src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe`（NSIS 安装器，版本号来自 `package.json`）。
 
+同目录还会生成 `latest.json`：自动升级的版本清单（`version` / `tag` / `notes` / `asset{name,size,sha256}`），与安装包一起挂到 Release。客户端只读这个静态文件——加速前缀不支持 `api.github.com`，所以版本信息不能靠 API。`notes` 从 `CHANGELOG.md` 对应版本段落截取。
+
 ### 2.4 安装器外观（官方 `bundle.windows.nsis`）
 
 安装界面由 Tauri 官方 `bundle.windows.nsis` 配置驱动。**没有手写 NSIS 逻辑**：1.1.0 起为了做「一键安装」把官方模板 vendor 了一份（`src-tauri/nsis/installer.nsi`，取自 `@tauri-cli` v2.12.4），只删掉「欢迎」和「选择安装目录」两页，其余页面、函数、卸载逻辑都是官方原文。当前配置：
