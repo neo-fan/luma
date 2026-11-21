@@ -54,5 +54,5 @@
 2. **`qjs-runner.exe` 只随包一份**：exe 同目录是 `resolve_runner()` 的有效命中点；编译期 `source_root` 路径在分发到别的机器后天然失效，故不需要 sidecars 布局副本。
 3. **不再有 mpv 兜底**：外部播放整体关闭、随包 mpv 已移除（本来也没打进过安装包），解码失败只走换线路 / 换源。
 4. **jar 站点仍被识别为 `jvm`**：契约与归一化分类不动，只删运行时；用户导入含 jar 的配置时这些站点显示 `enabled=false` + 「jar 源为 Android dex，Windows 端暂不支持」。
-5. **交付形态变更**：1.0.0 起不再出便携 zip，改为官方 `tauri build` 的 NSIS 安装器（`bundle.targets: ["nsis"]`）。安装后数据默认落 `%APPDATA%\Luma`；把安装目录整体放到可写位置并建 `data/` 即切换为便携模式。
+5. **交付形态变更**：1.0.0 起不再出便携 zip，改为官方 `tauri build` 的 NSIS 安装器（`bundle.targets: ["nsis"]`）。安装后数据落 `%APPDATA%\app.luma`；已移除 exe 同级 `data/` 的便携布局。
 6. 未签名 exe 会触发 SmartScreen，见 `README.md`。

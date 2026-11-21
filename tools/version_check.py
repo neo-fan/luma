@@ -62,8 +62,13 @@ def cargo_lock_version() -> str | None:
     return None
 
 
-def cargo_bin_name() -> str | None:
-    """`[[bin]]` 段的 `name`：dev 产物名，必须与 dev overlay 的 mainBinaryName 一致。"""
+def cargo_bin_names() -> list[str]:
+    """Cargo.toml 里所有 `[[bin]]` 的 name。
+
+    dev 与安装版各用一个 bin（`Luma_dev` / `luma`），overlay 的 mainBinaryName
+    必须落在这个集合里；只校验"第一个 bin"会把双 bin 布局误判成漂移。
+    """
+    names: list[str] = []
     in_bin = False
     for line in read("src-tauri/Cargo.toml").splitlines():
         stripped = line.strip()
@@ -73,8 +78,8 @@ def cargo_bin_name() -> str | None:
         if in_bin:
             match = re.match(r'^name\s*=\s*"([^"]+)"', stripped)
             if match:
-                return match.group(1)
-    return None
+                names.append(match.group(1))
+    return names
 
 
 def adapter_version(override: str | None) -> tuple[str | None, str]:
@@ -179,16 +184,25 @@ def main() -> int:
                     "否则任务管理器里的描述与正式版相同"
                 )
             dev_bin = dev_conf.get("mainBinaryName")
-            cargo_bin = cargo_bin_name()
-            if not dev_bin or dev_bin != cargo_bin:
+            bins = cargo_bin_names()
+            # 大小写不敏感：crate 名只能小写（luma），安装版显示名按 productName 写成 Luma。
+            bins_lower = [name.lower() for name in bins]
+            if not dev_bin or dev_bin.lower() not in bins_lower:
                 problems.append(
                     f"{DEV_CONF}: mainBinaryName = {dev_bin!r}，"
-                    f"应与 Cargo.toml 的 [[bin]] name {cargo_bin!r} 一致"
+                    f"应等于 Cargo.toml 的某个 [[bin]] name（现有 {bins!r}，大小写不敏感）"
                 )
             elif dev_bin.lower() == stable_product.lower():
                 problems.append(
                     f"{DEV_CONF}: mainBinaryName {dev_bin!r} 与安装版 exe 同名，"
                     "无法按进程名区分 dev 与正式版"
+                )
+            # stable 打包用的主 bin 也必须存在，否则 bundler 会把 dev 名装进包。
+            stable_bin = conf.get("mainBinaryName") or (bins[0] if bins else None)
+            if bins and (not stable_bin or stable_bin.lower() not in bins_lower):
+                problems.append(
+                    f"tauri.conf.json: mainBinaryName = {stable_bin!r}，"
+                    f"不在 Cargo.toml 的 [[bin]]（{bins!r}）里"
                 )
         except (OSError, ValueError) as err:
             problems.append(f"{DEV_CONF}: 无法解析（{err}）")

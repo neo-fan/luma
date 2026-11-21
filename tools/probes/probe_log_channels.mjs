@@ -7,7 +7,7 @@
  * 这里端到端验一次真实落盘：写一条带随机标记的日志，再到数据目录里核对。
  *
  * 依赖 dev 窗口（CDP 9222）。数据目录默认取 `%APPDATA%\app.luma.dev`（dev 通道），
- * 可用 `LUMA_DATA_DIR` 覆盖（便携模式 / 自定义目录时）。
+ * 可用 `LUMA_DATA_DIR` 覆盖（自定义目录时）。
  *
  *   node tools/probes/probe_log_channels.mjs
  */

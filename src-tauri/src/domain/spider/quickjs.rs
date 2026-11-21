@@ -625,7 +625,7 @@ mod tests {
     fn assets_dir_resolves_without_panicking() {
         let dir = resolve_assets_dir();
         assert!(!dir.as_os_str().is_empty());
-        // Dev and portable layouts both end in sidecars/qjs-assets.
+        // Dev and installed layouts both end in sidecars/qjs-assets.
         assert!(dir
             .to_string_lossy()
             .replace('\\', "/")

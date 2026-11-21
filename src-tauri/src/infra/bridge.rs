@@ -59,7 +59,7 @@ impl Conn {
 }
 
 fn adapter_root() -> PathBuf {
-    // Dev checkout, portable folder or installed build: probe for the adapter
+    // Dev checkout or installed build: probe for the adapter
     // instead of assuming one resource layout (see paths::sidecar_roots).
     crate::paths::find(&["sidecars", "py", "main.py"]).unwrap_or_else(crate::paths::source_root)
 }
@@ -73,7 +73,7 @@ fn adapter_root() -> PathBuf {
 /// as the adapter, so dev and shipped builds run the *same* interpreter (with
 /// pycryptodome / requests / lxml). Only when no bundle is found do we fall
 /// back to `python` on PATH — the case that made real spiders fail in dev with
-/// `No module named 'Crypto'` while working in the portable build.
+/// `No module named 'Crypto'` while working in the installed build.
 fn python_launch() -> (String, Option<PathBuf>) {
     if let Some(explicit) = crate::env::get("PYTHON") {
         return (explicit, None);

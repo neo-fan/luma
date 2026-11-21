@@ -1,6 +1,6 @@
 //! 试运行日志：stdout + 每日文件，按用途分三个通道（宿主 / 前端 / 适配层）。
 //!
-//! 目录结构（`<data dir>/logs/`，便携版随 `data/` 一起走，卸载即删）：
+//! 目录结构（`<data dir>/logs/`，数据目录在 `%APPDATA%\<identifier>`，卸载即删）：
 //!
 //! ```text
 //! logs/
@@ -94,7 +94,7 @@ impl Channel {
     const ALL: [Channel; 3] = [Channel::App, Channel::Ui, Channel::Spider];
 }
 
-/// 日志根目录：与 SQLite 同级的 `logs/`，便携版跟着 `data/` 走。
+/// 日志根目录：与 SQLite 同级的 `logs/`（数据目录下）。
 pub fn log_dir() -> PathBuf {
     LOG_DIR
         .get()

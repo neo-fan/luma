@@ -105,7 +105,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 - `<data>/luma.db` 单库，WAL + 事务写，先提交再刷内存缓存；2.0 起 `PRAGMA user_version`
   闸门，**不迁移旧播放数据**（`favorites`/`history` 分表丢弃，订阅地址保留并重新解析）。
-  便携模式 = exe 同级存在 `data/`。
+  数据目录 = `%APPDATA%\<identifier>`（`LUMA_DATA_DIR` 可覆盖），无便携布局。
 - **playback 行 = 这部剧的状态**：除进度/集/线路外，还带 `rate`（倍速，0 = 没设过
   → 播放侧按 1.0）、`skip_json`（跳过片头/片尾配置的 JSON 文本，空串 = 这次没带、
   `[]` = 用户清空过）与 `prefs_json`（剧个性配置扩展位）。表按 `title_key`（剧名

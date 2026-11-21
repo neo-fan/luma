@@ -3,8 +3,8 @@
 //! SQLite (`infra/db/`) is the single source of truth. The `Vec` fields are read
 //! caches only: every mutation commits a transaction first, then refreshes the
 //! cache, so a failed write can never leave the UI showing data that is not on
-//! disk. Portable mode (`data/` next to the executable) still wins over
-//! `%APPDATA%` — the database simply lives in that directory.
+//! disk. The database lives in `%APPDATA%\<identifier>` (or `LUMA_DATA_DIR` when
+//! overridden); there is no portable layout.
 //!
 //! **2.0 数据模型**：收藏与历史合并为**一张 `playback` 表**，收藏只是行上的
 //! `favorite` 标记。收藏页 = `favorite=1`，历史页 = 全部；清除播放记录只删
@@ -101,14 +101,6 @@ pub fn data_dir() -> PathBuf {
     if let Some(custom) = crate::env::get("DATA_DIR") {
         return PathBuf::from(custom);
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let portable = parent.join("data");
-            if portable.is_dir() {
-                return portable;
-            }
-        }
-    }
     if let Ok(appdata) = std::env::var("APPDATA") {
         if !appdata.trim().is_empty() {
             // 目录名 = identifier：`app.luma` / `app.luma.beta` / `app.luma.dev`。
@@ -116,6 +108,7 @@ pub fn data_dir() -> PathBuf {
             return PathBuf::from(appdata).join(crate::channel::data_dir_name());
         }
     }
+    // APPDATA 在 Windows 上恒有值；这里只是单测 / 非 Windows 工具链的兜底。
     PathBuf::from("data")
 }
 

@@ -29,7 +29,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 # Diagnostics are a best-effort facility. A missing/unsynced log module (e.g.
-# a portable bundle built before it existed) must degrade to a no-op, never to
+# an older bundle built before it existed) must degrade to a no-op, never to
 # a hard import failure that takes down the whole spider runtime.
 try:
     from adapterlog import log_crash, log_event

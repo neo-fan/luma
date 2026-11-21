@@ -38,7 +38,7 @@ __pycache__/
 # Vite 偶发在仓库根留下的配置文件加载临时产物（启动被打断时残留），非项目内容。
 vite.config.ts.timestamp-*.mjs
 
-# SQLite 运行时数据（便携版 data/ 或 dev 回退目录，绝不入库）
+# SQLite 运行时数据（相对 data/ 回退目录，正常安装/开发时数据在 %APPDATA%，绝不入库）
 /data/
 luma.db
 luma.db-wal

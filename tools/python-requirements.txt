@@ -6,7 +6,7 @@
 # `No module named 'Crypto' / 'requests' / 'lxml'`。
 #
 # 由 tools/prepare_runtime.py 的 step_python_deps() 自动安装；版本固定以保证
-# dev 与便携版行为一致。仅列**运行时**依赖；pip/setuptools/wheel 是安装工具，
+# dev 与安装版行为一致。仅列**运行时**依赖；pip/setuptools/wheel 是安装工具，
 # 由引导阶段处理、不在此列出。
 beautifulsoup4==4.15.0
 certifi==2026.10.23

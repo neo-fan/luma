@@ -211,8 +211,8 @@ fn run_inner() -> Result<(), AppError> {
             }
             // Optional startup self-check (`LUMA_SELFCHECK=1`): exercises the
             // Python sidecar path resolution and leaves the result in
-            // `<data>/selfcheck.log`. Off by default; useful for diagnosing a
-            // portable/installed layout without a console.
+            // `<data>/selfcheck.log`. Off by default; useful for diagnosing an
+            // installed layout without a console.
             if env::is_enabled("SELFCHECK") {
                 tauri::async_runtime::spawn(async move {
                     let outcome = match tokio::time::timeout(

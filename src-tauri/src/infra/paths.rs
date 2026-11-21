@@ -1,9 +1,9 @@
 //! Sidecar path resolution shared by the sidecar bridges (Python adapter / qjs-runner).
 //!
-//! Tauri's `resource_dir()` differs between a dev run (target/debug), a portable
-//! folder (exe dir) and an installed build (exe/resources). Rather than assume
-//! one layout, every consumer probes a small candidate list for the file it
-//! actually needs, so all three layouts work without extra configuration.
+//! Tauri's `resource_dir()` differs between a dev run (target/debug) and an
+//! installed build (exe/resources). Rather than assume one layout, every
+//! consumer probes a small candidate list for the file it actually needs, so
+//! both layouts work without extra configuration.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -22,8 +22,8 @@ pub fn sidecar_roots() -> Vec<PathBuf> {
 
     if let Some(dir) = resource_dir() {
         let dir = PathBuf::from(dir);
-        // Installed build: <resource>/sidecars. Portable: <exe>/sidecars where
-        // resource_dir is the exe dir. Also try the parent for <exe>/resources.
+        // Installed build: <resource>/sidecars. Also try the parent for
+        // <exe>/resources when resource_dir already points inside it.
         push_unique(&mut roots, dir.clone());
         if let Some(parent) = dir.parent() {
             push_unique(&mut roots, parent.to_path_buf());
@@ -45,7 +45,7 @@ pub fn sidecar_roots() -> Vec<PathBuf> {
     roots
 }
 
-/// Tauri 报告的 resource 目录（安装版 = exe/resources，便携版 = exe 目录）。
+/// Tauri 报告的 resource 目录（安装版 = exe/resources，dev = target/debug）。
 ///
 /// 宿主在 `setup()` 里发布它——那时 tokio worker 已经在跑，而 `std::env::set_var`
 /// 与并发 `std::env::var` 是数据竞争（edition 2021 下 `set_var` 还不是 `unsafe`，
@@ -102,7 +102,7 @@ pub fn find(relative: &[&str]) -> Option<PathBuf> {
 /// `sidecars/python-embed`, which carries pycryptodome / requests / lxml that
 /// several real spiders import. Falling back to whatever `python` is first on
 /// PATH makes those spiders fail with `No module named 'Crypto'` only in dev,
-/// while the portable build works — a confusing dev/prod drift. Probing the
+/// while the installed build works — a confusing dev/prod drift. Probing the
 /// same `sidecar_roots()` as the adapter means debug picks the checkout copy
 /// and release picks the resource-dir copy, with no env var to remember.
 ///

@@ -215,7 +215,7 @@ $env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（安装版�
 
   行首时间戳与文件名日期**都按系统时区**（`2026-11-21T01:15:52.905780+08:00`），两者同一口径：`tracing-subscriber` 默认 UTC 会让 UTC+8 凌晨的日志落进「前一天」的文件。宿主两个通道由 `infra/logging` 的 `DailyFile` 自己按本地日期跨天换句柄（`tracing-appender` 的 `Rotation::DAILY` 固定按 UTC 算日期且无可覆写钩子）。
 
-  dev/安装模式在 `%APPDATA%\<identifier>\logs\`（如 `app.luma.dev`）；便携模式（exe 同级 `data/`）为 `data/logs\`。每个通道上限 10 MiB，超出先删最旧的一整天，不切正在写的文件。
+  日志落在 `%APPDATA%\<identifier>\logs\`（dev 为 `app.luma.dev`），`LUMA_DATA_DIR` 覆盖时改写到该目录的 `logs\`。每个通道上限 10 MiB，超出先删最旧的一整天，不切正在写的文件。
 - 内容：启动摘要、前端关键操作、IPC 错误、未捕获异常；URL 只记 `scheme+host+path`，查询参数与播放直链不落盘。
 - 反馈：设置页「复制诊断信息」（含版本/平台/目录/配置规模/日志列表 JSON，日志项带 `channel`）+「打开日志目录」+「导出反馈文件」（三类日志各取末尾 400 行）。
 - 存储：设置页「存储与清理」分项显示日志 / 反馈报告 / 封面与页面缓存的占用并可手动清理（`domain/storage.rs`）。日志的当天文件被 writer 持有，删不掉时改为清空内容；用户报「占空间」时的第一现场就是这里，不必再去数据目录手删。
@@ -281,7 +281,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 
 ## 8. 相关文档
 
-- `README.md` —— 构建 / 测试 / 环境变量 / 日志与诊断 / 运行（安装版 + 便携模式）
+- `README.md` —— 构建 / 测试 / 环境变量 / 日志与诊断 / 运行（安装版）
 - `AGENTS.md` —— 当前规范与决策（「工程铁律」「常用命令」「开发约定」）
 - `CONTRIBUTING.md` —— 贡献流程、代码约定、PR 要求
 - `docs/ARCHITECTURE.md` —— 进程模型 / 四类源 / 数据流 / 分层 / ADR

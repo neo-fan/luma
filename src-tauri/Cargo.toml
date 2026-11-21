@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "2.0.1"
+version = "2.0.2"
 license = "GPL-3.0-or-later"
 description = "Luma - config-compatible desktop player framework"
 edition = "2021"
@@ -15,7 +15,17 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 # dev 与安装版必须可按进程名区分：安装版 `Luma.exe`，dev `Luma_dev.exe`。
 # Cargo target 名只接受字母/数字/下划线（rustc: invalid character in crate name），
-# 空格与 `.` 都会被拒；dev overlay 的 `mainBinaryName` 必须与此处相同。
+# 空格与 `.` 都会被拒。
+#
+# 两个 bin 指向同一份 main.rs：
+#   - `luma`     —— stable/beta 出包用（tauri.conf.json 的 mainBinaryName = "luma"），
+#                    tauri build 只打这个名字，安装目录才是 Luma.exe；只声明
+#                    Luma_dev 时 bundler 会直接把 dev 名装进安装包。
+#   - `Luma_dev` —— dev 用（cargo run 走 default-run），与安装版不同名。
+[[bin]]
+name = "luma"
+path = "src/main.rs"
+
 [[bin]]
 name = "Luma_dev"
 path = "src/main.rs"
@@ -29,7 +39,7 @@ tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Single-file persistence for configs / favourites / history. `bundled` compiles
-# the SQLite amalgamation into the binary so portable builds need no system DLL.
+# the SQLite amalgamation into the binary so the shipped exe needs no system DLL.
 rusqlite = { version = "0.32", features = ["bundled"] }
 tracing = "0.1"
 # File + stdout logging for the trial run. `fmt` + `registry` let us tee the

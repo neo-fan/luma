@@ -4,6 +4,15 @@
 
 ---
 
+## [2.0.2] - 2026-11-21
+
+### 修复
+
+- **安装版播放器没有样式（2.0.1 回归）**：Tauri 会给 `style-src` 追加 `'nonce-…'`，而同一指令里存在 nonce 时浏览器会忽略 `'unsafe-inline'`；ArtPlayer 是运行时注入 `<style>`（没有 nonce），于是整块播放器样式被 CSP 拦掉，安装版里只剩裸 DOM。dev 的 HTML 由 Vite 提供、不走这条注入，所以只有 release 坏。现在用 `dangerousDisableAssetCspModification: ["style-src"]` 让该指令保持原样。实测对照：2.0.1 安装包里注入的 `<style>` 不生效（`sheetApplied:false`），本版生效。
+- **安装包主程序名错成 `Luma_dev.exe`**：`Cargo.toml` 只声明了 `Luma_dev` 一个 bin，`tauri build` 直接把它打进安装包，正式版主程序与 dev 同名。改为双 bin（`luma` 出包、`Luma_dev` 跑 dev）+ `mainBinaryName: "Luma"`；`tools/version_check.py` 改为按 bin 集合校验 overlay 的 `mainBinaryName`，构建输出确认为 `target/release/Luma.exe`。
+
+---
+
 ## [2.0.1] - 2026-11-21
 
 ### 新增
@@ -39,6 +48,7 @@
 - **换源面板候选行展示线路数 / 集数**：`sourceCache.warmDetails` 取回候选详情时顺带算出「线路数 + 最全线路的集数」（纯函数 `playCounts`，含单测），经旁挂计数表在 `view()` 合并进候选；`SourcePicker` 行内 `.source-item__counts` 渲染 `N 线路 · M 集`。只有预热过的候选（默认匹配前 4 条）显示、其余留空无占位，CDP 实测《庆余年》面板里片库[py] 显示「3 线路 · 82 集」。解决「切之前看不出哪个源更完整」。
 
 ### 变更
+- **彻底移除便携模式（exe 同级 `data/`）**：`store.rs::data_dir()` 不再探测可执行文件同级的 `data/` 目录，数据目录恒为 `%APPDATA%\<identifier>`（stable/beta/dev 三通道），仅保留 `LUMA_DATA_DIR` 环境变量覆盖。代码注释、`README.md`、`AGENTS.md`、`docs/spec.md`、`docs/DEVELOPMENT.md`、`docs/MAINTENANCE.md`、`docs/size-report.md` 与 `.gitignore` / sidecar 路径解析中的「便携模式 / portable」表述同步清掉（仅保留 CI「便携子集」与历史交付 zip 等无关含义的措辞）。原先 exe 同级存在 `data/` 即把库与日志搬过去的行为不复存在；若曾有便携目录，数据不会自动迁移。
 - **片头/片尾跳过倒计时最终定为 5 秒，判定改为播放器事件驱动**：下方历史条目里的 3 秒在慢源上来不及看清或取消；`b140922` 放宽到 5 秒，`40a7bc3` 把触发从「窗口态翻转」改为 `<video>` 的 `playing` / `timeupdate` 直接判播放头位置，`5558e62` 修掉续播 seek 晚于 `playing` 时倒计时误起、到点把用户从续播点拽回片头的问题（倒计时期间播放头离开对应窗口即撤销；`doSkipIntro` 仅在仍落片头内时才 seek）。按剧「跳过」开关把 `skip_json` 写成 `{enabled, segments}` 信封，旧裸数组仍可读。源码契约测试同步改钉新守卫与序列化形状，避免测试比代码慢一拍。
 - **日志时间改用系统时区**：行首时间戳原本是 `tracing-subscriber` 默认的 UTC（`2026-11-20T17:15:52Z`），而文件名日期来自 `tracing-appender` 的 `Rotation::DAILY`——它内部固定用 `OffsetDateTime::now_utc()` 且没有可覆写的钩子。结果是 UTC+8 的凌晨（00:00~08:00）写出的行落在「前一天」的文件里，文件名与行内时间戳互相矛盾，用户报「我一点多卡住的」时要先心算 8 小时。现在两者统一到系统时区：行首为 `2026-11-21T01:15:52.905780+08:00`（带偏移量，转给别人看也不歧义），文件名 `luma.<本地日期>.log`；宿主两个通道改由 `infra/logging` 的 `DailyFile` 自己按本地日期跨天换句柄，保留份数（7）与容量（10 MiB）仍由同一个 `prune_files` 收口，适配层通道一并纳入同一策略。反馈文件的 `生成时间` 与文件名同样改本地时间，顺手删掉手搓的 `civil_from_days` 天文日换算（`chrono` 已是依赖）。
 - **片头/片尾自动跳过改为「3 秒可取消倒计时」**：原实现配置片头后在 `loadedmetadata` 直接静默 `currentTime` 瞬移，用户没看清就被跳走；片尾更是只有手动按钮、没有自动跳。现在进入片头/片尾窗口不再立即跳，而是在画面浮层显「N 秒后跳过片头/片尾 · 取消」，3 秒到点才执行跳转，期间可点取消（本次不跳、同类手动按钮随即恢复）。实现：引擎删除 `usePlayerEngine` 里的即时跳；新增纯函数 `shouldAutoSkipPrompt`（对引擎翻转上报的窗口态做边沿判定——片头首次报告即触发、片尾仅在播放中真正 `false→true` 进入时触发，续播点本就落在片尾的「上次看到」位置不被自动跳覆盖）+ `hooks/useAutoSkipPrompt`（一次性 3s 倒计时 + 取消 + 换集/换源按媒体身份复位）；`SkipOverlay` 渲染倒计时提示，`PlayerPage` 提供实际 seek 动作。`AUTO_SKIP_COUNTDOWN_S=3`。`skipSegments.test.ts` 补 10 条边沿用例，`vitest` 682 通过、`tsc` 干净。
