@@ -317,7 +317,7 @@ fn run_inner() -> Result<(), AppError> {
             config::config_list,
             config::config_active,
             config::config_activate,
-            config::config_rename,
+            config::config_edit,
             config::config_remove,
             config::config_refresh_settings,
             config::config_set_refresh_interval,

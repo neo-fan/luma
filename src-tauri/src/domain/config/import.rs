@@ -83,7 +83,7 @@ async fn fetch_config_text(url: &str) -> Result<String, AppError> {
 
 /// 订阅地址入库前归一化：app 内置加速前缀剥掉存**裸地址**（唯一性稳定）；
 /// 用户自带前缀保留原样（那是用户明确选择的加速）。
-fn normalize_source(mut source: ConfigSource) -> ConfigSource {
+pub(super) fn normalize_source(mut source: ConfigSource) -> ConfigSource {
     if source.kind == "url" {
         if let Some((prefix, bare)) = ghproxy::split_proxy(&source.value) {
             if ghproxy::is_builtin_prefix(prefix) {

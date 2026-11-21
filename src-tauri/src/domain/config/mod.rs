@@ -334,20 +334,22 @@ impl ConfigStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard
             .iter()
-            .map(|entry| {
-                let state = states.get(&entry.imported.id);
-                ConfigMeta {
-                    id: entry.imported.id.clone(),
-                    name: entry.imported.name.clone(),
-                    source: entry.source.clone(),
-                    imported_at: entry.imported.imported_at.clone(),
-                    refreshable: entry.source.kind == "url",
-                    last_checked_at: state.map(|state| state.checked_at).filter(|at| *at > 0),
-                    last_changed_at: state.and_then(|state| state.changed_at),
-                    refresh_error: state.and_then(|state| state.error.clone()),
-                }
-            })
+            .map(|entry| meta_of(entry, states.get(&entry.imported.id)))
             .collect()
+    }
+
+    /// 单份配置的 meta（编辑 / 重命名后回给前端）。列表页一次要全部，这里只要
+    /// 一行，所以单独取一次刷新状态，不为了 12 个字段把整张状态表扫出来。
+    fn meta_by_id(&self, id: &str) -> Option<ConfigMeta> {
+        let state = self.refresh_state(id);
+        let guard = self
+            .entries
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard
+            .iter()
+            .find(|entry| entry.imported.id == id)
+            .map(|entry| meta_of(entry, state.as_ref()))
     }
 
     /// Current name of an imported config, used to keep a user-chosen name
@@ -443,21 +445,24 @@ impl ConfigStore {
                 }
             }
         }
-        let refreshable = source.kind == "url";
-        let state = self.refresh_state(&imported.id);
-        Ok(ConfigMeta {
-            id: imported.id,
-            name,
-            source,
-            imported_at: imported.imported_at,
-            refreshable,
-            last_checked_at: state
-                .as_ref()
-                .map(|state| state.checked_at)
-                .filter(|at| *at > 0),
-            last_changed_at: state.as_ref().and_then(|state| state.changed_at),
-            refresh_error: state.and_then(|state| state.error),
+        self.meta_by_id(id).ok_or_else(|| {
+            AppError::new(code::INVALID_ARGUMENT, format!("config {id} not found"))
         })
+    }
+}
+
+/// 一行的对外视图。`list` 与 `meta_by_id` 共用，避免两处各拼一份 12 字段
+/// 结构体——历史上漏改一处就会让「编辑后名称不更新」这类问题复现。
+fn meta_of(entry: &StoredConfig, state: Option<&RefreshState>) -> ConfigMeta {
+    ConfigMeta {
+        id: entry.imported.id.clone(),
+        name: entry.imported.name.clone(),
+        source: entry.source.clone(),
+        imported_at: entry.imported.imported_at.clone(),
+        refreshable: entry.source.kind == "url",
+        last_checked_at: state.map(|state| state.checked_at).filter(|at| *at > 0),
+        last_changed_at: state.and_then(|state| state.changed_at),
+        refresh_error: state.and_then(|state| state.error.clone()),
     }
 }
 
@@ -654,13 +659,19 @@ pub fn config_activate(
     state.activate(&id)
 }
 
+/// 编辑已导入订阅：改名、换地址（换地址会按新地址重新导入后原地替换同一行）。
+///
+/// 与 `config_rename` 的区别不是参数多少，而是语义：改名只动名字，换地址要
+/// 重新拉取整份配置。两者合成一个命令，前端一次提交即可，也不会出现「名字改
+/// 成功、地址改失败」的半截状态。
 #[tauri::command]
-pub fn config_rename(
+pub async fn config_edit(
     state: tauri::State<'_, ConfigStore>,
     id: String,
-    name: String,
-) -> Result<ConfigMeta, AppError> {
-    state.rename(&id, &name)
+    name: Option<String>,
+    url: Option<String>,
+) -> Result<ConfigEditOutcome, AppError> {
+    state.edit(&id, name.as_deref(), url.as_deref()).await
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -752,6 +763,7 @@ pub async fn gh_proxy_test() -> Vec<ghproxy::ProbeResult> {
 // 跨模块 re-export 会把 `__cmd__*` 宏漏掉）；子模块只放实现与 DTO。
 mod decrypt;
 mod derive;
+mod edit;
 mod github;
 mod import;
 mod naming;
@@ -759,6 +771,7 @@ mod normalize;
 mod refresh;
 
 pub(crate) use derive::blocked_reason;
+pub use edit::ConfigEditOutcome;
 pub(crate) use normalize::repair_url;
 pub use github::GhProxyState;
 

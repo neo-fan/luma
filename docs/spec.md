@@ -86,7 +86,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 - **40 个 command 闭集**（`src-tauri/src/lib.rs` 注册）：config 13
   （`config_import` / `config_list` / `config_active` / `config_activate` /
-  `config_rename` / `config_remove` / `config_refresh` / `config_refresh_settings` /
+  `config_edit` / `config_remove` / `config_refresh` / `config_refresh_settings` /
   `config_set_refresh_interval`、`gh_proxy_state` / `gh_proxy_set` / `gh_proxy_test`、
   `site_set_enabled`）、
   http 1、spider 2（`spider_invoke` / `site_health`）、live 3（`live_parse` /

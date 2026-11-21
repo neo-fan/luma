@@ -187,6 +187,16 @@ export interface ConfigMeta {
   refreshError?: string;
 }
 
+/** 编辑订阅（config_edit）：改名 / 换地址一次提交的结果。 */
+export interface ConfigEditOutcome {
+  meta: ConfigMeta;
+  /**
+   * 仅当被编辑的订阅就是当前生效配置时返回运行快照——后台订阅没有「当前
+   * 站点缓存」可换，前端拿到 undefined 只需刷新列表。
+   */
+  snapshot?: ConfigSnapshot;
+}
+
 /** 订阅自动刷新的全局设置 + active 配置的检查状态（config_refresh_settings）。 */
 export interface RefreshSettings {
   /** 小时；0 = 关闭。 */

@@ -410,17 +410,45 @@
   flex: 0 0 auto;
 }
 
-/* 行内重命名：输入框吃掉剩余宽度，按钮不换行 */
-.config-item__rename {
+/* 行内编辑：名称 + 地址两行，标签吃掉固定宽度，输入框占满剩余空间 */
+.config-item__edit {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.config-item__field {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
-.config-item__rename .input {
-  min-width: 160px;
+.config-item__label {
+  color: var(--text-soft);
+  font-size: var(--fs-xs);
+}
+
+.config-item__edit .input {
+  min-width: 0;
+  width: 100%;
   padding: 6px 10px;
+}
+
+.config-item__hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+}
+
+.config-item__edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 52px;
 }
 
 .settings-line {

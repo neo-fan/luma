@@ -37,10 +37,11 @@ export default function ConfigListSection({
   const [listError, setListError] = useState("");
   /** 正在切换的配置 id；只用于禁用按钮与文案。 */
   const [switching, setSwitching] = useState("");
-  /** 行内重命名状态。 */
+  /** 行内编辑状态：名称 + 订阅地址（仅 url 来源可改地址）。 */
   const [editingId, setEditingId] = useState("");
   const [editingName, setEditingName] = useState("");
-  const [renaming, setRenaming] = useState(false);
+  const [editingUrl, setEditingUrl] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
   /** 待删除的配置：非空时弹出确认框（替代原生 confirm）。 */
   const [removingConfig, setRemovingConfig] = useState<ConfigMeta | null>(null);
   /** 订阅自动刷新：全局间隔 + active 配置的上次检查/变化/错误。 */
@@ -141,35 +142,79 @@ export default function ConfigListSection({
     }
   };
 
-  const startRename = (meta: ConfigMeta) => {
+  const startEdit = (meta: ConfigMeta) => {
     setEditingId(meta.id);
     setEditingName(meta.name);
+    // 只有网络地址导入的订阅有「地址」可编辑；文本/文件来源的来源串是正文或
+    // 本地路径，塞进输入框既没意义也不安全。
+    setEditingUrl(meta.refreshable ? meta.source.value : "");
     onError("");
     onNotice("");
   };
 
-  const saveRename = async (meta: ConfigMeta) => {
-    const next = cleanConfigName(editingName);
-    if (!next) {
+  /**
+   * 保存编辑：名称与地址一次提交。
+   *
+   * 换地址会让后端按新地址重新导入并原地替换同一行；拉取失败时旧订阅保持
+   * 不变，这里只把错误抛给用户，不做任何本地状态回收。
+   */
+  const saveEdit = async (meta: ConfigMeta) => {
+    const nextName = cleanConfigName(editingName);
+    if (!nextName) {
       onError("订阅名称不能为空");
       return;
     }
-    if (next === meta.name) {
+    const nextUrl = meta.refreshable ? editingUrl.trim() : "";
+    if (meta.refreshable && !nextUrl) {
+      onError("订阅地址不能为空");
+      return;
+    }
+    const renamed = nextName !== meta.name;
+    const migrated = meta.refreshable && nextUrl !== meta.source.value;
+    if (!renamed && !migrated) {
       setEditingId("");
       return;
     }
-    setRenaming(true);
+    setSavingEdit(true);
+    onError("");
+    onNotice("");
     try {
-      const updated = await api.configRename(meta.id, next);
-      onNotice(`已重命名为「${updated.name}」`);
-      log.info("config renamed", { id: updated.id, name: updated.name });
+      const outcome = await api.configEdit(meta.id, {
+        name: renamed ? nextName : undefined,
+        url: migrated ? nextUrl : undefined,
+      });
+      // 只有被编辑的就是当前配置时后端才回快照：其余情况不能动站点缓存。
+      if (outcome.snapshot) {
+        onImported(outcome.snapshot);
+      }
+      if (migrated) {
+        const usable = outcome.snapshot
+          ? outcome.snapshot.sites.filter((site) => site.enabled).length
+          : 0;
+        onNotice(
+          outcome.snapshot
+            ? `「${outcome.meta.name}」已换到新地址，${usable} 个可用站点`
+            : `「${outcome.meta.name}」的订阅地址已更新`,
+        );
+      } else {
+        onNotice(`已重命名为「${outcome.meta.name}」`);
+      }
+      log.info(migrated ? "config source edited" : "config renamed", {
+        id: outcome.meta.id,
+        name: outcome.meta.name,
+        migrated,
+      });
       setEditingId("");
       onReload();
     } catch (err) {
-      onError(`重命名失败：${errorMessage(err)}`);
-      log.error("config rename failed", { id: meta.id, message: errorMessage(err) });
+      onError(`${migrated ? "修改订阅地址" : "重命名"}失败：${errorMessage(err)}`);
+      log.error("config edit failed", {
+        id: meta.id,
+        migrated,
+        message: errorMessage(err),
+      });
     } finally {
-      setRenaming(false);
+      setSavingEdit(false);
     }
   };
 
@@ -279,39 +324,70 @@ export default function ConfigListSection({
             <li className="config-item" key={meta.id}>
               <div className="config-item__main">
                 {editingId === meta.id ? (
-                  <div className="config-item__rename">
-                    <input
-                      className="input"
-                      type="text"
-                      value={editingName}
-                      maxLength={48}
-                      aria-label={`重命名 ${meta.name}`}
-                      autoFocus
-                      onChange={(event) => setEditingName(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          void saveRename(meta);
-                        } else if (event.key === "Escape") {
-                          setEditingId("");
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn--primary btn--sm"
-                      disabled={renaming}
-                      onClick={() => void saveRename(meta)}
-                    >
-                      {renaming ? "保存中…" : "保存"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--sm"
-                      onClick={() => setEditingId("")}
-                    >
-                      取消
-                    </button>
-                  </div>
+                  <form
+                    className="config-item__edit"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void saveEdit(meta);
+                    }}
+                  >
+                    <label className="config-item__field">
+                      <span className="config-item__label">名称</span>
+                      <input
+                        className="input"
+                        type="text"
+                        value={editingName}
+                        maxLength={48}
+                        aria-label={`订阅名称 ${meta.name}`}
+                        autoFocus
+                        onChange={(event) => setEditingName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            setEditingId("");
+                          }
+                        }}
+                      />
+                    </label>
+                    {meta.refreshable ? (
+                      <label className="config-item__field">
+                        <span className="config-item__label">地址</span>
+                        <input
+                          className="input"
+                          type="url"
+                          value={editingUrl}
+                          spellCheck={false}
+                          aria-label={`订阅地址 ${meta.name}`}
+                          placeholder="https://…"
+                          onChange={(event) => setEditingUrl(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              setEditingId("");
+                            }
+                          }}
+                        />
+                      </label>
+                    ) : (
+                      <p className="config-item__hint">
+                        该订阅来自粘贴文本或本地文件，没有可编辑的地址；如需按地址更新，请重新导入。
+                      </p>
+                    )}
+                    <div className="config-item__edit-actions">
+                      <button
+                        type="submit"
+                        className="btn btn--primary btn--sm"
+                        disabled={savingEdit}
+                      >
+                        {savingEdit ? "保存中…" : "保存"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => setEditingId("")}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </form>
                 ) : (
                   <>
                     <span className="config-item__name">
@@ -351,9 +427,9 @@ export default function ConfigListSection({
                   ) : null}
                   <IconButton
                     name="pencil"
-                    label="重命名"
+                    label="编辑"
                     size="sm"
-                    onClick={() => startRename(meta)}
+                    onClick={() => startEdit(meta)}
                   />
                   <IconButton
                     name="trash"

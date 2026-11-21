@@ -808,3 +808,87 @@ fn load_repairs_stored_malformed_urls_and_persists_them() {
         );
     }
 }
+
+fn url_source(value: &str) -> ConfigSource {
+    ConfigSource {
+        kind: "url".into(),
+        value: value.into(),
+        name: None,
+    }
+}
+
+#[tokio::test]
+async fn edit_renames_without_touching_source() {
+    let (_guard, dir) = isolate_data_dir();
+    let store = store_at(&dir);
+    store
+        .insert(snapshot("a", &["x"]), url_source("https://example.com/a.json"))
+        .expect("insert config");
+
+    let outcome = store
+        .edit("a", Some("  家里的配置  "), None)
+        .await
+        .expect("rename through edit");
+    assert_eq!(outcome.meta.name, "家里的配置");
+    assert_eq!(
+        outcome.meta.source.value, "https://example.com/a.json",
+        "只改名不能碰地址"
+    );
+    assert!(
+        outcome.snapshot.is_none(),
+        "名字不影响站点，不该回运行快照"
+    );
+    assert_eq!(store.list()[0].name, "家里的配置");
+}
+
+#[tokio::test]
+async fn edit_rejects_empty_name_and_non_http_address() {
+    let (_guard, dir) = isolate_data_dir();
+    let store = store_at(&dir);
+    store
+        .insert(snapshot("a", &["x"]), url_source("https://example.com/a.json"))
+        .expect("insert config");
+
+    let err = store
+        .edit("a", Some("   "), None)
+        .await
+        .expect_err("blank name must be rejected");
+    assert_eq!(err.message, "config name is empty");
+
+    let err = store
+        .edit("a", None, Some("ftp://example.com/a.json"))
+        .await
+        .expect_err("non-http address must be rejected");
+    assert!(
+        err.message.contains("http://"),
+        "错误要说清该怎么填，实际：{}",
+        err.message
+    );
+    // 失败的编辑不能改到任何东西
+    assert_eq!(store.list()[0].name, "a");
+    assert_eq!(store.list()[0].source.value, "https://example.com/a.json");
+}
+
+#[tokio::test]
+async fn edit_rejects_address_already_used_by_another_config() {
+    let (_guard, dir) = isolate_data_dir();
+    let store = store_at(&dir);
+    store
+        .insert(snapshot("a", &["x"]), url_source("https://example.com/a.json"))
+        .expect("insert a");
+    store
+        .insert(snapshot("b", &["y"]), url_source("https://example.com/b.json"))
+        .expect("insert b");
+
+    let err = store
+        .edit("a", None, Some("https://example.com/b.json"))
+        .await
+        .expect_err("duplicate address must be rejected before fetching");
+    assert!(
+        err.message.contains("已是订阅"),
+        "重复地址要指名道姓，实际：{}",
+        err.message
+    );
+    // 冲突检测必须在网络之前：离线跑到这里就说明没有发请求。
+    assert_eq!(store.list().len(), 2);
+}

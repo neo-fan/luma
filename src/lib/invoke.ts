@@ -20,6 +20,7 @@ import type { DoubanMeta, DoubanMetaEvent } from "./douban";
 import type { DoubanProxyType } from "./doubanSettings";
 import type {
   AppError,
+  ConfigEditOutcome,
   ConfigMeta,
   ConfigSnapshot,
   ConfigSource,
@@ -293,9 +294,17 @@ export const api = {
     return call("site_set_enabled", { req: { siteKey, enabled } });
   },
 
-  /** 重命名已保存的配置（不切换 active）。 */
-  configRename(id: string, name: string): Promise<ConfigMeta> {
-    return call("config_rename", { id, name });
+  /**
+   * 编辑已保存的配置：名称与订阅地址一次提交（不切换 active）。
+   *
+   * 换地址会让后端按新地址重新导入并原地替换同一行；失败时旧订阅保持不变。
+   * `snapshot` 只在被编辑的就是当前配置时返回，用来替换站点缓存。
+   */
+  configEdit(
+    id: string,
+    patch: { name?: string; url?: string },
+  ): Promise<ConfigEditOutcome> {
+    return call("config_edit", { id, name: patch.name, url: patch.url });
   },
 
   configRemove(id: string): Promise<void> {
