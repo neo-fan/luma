@@ -75,7 +75,7 @@ corepack pnpm dev:app
 2. **新增离线检查要同时改两处**：`tools/check.py` 的 `checks()` 与 `docs/MAINTENANCE.md` §2 的覆盖清单；`--ci` 子集只放「干净机器能跑」的项。
 3. **阶段验收不进 CI**：它依赖运行中的应用与 stub，留在发版手工清单。
 4. **探针会切后端 active 配置的，cleanup 必须 `location.reload()`**（见 `AGENTS.md` 工程铁律 7）。
-5. 跑 `cargo test` 前先结束残留的 `qjs-runner` 进程：`tauri-build` 每次构建都要覆盖 `target/debug/qjs-runner.exe`，被占用会报 `os error 5 拒绝访问`。
+5. 跑 `cargo test` / `cargo check` 前先停 dev（`docs/DEVELOPMENT.md` §2.3）：`target` 锁被 dev 持有，且残留的 `qjs-runner` / `Luma_dev.exe` 会让 `tauri-build` 覆盖 `target/debug/qjs-runner.exe` 时报 `os error 5 拒绝访问`。停 dev 用 `Stop-Process -Name Luma_dev`。
 6. 若本会话的 `TEMP` 指向仓库内目录，Rust 单测里建子目录会因 ACL 失败（`create data dir failed`），改用系统临时目录（`$env:TEMP`）或仓库外的可写目录；**不要把临时目录建进仓库**。
 
 ## 5. 现状基线

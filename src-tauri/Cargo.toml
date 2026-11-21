@@ -5,10 +5,20 @@ license = "GPL-3.0-or-later"
 description = "Luma - config-compatible desktop player framework"
 edition = "2021"
 rust-version = "1.77.2"
+# 显式指定主 bin：tauri-cli 用 `name == package.name || name == default-run`
+# 判定主二进制，打包时再按 mainBinaryName 重命名。
+default-run = "Luma_dev"
 
 [lib]
 name = "luma_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# dev 与安装版必须可按进程名区分：安装版 `Luma.exe`，dev `Luma_dev.exe`。
+# Cargo target 名只接受字母/数字/下划线（rustc: invalid character in crate name），
+# 空格与 `.` 都会被拒；dev overlay 的 `mainBinaryName` 必须与此处相同。
+[[bin]]
+name = "Luma_dev"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

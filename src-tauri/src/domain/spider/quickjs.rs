@@ -258,7 +258,7 @@ fn resolve_assets_dir() -> PathBuf {
             return path;
         }
     }
-    // Portable layout: <luma.exe>/sidecars/qjs-assets.
+    // Portable layout: <exe>/sidecars/qjs-assets.
     if let Ok(current) = std::env::current_exe() {
         if let Some(dir) = current.parent() {
             let beside = dir.join("sidecars").join("qjs-assets");

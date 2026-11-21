@@ -88,8 +88,8 @@ Tauri 官方只负责「把 `dist/` 嵌进 exe + 打包安装器」，它不会�
 
 | 模式 | 命令 | 产物 |
 |---|---|---|
-| debug | `pnpm dev:app` | `src-tauri/target/debug/luma.exe`（配合 Vite dev server） |
-| release | `pnpm build:app` | `src-tauri/target/release/luma.exe`，安装器在 `src-tauri/target/release/bundle/nsis/` |
+| debug | `pnpm dev:app` | `src-tauri/target/debug/Luma_dev.exe`（配合 Vite dev server） |
+| release | `pnpm build:app` | `src-tauri/target/release/`（exe 名 = `mainBinaryName`，安装器在 `src-tauri/target/release/bundle/nsis/`） |
 | 前端 | `pnpm build` | `dist/`（`tauri.conf.json` 的 `frontendDist` 指向它） |
 
 `src-tauri/target/`、`dist/`、`sidecars/python-embed/` 均为可重建产物，已 gitignore。Release profile 与 `Cargo.toml` 的 `[profile.dev]` / `[profile.release]` 按 Tauri 官方 [App Size](https://v2.tauri.app/concept/size/) 建议设置。

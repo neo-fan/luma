@@ -62,6 +62,21 @@ def cargo_lock_version() -> str | None:
     return None
 
 
+def cargo_bin_name() -> str | None:
+    """`[[bin]]` 段的 `name`：dev 产物名，必须与 dev overlay 的 mainBinaryName 一致。"""
+    in_bin = False
+    for line in read("src-tauri/Cargo.toml").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_bin = stripped == "[[bin]]"
+            continue
+        if in_bin:
+            match = re.match(r'^name\s*=\s*"([^"]+)"', stripped)
+            if match:
+                return match.group(1)
+    return None
+
+
 def adapter_version(override: str | None) -> tuple[str | None, str]:
     """拉起适配层打一帧 ping。返回 (版本, 失败说明)。"""
     env = os.environ.copy()
@@ -154,6 +169,29 @@ def main() -> int:
                 )
         except (OSError, ValueError) as err:
             problems.append(f"{BETA_CONF}: 无法解析（{err}）")
+        try:
+            dev_conf = json.loads(read(DEV_CONF))
+            stable_product = str(conf.get("productName", "Luma"))
+            dev_product = dev_conf.get("productName")
+            if not dev_product or dev_product == stable_product:
+                problems.append(
+                    f"{DEV_CONF}: productName 应区别于 stable（{stable_product!r}），"
+                    "否则任务管理器里的描述与正式版相同"
+                )
+            dev_bin = dev_conf.get("mainBinaryName")
+            cargo_bin = cargo_bin_name()
+            if not dev_bin or dev_bin != cargo_bin:
+                problems.append(
+                    f"{DEV_CONF}: mainBinaryName = {dev_bin!r}，"
+                    f"应与 Cargo.toml 的 [[bin]] name {cargo_bin!r} 一致"
+                )
+            elif dev_bin.lower() == stable_product.lower():
+                problems.append(
+                    f"{DEV_CONF}: mainBinaryName {dev_bin!r} 与安装版 exe 同名，"
+                    "无法按进程名区分 dev 与正式版"
+                )
+        except (OSError, ValueError) as err:
+            problems.append(f"{DEV_CONF}: 无法解析（{err}）")
 
     # 适配层：宿主注入优先，回退 package.json；不允许再出现字面量版本号。
     main_py = read(MAIN_PY)

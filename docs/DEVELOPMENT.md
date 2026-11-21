@@ -59,6 +59,7 @@ cargo test   --manifest-path src-tauri/Cargo.toml --lib
 | WebView2 用户数据目录 | `%LOCALAPPDATA%\app.luma` | `%LOCALAPPDATA%\app.luma.beta` | `%LOCALAPPDATA%\app.luma.dev` |
 | 本地反代 | `127.0.0.1:9978` | `127.0.0.1:9977` | `127.0.0.1:9979` |
 | CDP | 不开 | 不开 | `127.0.0.1:9222` |
+| 进程名 / 描述（任务管理器） | `Luma.exe` / `Luma` | `Luma Beta.exe` / `Luma Beta` | `Luma_dev.exe` / `Luma Dev` |
 | 出包命令 | `pnpm build:app` | `pnpm build:beta` | 不出包 |
 
 开发时**已安装的正式版常常还开着**（用户在用它看片）。不隔离会互相打死，而且报错很难懂。
@@ -75,7 +76,7 @@ cargo test   --manifest-path src-tauri/Cargo.toml --lib
 - 三份 overlay 的 identifier 必须等于 `appId + 后缀`，由 `tools/version_check.py` 校验；不许只改一处。
 - 验收：dev 窗口与安装版同时开着不打架，且 `%LOCALAPPDATA%` 下同时存在 `app.luma\EBWebView` 与 `app.luma.dev\EBWebView`。
 
-> 顺带：`vite.config.ts` 的 `server.watch.ignored` 排除了 `src-tauri/`、`.agents/`、`.*.tmpdir/`、`.git/`。Node 24 把 `fs.watch` 的 EBUSY 当致命错误，而 `tauri dev` 正在写 `target\debug\luma.exe`、并行会话又在原子写源码，命中任一个都会让 vite 退出、连带 `beforeDevCommand` 失败把整个 dev 拖死。
+> 顺带：`vite.config.ts` 的 `server.watch.ignored` 排除了 `src-tauri/`、`.agents/`、`.*.tmpdir/`、`.git/`。Node 24 把 `fs.watch` 的 EBUSY 当致命错误，而 `tauri dev` 正在写 `target\debug\Luma_dev.exe`、并行会话又在原子写源码，命中任一个都会让 vite 退出、连带 `beforeDevCommand` 失败把整个 dev 拖死。
 
 ### 2.2 窗口与安全配置（`tauri.conf.json`）
 
@@ -83,6 +84,70 @@ cargo test   --manifest-path src-tauri/Cargo.toml --lib
 - **CSP**：`csp`（生产）与 `devCsp`（开发）分开。`img-src` / `media-src` / `connect-src` 放通 `http(s)` 是刻意的——封面与流地址来自用户导入的任意源，域名无法枚举；`style-src 'unsafe-inline'` 是 ArtPlayer 运行时注入 `<style>` 所需；`worker-src blob:` 是 hls.js 的 blob worker。真正收窄的是 `script-src`：生产 `'self'`，开发额外给 `'unsafe-inline' 'unsafe-eval'`（Vite HMR）。改 CSP 后必须开窗口走一遍「列表 → 详情 → 播放」，控制台不能出现 `Refused to`。
 - **capabilities**：显式列出 `main-access`，不依赖 `capabilities/` 目录扫描——新增权限文件不会自动生效。
 - **additionalBrowserArgs**：一旦设置就覆盖 wry 的默认值，必须自己补回 `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`，否则 PDF / SmartScreen 组件会在 webview 里启用。
+
+### 2.3 启动、停止与状态判定
+
+进程名固定：**安装版 `Luma.exe`，dev `Luma_dev.exe`**。任务管理器「名称」列即文件名，「描述」列取 exe 的 `FileDescription`（由 `productName` 生成），所以 dev 显示 `Luma Dev`。
+
+为什么不是 `Luma Dev.exe`：Cargo target 名只接受字母/数字/下划线（rustc 拒绝空格与 `.`），而 `tauri dev` 是 `cargo run` 直接跑产物、不走 `mainBinaryName` 的 build 期重命名（tauri-cli 2.12.4 源码：`rename_app` 只在 build 路径）。要文件名带空格只能绕开 `tauri dev` 自己起进程，得不偿失。dev 的 `[[bin]] name` 与 `tauri.dev.conf.json` 的 `mainBinaryName` 必须同为 `Luma_dev`，`productName` 必须区别于 stable，均由 `tools/version_check.py` 守护。
+
+**启动**（后台常驻，日志与 PID 落 `tools/.out/`）：
+
+```powershell
+New-Item -ItemType Directory -Force tools/.out | Out-Null          # 已在 .gitignore
+$p = Start-Process pwsh -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile','-Command',
+  'corepack pnpm dev:app *> tools/.out/dev.log'
+$p.Id | Set-Content tools/.out/dev.pid
+"pid=$($p.Id) log=tools/.out/dev.log"
+```
+
+**状态判定**（单次、2 秒超时、立即返回，不循环）：
+
+```powershell
+$devPid  = Get-Content tools/.out/dev.pid -ErrorAction SilentlyContinue
+$session = if ($devPid) { Get-Process -Id $devPid -ErrorAction SilentlyContinue }
+$app     = Get-Process Luma_dev -ErrorAction SilentlyContinue
+$cdp     = try { Invoke-RestMethod 'http://127.0.0.1:9222/json/list' -NoProxy -TimeoutSec 2 } catch { @() }
+if (@($cdp | Where-Object url -like 'http://localhost:1420*').Count) { 'READY' }
+elseif ($app) { 'BOOTING' }
+elseif ($session) { 'BUILDING' }
+elseif ($cdp) { 'STALE' }
+else { 'DOWN' }
+```
+
+| 状态 | 含义 | 动作 |
+|---|---|---|
+| `READY` | 窗口与前端已就绪，可接探针 | 继续 |
+| `BOOTING` | `Luma_dev.exe` 在跑，WebView2 / 前端还没挂上 | 30s 后再探 |
+| `BUILDING` | dev 会话在，二进制还没产出（首编可能十几分钟） | 30~60s 后再探，期间做别的事 |
+| `STALE` | 没有 dev 进程，9222 却被占：旧 `luma.exe` / `Luma_dev.exe` 残留 | 用下方命令清 `target\debug` 下的实例 |
+| `DOWN` | 会话与进程都没了 | 看 `tools/.out/dev.log` 尾部 |
+
+```powershell
+# STALE：只结束 target\debug 下的实例（含改名前遗留的 luma.exe）
+Get-Process luma, Luma_dev -ErrorAction SilentlyContinue |
+  Where-Object Path -like '*\src-tauri\target\debug\*' | ForEach-Object { Stop-Process -Id $_.Id }
+```
+
+**禁止死等**：不在一条命令里写循环等 `READY`、不 `Start-Sleep 600`；每次只探一次，状态自己看。Rust 首编慢属正常，别把等待当失败。
+
+**停止**（进程名唯一，不碰安装版）：交互终端里直接 `corepack pnpm dev:app` 时用 `Ctrl+C`；后台会话按下面三步收尾。
+
+```powershell
+Stop-Process -Name Luma_dev -ErrorAction SilentlyContinue        # app 退出后 tauri dev 自行收尾
+Start-Sleep -Seconds 2
+Get-Process Luma_dev -ErrorAction SilentlyContinue | Measure-Object | Select-Object -ExpandProperty Count  # 应为 0
+# 2s 后会话仍在（pid 文件里的进程还活着）才结束会话
+$devPid = Get-Content tools/.out/dev.pid -ErrorAction SilentlyContinue
+if ($devPid) { Stop-Process -Id $devPid -ErrorAction SilentlyContinue }
+# 仅当 cargo test 报 os error 5 时：清 debug 目录下的 qjs-runner 残留
+Get-Process qjs-runner -ErrorAction SilentlyContinue |
+  Where-Object Path -like '*\src-tauri\target\debug\*' | ForEach-Object { Stop-Process -Id $_.Id }
+```
+
+- 不要删 `target` 解锁，不要用 `CARGO_TARGET_DIR` 绕。
+- `qjs-runner` 正常由 Job Object 随主进程收尸，上面的清理只在构建报 `os error 5` 时用。
+- `cargo test` / `cargo check` / `tools/check.py` 要独占 `target`，运行中的 `Luma_dev.exe`、`qjs-runner.exe` 还锁同名产物，**必须先停 dev**。
 
 ## 3. 四端调试
 
@@ -99,7 +164,7 @@ $env:NO_PROXY = 'localhost,127.0.0.1'
 ```
 
 - **target 选择**：Vite 调试页是 `webSocketDebuggerUrl` 对应 `port=1420` 且 `path` 为空的那个；播放页只按 `location.hash` 判断是否"在播放页"（常驻 `player-host` 层隐藏但仍留 DOM，取 video 用 `checkVisibility`）。
-- **9222 被残留进程占用** → WebView2 起不来，先确认 `(Get-Process luma).Count -eq 0`。
+- **9222 被残留进程占用** → WebView2 起不来。先看 `Get-Process Luma_dev`；旧产物 `luma.exe` 只会是历史残留，按 `Path` 过滤到 `target\debug` 再结束。
 - 常用 CDP 工具（需 dev 窗口 + Vite 在跑）：
   - `node tools/audit/audit_ui.mjs` / `node tools/audit/audit_player_layout.mjs`：DOM/布局取证；
   - `node tools/probes/probe_*.mjs`：各功能窗口探针。
@@ -210,7 +275,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 1. **dev 加载旧 sidecar 副本** → `/proxy` 首次报 `unsupported method: proxy`。`paths::sidecar_roots()` 在 debug 构建优先源码根，避免静默加载 `target/debug/sidecars` 旧副本。
 2. **Vite dev 样式入口（`src/styles/index.css`）返回空串** → 整站退化成无样式堆叠。解决：重启 `tauri dev`。
 3. **Vite 转换缓存让探针连跑旧代码** → 误判"修复无效"。探针开头已加 `Network.setCacheDisabled` + reload `ignoreCache:true` + 拉 `PlayerPage.tsx` 自检特征，确保不把 stale 模块当产品 bug。
-4. **CDP 9222 被残留 luma 占用** → WebView2 起不来；先清残留进程。
+4. **CDP 9222 被残留 luma 占用** → WebView2 起不来；按 §2.3 的 `STALE` 处理。
 5. **嗅探窗口冲突**：dev 的 `--remote-debugging-port=9222` 会让第二个 WebView2 返 `0x8007139F`；嗅探窗口必须给独立 `data_directory` 且覆盖 `--remote-debugging-port=0`。
 6. **F 盘空间不足** → cargo 链接报 `os error 112`。曾用 junction 把 `src-tauri/target`、`release` 指到 `E:\luma-build`，**现在已不使用**（两者都是本仓库内的普通目录，`release/` 旧便携产物也已删除）。再遇到空间问题优先清回收站，或临时 `CARGO_TARGET_DIR=<另一块盘>`，不要手搓 junction 掩盖问题。
 

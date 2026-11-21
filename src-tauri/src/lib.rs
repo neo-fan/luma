@@ -158,7 +158,7 @@ fn run_inner() -> Result<(), AppError> {
         // 这里只做一次 loopback 探测，把根因直接写进日志。
         if std::net::TcpStream::connect(("127.0.0.1", 9222)).is_ok() {
             tracing::warn!(
-                "port 9222 is already taken; CDP may attach to a stale window — kill leftover luma.exe first"
+                "port 9222 is already taken; CDP may attach to a stale window — kill the leftover dev binary (Luma_dev.exe) first"
             );
         } else {
             tracing::info!("webview2 devtools listening on 127.0.0.1:9222 (debug build default)");
