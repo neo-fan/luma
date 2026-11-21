@@ -765,7 +765,9 @@ export default function PlayerPage({
   const doSkipIntro = () => {
     const v = videoRef.current;
     const intro = introMs(skipConfig);
-    if (v && intro > 0) {
+    // 只在「还落在片头里」才跳：历史续播可能已经落到片头之后（倒计时是在
+    // 0 秒那一下起的），这时再 seek 就是把用户从续播点拽回去。
+    if (v && intro > 0 && v.currentTime * 1000 < intro) {
       try {
         v.currentTime = intro / 1000;
       } catch {
