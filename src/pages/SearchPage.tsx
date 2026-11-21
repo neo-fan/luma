@@ -1,5 +1,5 @@
 import { FolderOpen, Search, SearchX } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Navigate } from "../lib/nav";
 import Empty from "../components/Empty";
@@ -13,6 +13,7 @@ import { api, errorMessage, toAppError } from "../lib/invoke";
 import { usePageState } from "../lib/usePageState";
 import { rankByTitle, titleMatchScore } from "../lib/format";
 import { favoriteFirst } from "../lib/siteFavorites";
+import { capItems } from "../lib/listLimits";
 import { putDetailSeed } from "../lib/handoff";
 import {
   clearSearchHistory,
@@ -27,6 +28,9 @@ import type { ResultPage, Site, VodInfo } from "../types/luma";
 
 // 流式全站搜索不限总墙钟：每站受后端默认 15s 单站超时约束，
 // 结果陆续上屏、全部站点跑完才收尾；用户随时可取消。
+
+/** 一次搜索最多保留的卡片数；统计仍按全量结果，界面明确提示截断。 */
+const MAX_SEARCH_HITS = 1200;
 
 interface AggregateRow {
   siteKey: string;
@@ -91,6 +95,12 @@ export default function SearchPage({
   const [target, setTarget] = usePageState<string>(`${K}target`, ALL_SITES);
   const [hits, setHits] = usePageState<SearchHit[]>(`${K}hits`, []);
   const [matchCount, setMatchCount] = usePageState<number>(`${K}matchCount`, 0);
+  /** 截断前的总数与提示标记：统计按全量算，显示只保留前 MAX_SEARCH_HITS 条。 */
+  const [totalHits, setTotalHits] = usePageState<number>(`${K}totalHits`, 0);
+  const [hitsTruncated, setHitsTruncated] = usePageState<boolean>(
+    `${K}hitsTruncated`,
+    false,
+  );
   /** 视图偏好，跨搜索保留；不改后端返回，只影响渲染哪些卡片。 */
   const [onlyMatches, setOnlyMatches] = usePageState<boolean>(
     `${K}onlyMatches`,
@@ -133,6 +143,22 @@ export default function SearchPage({
   const inputRef = useRef<HTMLInputElement>(null);
   /** 用户实际搜过的词，跨重启保留；与页面快照分开存。 */
   const [recent, setRecent] = useState<string[]>(() => readSearchHistory());
+
+  /**
+   * 所有 hits 写入都走这里：先按全量算匹配数，再截断显示列表。
+   * 流式批、收尾全量、单站重试三条路径若不共用，任何一条漏掉都会把几千条
+   * 结果重新塞回 renderer——这里必须是唯一出口。
+   */
+  const commitHits = useCallback(
+    (ranked: SearchHit[]) => {
+      setMatchCount(ranked.filter((hit) => hit.matchScore >= 2).length);
+      const capped = capItems(ranked, MAX_SEARCH_HITS);
+      setTotalHits(capped.total);
+      setHitsTruncated(capped.truncated);
+      setHits(capped.items);
+    },
+    [setHits, setMatchCount, setTotalHits, setHitsTruncated],
+  );
 
   // 等待期计时：每次搜索（timerEpoch 递增）都从 0 重新起表，500ms 粒度足够。
   // 依赖 timerEpoch 而非 loading：改词重搜时 loading 不变，只有纪元能感知新搜索。
@@ -183,6 +209,8 @@ export default function SearchPage({
     setShowFailures(false);
     setHits([]);
     setMatchCount(0);
+    setTotalHits(0);
+    setHitsTruncated(false);
     setProgress("");
 
     try {
@@ -258,8 +286,7 @@ export default function SearchPage({
             ),
             (hit) => hit.siteKey,
           );
-          setHits(ranked);
-          setMatchCount(ranked.reduce((n, hit) => n + (hit.matchScore >= 2 ? 1 : 0), 0));
+          commitHits(ranked);
           setSearched(true);
         };
         const scheduleHits = () => {
@@ -365,7 +392,7 @@ export default function SearchPage({
         ) {
           // 对账用独立的去重集（流式期的 seen 已含全部增量，复用会把
           // 整份结果误判成重复）；条目写进**外层 merged**——runSearch 末尾
-          // 的 setHits(ranked) 读的是它。
+          // 的 commitHits(ranked) 读的是它。
           const finalSeen = new Set<string>();
           for (const row of agg.results ?? []) {
             if (!row.ok) {
@@ -473,8 +500,7 @@ export default function SearchPage({
       cancelStreamFlush?.();
       cancelStreamFlush = null;
       const ranked = rankByTitle(merged, word, (hit) => hit.vod.vod_name);
-      setHits(ranked);
-      setMatchCount(ranked.filter((hit) => hit.matchScore >= 2).length);
+      commitHits(ranked);
       setSearched(true);
       log.info("search done", {
         keyword: word.slice(0, 60),
@@ -556,6 +582,8 @@ export default function SearchPage({
     setKeyword("");
     setHits([]);
     setMatchCount(0);
+    setTotalHits(0);
+    setHitsTruncated(false);
     setOnlyMatches(false);
     setFailures(0);
     setSkipped(0);
@@ -629,8 +657,7 @@ export default function SearchPage({
         seen.add(id);
         deduped.push(hit);
       }
-      setHits(deduped);
-      setMatchCount(deduped.filter((hit) => hit.matchScore >= 2).length);
+      commitHits(deduped);
       setFailureRows((current) =>
         current.filter((item) => item.siteKey !== row.siteKey),
       );
@@ -665,6 +692,7 @@ export default function SearchPage({
     }
   };
 
+  const displayedMatchCount = hits.filter((hit) => hit.matchScore >= 2).length;
   const visibleHits = onlyMatches
     ? hits.filter((hit) => hit.matchScore >= 2)
     : hits;
@@ -805,8 +833,9 @@ export default function SearchPage({
         {!loading && searched ? (
           <div className="result-summary">
             <p className="result-meta">
-              {progress ? `${progress}；` : ""}共 {hits.length} 条结果
+              {progress ? `${progress}；` : ""}共 {totalHits || hits.length} 条结果
               {matchCount > 0 ? `；其中 ${matchCount} 条片名匹配` : ""}
+              {hitsTruncated ? `；仅显示前 ${hits.length} 条` : ""}
               {onlyMatches ? `；当前显示 ${visibleHits.length} 条` : ""}
               {failures > 0 ? `；${failures} 个站点失败` : ""}
               {skipped > 0 ? `；${skipped} 个站点按配置跳过` : ""}
@@ -825,7 +854,7 @@ export default function SearchPage({
                 </button>
               </div>
             ) : null}
-            {hits.length > 0 && matchCount > 0 && matchCount < hits.length ? (
+            {hits.length > 0 && displayedMatchCount > 0 && displayedMatchCount < hits.length ? (
               <label className="filter-toggle">
                 <input
                   type="checkbox"

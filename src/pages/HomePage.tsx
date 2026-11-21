@@ -24,6 +24,13 @@ import { putDetailSeed } from "../lib/handoff";
 import { notify } from "../lib/notify";
 import { leafClasses } from "../lib/categories";
 import { usableHomeSites } from "../lib/format";
+import {
+  capItems,
+  clampLoadedPages,
+  dropLru,
+  putLru,
+  type LruStore,
+} from "../lib/listLimits";
 import { usePageState } from "../lib/usePageState";
 import type { HomeResult, ResultPage, Site, VodInfo } from "../types/luma";
 
@@ -112,6 +119,11 @@ const SWITCH_DEBOUNCE_MS = 300;
 
 /** 沉浸式首页：推荐列表前 5 条进头图轮播，其余进横排。 */
 const HERO_COUNT = 5;
+/** 分类无限滚动的硬上限：超过后停止翻页，避免 catItems 无限增长。 */
+const MAX_CAT_PAGES = 20;
+const MAX_CAT_ITEMS = 1200;
+/** 推荐流页内快照只保留最近几个站点；73 个站点各留一份会平白吃掉 renderer 内存。 */
+const MAX_HOME_SNAPSHOTS = 6;
 
 /**
  * 首页推荐数据 + 归属站点键 + 写入时刻。存储随站点换键（usePageState 渲染期取值），
@@ -126,6 +138,8 @@ const HERO_COUNT = 5;
  * {@link shouldSkipHomeRequest}）。
  */
 type ScopedHome = { siteKey: string; data: HomeResult | null; storedAt: number };
+
+const EMPTY_HOME: ScopedHome = { siteKey: "", data: null, storedAt: 0 };
 
 /** 首页内联的分类选择：tid="" 表示回到推荐流。存站点 key 是为了切站后
  *  不把上一个站点的 type_id 带过去（TVBox 的 tid 只在产生它的站点有效）。
@@ -158,11 +172,25 @@ export default function HomePage({
   isDefaultSite,
   navigate,
 }: HomePageProps) {
-  // 首页推荐内容按站点保留，返回首页时直接出结果；站点 key 变化时自然失效。
+  // 首页推荐内容按站点保留，返回首页时直接出结果；只留最近 6 个站点，
+  // 避免 73 个站点各存一份 HomeResult（含整张推荐列表）把 renderer 撑大。
   const favoriteSites = useFavoriteSites();
-  const [homeState, setHomeState] = usePageState<ScopedHome>(
-    `home:${siteKey}:data:v2`,
-    { siteKey: "", data: null, storedAt: 0 },
+  const [homeSnapshots, setHomeSnapshots] = usePageState<LruStore<ScopedHome>>(
+    "home:data:v3",
+    { values: {}, order: [] },
+  );
+  const homeState = homeSnapshots.values[siteKey] ?? EMPTY_HOME;
+  const rememberHome = useCallback(
+    (next: ScopedHome) => {
+      setHomeSnapshots((prev) =>
+        putLru(prev, next.siteKey, next, MAX_HOME_SNAPSHOTS),
+      );
+    },
+    [setHomeSnapshots],
+  );
+  const forgetHome = useCallback(
+    (key: string) => setHomeSnapshots((prev) => dropLru(prev, key)),
+    [setHomeSnapshots],
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -190,6 +218,8 @@ export default function HomePage({
   const [catHasMore, setCatHasMore] = useState(true);
   const [catLoading, setCatLoading] = useState(false);
   const [catLoadingMore, setCatLoadingMore] = useState(false);
+  /** 因 20 页 / 1200 条上限而停止，区别于源站自然到底。 */
+  const [catCapReached, setCatCapReached] = useState(false);
   const [catError, setCatError] = useState("");
   const [catReload, setCatReload] = useState(0);
   /**
@@ -343,7 +373,7 @@ export default function HomePage({
     let alive = true;
     const run = async () => {
       if (!siteKey) {
-        setHomeState({ siteKey: "", data: null, storedAt: 0 });
+        forgetHome(siteKey);
         setError("");
         setLoading(false);
         return;
@@ -363,7 +393,7 @@ export default function HomePage({
             // 这个源彻底坏了。
             const cards = (result?.list ?? []).length;
             const cats = (result?.classes ?? []).length;
-            setHomeState({
+            rememberHome({
               siteKey,
               data: cards > 0 || cats > 0 ? result : null,
               storedAt: Date.now(),
@@ -410,7 +440,7 @@ export default function HomePage({
             return;
           }
           if (attempt === 1) {
-            setHomeState({ siteKey, data: null, storedAt: Date.now() });
+            rememberHome({ siteKey, data: null, storedAt: Date.now() });
             setError(errorMessage(err));
             setLoading(false);
             return;
@@ -429,7 +459,7 @@ export default function HomePage({
     return () => {
       alive = false;
     };
-  }, [siteKey, reload]);
+  }, [siteKey, reload, rememberHome, forgetHome]);
 
   /**
    * 分类无限滚动的「进入 / 切换」：站点或分类变化时，按已加载页数
@@ -441,6 +471,7 @@ export default function HomePage({
       setCatItems([]);
       setCatNext(1);
       setCatHasMore(true);
+      setCatCapReached(false);
       setCatLoading(false);
       return;
     }
@@ -448,12 +479,16 @@ export default function HomePage({
     extendSignatureRef.current = JSON.stringify(activeExtend);
     // 筛选条件变化（或按条件重新进入）时：旧条件下已加载的页数对新条件毫无
     // 意义（pagecount/条目完全不同），只拉第 1 页。
-    const pagesLoaded =
+    const requestedPages =
       !extendChanged && selection.siteKey === siteKey ? Math.max(1, selection.page) : 1;
+    const pagesLoaded = clampLoadedPages(requestedPages, MAX_CAT_PAGES);
+    // 返回时若快照记着超限页数，说明上次就是被上限截住的，不重放第 21 页。
+    let capReached = requestedPages > MAX_CAT_PAGES;
     let alive = true;
     setCatItems([]);
     setCatNext(1);
     setCatHasMore(true);
+    setCatCapReached(false);
     setCatLoading(true);
     setCatError("");
     void (async () => {
@@ -463,7 +498,13 @@ export default function HomePage({
         try {
           const result = await api.category(siteKey, activeTid, page, false, activeExtend);
           all.push(...(result.list ?? []));
-          hasMore = morePages(result, page);
+          const nextHasMore = morePages(result, page);
+          if (all.length >= MAX_CAT_ITEMS && nextHasMore) {
+            capReached = true;
+            hasMore = false;
+            break;
+          }
+          hasMore = nextHasMore;
           if (!hasMore) {
             break;
           }
@@ -477,9 +518,11 @@ export default function HomePage({
         }
       }
       if (alive) {
-        setCatItems(all);
-        setCatNext(pagesLoaded + 1);
-        setCatHasMore(hasMore);
+        const capped = capItems(all, MAX_CAT_ITEMS);
+        setCatItems(capped.items);
+        setCatNext(clampLoadedPages(pagesLoaded + 1, MAX_CAT_PAGES));
+        setCatHasMore(hasMore && !capped.truncated && pagesLoaded < MAX_CAT_PAGES);
+        setCatCapReached(capReached || capped.truncated);
         setCatLoading(false);
       }
     })();
@@ -541,14 +584,25 @@ export default function HomePage({
       return;
     }
     const page = catNext;
+    if (page > MAX_CAT_PAGES) {
+      setCatHasMore(false);
+      setCatCapReached(true);
+      return;
+    }
     setCatLoadingMore(true);
     void (async () => {
       try {
         const result = await api.category(siteKey, activeTid, page, false, extendRef.current);
         const items = result.list ?? [];
-        setCatItems((prev) => [...prev, ...items]);
-        setCatNext((next) => next + 1);
-        setCatHasMore(morePages(result, page));
+        const merged = capItems([...catItems, ...items], MAX_CAT_ITEMS);
+        const sourceHasMore = morePages(result, page);
+        const byPageLimit = page + 1 > MAX_CAT_PAGES;
+        const limitStopped =
+          merged.truncated || byPageLimit || catItems.length >= MAX_CAT_ITEMS;
+        setCatItems(merged.items);
+        setCatNext(clampLoadedPages(page + 1, MAX_CAT_PAGES));
+        setCatHasMore(sourceHasMore && !limitStopped);
+        setCatCapReached(limitStopped && (sourceHasMore || merged.truncated));
         // 持久化已加载页数，返回详情后从缓存瞬间补回、滚动位置不丢。
         setSelection((prev) =>
           prev.siteKey === siteKey
@@ -562,7 +616,7 @@ export default function HomePage({
         setCatLoadingMore(false);
       }
     })();
-  }, [activeTid, siteKey, catHasMore, catLoadingMore, catLoading, catNext]);
+  }, [activeTid, siteKey, catHasMore, catLoadingMore, catLoading, catNext, catItems]);
 
   /** 强制刷新分类：清空累积，绕过缓存重新拉第 1 页。 */
   useEffect(() => {
@@ -573,6 +627,7 @@ export default function HomePage({
     setCatItems([]);
     setCatNext(1);
     setCatHasMore(true);
+    setCatCapReached(false);
     setCatLoading(true);
     setCatError("");
     void (async () => {
@@ -580,9 +635,11 @@ export default function HomePage({
         const result = await api.category(siteKey, activeTid, 1, true, extendRef.current);
         if (alive) {
           const items = result.list ?? [];
-          setCatItems(items);
+          const capped = capItems(items, MAX_CAT_ITEMS);
+          setCatItems(capped.items);
           setCatNext(2);
-          setCatHasMore(morePages(result, 1));
+          setCatHasMore(morePages(result, 1) && !capped.truncated);
+          setCatCapReached(capped.truncated);
           setSelection((prev) =>
             prev.siteKey === siteKey
               ? { ...prev, tid: activeTid, page: 1 }
@@ -591,8 +648,8 @@ export default function HomePage({
           if (manualRefreshRef.current) {
             manualRefreshRef.current = false;
             notify.success(
-              items.length > 0
-                ? `已刷新 · ${items.length} 个内容`
+              capped.items.length > 0
+                ? `已刷新 · ${capped.items.length} 个内容`
                 : "已刷新 · 该分类暂无内容",
             );
           }
@@ -859,7 +916,12 @@ export default function HomePage({
         {isCategory ? (
           <div className="infinite-foot">
             {catLoadingMore ? <Spinner label="正在加载更多…" /> : null}
-            {!catHasMore && catItems.length > 0 ? (
+            {catCapReached ? (
+              <p className="tip">
+                已加载 {MAX_CAT_ITEMS} 条上限；刷新可从头重新加载。
+              </p>
+            ) : null}
+            {!catHasMore && !catCapReached && catItems.length > 0 ? (
               <p className="tip">已经到底啦，没有更多内容了</p>
             ) : null}
             {/* 滚动哨兵：进入视口前 400px 自动拉下一页；已无更多时不再触发 */}
