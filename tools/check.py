@@ -78,6 +78,7 @@ def checks(full: bool, quick: bool, ci: bool = False) -> list[tuple[str, list[st
     items: list[tuple[str, list[str]]] = [
         ("contract (schema <-> TS)", [py, "tests/offline/contract_check.py"]),
         ("version consistency", [py, "tools/version_check.py"]),
+        ("release prep", [py, "tests/offline/release_prep_check.py"]),
     ]
     if not ci:
         items += [
