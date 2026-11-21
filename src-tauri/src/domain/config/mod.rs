@@ -762,6 +762,7 @@ pub async fn gh_proxy_test() -> Vec<ghproxy::ProbeResult> {
 // 命令层留在本文件（Tauri 的 `generate_handler!` 需要宏在同一模块作用域，
 // 跨模块 re-export 会把 `__cmd__*` 宏漏掉）；子模块只放实现与 DTO。
 mod decrypt;
+mod deproxy;
 mod derive;
 mod edit;
 mod github;
@@ -770,6 +771,7 @@ mod naming;
 mod normalize;
 mod refresh;
 
+pub(crate) use deproxy::restore as restore_proxied_url;
 pub(crate) use derive::blocked_reason;
 pub use edit::ConfigEditOutcome;
 pub(crate) use normalize::repair_url;

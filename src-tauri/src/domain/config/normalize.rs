@@ -8,6 +8,7 @@
 //! 这些函数都是纯函数、同步、零 IPC：导入直接走宿主进程，不必排队等 Python
 //! 适配层，也不需要 30s 预算兜底。
 
+use super::deproxy;
 use crate::error::{code, AppError};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
@@ -123,6 +124,16 @@ pub fn normalize_site(
     for field in ["api", "jar", "logo", "ext"] {
         if let Some(value) = site.get(field).cloned() {
             site.insert(field.to_string(), resolve_ref(origin, &value));
+        }
+    }
+
+    // 第三方 TVBox 壳会把「指向本机转发服务」的地址直接写进 api（如
+    // `127.0.0.1:<port>/p/<n>/proxy/<url>`）：那个端口只在壳进程里存在，原样
+    // 留着等于每个请求都连本机一个不存在的服务。真实地址就嵌在路径里，剥壳
+    // 直连（规则见 deproxy 模块头，不绑定具体前缀）。
+    if let Some(api) = site.get("api").and_then(Value::as_str) {
+        if let Some(restored) = deproxy::restore(api) {
+            site.insert("api".into(), Value::String(restored));
         }
     }
 
@@ -589,7 +600,13 @@ fn resolve_items(items: Option<&Value>, origin: &str) -> Vec<Value> {
             Value::Object(obj) if obj.contains_key("url") => {
                 let mut obj = obj.clone();
                 if let Some(url) = obj.get("url").cloned() {
-                    obj.insert("url".into(), resolve_ref(origin, &url));
+                    let mut resolved = resolve_ref(origin, &url);
+                    // 直播源同样可能套着 TVBox 本机代理；能剥出公网地址就剥，
+                    // `/c/<秒>/…` 这类转码路径剥不出来，原样保留。
+                    if let Some(restored) = resolved.as_str().and_then(deproxy::restore) {
+                        resolved = Value::String(restored);
+                    }
+                    obj.insert("url".into(), resolved);
                 }
                 Value::Object(obj)
             }

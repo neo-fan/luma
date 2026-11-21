@@ -122,6 +122,11 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 - 导入链：拉取（10s 超时）→ `infra/textio.rs` 洗 UTF-8 → 解密 → 归一化 → 双快照
   → 站点路由（`.py` → Python，`.js` → QuickJS，`csp_*` / `.jar` → jvm 屏蔽，
   其余 CMS）。
+- 本机代理地址还原：TVBox 系订阅会把宿主进程内的转发地址写进 `api` / `lives`
+  （`127.0.0.1:<port>/p/0/proxy/<真实地址>`）。那个端口在 Luma 里不存在，导入时
+  剥掉外壳直连。带 `do=` / `siteKey=` 的是 spider 回调（含本应用自己的
+  `?do=py`），一律不动；还原目标只接受公网 http(s)；直播 `/c/…` 剥完内层仍是
+  本机转码服务，保持原样。
 - 契约单一真源：`contracts/luma.schema.json` → `src/types/luma.ts` → Rust 序列化，
   `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。
 
@@ -145,6 +150,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 | --- | --- |
 | 配置解密 | `domain/config/decrypt.rs` |
 | 方言归一化 + 多仓合并 + 站点路由 | `domain/config/normalize.rs` |
+| 本机代理地址还原（TVBox 系订阅） | `domain/config/deproxy.rs` |
 | 导入、双快照、策略派生 | `domain/config/{import,derive}.rs` |
 | CMS 采集 | `domain/spider/cms.rs` → `cms_parse.rs` |
 | py / js 源返回值归一 | `domain/spider/cms_parse.rs::normalize_spider_result`（js 由 qjs-runner 直接产出契约形状） |

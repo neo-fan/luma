@@ -269,6 +269,12 @@ pub async fn resolve_play(
         }
     }
 
+    // spider 可能把「指向本机代理」的地址原样吐回来（第三方 TVBox 壳的私有
+    // 写法，端口在 Luma 里没人监听）。先还原成真实地址，再做协议判断与分类。
+    if let Some(restored) = crate::config::restore_proxied_url(&effective_url) {
+        effective_url = restored;
+    }
+
     if let Some(prefix) = non_web_media_scheme(&effective_url) {
         return Err(AppError::new(
             code::PLAY_RESOLVE_FAIL,

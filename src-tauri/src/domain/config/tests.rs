@@ -892,3 +892,39 @@ async fn edit_rejects_address_already_used_by_another_config() {
     // 冲突检测必须在网络之前：离线跑到这里就说明没有发请求。
     assert_eq!(store.list().len(), 2);
 }
+
+#[test]
+fn import_restores_tvbox_local_proxy_addresses() {
+    let raw = json!({
+        "sites": [
+            { "key": "ikun", "name": "ikun", "type": 1,
+              "api": "http://127.0.0.1:10079/p/0/proxy/https://ikunzyapi.com/api.php/provide/vod/?" },
+            { "key": "direct", "name": "直连", "type": 1,
+              "api": "https://suoniapi.com/api.php/provide/vod/" },
+            { "key": "py", "name": "回调", "type": 3,
+              "api": "http://127.0.0.1:9978/proxy?do=py&ext=x" }
+        ],
+        "lives": [
+            { "name": "转码", "url": "http://127.0.0.1:10079/c/3600/null/http://127.0.0.1:35456/all.m3u" },
+            { "name": "套壳", "url": "http://127.0.0.1:10079/p/0/proxy/https://a.com/live.m3u" }
+        ]
+    });
+    let out = normalize_config(&raw, "https://example.com/api.json").expect("import ok");
+
+    // 私有壳的前缀不在 TVBox/FongMi 源码里，但内嵌地址是完整的，剥掉即可直连。
+    assert_eq!(
+        out["sites"][0]["api"], "https://ikunzyapi.com/api.php/provide/vod/?",
+        "本机代理壳应还原成真实 CMS 地址"
+    );
+    // 本来就直连的地址一个字节都不动。
+    assert_eq!(out["sites"][1]["api"], "https://suoniapi.com/api.php/provide/vod/");
+    // `do=py` 是 spider 回调（BaseLoader 按 do 分派），语义不是转发。
+    assert_eq!(out["sites"][2]["api"], "http://127.0.0.1:9978/proxy?do=py&ext=x");
+
+    // 直播转码路径剥完仍是本机 35456，还原没有意义，保持原样交给上层判失败。
+    assert_eq!(
+        out["lives"][0]["url"],
+        "http://127.0.0.1:10079/c/3600/null/http://127.0.0.1:35456/all.m3u"
+    );
+    assert_eq!(out["lives"][1]["url"], "https://a.com/live.m3u");
+}
