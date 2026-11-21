@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Luma — Windows 11 x64 上的配置兼容播放器</title>
+  <meta name="description" content="Luma 是 Windows 11 x64 上的 TVBox 兼容播放框架，不内置、不托管、不分发任何订阅地址或影视源。">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      --ink: #1c2437;
+      --muted: #66728c;
+      --line: #dfe5f2;
+      --surface: #ffffff;
+      --bg: #f6f8fd;
+      --brand: #536bd8;
+      --brand-soft: #e9eeff;
+      --brand-ink: #34427c;
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+    header {
+      background: rgba(255, 255, 255, 0.88);
+      border-bottom: 1px solid var(--line);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(10px);
+    }
+    .nav { display: flex; align-items: center; gap: 14px; min-height: 66px; }
+    .nav img { width: 32px; height: 32px; }
+    .nav strong { font-size: 18px; letter-spacing: 0.2px; }
+    .nav .spacer { flex: 1; }
+    .nav a { font-size: 14px; color: var(--muted); margin-left: 20px; }
+    .nav a.cta { color: #fff; background: var(--brand); padding: 8px 16px; border-radius: 999px; }
+    .nav a.cta:hover { text-decoration: none; background: #4459bd; }
+
+    .hero { padding: 72px 0 24px; }
+    .eyebrow {
+      display: inline-block; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+      color: var(--brand-ink); background: var(--brand-soft); padding: 5px 12px; border-radius: 999px;
+    }
+    h1 { font-size: clamp(30px, 5vw, 50px); line-height: 1.25; margin: 20px 0 16px; }
+    .lede { font-size: 18px; color: var(--muted); max-width: 760px; margin: 0 0 28px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+    .button {
+      display: inline-block; padding: 12px 22px; border-radius: 12px; font-size: 15px; font-weight: 600;
+      background: var(--brand); color: #fff; border: 1px solid var(--brand);
+    }
+    .button:hover { text-decoration: none; background: #4459bd; }
+    .button.secondary { background: #fff; color: var(--brand-ink); border-color: var(--line); }
+    .button.secondary:hover { background: #f0f3fb; }
+    .note { font-size: 13px; color: var(--muted); margin-top: 18px; }
+
+    section { padding: 40px 0; }
+    h2 { font-size: 25px; margin: 0 0 20px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .card {
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 22px; box-shadow: 0 6px 20px rgba(30, 42, 78, 0.04);
+    }
+    .card h3 { margin: 0 0 8px; font-size: 17px; }
+    .card p { margin: 0; color: var(--muted); font-size: 14px; }
+    figure { margin: 0; }
+    figure img { width: 100%; height: auto; display: block; border-radius: var(--radius); border: 1px solid var(--line); }
+    figcaption { color: var(--muted); font-size: 13px; margin-top: 10px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: var(--radius); overflow: hidden; font-size: 14px; }
+    th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+    th { background: var(--brand-soft); color: var(--brand-ink); font-weight: 600; }
+    tr:last-child td { border-bottom: 0; }
+    .ok { color: #1f7a5a; font-weight: 600; }
+    .no { color: #a94b4b; font-weight: 600; }
+    .links { display: flex; flex-wrap: wrap; gap: 10px 22px; font-size: 14px; }
+    footer { border-top: 1px solid var(--line); padding: 28px 0 48px; color: var(--muted); font-size: 13px; }
+    @media (max-width: 640px) {
+      .nav a:not(.cta) { display: none; }
+      .hero { padding-top: 44px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap nav">
+      <img src="assets/icon.svg" alt="Luma 图标">
+      <strong>Luma</strong>
+      <span class="spacer"></span>
+      <a href="https://github.com/neo-fan/luma">源码</a>
+      <a href="https://github.com/neo-fan/luma#readme">文档</a>
+      <a class="cta" href="https://github.com/neo-fan/luma/releases">下载</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap hero">
+      <span class="eyebrow">Windows 11 x64 · GPL-3.0</span>
+      <h1>配置兼容播放器，<br>但不替你决定看什么</h1>
+      <p class="lede">
+        Luma 是一个空壳播放框架，兼容 TVBox 系配置。它不内置、不托管、不分发任何订阅地址或影视源；
+        所有内容来自使用者自行导入的配置与脚本。
+      </p>
+      <div class="actions">
+        <a class="button" href="https://github.com/neo-fan/luma/releases">下载 NSIS 安装器</a>
+        <a class="button secondary" href="https://github.com/neo-fan/luma#readme">阅读 README</a>
+      </div>
+      <p class="note">不收集遥测 · 不上传配置 · 不内置账号体系</p>
+    </div>
+
+    <section class="wrap">
+      <figure>
+        <img src="assets/overview.svg" alt="Luma 界面示意图：原创绘制，不含真实内容">
+        <figcaption>界面示意图。全部元素为原创绘制的占位内容，不含真实片源、海报或第三方素材。</figcaption>
+      </figure>
+    </section>
+
+    <section class="wrap">
+      <h2>能做什么</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>订阅导入</h3>
+          <p>URL、本地文件或内联文本；兼容 JSONC、base64 图片种与 gzip 包装。多个订阅各自独立的收藏、历史与缓存。</p>
+        </div>
+        <div class="card">
+          <h3>源适配</h3>
+          <p>CMS 采集、Python base.spider、JavaScript（drpy2 / 经典 var spider）。jar 站点只识别并屏蔽，不执行。</p>
+        </div>
+        <div class="card">
+          <h3>聚合搜索</h3>
+          <p>一次关键词覆盖当前配置全部站点，按站流式上屏、可中断，失败按原因分组并支持单站重试。</p>
+        </div>
+        <div class="card">
+          <h3>本地反代播放</h3>
+          <p>重写 m3u8 相对分片，透传 UA / Referer / Cookie；失败按退避重连，换线换源由用户决定。</p>
+        </div>
+        <div class="card">
+          <h3>直播与 EPG</h3>
+          <p>解析 m3u / m3u8 并走本地代理，支持多线路切换、XMLTV 节目单与台标。</p>
+        </div>
+        <div class="card">
+          <h3>隐私与诊断</h3>
+          <p>SQLite 单库 WAL 存储；日志按天轮转并脱敏 URL，设置页可查看真实占用并分项清理。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <h2>架构</h2>
+      <figure>
+        <img src="assets/architecture.svg" alt="Luma 架构示意图">
+        <figcaption>前端只有一条 IPC 出口；配置与解析都在 Rust 主进程，sidecar 只执行第三方源脚本。</figcaption>
+      </figure>
+    </section>
+
+    <section class="wrap">
+      <h2>播放链路</h2>
+      <figure>
+        <img src="assets/playback.svg" alt="Luma 播放链路示意图">
+        <figcaption>先重连同一地址，再交给用户选择换线或换源；超时不算 dead，慢不等于死。</figcaption>
+      </figure>
+    </section>
+
+    <section class="wrap">
+      <h2>支持范围</h2>
+      <table>
+        <thead>
+          <tr><th>能力</th><th>状态</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>CMS 采集</td><td class="ok">支持</td><td>主流配置主体，直链 m3u8</td></tr>
+          <tr><td>Python（base.spider）</td><td class="ok">支持</td><td>直链型与 proxy?do=py 型</td></tr>
+          <tr><td>JavaScript（drpy2 / var spider）</td><td class="ok">支持</td><td>独立 qjs-runner 进程</td></tr>
+          <tr><td>parses[] 解析池</td><td class="ok">支持</td><td>type 0 / 1 / 4</td></tr>
+          <tr><td>直播（lives）</td><td class="ok">支持</td><td>m3u8 经本地代理重写后播放</td></tr>
+          <tr><td>jar（csp_* / 全局 spider jar）</td><td class="no">不支持</td><td>依赖 Android 运行时，导入即识别并屏蔽</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="wrap">
+      <h2>更多</h2>
+      <div class="links">
+        <a href="https://github.com/neo-fan/luma">GitHub 仓库</a>
+        <a href="https://github.com/neo-fan/luma/releases">Releases</a>
+        <a href="https://github.com/neo-fan/luma/blob/main/docs/ARCHITECTURE.md">架构文档</a>
+        <a href="https://github.com/neo-fan/luma/blob/main/docs/DEVELOPMENT.md">开发指南</a>
+        <a href="https://github.com/neo-fan/luma/blob/main/CONTRIBUTING.md">贡献指南</a>
+        <a href="https://github.com/neo-fan/luma/blob/main/SECURITY.md">安全说明</a>
+        <a href="https://github.com/neo-fan/luma/blob/main/CHANGELOG.md">更新日志</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      Luma · <a href="https://github.com/neo-fan/luma/blob/main/LICENSE">GPL-3.0-or-later</a> ·
+      本站所有示意图为原创 SVG，未使用任何第三方影视素材。
+    </div>
+  </footer>
+</body>
+</html>

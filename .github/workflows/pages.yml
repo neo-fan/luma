@@ -1,0 +1,52 @@
+name: pages
+
+# 静态落地页部署到 GitHub Pages。站点源码在 site/，配图复用 docs/assets/，
+# 图标复用 public/icon.svg；构建时统一拷进 site/assets/，避免重复维护二进制资源。
+# 仓库需将 Pages 的 Source 设为 GitHub Actions（Settings → Pages → Build and deployment）。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'docs/assets/**'
+      - 'public/icon.svg'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble static site
+        run: |
+          mkdir -p site/assets
+          cp -r docs/assets/. site/assets/
+          cp public/icon.svg site/assets/icon.svg
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
