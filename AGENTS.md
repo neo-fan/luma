@@ -20,7 +20,7 @@ Luma 是 Windows 11 x64 的配置兼容播放框架（空壳框架，兼容 TVBo
 | 交付物 | `src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe` |
 | 回归基线 | `python tools/check.py` 12/12；`pnpm test` 740（91 个文件）；`cargo test --lib` 280 passed / 2 ignored；`qjs-runner` cargo test 7 passed |
 | 窗口探针 | `node tools/run_probes.mjs --list`（需要 debug 窗口 + CDP 9222） |
-| 发布状态 | `LICENSE` 为 **GPL-3.0-or-later**；仓库已公开并推送至 `neo-fan/luma`，`main` 与 `origin/main` 同步；`v2.0.3` 已发布到 GitHub Release（含 NSIS 安装包与 `latest.json` 自动升级清单），本地 `target/` 不保留安装包，交付以 CI 产物为准；下一个版本用 `python tools/release_prep.py X.Y.Z` 收口 |
+| 发布状态 | `LICENSE` 为 **GPL-3.0-or-later**；仓库已公开并推送至 `neo-fan/luma`，`main` 与 `origin/main` 同步；`v2.0.4` 已发布到 GitHub Release（含 NSIS 安装包与 `latest.json` 自动升级清单），本地 `target/` 不保留安装包，交付以 CI 产物为准；下一个版本用 `python tools/release_prep.py X.Y.Z` 收口 |
 
 ## 技术栈
 
