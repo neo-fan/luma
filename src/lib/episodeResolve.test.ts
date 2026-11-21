@@ -5,7 +5,8 @@
  * 对应线路的 playerContent；一旦某个调用点（换线路 / 换源探测）绕开它，就会
  * 出现「11 条 play url is invalid，且真正可播的线路被跳过」。
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { isLineBad, resetLineHealth } from "./lineHealth";
 
 const spiderInvoke = vi.fn();
 const parseResolve = vi.fn();
@@ -20,9 +21,33 @@ vi.mock("./invoke", () => ({
 
 const { resolveEpisodeTarget } = await import("./episodeResolve");
 
+/** 最小 localStorage 桩：坏线路标记的写入必须能被断言到。 */
+function installStorage(): void {
+  const map = new Map<string, string>();
+  const stub = {
+    getItem: (key: string) => map.get(key) ?? null,
+    setItem: (key: string, value: string) => void map.set(key, value),
+    removeItem: (key: string) => void map.delete(key),
+    clear: () => map.clear(),
+    key: (index: number) => Array.from(map.keys())[index] ?? null,
+    get length() {
+      return map.size;
+    },
+  };
+  (globalThis as unknown as { localStorage: Storage }).localStorage =
+    stub as unknown as Storage;
+}
+
+beforeEach(() => {
+  installStorage();
+  resetLineHealth();
+});
+
 afterEach(() => {
   spiderInvoke.mockReset();
   parseResolve.mockReset();
+  resetLineHealth();
+  delete (globalThis as unknown as { localStorage?: Storage }).localStorage;
 });
 
 describe("resolveEpisodeTarget", () => {
@@ -75,7 +100,24 @@ describe("resolveEpisodeTarget", () => {
   it("keeps the original url when the spider throws", async () => {
     spiderInvoke.mockRejectedValue(new Error("method not implemented"));
     const target = await resolveEpisodeTarget("cms1", "线路1", "https://cdn.example/a.m3u8");
-    expect(target).toEqual({ url: "https://cdn.example/a.m3u8" });
+    // 直链仍然交给 resolve_play 兜底；异常本身只记为「本轮无定论」。
+    expect(target.url).toBe("https://cdn.example/a.m3u8");
+    expect(target.unresolvable).toBe(false);
+    expect(target.transient).toBe(true);
+  });
+
+  it("treats a thrown playerContent on a private token as transient, not a rejection", async () => {
+    // 实测同一个地址：第一次 playerContent 抛异常 → 旧实现判「源明确拒绝」并写
+    // 30 分钟坏标记，之后换集 / 换源全部 fail-fast 报「无法解析播放地址」，
+    // 点刷新（忽略坏标记）又好了。异常只是「这次没答好」。
+    spiderInvoke.mockRejectedValue(new Error("dialect unknown: Expecting value"));
+    const target = await resolveEpisodeTarget("py_bubuzhuiju", "BBA", "BBA_0_1");
+    expect(target.unresolvable).toBe(true);
+    expect(target.transient).toBe(true);
+    expect(target.rejected).toBeFalsy();
+    expect(target.timedOut).toBeFalsy();
+    // 关键回归：不许把这条线路记成坏线路。
+    expect(isLineBad("py_bubuzhuiju", "BBA")).toBe(false);
   });
 
   it("keeps the original url when playerContent returns nothing usable", async () => {

@@ -37,7 +37,13 @@ export async function resolveEpisodePlay(
   }
   const target = await resolveEpisodeTarget(siteKey, playFrom, episodeUrl);
   if (target.unresolvable) {
-    throw new Error("线路不可解析");
+    // 瞬时故障（源这次没答好）与「源明确说这条线路不能播」必须分开：前者
+    // 重试就能过，别让用户以为线路废了。
+    throw new Error(
+      target.transient
+        ? "源暂时没有解析出这条线路（临时故障），请重试"
+        : "线路不可解析",
+    );
   }
   const play = await api.resolvePlay({
     siteKey,

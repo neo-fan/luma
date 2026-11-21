@@ -46,6 +46,15 @@ export interface EpisodeTarget {
    * 正在连接」。慢 ≠ 坏，只有源**明确回了一个不能用**的结果才算坏。
    */
   timedOut?: boolean;
+  /**
+   * 这一次调用失败了，但源**没有给出「不能播」的确定结论**。
+   *
+   * 成因是连接重置、脚本抛错、上游 5xx、响应不是 JSON 这一类瞬时故障。与
+   * `rejected` 严格区分：`rejected` 是「源明确说不」，`transient` 是「源这次
+   * 没答好」。后者不许写坏线路标记（否则一次偶发失败会让整条线路在 30 分钟
+   * 内被换集/换源路径 fail-fast），文案也必须留「重试」而不是「换线路」。
+   */
+  transient?: boolean;
 }
 
 interface PlayerContentResult {
@@ -100,7 +109,9 @@ export async function resolveEpisodeTarget(
   // 的毛病不会自己好，等一次超时只会让用户以为卡住了。
   // 用户主动点播（ignoreBadLineMark）例外：给重试机会，成功即解封。
   if (isLineBad(siteKey, playFrom) && !options.ignoreBadLineMark) {
-    return { url: playUrl, unresolvable: !HTTP_URL.test(playUrl) };
+    // 坏标记现在只由「源明确拒绝」写入（见 markLineBad 的约定），所以这里可以
+    // 理直气壮地告诉用户「源站没解析这条线路」，并允许他稍后重试。
+    return { url: playUrl, unresolvable: !HTTP_URL.test(playUrl), rejected: true };
   }
   let played: PlayerContentResult | null = null;
   // 慢 ≠ 坏：耗时接近超时的失败是「源还没答完」，不能当成「源说不能播」。
@@ -117,21 +128,21 @@ export async function resolveEpisodeTarget(
       timeoutMs: playerContentTimeoutMs,
     })) as PlayerContentResult | null;
   } catch {
-    // CMS / 未实现 playerContent 的源：沿用原始地址。
-    // 但若原始地址本身不是 URL（私有 token / 自定义 scheme），源侧已经用超时
-    // 或异常表明它解不开——直接判不可播并标记线路，让上层 fail-fast 抛出明确
-    // 错误，而不是把死 token 丢给 resolvePlay 再去嗅探一个永远 404 的地址。
+    // 调用失败只说明「这一次没答好」——连接重置、脚本抛错、上游 5xx、响应不是
+    // JSON 都属于这一类，**不等于源明确说这条线路不能播**。早先这里把「快失败」
+    // 一律判成 `rejected` 并写 30 分钟坏标记，于是源侧一次偶发异常就让整条线路
+    // 在换集 / 换源路径上被 fail-fast：用户看到「无法解析播放地址」，点刷新
+    // 又好了（刷新走 `ignoreBadLineMark` 的冷路径）。现在统一记为 transient：
+    // 不写坏标记、不谎称「源拒绝」，文案留给「重试」。
     const elapsed = Date.now() - startedAt;
     const slow = elapsed >= playerContentTimeoutMs * 0.7;
-    if (!HTTP_URL.test(playUrl) && !slow) {
-      markLineBad(siteKey, playFrom);
-      return { url: playUrl, unresolvable: true, rejected: true };
-    }
-    // 慢失败：不记坏线路（冷启动 18s / 忙时更久的源每次都会被误封），
-    // 让上层给「可重试」的提示而不是「网盘 token」。
-    return slow
-      ? { url: playUrl, unresolvable: !HTTP_URL.test(playUrl), timedOut: true }
-      : { url: playUrl, ...(HTTP_URL.test(playUrl) ? {} : { rejected: true }) };
+    return {
+      url: playUrl,
+      unresolvable: !HTTP_URL.test(playUrl),
+      transient: true,
+      // 慢失败同时是超时：上层据 timedOut 给「源较慢」的文案（仍不自动换源）。
+      ...(slow ? { timedOut: true } : {}),
+    };
   }
 
   const candidate = String(played?.playUrl || played?.url || "");

@@ -26,6 +26,15 @@ interface LineEntry {
   good?: number;
   /** 最近一次「解不解」的时间戳。 */
   bad?: number;
+  /**
+   * 坏标记的成因。**只有 `rejected`（源明确拒绝：token 原样回吐 / 空串）才可信。**
+   *
+   * 早先只要 `playerContent` 抛异常（连接重置、脚本报错、上游 5xx、非 JSON）
+   * 就被记成坏线路，于是源侧一次偶发失败会让这条线路在换集/换源路径上被
+   * fail-fast 整整 30 分钟——用户看到「无法解析播放地址」，点刷新（走忽略
+   * 坏标记的冷路径）又好了。没有成因的旧记录一律不再采信。
+   */
+  badReason?: "rejected";
 }
 
 type LineData = Record<string, LineEntry>;
@@ -87,22 +96,30 @@ export function markLineGood(siteKey: string, line: string, now = Date.now()): v
   write(data, store);
 }
 
-/** 这条线路刚被判定解不开（token 原样回吐 / 解码超时）。 */
+/**
+ * 这条线路刚被**明确判定**解不开（token 原样回吐 / 返回空串）。
+ *
+ * 只允许「源给出了确定结论」的调用点写它。调用抛异常（超时、连接重置、脚本
+ * 报错）不构成拒绝——那种情况不写标记，交给下一次重试。
+ */
 export function markLineBad(siteKey: string, line: string, now = Date.now()): void {
   if (!siteKey || !line) {
     return;
   }
   const store = storage();
   const data = read(store);
-  data[key(siteKey, line)] = { ...data[key(siteKey, line)], bad: now };
+  data[key(siteKey, line)] = {
+    ...data[key(siteKey, line)],
+    bad: now,
+    badReason: "rejected",
+  };
   write(data, store);
 }
 
 /**
- * 是否处于「坏」状态：坏标记在有效期内，且比上一次成功更新。
+ * 是否处于「坏」状态：坏标记在有效期内、成因是明确拒绝，且比上一次成功更新。
  *
- * 成功一次就重新信任该线路——播放器最怕的是「明明能播却因为一次超时被永久
- * 跳过」。
+ * 成功一次就重新信任该线路——播放器最怕的是「明明能播却因为一次失败被永久跳过」。
  */
 export function isLineBad(
   siteKey: string,
@@ -111,7 +128,7 @@ export function isLineBad(
   ttlMs = BAD_TTL_MS,
 ): boolean {
   const entry = read()[key(siteKey, line)];
-  if (!entry?.bad) {
+  if (!entry?.bad || entry.badReason !== "rejected") {
     return false;
   }
   if (entry.good && entry.good >= entry.bad) {

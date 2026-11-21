@@ -17,6 +17,7 @@ import {
   markLineGood,
   resetLineHealth,
 } from "./lineHealth";
+import { LINE_HEALTH_KEY } from "./storageKeys";
 
 /** 最小 localStorage 桩：lineHealth 每次调用都读全局，桩生效。 */
 function installStorage(): void {
@@ -49,6 +50,18 @@ describe("lineHealth", () => {
     markLineBad("py_bubuzhuiju", "zijianm3u8", now);
     expect(isLineBad("py_bubuzhuiju", "zijianm3u8", now + 1000)).toBe(true);
     expect(isLineBad("py_bubuzhuiju", "zijianm3u8", now + BAD_TTL_MS + 1)).toBe(false);
+  });
+
+  it("不采信没有成因的旧坏标记（旧版本把调用异常也记成坏线路）", () => {
+    const now = 1_000_000;
+    // 旧格式只有 `bad` 时间戳。那些记录来自「playerContent 抛异常」的误判，
+    // 升级后必须一次性失效，否则用户还要再被骗 30 分钟。
+    localStorage.setItem(
+      LINE_HEALTH_KEY,
+      JSON.stringify({ "py_bubuzhuiju\u0001BBA": { bad: now } }),
+    );
+    expect(isLineBad("py_bubuzhuiju", "BBA", now + 1000)).toBe(false);
+    expect(lineRank("py_bubuzhuiju", "BBA", now + 1000)).toBe(LINE_RANK_UNKNOWN);
   });
 
   it("成功一次就恢复信任（不会被一次超时永久判死）", () => {
