@@ -32,6 +32,7 @@ import { resolutionBadge, resolutionDetail } from "../lib/resolution";
 import type { VideoMeta } from "../lib/resolution";
 import { api } from "../lib/invoke";
 import type { LiveChannel, LiveSource } from "../types/luma";
+import { usePlayerRevive } from "../hooks/usePlayerRevive";
 
 /**
  * 一轮内每频道最多自动换几条线路（见 `switchOrFailover` 的预算闸）。
@@ -329,44 +330,12 @@ export default function LivePage({
    * 一个都没有（实测）。这里在回到直播页后轮询确认：实例还活着就不动；被摘掉
    * 就重新解析同一条流，用户看到的是原地恢复，不是空白页。
    */
-  const lastReviveAt = useRef(0);
-  useEffect(() => {
-    if (!liveActive || !resolved) {
-      return;
-    }
-    if (Date.now() - lastReviveAt.current < 4000) {
-      return;
-    }
-    let stopped = false;
-    let tries = 0;
-    let timer = 0;
-    const check = () => {
-      if (stopped) {
-        return;
-      }
-      const video = containerRef.current?.querySelector("video") ?? null;
-      if (video && (video.getAttribute("src") || video.currentSrc)) {
-        stopped = true;
-        return;
-      }
-      // video 还在但 src 被清空 = 被守卫硬停；前几次没有 video 只是实例还没建，
-      // 多给几轮，别把正常冷启误判成「被杀」而反复重解析。
-      const killed = Boolean(video) || tries >= 3;
-      if (killed) {
-        stopped = true;
-        lastReviveAt.current = Date.now();
-        reloadRef.current?.();
-        return;
-      }
-      tries += 1;
-      timer = window.setTimeout(check, 500);
-    };
-    timer = window.setTimeout(check, 500);
-    return () => {
-      stopped = true;
-      window.clearTimeout(timer);
-    };
-  }, [liveActive, resolved, reload]);
+  usePlayerRevive({
+    active: liveActive,
+    hasResolved: Boolean(resolved),
+    containerRef,
+    revive: () => reloadRef.current?.(),
+  });
 
   /** 本频道这一轮已经试过的线路：避免「A→B→A」来回切。 */
   const triedRef = useRef<Set<number>>(new Set());
