@@ -31,13 +31,26 @@ corepack pnpm build:app      # stable 安装包：嵌前端 + 打包 NSIS（发�
 - 编译前先停掉 `tauri dev`，否则 cargo 会等 target 目录锁。
 - 图标用官方 `corepack pnpm tauri icon <svg>` 重生成，不要手搓 ICO/PNG/BMP。
 
-## 3. 提交前必须跑
+## 3. 提交前跑什么（按影响面）
+
+日常只跑受影响的测试，全量留到跨模块、改契约或合并到主线前：
+
+```powershell
+python tools/affected.py          # 先看工作区改动该跑什么（只打印）
+python tools/affected.py --run    # 再执行
+```
+
+映射规则：改一个 Rust 文件 → 该模块的 `cargo test --lib <module>`；改一个前端文件 → 同目录测试 + 引用它的测试 + `tsc`；改一支探针 → `node --check` + 那一支；纯文档 → 不跑。
+
+改动跨多个模块、动了 `Cargo.toml` 依赖、或改了契约字段时，才跑全量门禁：
 
 ```powershell
 python tools/check.py        # 11 项离线门禁：契约 / 版本一致性 / 发布收口 / py 兼容 / py 框架 / 适配层健壮性 / qjs 引擎 / py 语法 / 前端类型 / 前端单测 / Rust 单测
 ```
 
 `--quick` 跳过 Rust 单测；`--full` 追加 qjs-runner 单测与 `pnpm build`；`--ci` 只跑干净机器能跑的 6 项便携子集（也是 `checks.yml` 的内容）；`--artifacts` 把运行时候检加回来（发布时查产物，不是回归门禁）。
+
+`cargo test` / `cargo check` / `check.py` 要独占 `target`，跑之前先停 dev（`Stop-Process -Name Luma_dev`）。
 
 改动涉及 UI / 播放 / 配置链路时，另外跑窗口探针（需要 debug 窗口 + CDP 9222）：
 
@@ -79,7 +92,7 @@ schema → `src/types/luma.ts` → Rust 序列化（`src-tauri/src/domain/spider
 
 - 提交信息用 `type(scope): 摘要`（`feat` / `fix` / `refactor` / `docs` / `test` / `chore` / `ci`），正文写**为什么**改，而不是复述 diff。
 - 一个 PR 只做一件事；顺手修的东西单独提交。
-- PR 描述里写：改动文件清单、跑过的命令与结果、未解决的问题。**没跑门禁的 PR 会被打回**，这比写得难看严重得多。
+- PR 描述里写：改动文件清单、跑过的命令与结果、未解决的问题。**没跑对应层面门禁的 PR 会被打回**（日常 `affected.py --run`；跨模块 / 改契约 / 合并前 `check.py`），这比写得难看严重得多。
 - 不要提交：`dist/`、`src-tauri/target/`、`sidecars/python-embed/`、`node_modules/`、真实配置样本、日志。`.gitignore` 已经覆盖，若 `git status` 冒出它们说明忽略规则被改坏。
 
 ## 6. 明确不接受的改动

@@ -9,7 +9,7 @@
 | 本地跑起来 / 排查 UI / 看日志 | `docs/DEVELOPMENT.md` |
 | 理解进程模型、四类源、数据流 | `docs/ARCHITECTURE.md`（含 ADR） |
 | 升版本 / 打包 / 验收 | `docs/RELEASING.md` |
-| 改动后判断有没有破坏基线 | `python tools/check.py` |
+| 改动后判断有没有破坏基线 | 日常 `python tools/affected.py --run`；跨模块 / 改契约 / 合并前 `python tools/check.py` |
 | 找某类文件放哪、是否入库 | `docs/project-layout.md` |
 | 查历史决策与逐轮记录 | git history、`CHANGELOG.md` |
 
@@ -17,7 +17,8 @@
 
 | 层 | 命令 | 依赖 | 用途 |
 |---|---|---|---|
-| 离线（必过） | `python tools/check.py` | 无窗口、无外网 | 每次改动的**最低门槛** |
+| 定向单测（日常） | `python tools/affected.py --run` | 无窗口、无外网 | 每次改动的**默认姿势**，按影响面挑 |
+| 离线全量 | `python tools/check.py` | 无窗口、无外网 | 跨模块 / 改契约 / 合并到主线前 |
 | 窗口探针 | `node tools/run_probes.mjs` | debug 窗口 + CDP 9222 + Vite 1420 | 改 UI / 播放 / 配置链路后 |
 | 阶段断言 | `python tests/acceptance/p0.py` ~ `p3.py` | stub + 运行中的应用 | 改 sidecar / 打包后 |
 | 真实配置 | 导入 → 搜索 → 详情 → 播放 | 外网 | 源兼容结论（外网抖动不算回归） |
@@ -85,7 +86,7 @@
 
 - **换行**：`.gitattributes` 已定 `* text=auto eol=lf`，本地 `core.autocrlf=false` / `core.safecrlf=true`。两类文件**故意保留原字节**、禁止规范化：`tests/fixtures/media/**`（二进制）、`sidecars/qjs-assets/**`（SHA256 必须与 manifest 一致）。
 - **不要用 `-c core.safecrlf=false` 绕过提交失败**：报 `CRLF would be replaced by LF` 说明有脚本用 `open(...,'w')` 未指定 `newline` 在 Windows 写出了 CRLF。正确做法是把工作区文件转回 LF，再 `git add --renormalize .`。写文件统一用 `Path.write_text(..., newline="\n")`。
-- **提交前**：`python tools/check.py` 全绿；`git status --short` 应干净（发版后不留散落改动）。每轮自己写 commit、**不 push**；版本发布打本地 annotated tag `vX.Y.Z`。
+- **提交前**：`python tools/affected.py --run` 绿；跨模块 / 改契约 / 合并到主线前再跑 `python tools/check.py` 全绿。`git status --short` 应干净（发版后不留散落改动）。每轮自己写 commit、**不 push**；版本发布打本地 annotated tag `vX.Y.Z`。
 - **工作区整洁**：`release/`、`dist/`、`target/`、`*.log`、`__pycache__`、`*.tsbuildinfo` 均由 `.gitignore` 覆盖，无需手工清理；若 `git status` 冒出这些，说明忽略规则被改坏。
 - **产物可追溯**：release 包必须从已提交的工作区构建；若有未提交改动被编进 exe/前端，需在 `CHANGELOG.md` 显式记录，否则产物与 tag 不一致。
 

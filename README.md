@@ -103,7 +103,8 @@ corepack pnpm build:app              # release：嵌入前端并产出 NSIS 安�
 测试：
 
 ```powershell
-python tools/check.py                  # 离线一键回归（推荐）
+python tools/affected.py --run         # 日常：按改动半径只跑受影响的
+python tools/check.py                  # 全量离线回归：跨模块 / 改契约 / 发版前
 corepack pnpm test                     # 前端单测
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 node tools/run_probes.mjs --list       # 窗口探针清单（需 debug 窗口 + CDP 9222）
