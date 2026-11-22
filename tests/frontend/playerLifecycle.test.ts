@@ -36,7 +36,10 @@ describe("player lifecycle contract", () => {
     // recreated from the *previous* source's resolved value.
     // `vodName` 曾被列进依赖却从未被 effect 使用：一旦有人让原地换源同步片名，
     // 这条死依赖就会把换源变成整实例销毁 + 黑屏数秒，已移除。
-    expect(engine).toMatch(/\}, \[resolved, resolving, siteKey\]\);/);
+    // `historyReady` 必须参与早退与依赖：续播点由异步历史查询写入一次性 ref，
+    // 若实例先创建并消费了空值，历史晚到后写入就无人再读（重开从头播）。
+    expect(engine).toContain("!historyReady ||");
+    expect(engine).toMatch(/\}, \[resolved, resolving, historyReady, siteKey\]\);/);
     expect(engine).not.toMatch(/\[resolved, resolving, siteKey, vodName\]/);
   });
 

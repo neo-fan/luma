@@ -33,6 +33,7 @@ import type { Site, VodInfo } from "../types/luma";
 import { usePlayResolution } from "../hooks/usePlayResolution";
 import { usePlaybackIndicator } from "../hooks/usePlaybackIndicator";
 import { usePlaybackHistory } from "../hooks/usePlaybackHistory";
+import { usePlayerRevive } from "../hooks/usePlayerRevive";
 import { usePlayerEngine, BUILTIN_KINDS } from "../hooks/usePlayerEngine";
 import type {
   EpisodeNavControl,
@@ -243,45 +244,15 @@ export default function PlayerPage({
    * 摘掉 src、要么连元素都没了，切回来就是黑屏。这里轮询确认情况：还活着就
    * 不动；被清空就带上进度快照重新解析——用户看到的是「接着播」。
    */
-  const lastReviveAt = useRef(0);
-  useEffect(() => {
-    if (!active || !resolved) {
-      return;
-    }
-    if (Date.now() - lastReviveAt.current < 4000) {
-      return;
-    }
-    let stopped = false;
-    let tries = 0;
-    let timer = 0;
-    const check = () => {
-      if (stopped) {
-        return;
-      }
-      const stageEl = containerRef.current;
-      const video = stageEl?.querySelector("video") ?? null;
-      if (video && (video.getAttribute("src") || video.currentSrc)) {
-        stopped = true;
-        return;
-      }
-      const killed = Boolean(video) || tries >= 3;
-      if (killed) {
-        stopped = true;
-        lastReviveAt.current = Date.now();
-        resumeMsRef.current =
-          lastMediaRef.current.positionMs || resumeMsRef.current;
-        reload();
-        return;
-      }
-      tries += 1;
-      timer = window.setTimeout(check, 500);
-    };
-    timer = window.setTimeout(check, 500);
-    return () => {
-      stopped = true;
-      window.clearTimeout(timer);
-    };
-  }, [active, resolved, reload]);
+  usePlayerRevive({
+    active,
+    hasResolved: Boolean(resolved),
+    containerRef,
+    revive: () => {
+      resumeMsRef.current = lastMediaRef.current.positionMs || resumeMsRef.current;
+      reload();
+    },
+  });
 
   /**
    * 首帧前海报：影片封面过 /image 代理（防盗链 / 内联 header），供播放内核
@@ -376,6 +347,7 @@ export default function PlayerPage({
 
   // 历史数据层（续播/倍速/片头片尾记忆 + 5 秒节流写回）。
   const {
+    historyReady,
     readRememberedRate,
     readRememberedSkip,
     rememberedRateRef,
@@ -521,6 +493,7 @@ export default function PlayerPage({
     switching,
     reloadRef,
     resumeMsRef,
+    historyReady,
     rememberedRate: readRememberedRate,
     onRememberedRate: (rate) => {
       rememberedRateRef.current = rate;

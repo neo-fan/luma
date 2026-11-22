@@ -53,6 +53,7 @@ import {
 import { createActor } from "xstate";
 import { vodSessionMachine } from "../lib/vodSessionMachine";
 import { liveSessionMachine } from "../lib/liveSessionMachine";
+import { RESUME_MIN_POSITION_MS, SWITCH_SOURCE_CAP_MS } from "../lib/constants";
 import type { VideoMeta } from "../lib/resolution";
 import type { PosterElement } from "./playerPosterHold";
 import type { PlayResolved } from "../types/luma";
@@ -173,6 +174,14 @@ export interface UsePlayerEngineArgs {
    */
   resumeMsRef?: MutableRefObject<number>;
   /**
+   * 历史续播查询是否完成。false 时不创建播放器实例。
+   *
+   * 续播点由历史 hook 写进 resumeMsRef，是一次性消费；若实例先创建并消费了
+   * 空值，历史晚到后写入就无人再读（重开从头播）。把它作为创建前置条件，
+   * 写入必定早于读取，就不需要任何「晚到补跳」分支。
+   */
+  historyReady?: boolean;
+  /**
    * 这部剧记忆的倍速（来自 `HistoryItem.rate`，0/缺省视为没设过 → 1.0）。
    *
    * 用**取值函数**而不是数值：它随 history 查询异步落地，绝不能进内核 effect
@@ -280,6 +289,7 @@ export function usePlayerEngine({
   canNext,
   reloadRef,
   resumeMsRef,
+  historyReady = true,
   rememberedRate,
   onRememberedRate,
   rememberedSkip,
@@ -426,6 +436,7 @@ export function usePlayerEngine({
       !container ||
       !resolved ||
       resolving ||
+      !historyReady ||
       !BUILTIN_KINDS.includes(resolved.kind)
     ) {
       return;
@@ -882,7 +893,7 @@ export function usePlayerEngine({
       resumeMsRef.current = 0;
     }
     const applyResume = () => {
-      if (siteKey === "live" || resumeMs <= 3000 || !Number.isFinite(video.duration)) {
+      if (siteKey === "live" || resumeMs <= RESUME_MIN_POSITION_MS || !Number.isFinite(video.duration)) {
         return;
       }
       if (resumeMs >= (video.duration - 5) * 1000) {
@@ -1307,7 +1318,7 @@ export function usePlayerEngine({
         // 封顶必须无条件收口（finish(false)）：上一轮切换被新代次顶掉后，
         // 若连 cap 也被守卫吞了，这条 promise 永挂、finally 永远不跑，
         // 「切换中」只能等页面级兜底。
-        const cap = window.setTimeout(() => finish(false), 15000);
+        const cap = window.setTimeout(() => finish(false), SWITCH_SOURCE_CAP_MS);
         // 登记给「新一轮切换 / effect cleanup」兜底：正常收口时 disposeWaiter
         // 已跑过一次，再跑是幂等的 removeEventListener/clearTimeout no-op。
         trackSwitchDisposer(disposeWaiter);
@@ -1386,7 +1397,7 @@ export function usePlayerEngine({
     // `vodName` 曾在依赖里却从未被 effect 用到：一旦有人让原地换源同步片名
     // （很自然的改动），这条死依赖就会把换源变成整实例销毁 + 黑屏数秒。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, resolving, siteKey]);
+  }, [resolved, resolving, historyReady, siteKey]);
 
   // 句柄必须记忆化：调用方（PlayerPage）把它放进三个 effect 的依赖里。若每次
   // 渲染返回新对象，慢加载期间 2s 一次的 setSlowNotice 就会让 interval 重建、

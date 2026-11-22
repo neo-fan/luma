@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
 import { ledgerSuccess } from "../lib/failoverLedger";
+import { HISTORY_WRITE_THROTTLE_MS, RESUME_MIN_POSITION_MS } from "../lib/constants";
 import { resolutionFromVideo } from "../lib/resolution";
 import { episodeNumber } from "../lib/sources";
 import { api } from "../lib/invoke";
@@ -62,6 +63,15 @@ export interface UsePlaybackHistoryOptions {
 }
 
 export interface PlaybackHistory {
+  /**
+   * 历史续播查询是否完成。
+   *
+   * 引擎必须等它为真才创建实例：续播点靠 resumeMsRef 一次性传递，而历史查询
+   * 是异步 IPC。若 player 先创建并消费了 ref（拿到 0），历史晚到后再写就没人
+   * 读——这正是「重开从头播」的根因。把历史变成 player 创建的前置条件后，
+   * 写入必定早于读取，不再需要任何「晚到补跳」分支。
+   */
+  historyReady: boolean;
   /** 这部剧记忆的倍速（0 = 没设过，播放侧按 1.0 起播）。 */
   readRememberedRate: () => number;
   rememberedRateRef: MutableRefObject<number>;
@@ -88,7 +98,8 @@ export interface PlaybackHistory {
  * ② 播放进度按 5 秒节流写回（播放 / 暂停立即写、卸载用快照补一次）。
  * 写回需要的集名 / 线路名 / 封面元数据由调用方以 ref 提供（随异步数据更新，
  * 绝不进 effect 依赖重建监听）。刷新路径可能已写入更准的进度（resumeMsRef
- * 非 0），历史晚到时不得覆盖。
+ * 非 0），历史不得覆盖；同时历史是播放器创建的前置条件（见 historyReady），
+ * 续播点写入必定早于内核读取。
  */
 export function usePlaybackHistory({
   siteKey,
@@ -115,6 +126,7 @@ export function usePlaybackHistory({
    * 由 history 查询异步填、由内核的倍速变更回调更新。用 ref 不用 state：
    * 它不该触发整页重渲染，更不能进播放内核 effect 的依赖（会重建实例）。
    */
+  const [historyReady, setHistoryReady] = useState(false);
   const rememberedRateRef = useRef(0);
   const readRememberedRate = useCallback(() => rememberedRateRef.current, []);
   /**
@@ -134,6 +146,7 @@ export function usePlaybackHistory({
   }, []);
   useEffect(() => {
     let alive = true;
+    setHistoryReady(false);
     void (async () => {
       try {
         const history = await api.historyList();
@@ -164,24 +177,24 @@ export function usePlaybackHistory({
         if (
           !alive ||
           !hit?.positionMs ||
-          hit.positionMs <= 3000 ||
+          hit.positionMs <= RESUME_MIN_POSITION_MS ||
           !sameEpisode
         ) {
           return;
         }
-        // 刷新路径已写入更准确的当前进度，别被异步到达的历史覆盖。
+        // 刷新路径已写入更准确的当前进度，别被历史覆盖。
         if (resumeMsRef.current !== 0) {
           return;
         }
-        const video = videoRef.current;
-        if (video && video.readyState >= 1 && video.currentTime < 1) {
-          // 历史比 loadedmetadata 晚到：内核已消费过 ref，这里直接补跳。
-          video.currentTime = hit.positionMs / 1000;
-        } else {
-          resumeMsRef.current = hit.positionMs;
-        }
+        // historyReady 为 false 期间内核不会创建实例，所以这里写入的续播点
+        // 必定早于它的唯一一次读取——不存在「晚到」需要补跳的情形。
+        resumeMsRef.current = hit.positionMs;
       } catch {
         // 历史读不到就从头播，不打断播放。
+      } finally {
+        if (alive) {
+          setHistoryReady(true);
+        }
       }
     })();
     return () => {
@@ -212,7 +225,7 @@ export function usePlaybackHistory({
       snapshot?: { positionMs: number; durationMs?: number },
     ) => {
       const now = Date.now();
-      if (!force && now - lastWrite < 5000) {
+      if (!force && now - lastWrite < HISTORY_WRITE_THROTTLE_MS) {
         return;
       }
       lastWrite = now;
@@ -296,6 +309,7 @@ export function usePlaybackHistory({
   }, [resolved, activeSiteKey, activeVodId, activeVodName, playUrl, ledgerKey, attachSignal]);
 
   return {
+    historyReady,
     readRememberedRate,
     readRememberedSkip,
     rememberedRateRef,
