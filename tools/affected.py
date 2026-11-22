@@ -77,6 +77,15 @@ def frontend_importers(source: str) -> list[str]:
     return hits
 
 
+def lock_tests_for(source: str) -> list[str]:
+    """`tests/frontend/` 里「读这个文件的源码文本」的锁测试。
+
+    这一层不能靠 import 关系找：那些测试是 `read("src/pages/HomePage.tsx")` 的
+    字符串断言，改的是被读的文件、被测文件本身没有任何 import。
+    """
+    return git("grep", "-l", "-F", source, "--", "tests/frontend")
+
+
 def diff_touches_more_than_version(path: str) -> bool:
     """`Cargo.toml` / `package.json` 的改动是「只动 version」还是「动了依赖」。"""
     out = subprocess.run(
@@ -148,8 +157,27 @@ def plan(files: list[str]) -> tuple[list[list[str]], list[str]]:
             if path.endswith(".ts"):
                 for hit in frontend_importers(path):
                     vitest.add(hit)
+            # 源码锁：改的是被 read() 的文件时，锁测试本身没有 import 关系
+            for hit in lock_tests_for(path):
+                vitest.add(hit)
+        elif path.startswith("src/") and path.endswith(".css"):
+            # 样式改动只影响「读 CSS 做断言」的锁测试，不需要 tsc。
+            # 两类都要收：一类直接读这个文件名，另一类走 readCss() 聚合读——
+            # 后者不出现文件名，只按文件名反查会漏掉大半（designScale /
+            # styleModules / noticeToast 都属这类）。
+            for hit in lock_tests_for(path) + git(
+                "grep", "-l", "-F", "readCss", "--", "tests/frontend"
+            ):
+                if hit.endswith((".test.ts", ".test.tsx")):
+                    vitest.add(hit)
+            if not vitest:
+                notes.append(f"样式改动没有找到对应锁测试，建议跑 pnpm test：{path}")
         elif path.startswith("tools/probes/") and path.endswith(".mjs"):
-            probes.add(path)
+            if "/lib/" in path:
+                # 共享 CDP 客户端：全部探针都依赖它，单独跑没有意义。
+                notes.append(f"改了探针共享库，建议跑整套：node tools/run_probes.mjs（{path}）")
+            else:
+                probes.add(path)
         elif path.startswith("tools/") and path.endswith(".py"):
             commands.append([PY, "-m", "py_compile", path])
         elif path.endswith((".md", ".txt")) or path.startswith(".github/"):
@@ -214,7 +242,10 @@ def main() -> int:
         print()
 
     if not commands:
-        print("这些改动不需要本地回归（文档 / CI 配置 / 注释）；上面标[注意]的请自行判断。")
+        message = "这些改动不需要本地回归（文档 / CI 配置 / 注释）。"
+        if notes:
+            message = message[:-1] + "；上面标 [注意] 的需人工判断。"
+        print(message)
         return 0
 
     print("计划执行：")
