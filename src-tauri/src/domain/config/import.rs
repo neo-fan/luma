@@ -70,15 +70,24 @@ async fn fetch_fastest(bare: &str) -> Result<String, AppError> {
 /// - 其它 → 直连。
 async fn fetch_config_text(url: &str) -> Result<String, AppError> {
     if let Some((prefix, _)) = ghproxy::split_proxy(url) {
-        if !ghproxy::is_builtin_prefix(prefix) {
+        if !ghproxy::is_builtin_prefix(&prefix) {
             return fetch_text(url).await;
         }
     }
-    let bare = ghproxy::strip_proxy(url);
-    if ghproxy::is_github_url(bare) {
-        return fetch_fastest(bare).await;
+    // 用户选了 jsDelivr 时先按它的形态直取（单文件肯定在它能服务的范围内），
+    // 失败再落到「内置节点 + 直连」竞速，不让一个 CDN 抽风卡住整次导入。
+    if ghproxy::is_jsdelivr_url(url) {
+        if let Ok(text) = fetch_text(url).await {
+            return Ok(text);
+        }
     }
-    fetch_text(bare).await
+    let bare = ghproxy::split_proxy(url)
+        .map(|(_, bare)| bare)
+        .unwrap_or_else(|| url.to_string());
+    if ghproxy::is_github_url(&bare) {
+        return fetch_fastest(&bare).await;
+    }
+    fetch_text(&bare).await
 }
 
 /// 订阅地址入库前归一化：app 内置加速前缀剥掉存**裸地址**（唯一性稳定）；
@@ -86,8 +95,8 @@ async fn fetch_config_text(url: &str) -> Result<String, AppError> {
 pub(super) fn normalize_source(mut source: ConfigSource) -> ConfigSource {
     if source.kind == "url" {
         if let Some((prefix, bare)) = ghproxy::split_proxy(&source.value) {
-            if ghproxy::is_builtin_prefix(prefix) {
-                source.value = bare.to_string();
+            if ghproxy::is_builtin_prefix(&prefix) {
+                source.value = bare;
             }
         }
     }

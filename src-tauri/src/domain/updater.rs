@@ -366,12 +366,18 @@ pub async fn update_install(app: tauri::AppHandle, path: String) -> Result<(), A
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ghproxy::BUILTIN_PREFIXES;
 
     #[test]
     fn prefixes_prefer_current_then_builtin_then_direct() {
-        let list = candidate_prefixes("https://ghfast.top/");
-        assert_eq!(list[0], "https://ghfast.top/");
-        assert!(list.contains(&"https://gh-proxy.com/".to_string()));
+        let current = "https://ghfast.top/";
+        let list = candidate_prefixes(current);
+        assert_eq!(list[0], current);
+        // 内置名单里的节点都要排进来（与当前值重复时只留一份）；不再钉死某个具体
+        // 域名——名单会随失效更新，写死域名只会让换节点时假红。
+        for prefix in BUILTIN_PREFIXES {
+            assert!(list.contains(&prefix.to_string()), "缺少内置前缀 {prefix}");
+        }
         assert_eq!(list.last().unwrap(), "");
         // 同一个前缀不重复出现
         let unique: std::collections::HashSet<_> = list.iter().collect();
