@@ -171,11 +171,19 @@ if (bad.length > 0) {
 console.log("健康播放 12 拍:", JSON.stringify(healthy.slice(0, 3)), "...");
 
 // 4) 真实换集：两条合法路径分别断言
-let chainReady = false;
 const pre = await cdp.eval(SESSION);
 const clicked = await clickNextEpisode(30000);
 if (!clicked) {
-  console.log("[SKIP] 拿不到「下一集」按钮（可能是单集片源），只验了首播链路");
+  // 单集片源没按钮是环境；多集且首集已在播仍没按钮，就是真实回归。
+  const episodes = await cdp.eval(
+    "document.querySelectorAll('.player-episodes .episode, .content .episode').length",
+  );
+  const current = await cdp.eval(SESSION);
+  if (episodes > 1 && current?.ctx?.hasPlayed === true) {
+    problems.push(`多集片源在播但拿不到「下一集」按钮（${episodes} 集）`);
+  } else {
+    console.log("[SKIP] 单集片源或首集未出画，只验了首播链路");
+  }
 } else {
   let sawSwitching = false;
   let stuckAt = null;
@@ -208,17 +216,14 @@ if (!clicked) {
     await cdp.sleep(300);
   }
   if (!outcome) {
-    if (problems.length === 0) {
-      console.log(`[SKIP] 70s 内新集没出画（${JSON.stringify(await cdp.eval(SESSION))}），源侧环境问题`);
-    }
+    // 按钮确实点过却 70s 没有新集：不能再按源侧环境放行。
+    problems.push(`点到「下一集」后 70s 内新集没出画：${JSON.stringify(await cdp.eval(SESSION))}`);
   } else if (outcome.instance !== pre.instance) {
-    chainReady = true;
     console.log("换集走的是退回整页重建（新 actor）:", JSON.stringify({ instance: outcome.instance, ctx: outcome.ctx }));
     if (outcome.state !== "playing") problems.push(`重建后机器应回到 playing，实际 ${outcome.state}`);
     if (outcome.ctx?.hasPlayed !== true) problems.push("重建后 hasPlayed 没置位（LOAD/MEDIA_ALIVE 没喂到）");
     if (outcome.ctx?.unresponsiveProbes !== 0) problems.push("重建后 unknown 计数非 0（bumpSession 没复位）");
   } else {
-    chainReady = true;
     console.log("换集走的是原地切换（同一 actor）:", JSON.stringify({ ctx: outcome.ctx }));
     if (!sawSwitching) problems.push("原地换集期间没观测到 switching 状态（USER_SWITCH 没喂进机器）");
     if (outcome.ctx?.sessionId !== pre.ctx.sessionId + 1) {
@@ -242,7 +247,9 @@ if (!clicked) {
 // 5) 判死上报实测：对正在播的 <video> 塞坏 src → 解码报错 → 机器进 failed
 //    → reportFailure 撤海报、上报失败原因（提示只在播放器内）→ 停在那里等用户操作。自动换线/换源
 //    已于 a4d2d5a 下线，因此这里钉的是「上报且不自作主张」，不是旧交棒链。
-if (chainReady) {
+// 首播已出画即可验判死链，不再依赖换集是否成功；过去一次换集 SKIP 会连带
+// 吞掉「注入坏源后停 failed、不自动换线」这段核心断言。
+{
   const before = await cdp.eval(SESSION);
   const forced = await cdp.eval(`(() => {
     // 必须是**当前在放的那一个** <video>：交棒/换线会让引擎重建实例（本探针上一轮
@@ -306,8 +313,6 @@ if (chainReady) {
       );
     }
   }
-} else {
-  console.log("（没走到原地换集，跳过交棒链实测）");
 }
 
 if (cdp.exceptions.length > 0) {

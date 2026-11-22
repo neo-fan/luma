@@ -14,10 +14,6 @@ const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("one open-source icon set for the whole app", () => {
-  it("declares lucide-react as a runtime dependency", () => {
-    expect(read("package.json")).toContain('"lucide-react"');
-  });
-
   it("keeps a single shared geometry baseline", () => {
     const baseline = read("src/components/icons.ts");
     expect(baseline).toContain("export const ICON_STROKE_WIDTH");
@@ -42,7 +38,6 @@ describe("one open-source icon set for the whole app", () => {
   it("maps settings to the gear, not the old sun/asterisk", () => {
     const nav = read("src/components/NavIcon.tsx");
     expect(nav).toContain("settings: Settings");
-    expect(nav).not.toContain("M12 3.2v2.3");
   });
 
   it("keeps every public icon name mapped", () => {

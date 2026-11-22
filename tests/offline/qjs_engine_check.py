@@ -11,11 +11,13 @@
    依赖 Node/Java 桥、Luma 未复刻的符号，调用返回空而非抛 ReferenceError 中断整站。
 
 运行： `<python-embed>/python.exe tests/offline/qjs_engine_check.py`
+要求：预先构建好的 qjs-runner 二进制，`LUMA_QJS_RUNNER` 或
+`sidecars/qjs-runner/target/{debug,release}/qjs-runner(.exe)`。本脚本**不构建**；
+二进制缺失、帧未返回或结果为空一律 FAIL，不再静默 N/A。
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
@@ -24,12 +26,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SIDECAR = ROOT / "sidecars" / "qjs-runner"
-CARGO = os.environ.get("CARGO", "cargo")
 LIB = ROOT / "sidecars" / "qjs-assets" / "js" / "lib"
 
 PASS = 0
 FAIL = 0
-NA = 0
 
 
 def check(ok: bool, group: str, name: str, detail: str = "") -> None:
@@ -40,12 +40,6 @@ def check(ok: bool, group: str, name: str, detail: str = "") -> None:
     else:
         FAIL += 1
         print(f"FAIL  [{group}] {name}  {detail}")
-
-
-def na(group: str, name: str, detail: str = "") -> None:
-    global NA
-    NA += 1
-    print(f"N/A   [{group}] {name}  {detail}")
 
 
 def binary_path() -> Path | None:
@@ -62,25 +56,8 @@ def binary_path() -> Path | None:
     return None
 
 
-def ensure_binary() -> Path | None:
-    p = binary_path()
-    if p:
-        return p
-    try:
-        subprocess.run(
-            [CARGO, "build", "--offline"],
-            cwd=str(SIDECAR), check=True, timeout=600,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
-    except FileNotFoundError:
-        na("qjs", "cargo missing")
-        return None
-    except subprocess.CalledProcessError as e:
-        na("qjs", "build failed", f"{str(e.stdout)[:200]!r}")
-        return None
-    except subprocess.TimeoutExpired:
-        na("qjs", "build timeout")
-        return None
+def require_binary() -> Path | None:
+    """Resolve a prebuilt runner. Building here would race the app build lock."""
     return binary_path()
 
 
@@ -136,7 +113,7 @@ export function __jsEvalReturn() {
 def check_gbk(binary: Path):
     resp, err = run(binary, [frame(1, GBK_SPIDER)])
     if not resp or resp[0].get("_parseerr"):
-        na("gbk", "runner", str(resp[:1]))
+        check(False, "gbk", "runner", str(resp[:1]))
         return
     check(bool(resp[0].get("ok")), "gbk", "engine loaded", str(resp[0].get("error", ""))[:200])
     res = resp[0].get("result") or {}
@@ -146,7 +123,7 @@ def check_gbk(binary: Path):
         check(all(item.get("rt") or []), "gbk", "roundtrip preserved", str(item.get("rt")))
         check(bool(item.get("known")), "gbk", "known GBK bytes", "你=C4E3 好=BAC3 中文=D6D0CEEC")
     else:
-        na("gbk", "no result")
+        check(False, "gbk", "no result", str(res))
     if "decode failed" in err or "encode failed" in err:
         check(False, "gbk", "no engine warnings", err[:200])
 
@@ -176,13 +153,13 @@ export function __jsEvalReturn() {
 def check_ds_real(binary: Path):
     resp, err = run(binary, [frame(1, DS_REAL, api="https://x/y.js")])
     if not resp or resp[0].get("_parseerr"):
-        na("ds-real", "runner", str(resp[:1]))
+        check(False, "ds-real", "runner", str(resp[:1]))
         return
     check(bool(resp[0].get("ok")), "ds-real", "engine loaded", str(resp[0].get("error", ""))[:200])
     res = resp[0].get("result") or {}
     items = res.get("list") or []
     if not items:
-        na("ds-real", "no result")
+        check(False, "ds-real", "no result", str(res))
         return
     item = items[0]
     check(item.get("present") == "batchFetch,reqs,toBeijingTime,jsonToCookie,cookieToJson",
@@ -217,13 +194,13 @@ export function __jsEvalReturn() {
 def check_ds_stubs(binary: Path):
     resp, err = run(binary, [frame(1, DS_STUBS, api="https://x/y.js")])
     if not resp or resp[0].get("_parseerr"):
-        na("ds-stubs", "runner", str(resp[:1]))
+        check(False, "ds-stubs", "runner", str(resp[:1]))
         return
     check(bool(resp[0].get("ok")), "ds-stubs", "engine loaded", str(resp[0].get("error", ""))[:200])
     res = resp[0].get("result") or {}
     items = res.get("list") or []
     if not items:
-        na("ds-stubs", "no result")
+        check(False, "ds-stubs", "no result", str(res))
         return
     item = items[0]
     results = item.get("results") or {}
@@ -234,16 +211,18 @@ def check_ds_stubs(binary: Path):
 
 
 def main() -> int:
-    binp = ensure_binary()
+    binp = require_binary()
     if not binp:
-        print(f"no sidecar binary available — 9 N/A, 0 P, 0 F")
-        return 0
+        check(False, "qjs", "binary available", "set LUMA_QJS_RUNNER or build qjs-runner first")
+        print("=" * 60)
+        print(f"qjs engine check: {PASS} pass / {FAIL} fail")
+        return 1
     print(f"using {binp}")
     check_gbk(binp)
     check_ds_real(binp)
     check_ds_stubs(binp)
     print("=" * 60)
-    print(f"qjs engine check: {PASS} pass / {FAIL} fail / {NA} N/A")
+    print(f"qjs engine check: {PASS} pass / {FAIL} fail")
     return 0 if FAIL == 0 else 1
 
 

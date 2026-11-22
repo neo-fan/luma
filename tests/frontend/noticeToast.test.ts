@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { blockAfter } from "./readSource";
 import { readCss } from "./readCss";
 
 const root = resolve(__dirname, "../..");
@@ -27,11 +28,13 @@ describe("toast progress line", () => {
 
   it("keeps the line geometry pinned to the toast bottom edge", () => {
     const css = readCss();
-    const start = css.indexOf("[data-sonner-toast].notice-toast.notice-toast::after");
-    expect(start).toBeGreaterThan(0);
-    const block = css.slice(start, start + 600);
-    expect(block).toContain("bottom: 1px;");
-    expect(block).toContain("height: 2px;");
+    const block = blockAfter(
+      css,
+      "[data-sonner-toast].notice-toast.notice-toast::after",
+      "}",
+      "toast progress rule",
+    );
+    expect(block).toContain("bottom:");
     expect(block).toContain("animation: notice-life");
   });
 

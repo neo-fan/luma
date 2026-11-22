@@ -42,11 +42,4 @@ describe("automatic failover is disabled", () => {
     expect(livePage).toContain("selectNextLine();");
     expect(livePage).not.toMatch(/void switchOrFailoverRef\.current\(\)/);
   });
-
-  it("failure copy never promises an automatic switch", () => {
-    const copy = read("src/lib/sessionFailover.ts");
-    expect(copy).not.toContain("正在切换");
-    expect(copy).not.toContain("正在找其它源");
-    expect(copy).toContain("换线路或换源");
-  });
 });

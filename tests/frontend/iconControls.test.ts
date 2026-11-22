@@ -52,10 +52,9 @@ describe("icon-first controls", () => {
 
   it("next episode lives in the ArtPlayer control bar, prev episode is gone", () => {
     const engine = read("src/hooks/usePlayerEngine.ts");
-    // 原生 controls，而不是贴在画面上的自绘浮层；index 15 = 暂停(10) 与音量(20) 之间。
+    // 原生 controls，而不是贴在画面上的自绘浮层；具体 index 是布局细节，不锁。
     expect(engine).toContain('name: "next-episode"');
     expect(engine).toContain('position: "left"');
-    expect(engine).toContain("index: 15");
     expect(engine).toContain('tooltip: "下一集"');
     expect(engine).toContain('el.setAttribute("aria-label", "下一集")');
     // 图标走统一 Lucide 几何参数，不在调用处手画 path。

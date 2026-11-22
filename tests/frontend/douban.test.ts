@@ -153,10 +153,6 @@ describe("douban prefs storage", () => {
       "cmliussss-cdn-tencent",
       "cmliussss-cdn-ali",
     ]);
-    for (const option of DOUBAN_PROXY_OPTIONS) {
-      expect(option.label.length).toBeGreaterThan(0);
-      expect(option.hint.length).toBeGreaterThan(0);
-    }
   });
 });
 

@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { blockAfter } from "./readSource";
 import { readCss } from "./readCss";
 
 // tests/frontend -> project root
@@ -47,16 +48,18 @@ describe("player lifecycle contract", () => {
     const engine = read("src/hooks/usePlayerEngine.ts");
     // 硬停收在幂等的 hardStop() 里：cleanup 与全局唯一实例登记表共用，
     // 这样 HMR / 换集漏掉 cleanup 时，新实例创建前也能收回游离的 <video>。
-    const cleanup = engine.slice(engine.lastIndexOf("return () => {"));
+    const cleanupAt = engine.lastIndexOf("return () => {");
+    expect(cleanupAt, "锚点丢失：cleanup 函数名变了？").toBeGreaterThanOrEqual(0);
+    const cleanup = engine.slice(cleanupAt);
     expect(cleanup).toContain("hardStop()");
     expect(cleanup).toContain("unregister()");
     expect(engine).toContain("stopActivePlayer(container)");
     expect(engine).toContain("registerPlayer(hardStop, () => onDisplacedRef.current?.())");
-    const hardStop = engine.slice(engine.indexOf("const hardStop = () => {"));
-    expect(hardStop.slice(0, 700)).toContain("video.pause()");
-    expect(hardStop.slice(0, 700)).toContain('video.removeAttribute("src")');
-    expect(hardStop.slice(0, 700)).toContain("teardownDecoders?.()");
-    expect(hardStop.slice(0, 700)).toContain("art.destroy()");
+    const hardStop = blockAfter(engine, "const hardStop = () => {", "};", "hardStop");
+    expect(hardStop).toContain("video.pause()");
+    expect(hardStop).toContain('video.removeAttribute("src")');
+    expect(hardStop).toContain("teardownDecoders?.()");
+    expect(hardStop).toContain("art.destroy()");
     // 解码器自己同时做两件事：把 teardown 交给内核（硬停路径直接调），
     // 并订阅 ArtPlayer 的 destroy 事件。少任一条都会留一个还在灌数据的 MSE 源。
     // 订阅必须用 `once`：原地换集/换台复用同一实例，`on` 会在实例上累积处理器。
@@ -67,9 +70,9 @@ describe("player lifecycle contract", () => {
 
   it("status overlay never blocks the controls", () => {
     const css = readCss();
-    const overlay = css.slice(css.indexOf(".player-overlay {"));
-    expect(overlay.slice(0, 400)).toContain("pointer-events: none");
-    expect(overlay.slice(0, 400)).toContain("background: transparent");
+    const overlay = blockAfter(css, ".player-overlay {", "}", "player overlay rule");
+    expect(overlay).toContain("pointer-events: none");
+    expect(overlay).toContain("background: transparent");
   });
 
   it("keeps a cross-HMR global registry so two players can never play at once", () => {
@@ -96,9 +99,9 @@ describe("player lifecycle contract", () => {
     // 否则切回播放页时 hls.js 重新拉流、进度归零。
     expect(host).toContain('active ? "player-host" : "player-host is-idle"');
     const css = readCss();
-    const idle = css.slice(css.indexOf(".player-host.is-idle"));
-    expect(idle.slice(0, 300)).toContain("visibility: hidden");
-    expect(idle.slice(0, 300)).not.toMatch(/display:\s*none/);
+    const idle = blockAfter(css, ".player-host.is-idle", "}", "idle host rule");
+    expect(idle).toContain("visibility: hidden");
+    expect(idle).not.toMatch(/display:\s*none/);
   });
 });
 

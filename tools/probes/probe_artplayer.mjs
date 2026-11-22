@@ -224,11 +224,28 @@ for (let attempt = 0; attempt < 6 && !mounted; attempt += 1) {
   mounted = await cdp.eval(WAIT(MOUNTED, 22000));
 }
 console.log(`[info] playable line found after ${attempts} attempt(s)`);
-assert(!!mounted, "ArtPlayer mounted in page", String(mounted));
 if (!mounted) {
+  // 分两种：源侧连播放地址都没给出来（ArtPlayer 无从挂载），还是给了地址但
+  // 播放器没起来（真回归）。前者按环境跳过并说明原因，后者仍然判红。
+  // 2026-11-22 实测：源站 21s 仍未解析，界面停在「正在连接播放地址…」，
+  // 旧判据把它算成「ArtPlayer 没挂载」→ 假红。
+  const state = JSON.parse(
+    (await cdp.eval(`JSON.stringify({
+      resolving: /正在连接播放地址|已等待 \\d+s/.test(document.body.innerText),
+      art: !!document.querySelector('.player-art'),
+      video: !!document.querySelector('.player-art video, .player-host video'),
+    })`)) || "{}",
+  );
+  if (!state.art && !state.video && state.resolving) {
+    console.log("[SKIP] 源侧没解析出播放地址，ArtPlayer 无从挂载（不是播放器回归）");
+    cdp.close();
+    console.log("\nSKIP artplayer");
+    process.exit(0);
+  }
   console.log(`[diag] page text: ${String(await cdp.eval(`document.body.innerText.slice(0, 600)`))}`);
   console.log(`[diag] exceptions: ${cdp.errors.slice(0, 5).join(" | ").slice(0, 1200)}`);
 }
+assert(!!mounted, "ArtPlayer mounted in page", String(mounted));
 
 // 真实源里死链很常见：ArtPlayer 挂载成功但 hls.js 报 manifestLoadError。
 // 保持「必须真实解码出画」的断言强度，但给多条线路机会，避免把某个源站

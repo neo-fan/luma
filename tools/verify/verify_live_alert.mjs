@@ -178,7 +178,9 @@ console.log(`出现过的 toast：${toastSpans.length ? toastSpans.map((s) => `$
 console.log(`出画且挂错误条：${overlaps.length} 帧`);
 console.log(`超出 TTL 仍未消失：错误条 ${longLived.length} 条 / toast ${toastLongLived.length} 条`);
 
-const ok = overlaps.length === 0 && longLived.length === 0 && toastLongLived.length === 0;
+// 「没出画 + 没错误条」过去会让三个计数全 0 而误报 PASS。先要求确实出画，
+// 再谈错误条生命周期；否则直播黑屏这个用户故障被静默放过。
+const ok = playing && overlaps.length === 0 && longLived.length === 0 && toastLongLived.length === 0;
 console.log(ok ? "PASS" : "FAIL");
 ws.close();
 process.exit(ok ? 0 : 1);

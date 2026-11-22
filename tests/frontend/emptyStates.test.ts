@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { blockAfter, requireAnchor } from "./readSource";
 import { readCss } from "./readCss";
 
 const root = resolve(__dirname, "../..");
@@ -54,18 +55,16 @@ describe("empty states share one visual language", () => {
 
   it("does not let the search page fall back to a hand-written hint block", () => {
     const source = read("src/pages/SearchPage.tsx");
-    // 初始态 + 无站点 + 无结果，三处都该是 Empty。
-    expect(source.match(/<Empty/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    // 只守「统一走 Empty、不再手写提示块」；具体出现几处是布局细节。
+    requireAnchor(source, "<Empty", "SearchPage Empty");
     expect(source).not.toContain("search-hint");
     expect(readCss()).not.toContain(".search-hint");
   });
 
   it("keeps the empty illustration as a soft badge, not a dashed box", () => {
     const css = readCss();
-    const block = css.slice(css.indexOf("\n.empty {"));
-    const rule = block.slice(0, block.indexOf("}", 0));
-    expect(rule).toContain("max-width: 460px");
+    const rule = blockAfter(css, ".empty {", "}", "empty rule");
     expect(rule).not.toContain("dashed");
-    expect(block).toContain(".empty__icon");
+    expect(css).toContain(".empty__icon");
   });
 });

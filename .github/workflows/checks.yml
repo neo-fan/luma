@@ -1,0 +1,46 @@
+name: checks
+
+# 每次推到 main 与 PR 都跑可移植的离线门禁；发布 tag 仍由 release.yml 负责出包。
+# 只跑 check.py --ci：契约 / 版本 / 发布工具 / Python 语法 / 前端类型 / 前端单测。
+# 需要随包运行时或 Rust 工具链的检查留给本地默认门禁与发版流程。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: portable offline gate
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run portable offline checks
+        run: python tools/check.py --ci

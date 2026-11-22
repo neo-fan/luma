@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { requireAnchor } from "./readSource";
 import { readCss, styleModules } from "./readCss";
 
 const root = resolve(__dirname, "../..");
@@ -16,6 +17,7 @@ const indexCss = readFileSync(resolve(root, "src/styles/index.css"), "utf8");
 
 describe("style module cascade", () => {
   it("keeps the entry file free of rules", () => {
+    requireAnchor(indexCss, "@import", "index.css @import");
     const withoutComments = indexCss.replace(/\/\*[\s\S]*?\*\//g, "");
     for (const line of withoutComments.split("\n")) {
       const trimmed = line.trim();
@@ -36,9 +38,10 @@ describe("style module cascade", () => {
 
   it("reads modules back in the cascade order", () => {
     const css = readCss();
-    expect(css).toContain("--cover-w-grid-min");
-    expect(css).toContain("[data-sonner-toast].notice-toast.notice-toast::after");
+    const tokenAt = requireAnchor(css, "--cover-w-grid-min", "cover grid token");
+    const overrideAt = requireAnchor(css, ".sidebar__dev", "sidebar dev rule");
+    requireAnchor(css, "[data-sonner-toast].notice-toast.notice-toast::after", "notice toast rule");
     // 拼接顺序 = 模块顺序：第一块 token 必须早于最后一块的覆盖规则。
-    expect(css.indexOf("--cover-w-grid-min")).toBeLessThan(css.indexOf(".sidebar__dev"));
+    expect(tokenAt).toBeLessThan(overrideAt);
   });
 });

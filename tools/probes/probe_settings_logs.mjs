@@ -136,6 +136,9 @@ try {
   await cdp.send("Page.enable");
   await cdp.send("Page.reload", { ignoreCache: true });
 
+  // reload 保留 hash：上一支探针可能停在 #/player/…（播放页是沉浸态，没有
+  // 侧栏 foot）。先归位首页，探针之间互不继承路由状态。
+  await cdp.eval("location.hash = '#/'");
   const navReady = await cdp.eval(
     WAIT("return document.querySelector('.nav__item') ? 'OK' : null;", 30000),
   );

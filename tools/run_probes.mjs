@@ -36,6 +36,9 @@
  *   node tools/run_probes.mjs --only=flv,history
  *   node tools/run_probes.mjs --list
  *
+ * 退出码：0 = 至少一支真 PASS 且无 FAIL；1 = 有 FAIL；2 = 全部 SKIP（没有任何回归证据）。
+ * 汇总把 SKIP 与 PASS 分列：探针打印 [SKIP]/[n-a]/[N/A] 且 exit 0 时不再算 PASS。
+ *
  * 前置：dev 窗口在跑（CDP 9222）、`python tests/stub_server.py` 在跑（8787）。
  *   - 出画类探针用本地 stub 播放源（flv 的 sample.flv、playback 的 index.m3u8 等），
  *     必须用 `LUMA_PROXY_ALLOW_LOCAL=1` 启动 dev/Tauri：常驻播放反代默认按 SSRF 口径
@@ -77,10 +80,6 @@ const PROBES = [
   { key: "sidebar", script: "tools/probes/probe_sidebar.mjs", label: "侧边栏收缩 / 展开" },
   // 清空封面缓存（会回源重取），放靠后，避免给前面的探针加冷缓存时间。
   { key: "storage_clean", script: "tools/probes/probe_storage_clean.mjs", label: "设置 存储与清理（用量 / 二次确认 / 清理生效）" },
-  // 冷 reload 才可比（豆瓣 store 是进程内的），需要真实配置与豆瓣出数，放最后。
-  { key: "hero_douban_once", script: "tools/probes/probe_hero_douban_once.mjs", label: "首页头图 豆瓣到货一次性（同批 + 淡入）" },
-  // 自己抓 CMS 列表找一个带 vod_douban_id 的条目再进详情；源没填就 SKIP。
-  { key: "douban_subject_id", script: "tools/probes/probe_douban_subject_id.mjs", label: "豆瓣 subject_id 直取（真实数据端到端）" },
   // 会把 active 切成桩配置，必须最后；默认不跑。
   { key: "ui", script: "tools/probes/probe_ui.mjs", label: "UI 冒烟（会切桩配置）", needsStub: true, optIn: true },
 ];
@@ -293,13 +292,22 @@ for (const probe of selected) {
     env.LUMA_KEYWORD = env.LUMA_KEYWORD || "走马上任";
   }
   const run = spawnSync(process.execPath, [probe.script], {
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
     env,
     shell: false,
   });
+  const stdout = run.stdout?.toString() ?? "";
+  const stderr = run.stderr?.toString() ?? "";
+  if (stdout) process.stdout.write(stdout);
+  if (stderr) process.stderr.write(stderr);
   const ok = run.status === 0;
-  results.push({ key: probe.key, label: probe.label, ok, ms: Date.now() - startedAt });
-  console.log(`${ok ? "[PASS]" : "[FAIL]"} ${probe.key}（${((Date.now() - startedAt) / 1000).toFixed(0)}s）`);
+  // 探针习惯用 [SKIP] / [n-a] 表达「环境不满足，没断言」。这类 exit 0 过去
+  // 被算作 PASS，掩盖了长期空跑；这里单独标记，汇总时与真 PASS 分列。
+  const skipped = ok && /\[(?:SKIP|n-a|N\/A)\]/.test(stdout);
+  results.push({ key: probe.key, label: probe.label, ok, skipped, ms: Date.now() - startedAt });
+  console.log(
+    `${!ok ? "[FAIL]" : skipped ? "[SKIP]" : "[PASS]"} ${probe.key}（${((Date.now() - startedAt) / 1000).toFixed(0)}s）`,
+  );
 }
 
 // 收尾：恢复 active、删掉本轮新建的配置（探针自己的 stub 配置不留垃圾）。
@@ -313,9 +321,17 @@ if (before) {
 cdp.close();
 
 const failed = results.filter((item) => !item.ok);
+const skipped = results.filter((item) => item.skipped);
+const passed = results.filter((item) => item.ok && !item.skipped);
 console.log("\n=== 汇总 ===");
 for (const item of results) {
-  console.log(`${item.ok ? "ok  " : "FAIL"}  ${item.key.padEnd(16)} ${(item.ms / 1000).toFixed(0)}s  ${item.label}`);
+  const state = !item.ok ? "FAIL" : item.skipped ? "skip" : "ok  ";
+  console.log(`${state}  ${item.key.padEnd(16)} ${(item.ms / 1000).toFixed(0)}s  ${item.label}`);
 }
-console.log(failed.length === 0 ? "\n全部通过" : `\n${failed.length} 个探针失败`);
-process.exit(failed.length === 0 ? 0 : 1);
+console.log(
+  `\n${passed.length} 通过 / ${skipped.length} 跳过（环境未就绪，不代表通过） / ${failed.length} 失败`,
+);
+// 全部跳过时不再报「全部通过」：那意味着这一轮没有任何回归证据。
+if (failed.length > 0) process.exit(1);
+if (passed.length === 0 && skipped.length > 0) process.exit(2);
+process.exit(0);

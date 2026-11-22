@@ -189,6 +189,10 @@ try {
   assert(typeof seeded === "string" && seeded.startsWith("{"), "history entry seeded", String(seeded));
 
   // 侧栏 → 历史（图标也在，顺带验证入口存在）
+  // 先回首页：reload 会保留上一次的 hash，若本来就停在 #/history，点「历史」不改变
+  // 路由 → 页面不重新取数，刚插入的合成记录永远看不到（2026-11-22 连跑实测）。
+  await cdp.eval(`location.hash = '#/'`);
+  await sleep(600);
   const nav = await cdp.eval(`(() => {
     const item = [...document.querySelectorAll('.nav__item')].find((n) => (n.getAttribute('aria-label') || n.textContent || '').includes('历史'));
     if (!item) return 'MISSING';
@@ -196,8 +200,13 @@ try {
     return 'CLICKED';
   })()`);
   assert(nav === "CLICKED", "sidebar has a 历史 entry", nav);
+  // 只等 `.fav-item` 出现是不够的：列表先渲染空壳卡片，片名/封面信息随后由
+  // history_list 回填。早读会把「数据还没到」误判成「历史条目没渲染」
+  // （2026-11-22 连跑实测：3 张卡片 title/meta 全空，单跑却不复现）。
+  // 等到每张卡片都有片名再断言，条件仍然是真实渲染结果，不是放行。
   assert(
-    (await cdp.eval(WAIT("return document.querySelector('.vod-grid .fav-item') ? 'OK' : null;", 20000))) === "OK",
+    (await cdp.eval(WAIT(`const items = [...document.querySelectorAll('.vod-grid .fav-item')];
+      return items.length > 0 && items.every((el) => (el.querySelector('.vod-card__title')?.innerText || '').trim()) ? 'OK' : null;`, 20000))) === "OK",
     "history page rendered",
   );
 

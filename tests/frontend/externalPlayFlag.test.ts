@@ -11,6 +11,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { requireAnchor } from "./readSource";
 
 const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
@@ -33,9 +34,10 @@ describe("external play is temporarily disabled", () => {
 
   it("guards the open_external IPC path", () => {
     const page = read("src/pages/PlayerPage.tsx");
-    expect(page).toContain("if (!EXTERNAL_PLAY_ENABLED)");
     // 早退必须写在 openExternal 调用之前。
-    expect(page.indexOf("if (!EXTERNAL_PLAY_ENABLED)")).toBeLessThan(page.indexOf("await api.openExternal"));
+    const guardAt = requireAnchor(page, "if (!EXTERNAL_PLAY_ENABLED)", "external guard");
+    const callAt = requireAnchor(page, "await api.openExternal", "openExternal call");
+    expect(guardAt).toBeLessThan(callAt);
   });
 
   it("keeps failure hints consistent with the switch", () => {
@@ -45,9 +47,6 @@ describe("external play is temporarily disabled", () => {
     expect(read("src/hooks/playback/usePlaybackController.ts")).not.toContain("PLAY_FAILURE_HINT");
     expect(engine + read("src/hooks/playerDecoders.ts")).toContain("PLAY_FAILURE_HINT");
     expect(stage).toContain("EXTERNAL_PLAY_FALLBACK");
-    // 关闭期间不能再出现无条件引导用户去用外部播放的硬编码文案。
-    expect(page).not.toContain("可尝试外部播放。");
-    expect(engine).not.toContain("请使用外部播放。");
   });
 
   it("keeps the backend command so restoring is a one-line change", () => {

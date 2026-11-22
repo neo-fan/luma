@@ -106,7 +106,9 @@ def test_encoding() -> None:
     # lookup that can crash the gate. The bundled python-embed ships requests, so
     # run this file with it (`tools/check.py` does that).
     if spider_mod.requests is None:
-        na("http", "fetch/post 强制 utf-8", "requests 不可用（请用 sidecars/python-embed 运行）")
+        # check.py always uses the bundled interpreter. Silent N/A here used to
+        # let the whole utf-8 group report PASS without running a single assertion.
+        check(False, "http", "requests 可用", "请用 sidecars/python-embed 或安装 requests 后运行")
         return
     s = Spider()
     s._session = _FakeSession()  # type: ignore[assignment]

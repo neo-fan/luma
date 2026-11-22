@@ -2,10 +2,11 @@
 """One-shot offline regression gate (no window, no network).
 
 Usage:
-    python tools/check.py            # default gate
-    python tools/check.py --full     # also run `pnpm build`
+    python tools/check.py            # default gate (11 checks)
+    python tools/check.py --full     # also run qjs-runner unit tests and `pnpm build`
     python tools/check.py --quick    # skip cargo test (useful while iterating on TS)
-    python tools/check.py --ci       # portable subset (CI job "checks")
+    python tools/check.py --ci       # portable subset (6 checks, no sidecar/runtime deps)
+    python tools/check.py --artifacts # additionally verify prepared runtime artifacts
     python tools/check.py --list     # show the checks and exit
 
 Exit code is non-zero if any check fails. Every check is a subprocess so this
@@ -73,7 +74,7 @@ SYNTAX_SNIPPET = (
 )
 
 
-def checks(full: bool, quick: bool, ci: bool = False) -> list[tuple[str, list[str]]]:
+def checks(full: bool, quick: bool, ci: bool = False, artifacts: bool = False) -> list[tuple[str, list[str]]]:
     py = interp()
     items: list[tuple[str, list[str]]] = [
         ("contract (schema <-> TS)", [py, "tests/offline/contract_check.py"]),
@@ -85,18 +86,24 @@ def checks(full: bool, quick: bool, ci: bool = False) -> list[tuple[str, list[st
             ("py compatibility", [py, "tests/offline/py_compat_check.py"]),
             ("py base spider", [py, "tests/offline/py_base_spider_check.py"]),
             ("adapter robustness", [py, "tests/offline/adapter_isolation.py"]),
-            ("runtime artifacts", [py, "tools/prepare_runtime.py", "--check"]),
-            ("qjs-runner unit tests", [CARGO, "test", "--manifest-path", "sidecars/qjs-runner/Cargo.toml"]),
+            # Requires a prebuilt qjs-runner; it never builds implicitly. Missing
+            # binary is now a failure, not a silent N/A.
             ("qjs engine", [py, "tests/offline/qjs_engine_check.py"]),
         ]
     items += [
         ("python syntax", [py, "-c", SYNTAX_SNIPPET]),
+        ("frontend types", pnpm() + ["exec", "tsc", "--noEmit"]),
         ("frontend unit tests", pnpm() + ["test"]),
     ]
     if not quick and not ci:
         items.append(("rust unit tests", [CARGO, "test", "--manifest-path", "src-tauri/Cargo.toml", "--lib"]))
+    if artifacts:
+        items.append(("runtime artifacts", [py, "tools/prepare_runtime.py", "--check"]))
     if full:
-        items.append(("frontend build", pnpm() + ["build"]))
+        items += [
+            ("qjs-runner unit tests", [CARGO, "test", "--manifest-path", "sidecars/qjs-runner/Cargo.toml"]),
+            ("frontend build", pnpm() + ["build"]),
+        ]
     return items
 
 
@@ -107,14 +114,18 @@ def main() -> int:
     ap.add_argument(
         "--ci",
         action="store_true",
-        help="portable subset for CI: contract + python syntax + frontend tests "
-        "(skips py adapter checks that need pip deps, rust tests that need "
-        "bundle.resources, and the local runtime artifacts probe)",
+        help="portable subset for CI: contract + version + release prep + python "
+        "syntax + frontend types/tests (no sidecar, runtime or cargo deps)",
+    )
+    ap.add_argument(
+        "--artifacts",
+        action="store_true",
+        help="also verify prepared runtime artifacts (release-time surface, not a regression gate)",
     )
     ap.add_argument("--list", action="store_true", help="list checks and exit")
     args = ap.parse_args()
 
-    todo = checks(args.full, args.quick, args.ci)
+    todo = checks(args.full, args.quick, args.ci, args.artifacts)
     if args.list:
         for name, cmd in todo:
             print(f"{name:26s} {' '.join(cmd)}")
@@ -123,9 +134,10 @@ def main() -> int:
     skipped = []
     if args.ci:
         skipped = [
-            "py compatibility / py base spider (need pip deps, run in the py-adapter job)",
-            "runtime artifacts (needs locally prepared python-embed)",
+            "py compatibility / py base spider / adapter robustness (need pip deps)",
+            "qjs engine (needs a prebuilt qjs-runner binary)",
             "rust unit tests (tauri-build copies bundle.resources, needs stubs)",
+            "runtime artifacts (use --artifacts at release time)",
         ]
 
     print(f"Luma offline check  ({len(todo)} checks, cwd={ROOT})")

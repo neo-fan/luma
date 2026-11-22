@@ -84,23 +84,52 @@ if (items.length < 2) {
   process.exit(0);
 }
 
-// 场景 1：点一个台，等它起播
-const first = await playChannel(0);
+// 轨道里混着占位台：配置自带以时间命名的「时间」台，指向静态 mp4，
+// 永远 paused@0（不是黑屏，也没有声）。先扫出真能出画的台，再在它们之间
+// 验切台；**一个都出不了画**才是用户可见故障。
+const playable = [];
+// 「在推进」可能是上一台还没停（切台瞬间旧流仍在播），必须同时要求 src 换了。
+let prevSrc = await cdp
+  .eval(`(() => { const v = document.querySelector('video'); return v ? String(v.currentSrc) : ''; })()`);
+for (let i = 0; i < Math.min(items.length, 8) && playable.length < 3; i += 1) {
+  const name = await playChannel(i);
+  const snap = await cdp.eval(SNAPSHOT);
+  const src = snap.inDoc[0]?.src || "";
+  const switched = src !== "" && src !== prevSrc;
+  console.log(
+    `[scan] #${i} ${name} advancing=${snap.advancing} switched=${switched} src=${src || "-"}`,
+  );
+  if (switched && snap.advancing >= 1) playable.push({ index: i, name });
+  prevSrc = src || prevSrc;
+}
+if (playable.length === 0) {
+  problems.push(`前 ${Math.min(items.length, 8)} 个频道没有一条流在推进（整页出不了画）`);
+} else if (playable.length === 1) {
+  console.log("[info] 只有 1 个可用台，切台场景退化为同台重进（独占约束照验）");
+}
+
+// 场景 1：点一个能出画的台，等它起播
+const first = await playChannel(playable[0]?.index ?? 0);
 const firstSnap = await sample(`play:${first}`);
 console.log(firstSnap.label, JSON.stringify(firstSnap.snap));
+// 过去这里只有上限，完全没出画（advancing=0）时反而全绿。加下限才能抓到
+// 「切台后只剩空壳画面 / 被夺用未复活」这类用户可见故障。
+if (firstSnap.snap.advancing < 1) problems.push("首个可用频道起播后没有视频在推进（黑屏或被夺用未复活）");
 if (firstSnap.snap.advancing > 1) problems.push(`起播时有 ${firstSnap.snap.advancing} 个视频在推进`);
 if (firstSnap.snap.audioElements > 0) problems.push("直播页出现了 <audio> 元素");
 
-// 场景 2：连续切台，逐拍采样
-for (const index of [1, 2, 0]) {
-  if (index >= items.length) continue;
-  const name = await playChannel(index);
+// 场景 2：在可用台之间切换（并切回第一个），逐拍采样
+const targets = [...playable.slice(1), ...(playable.length > 0 ? [playable[0]] : [])];
+for (const target of targets) {
+  const name = await playChannel(target.index);
   for (const wait of [80, 260, 700, 1600, 3200]) {
     await cdp.sleep(wait);
     const row = await sample(`switch:${name}+${wait}ms`);
     console.log(row.label, JSON.stringify(row.snap));
     if (row.snap.inDoc.length > 1) problems.push(`${row.label}: DOM 里有 ${row.snap.inDoc.length} 个视频`);
     if (row.snap.advancing > 1) problems.push(`${row.label}: ${row.snap.advancing} 个视频同时推进`);
+    // 切台后 3.2s 仍无推进即为真实黑屏，不再按环境放行。
+    if (wait === 3200 && row.snap.advancing < 1) problems.push(`${row.label}: 切台后没有视频在推进`);
   }
 }
 

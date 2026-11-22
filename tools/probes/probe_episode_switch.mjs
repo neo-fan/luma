@@ -139,8 +139,10 @@ for (let pick = 0; pick < Math.min(MAX_SOURCES, cardCount) && !demonstrated; pic
       await backToSearch();
       continue;
     }
-    // 在播却没有下一集按钮 → 记为这张源的失败证据，但仍换源再试（避免单源偶发误判）。
+    // 已确认是多集且第一集在播，却没有下一集控制项 → 真实回归，不再按环境 SKIP。
+    playedEp1 = true;
     lastDiag = `视频在播(${ps.t}s/rs${ps.rs})却没有「下一集」控制项`;
+    problems.push(`多集片源在播但「下一集」控制项缺失：${lastDiag}`);
     await backToSearch();
     continue;
   }

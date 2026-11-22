@@ -28,13 +28,7 @@ describe("player audio fade", () => {
     // 引擎里不再自己爬坡：淡入只有一处实现。
     expect(engine).not.toContain("requestAnimationFrame(");
     expect(engine).not.toContain("FADE_IN_MS");
-    // 模块侧的两个入口与顺序约束还在。
-    expect(fader).toContain("export const FADE_IN_MS = 200;");
-    expect(fader).toContain("silentUntil = now() + FADE_IN_MS + 150;");
-    expect(fader).toContain("target.volume = wanted.volume * progress;");
-    // addEventListener 第三参数传布尔是 capture，不是 once —— 写错会让冷启动
-    // 那轮淡入在换集之后复活（单测能抓到，这里也钉一道）。
-    expect(fader).toContain('target.addEventListener(type, handler, once ? { once: true } : undefined);');
+    // 内部公式与监听器参数由 playerVolumeFade.test.ts 的行为测试覆盖，这里只守委托不重复。
   });
 
   it("mutes before pausing when tearing the player down", () => {

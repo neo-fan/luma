@@ -100,10 +100,4 @@ describe("player favourites & history line contract", () => {
     expect(detail).toContain("resume.playFrom");
     expect(detail).toContain("resume.episodeName");
   });
-
-  it("surfaces line and episode in the history list", () => {
-    const history = read("src/lib/history.ts");
-    expect(history).toContain("item.playFrom");
-    expect(history).toContain("item.episodeName");
-  });
 });

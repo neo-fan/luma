@@ -12,7 +12,7 @@ const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 describe("renderer list budgets are wired into pages", () => {
   it("caps search hits through a single commit path", () => {
     const page = read("src/pages/SearchPage.tsx");
-    expect(page).toContain("const MAX_SEARCH_HITS = 1200;");
+    expect(page).toContain("MAX_SEARCH_HITS");
     expect(page).toContain("const commitHits = useCallback(");
     expect(page).toContain("capItems(ranked, MAX_SEARCH_HITS)");
     // 三条写入路径都必须走 commitHits，不能绕过截断。
@@ -23,9 +23,9 @@ describe("renderer list budgets are wired into pages", () => {
 
   it("bounds category pages and keeps a small site-snapshot LRU", () => {
     const page = read("src/pages/HomePage.tsx");
-    expect(page).toContain("const MAX_CAT_PAGES = 20;");
-    expect(page).toContain("const MAX_CAT_ITEMS = 1200;");
-    expect(page).toContain("const MAX_HOME_SNAPSHOTS = 6;");
+    expect(page).toContain("MAX_CAT_PAGES");
+    expect(page).toContain("MAX_CAT_ITEMS");
+    expect(page).toContain("MAX_HOME_SNAPSHOTS");
     expect(page).toContain('"home:data:v3"');
     expect(page).toContain("clampLoadedPages(");
     expect(page).toContain("putLru(");

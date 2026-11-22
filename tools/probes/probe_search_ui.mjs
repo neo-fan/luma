@@ -132,14 +132,6 @@ const TYPE_IN_BLOCK = (heading, value, nth = 0) => `(() => {
   return 'TYPED';
 })()`;
 
-const SELECT = (selector, value) => `(() => {
-  const el = document.querySelector(${JSON.stringify(selector)});
-  if (!el) return 'MISSING';
-  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, ${JSON.stringify(value)});
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-  return el.value;
-})()`;
-
 const WAIT = (expression, timeout = 30000) => `(async () => {
   const deadline = Date.now() + ${timeout};
   while (Date.now() < deadline) {
@@ -197,7 +189,26 @@ await cdp.shot("search-1-import");
 
 // 2. 搜索页走一次并发聚合
 assert((await cdp.eval(CLICK("搜索", ".nav__item"))) === "CLICKED", "open search page");
-assert((await cdp.eval(SELECT(".search-bar select", "__all__"))) === "__all__", "all sites selected");
+// 搜索范围控件是 AppSelect（SiteSelect.tsx），默认就是「全部站点」；
+// 原生 <select> 的 DOM 已不存在，按 data-value + 菜单项两条真实路径断言。
+const scope = await cdp.eval(`(async () => {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const root = document.querySelector('.search-bar .app-select--site');
+    if (root) {
+      if (root.getAttribute('data-value') === '__all__') return '__all__';
+      const trigger = root.querySelector('.app-select__trigger');
+      if (trigger) { trigger.click(); break; }
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  await new Promise((r) => setTimeout(r, 300));
+  const item = document.querySelector('.app-select__menu[aria-label="选择站点"] .app-select__item[data-value="__all__"]');
+  if (!item) return 'NO_ITEM';
+  item.click();
+  return '__all__';
+})()`);
+assert(scope === "__all__", "all sites selected", String(scope));
 assert((await cdp.eval(TYPE(".search-bar input.input", KEYWORD))) === "TYPED", "type keyword");
 const started = Date.now();
 assert((await cdp.eval(CLICK("搜索", ".search-bar button"))) === "CLICKED", "submit search");
@@ -232,18 +243,41 @@ const episodes = await cdp.eval(`document.querySelectorAll('.content .episode').
 assert(Number(episodes) > 0, "episodes available", `${episodes} episodes`);
 if (Number(episodes) > 0) {
   await cdp.eval(`document.querySelector('.content .episode').click()`);
-  const player = await cdp.eval(
-    WAIT("const v = document.querySelector('video'); return v && (v.currentSrc || v.src) ? (v.currentSrc || v.src) : null;", 40000),
-  );
+  // 首条线路解析失败在真实源里很常见（源站死链 / 加速通道抽风）。播放页本身给了
+  // 「换下一条线路」出口，探针跟着用户真实动作重试，别把「第一条线路不灵」直接
+  // 判成「播放不了」（2026-11-22 套件实测：详情 41 集正常，首线路 40s 无地址）。
+  const MEDIA = "const v = document.querySelector('video'); return v && (v.currentSrc || v.src) ? (v.currentSrc || v.src) : null;";
+  let player = null;
+  let lineTries = 0;
+  for (; lineTries < 3 && !player; lineTries += 1) {
+    if (lineTries > 0) {
+      const next = await cdp.eval(`(() => {
+        const btn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').includes('换下一条线路'));
+        if (!btn || btn.disabled) return 'MISSING';
+        btn.click();
+        return 'CLICKED';
+      })()`);
+      if (next !== "CLICKED") {
+        console.log(`[info] 没有可换的线路了（试过 ${lineTries} 条）`);
+        break;
+      }
+    }
+    player = await cdp.eval(WAIT(MEDIA, lineTries === 0 ? 40000 : 30000));
+  }
+  console.log(`[info] media source after ${lineTries} line(s)`);
   assert(!!player, "player has a media source", String(player).slice(0, 140));
-  const playing = await cdp.eval(WAIT(`
-    const v = document.querySelector('video');
-    return v && v.readyState >= 2 && v.videoWidth > 0
-      ? JSON.stringify({ w: v.videoWidth, h: v.videoHeight, t: v.currentTime, paused: v.paused })
-      : null;
-  `, 90000));
-  assert(!!playing, "video decoded real frames", String(playing));
-  await cdp.shot("search-3-player");
+  if (player) {
+    const playing = await cdp.eval(WAIT(`
+      const v = document.querySelector('video');
+      return v && v.readyState >= 2 && v.videoWidth > 0
+        ? JSON.stringify({ w: v.videoWidth, h: v.videoHeight, t: v.currentTime, paused: v.paused })
+        : null;
+    `, 60000));
+    assert(!!playing, "video decoded real frames", String(playing));
+    await cdp.shot("search-3-player");
+  } else {
+    console.log(`[diag] page text: ${String(await cdp.eval("document.body.innerText.slice(0, 300)")).replace(/\n+/g, " | ")}`);
+  }
 }
 
 // 本探针没有「恢复原配置」的收尾——它的职责本身就是把 active 归位到真实配置

@@ -328,46 +328,84 @@ try {
   })()`);
   assert(recheck === "CHECKED", "re-check .filter-toggle input", String(recheck));
 
-  // 5. 第一个 .source-item 的「切换」→ picker 消失 → 源变更、标题仍在。
+  // 5. 换到一个**非当前**源：「切换」→ picker 消失 → 源变更、标题仍在。
+  // 列表包含当前源（SourcePicker 不排除它），点第一条可能正好是当前源，
+  // 断言「源变了」就会假红。按详情路由里的 siteKey 跳过它。
+  // 另外优先挑非 py 源：py 源要现取脚本（走 GitHub 加速，可能 403/超时），
+  // 目标源自己的详情挂掉会让后面「选集→播放页」整串失败，看着像换源坏了。
   const switched = await cdp.eval(`(() => {
-    const item = document.querySelector('.source-item');
-    if (!item) return 'MISSING_ITEM';
-    const btns = [...item.querySelectorAll('button, a')];
+    const current = decodeURIComponent((location.hash.split('/')[2] || ''));
+    const items = [...document.querySelectorAll('.source-item')].filter((el) => el.getAttribute('data-site-key') !== current);
+    const pick = items.find((el) => !String(el.getAttribute('data-site-key') || '').startsWith('py_')) || items[0];
+    if (!pick) return 'NO_OTHER_SOURCE';
+    const key = pick.getAttribute('data-site-key') || '';
+    const btns = [...pick.querySelectorAll('button, a')];
     const btn = btns.find((n) => (n.textContent || '').trim() === '切换')
              || btns.find((n) => (n.textContent || '').includes('切换'));
     if (!btn) return 'MISSING_BTN';
+    if (btn.disabled) return 'DISABLED';
     btn.click();
-    return 'CLICKED';
+    return 'CLICKED:' + key;
   })()`);
-  assert(switched === "CLICKED", "click first .source-item 切换 button", switched);
+  assert(String(switched).startsWith("CLICKED"), "click another .source-item 切换 button", switched);
   const closed = await cdp.eval(
     WAIT("return document.querySelector('.source-picker') ? null : 'CLOSED';", 15000),
   );
   assert(closed === "CLOSED", ".source-picker closed after 切换", String(closed));
-  // 换源会重建详情页并重新拉详情，等标题回来再读源名，别把加载态当失败。
-  const detailReloaded = await cdp.eval(
-    WAIT("return document.querySelector('.detail-title') ? 'OK' : null;", 30000),
+  // 换源成功的判据是「源名真的变了」，不是「详情页有标题」：换源过程中详情页不
+  // 会卸载，旧标题一直在，按存在性判断会立刻读到换源前的值（2026-11-22 实测：
+  // 读到 after == before，随后又拿旧详情去点选集，一路假红）。
+  const switchedState = await cdp.eval(
+    WAIT(`const s = (document.querySelector('.detail-source')?.innerText || '').trim();
+      if (s && s !== ${JSON.stringify(beforeSource)}) return 'CHANGED';
+      if (document.querySelector('.error-bar')) return 'ERROR';
+      if (document.querySelector('[data-sonner-toast]')) return 'TOAST';
+      return null;`, 25000),
   );
-  assert(detailReloaded === "OK", "detail reloaded for picked source", String(detailReloaded));
-  const afterRaw = await cdp.eval(`(() => {
-    const src = document.querySelector('.detail-source');
-    const title = document.querySelector('.detail-title');
-    return JSON.stringify({
-      source: src ? src.innerText.trim() : null,
-      title: title ? title.innerText.trim() : null,
-    });
-  })()`);
-  const after = JSON.parse(afterRaw || "{}");
-  assert(!!after.source && after.source !== beforeSource, ".detail-source changed after 切换", JSON.stringify({ before: beforeSource, after: after.source }));
-  assert(!!after.title, ".detail-title still non-empty", JSON.stringify(after.title));
+  if (switchedState !== "CHANGED") {
+    const state = await cdp.eval(`(() => JSON.stringify({
+      hash: location.hash,
+      err: document.querySelector('.error-bar')?.innerText?.slice(0, 120) || null,
+      toast: document.querySelector('[data-sonner-toast]')?.innerText?.slice(0, 120) || null,
+    }))()`);
+    console.log(`[info] switch state: ${switchedState} ${state}`);
+    // 目标源自己不可用（报错/提示），换源动作本身没坏：按环境跳过并说明。
+    if (switchedState === "ERROR" || switchedState === "TOAST") {
+      console.log(`[SKIP] 目标源换不过去（${switchedState}），不是换源面板回归：${state}`);
+      cdp.close();
+      console.log("\nSKIP source_picker");
+      process.exit(0);
+    }
+  }
+  assert(switchedState === "CHANGED", "detail source switched to the picked site", String(switchedState));
+  const afterTitle = await cdp.eval(`document.querySelector('.detail-title')?.innerText?.trim() || ''`);
+  assert(!!afterTitle, ".detail-title still non-empty after 切换", afterTitle);
 
   // 6. 详情页第一个 .episode → 播放页（播放器 + 信息卡 + 常驻选集）。
-  const epClick = await cdp.eval(FIRST_CLICK(".episode"));
+  // 换源会整页重建详情，`.episode` 节点可能还挂在旧一版上：点完以**路由真的
+  // 变成 #/player/** 为准，未变就再点一次（最多 3 次）。只断言「点了」会把
+  // 重渲染竞态记成产品回归（实测同一集手动点必进播放页）。
+  let entered = null;
+  let epClick = "MISSING";
+  for (let attempt = 0; attempt < 3 && !entered; attempt += 1) {
+    epClick = await cdp.eval(FIRST_CLICK(".episode"));
+    if (epClick !== "CLICKED") break;
+    entered = await waitEval(
+      cdp,
+      "return location.hash.startsWith('#/player/') ? 'OK' : null;",
+      12000,
+    );
+  }
   assert(epClick === "CLICKED", "click first .episode to open player", epClick);
   if (epClick !== "CLICKED") {
     console.log(`[diag] detail page text: ${String(await cdp.eval("document.body.innerText.slice(0, 800)"))}`);
     console.log(`[diag] exceptions: ${cdp.errors.slice(0, 5).join(" | ").slice(0, 1200)}`);
   }
+  assert(
+    entered === "OK",
+    "episode click opens the player route",
+    String(await cdp.eval("location.hash")),
+  );
   const aboutReady = await cdp.eval(
     WAIT("return document.querySelector('.player-about') ? 'OK' : null;", 30000),
   );

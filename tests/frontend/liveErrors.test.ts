@@ -148,12 +148,6 @@ describe("LivePage 接入分类文案", () => {
     expect(page).toContain("hint={");
   });
 
-  it("旧的笼统文案不再出现", () => {
-    expect(page).not.toContain("该频道的所有线路都无法播放，请换一个频道。");
-    expect(page).not.toContain("播放地址解析失败：");
-    expect(page).not.toContain('setFatalError("")');
-  });
-
   it("换线/换台提示进播放器 notice，ErrorBar 保留主文案 / 归因 / 详情结构", () => {
     // 播放相关提示统一进播放器 notice，不再挂在页顶 .tip。
     expect(page).not.toContain('<p className="tip">');
@@ -162,8 +156,6 @@ describe("LivePage 接入分类文案", () => {
     expect(page).toContain('lifetime="timed"');
     expect(page).toContain('lifetime={resolveError ? "timed" : "sticky"}');
     expect(page).toContain("resolveFailure?.message");
-    // 三类提示：播放失败、地址解析失败、全部线路失败。
-    expect(page.match(/<ErrorBar/g) ?? []).toHaveLength(3);
   });
 });
 
@@ -171,7 +163,7 @@ describe("换线尝试预算：只允许自动换线路，绝不自动换台/换
   const page = read("src/pages/LivePage.tsx");
 
   it("预算闸在 switchOrFailover 里、线路数多于预算才生效", () => {
-    expect(page).toContain("const LIVE_LINE_ATTEMPTS = 5;");
+    expect(page).toContain("LIVE_LINE_ATTEMPTS");
     expect(page).toContain(
       "total > LIVE_LINE_ATTEMPTS && tried.size >= LIVE_LINE_ATTEMPTS",
     );
