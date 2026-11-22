@@ -679,6 +679,35 @@
   }
 }
 
+/* 安装阶段：真实进度在 NSIS 的安装窗口里，应用马上就要退出，
+   这里只表示「正在交接」，不确定进度用往返滑动的条。 */
+.update-progress--indeterminate .update-progress__bar {
+  width: 36%;
+  transition: none;
+  animation: update-progress-slide 1.15s ease-in-out infinite;
+}
+
+/* 位移交给外层动画，不要再叠一层扫光。 */
+.update-progress--indeterminate .update-progress__bar::after {
+  display: none;
+}
+
+@keyframes update-progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+.update-installing__note {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
 /* 检查 / 下载 / 安装的在途状态：同一枚小环，按钮内与状态行共用。 */
 .update-status {
   display: flex;

@@ -129,12 +129,16 @@ export default function UpdateSection() {
     setPhase("installing");
     setError("");
     setTip("");
-    // 静默安装后应用直接退出；记下目标版本，下次启动据此回执更新结果。
+    // 静默/被动安装期间应用必须退出，界面没有机会再更新。记下目标版本，
+    // 下次启动据此回执更新结果。
     writeUpdatePrefs({ pendingVersion: info?.latest ?? "" });
     try {
+      // 先让「正在安装」面板画出来：后端启动安装器后只等 1.2 秒就退出窗口，
+      // 点完确认立刻调用会让人觉得「什么都没发生窗口就没了」。
+      await new Promise((resolve) => window.setTimeout(resolve, 700));
       await api.updateInstall(installer);
       // 正常路径下应用会立刻退出，这里不会继续执行。
-      setTip("安装器已启动，应用即将退出。");
+      setTip("安装程序已启动，Luma 会在安装完成后自动重新打开。");
     } catch (err) {
       // 安装根本没启动，撤销标记，下次启动不要误报失败。
       writeUpdatePrefs({ pendingVersion: "" });
@@ -156,7 +160,7 @@ export default function UpdateSection() {
           ? `正在下载更新 · ${percent}%`
           : "正在连接更新服务器…"
         : phase === "installing"
-          ? "正在准备安装，应用即将退出…"
+          ? "正在启动安装程序，稍后会自动重新打开…"
           : "";
 
   const latestLabel = info ? formatVersion(info.latest) : "尚未检查";
@@ -166,7 +170,7 @@ export default function UpdateSection() {
       <h2 className="section-title">关于与更新</h2>
       <p className="settings-line">
         从 GitHub Release 检查新版本，安装包按「GitHub 加速」里选择的通道下载，
-        校验 SHA256 后静默安装。安装时应用会退出，完成后重新打开即可。
+        校验 SHA256 后启动安装程序并显示安装进度；Luma 会先退出，安装完成后自动重新打开。
       </p>
 
       <div className="settings-kv">
@@ -279,6 +283,23 @@ export default function UpdateSection() {
         </div>
       ) : null}
 
+      {/* 安装期间进度由 NSIS 自己的窗口显示（passive 模式），应用马上要退出，
+          这里只能表示「正在交接」，并把接下来会发生什么说清楚。 */}
+      {phase === "installing" ? (
+        <div className="update-installing">
+          <div
+            className="update-progress update-progress--indeterminate"
+            role="progressbar"
+            aria-valuetext="正在安装"
+          >
+            <span className="update-progress__bar" />
+          </div>
+          <p className="update-installing__note">
+            安装进度显示在系统安装窗口里。Luma 会先退出，安装完成后自动重新打开，无需手动启动。
+          </p>
+        </div>
+      ) : null}
+
       {tip ? <p className="tip tip--ok">{tip}</p> : null}
 
       {/* 更新说明来自 CHANGELOG，纯文本展示：不渲染 markdown，避免源站内容进 DOM。 */}
@@ -300,8 +321,8 @@ export default function UpdateSection() {
         title="安装新版本"
         message={
           info
-            ? `应用将退出并静默安装 ${formatVersion(info.latest)}，安装完成后请重新打开 Luma。`
-            : "应用将退出并安装新版本，完成后请重新打开 Luma。"
+            ? `应用将退出并安装 ${formatVersion(info.latest)}，安装进度显示在系统安装窗口里，完成后 Luma 会自动重新打开。`
+            : "应用将退出并安装新版本，安装完成后 Luma 会自动重新打开。"
         }
         confirmText="安装并退出"
         onConfirm={() => void install()}

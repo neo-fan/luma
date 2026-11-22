@@ -14,11 +14,15 @@
 //!
 //! ## 安装
 //!
-//! 安装包是项目自己产出的 NSIS（`currentUser` 模式），`/S` 静默安装即可；
-//! 模板保留 `CheckIfAppIsRunning`，会结束旧进程。安装完成后不自动拉起应用
-//! （静默模式不显示完成页），界面上要明确提示用户重新打开。点安装后先在 UI
-//! 显示「正在准备安装」动画，再异步等待一小段时间退出；安装结果由前端记下目标
-//! 版本，在下次启动时核对并回执。
+//! 安装包是项目自己产出的 NSIS（`currentUser` 模式），用 **passive** 模式
+//! （`/P`）而不是静默（`/S`）：silent 全程没有任何界面，用户点完「安装并退出」
+//! 只看到窗口消失，既不知道装到哪一步，也不知道还要等多久。passive 只显示安装
+//! 进度窗口、不需要任何交互，装完自动关闭；模板在 passive 下同样认 `/R`，会把
+//! 应用重新拉起来，配合启动回执形成闭环（见 `INSTALL_ARGS`）。
+//!
+//! 官方模板的 `CheckIfAppIsRunning` 在 passive 下不弹确认框、直接关掉仍占用
+//! exe 的进程，所以「应用还没退干净」不会把安装卡在对话框上。点安装后后端先
+//! 等一小段时间再退出，把时间留给前端把「正在安装」面板画出来。
 
 use crate::error::{code, AppError};
 use crate::ghproxy;
@@ -40,6 +44,17 @@ const CHECK_TTL: Duration = Duration::from_secs(600);
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// 下载进度事件的最小间隔（hls 分片级别的频繁 emit 会拖慢前端渲染）。
 const PROGRESS_STEP: Duration = Duration::from_millis(150);
+
+/// 安装器参数。
+///
+/// `/P` = passive：显示安装进度窗口但不需要任何交互，装完自动关闭。比 `/S`
+/// 多出的就是一个进度界面——用户点完「安装并退出」至少能看到「正在写入文件」，
+/// 而不是只有一个窗口消失。`/R` 让模板在安装成功后重新拉起应用，这样用户
+/// 不必自己回去双击图标，启动回执也能立刻报「已更新到 X」。
+///
+/// 两者都依赖 `nsis/installer.nsi`：`$PassiveMode` 由 `/P` 置位（`.onInit`），
+/// `.onInstSuccess` 在 passive 下读 `/R`（模板 793-799 行）。
+const INSTALL_ARGS: [&str; 2] = ["/P", "/R"];
 
 /// 检查结果缓存（10 分钟）：启动静默检查与设置页手动检查共用。
 static CACHE: std::sync::Mutex<Option<(Instant, UpdateInfo)>> = std::sync::Mutex::new(None);
@@ -335,13 +350,13 @@ pub async fn update_install(app: tauri::AppHandle, path: String) -> Result<(), A
         ));
     }
     let _child = std::process::Command::new(target)
-        .arg("/S")
+        .args(INSTALL_ARGS)
         .spawn()
         .map_err(|err| {
             AppError::new(code::UPDATE_FAIL, "启动安装器失败")
                 .with_cause(err.to_string())
         })?;
-    // 给安装器接管时间，也让前端把「正在准备安装」动画画出来。用 async 等待，
+    // 给安装器接管时间，也让前端把「正在安装」面板画出来。用 async 等待，
     // 不阻塞主线程；随后走正常退出流程（sidecar 优雅关停也在这里）。
     tokio::time::sleep(Duration::from_millis(1200)).await;
     app.exit(0);
@@ -382,5 +397,28 @@ mod tests {
         assert!(newer > current);
         let beta = parse_version("2.0.1-beta.1").unwrap();
         assert!(beta > current && beta < newer);
+    }
+
+    /// 安装必须有可见进度、并且装完自己回来。这两条都靠参数实现，别被改回 /S。
+    #[test]
+    fn installer_runs_passive_and_restarts_app() {
+        assert!(INSTALL_ARGS.contains(&"/P"), "passive 模式才有安装进度窗口");
+        assert!(INSTALL_ARGS.contains(&"/R"), "装完要自动重新拉起应用");
+        assert!(!INSTALL_ARGS.contains(&"/S"), "静默模式全程无界面，等于没有进度");
+    }
+
+    /// 参数只是请求，模板得真的认。换模板（比如回退官方默认）时要在这里炸。
+    #[test]
+    fn nsis_template_honours_passive_and_restart_flags() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("nsis/installer.nsi");
+        let text = std::fs::read_to_string(&path).expect("读取自定义 NSIS 模板");
+        assert!(
+            text.contains("\"/P\"") && text.contains("PassiveMode"),
+            "模板必须解析 /P 才能进入 passive 模式"
+        );
+        assert!(
+            text.contains("\"/R\""),
+            "模板的 .onInstSuccess 必须解析 /R 才能自动重启"
+        );
     }
 }

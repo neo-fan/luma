@@ -79,7 +79,7 @@ python tools/check.py
 
 `check.py` 串行执行并汇总（12 项）：契约校验、版本一致性、发布收口、Python 兼容、py 框架、适配层健壮性、`py_compile`、`prepare_runtime.py --check`、qjs-runner 单测、qjs 引擎帧校验、前端单测、`cargo test --lib`。任一失败即非零退出。
 
-**当前基线（2.0.5）**：`python tools/check.py` **12/12 全绿**；其中 `pnpm test` 740（91 个文件）、`cargo test --lib` 285 passed / 2 ignored、`qjs-runner cargo test` 7 passed（GBK 编解码纯函数）、`py_compat_check` 19/19、`adapter_isolation` 15/15、`contract_check` 8 类型 + 8 方法对齐、`version_check` 版本全链一致（`tauri.conf.json` 指回 `package.json`、sidecar ping 回报注入的 2.0.5）、`release_prep_check` 53 断言（semver 比较 / 四处载体改写 / CHANGELOG 提升与阻断 / 工作区状态判定）、`prepare_runtime --check` 8 个 JS 依赖齐全 + 9 个资源字节数/SHA256 通过、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底）。`tsc --noEmit` 零错误（不在 `check.py` 内，单独跑）。
+**当前基线（2.0.6）**：`python tools/check.py` **12/12 全绿**；其中 `pnpm test` 740（91 个文件）、`cargo test --lib` 296 passed / 2 ignored、`qjs-runner cargo test` 7 passed（GBK 编解码纯函数）、`py_compat_check` 19/19、`adapter_isolation` 15/15、`contract_check` 8 类型 + 8 方法对齐、`version_check` 版本全链一致（`tauri.conf.json` 指回 `package.json`、sidecar ping 回报注入的 2.0.6）、`release_prep_check` 53 断言（semver 比较 / 四处载体改写 / CHANGELOG 提升与阻断 / 工作区状态判定）、`prepare_runtime --check` 8 个 JS 依赖齐全 + 9 个资源字节数/SHA256 通过、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底）。`tsc --noEmit` 零错误（不在 `check.py` 内，单独跑）。
 
 ### 2.2 窗口回归（需要 dev 窗口）
 
@@ -105,7 +105,7 @@ corepack pnpm build:beta       # beta（app.luma.beta），只在预发布时用
 
 产物：`src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe`（NSIS 安装器，版本号来自 `package.json`）。
 
-同目录还会生成 `latest.json`：自动升级的版本清单（`version` / `tag` / `notes` / `asset{name,size,sha256}`），与安装包一起挂到 Release。客户端只读这个静态文件——加速前缀不支持 `api.github.com`，所以版本信息不能靠 API。`notes` 从 `CHANGELOG.md` 对应版本段落截取。客户端点「安装并退出」会先记下目标版本；`/S` 静默安装结束前应用已退出，结果在**下次启动**按当前版本核对后提示「已更新到 X」或「更新未完成，可重试」。
+同目录还会生成 `latest.json`：自动升级的版本清单（`version` / `tag` / `notes` / `asset{name,size,sha256}`），与安装包一起挂到 Release。客户端只读这个静态文件——加速前缀不支持 `api.github.com`，所以版本信息不能靠 API。`notes` 从 `CHANGELOG.md` 对应版本段落截取。客户端点「安装并退出」会先记下目标版本；`/P` passive 安装期间应用已退出，安装器随后按 `/R` 自动重新拉起应用，结果在**下次启动**按当前版本核对后提示「已更新到 X」或「更新未完成，可重试」。
 
 ### 2.4 安装器外观（官方 `bundle.windows.nsis`）
 
