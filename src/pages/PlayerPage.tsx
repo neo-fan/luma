@@ -239,15 +239,11 @@ export default function PlayerPage({
       : null;
 
   /**
-   * 从直播页回到点播：直播播放器创建实例时会硬停「非本容器」的 `<video>`
-   * （`lib/playerRegistry` 的全局唯一守卫，用来根治双声），点播这一路要么被
-   * 摘掉 src、要么连元素都没了，切回来就是黑屏。这里轮询确认情况：还活着就
-   * 不动；被清空就带上进度快照重新解析——用户看到的是「接着播」。
+   * 被直播播放器夺用后原地复活：registry 硬停本实例时会明确通知，带上进度
+   * 快照重新解析。不再轮询 DOM 猜 video 的 src。
    */
-  usePlayerRevive({
+  const { onDisplaced } = usePlayerRevive({
     active,
-    hasResolved: Boolean(resolved),
-    containerRef,
     revive: () => {
       resumeMsRef.current = lastMediaRef.current.positionMs || resumeMsRef.current;
       reload();
@@ -493,6 +489,7 @@ export default function PlayerPage({
     switching,
     reloadRef,
     resumeMsRef,
+    onDisplaced,
     historyReady,
     rememberedRate: readRememberedRate,
     onRememberedRate: (rate) => {

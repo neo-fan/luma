@@ -51,8 +51,6 @@ describe("playback constants are the single source of truth", () => {
       "src/pages/SearchPage.tsx",
       "src/components/player/PlayerStage.tsx",
       "src/hooks/playerPrefsWriter.ts",
-      // 播放器两页的轮询已收口到公共 hook，不再各自引用。
-      "src/hooks/usePlayerRevive.ts",
     ]) {
       expect(read(file)).toContain("SHORT_UI_TICK_MS");
     }

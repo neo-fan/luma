@@ -241,6 +241,14 @@ export interface UsePlayerEngineArgs {
    * 只在这一刻回调——内核自己的重连成功不会走到这里。
    */
   onPlayFailed?: (cause: FailoverCause) => void;
+  /**
+   * 本实例被另一个播放器夺用（全局唯一守卫硬停它）时回调。
+   *
+   * 常驻层（直播）切到点播页时组件不卸载，但 video 被摘掉 src、引擎 effect
+   * 不会重跑 → 画面黑屏。registry 在硬停时直接发出这个事实，页面据此重解析，
+   * 不再轮询 DOM 猜 src 是否还在。
+   */
+  onDisplaced?: () => void;
 }
 
 export interface UsePlayerEngineHandle {
@@ -304,6 +312,7 @@ export function usePlayerEngine({
   onSlowNotice,
   setVideoError,
   onPlayFailed,
+  onDisplaced,
 }: UsePlayerEngineArgs): UsePlayerEngineHandle {
   /** 控制栏「下一集」按钮的 DOM：mounted 时拿到，供禁用态同步用。 */
   const nextButtonRef = useRef<HTMLElement | null>(null);
@@ -318,6 +327,9 @@ export function usePlayerEngine({
   /** 判死回调同理：身份每帧都变，只走 ref，不进内核 effect 依赖。 */
   const onPlayFailedRef = useRef(onPlayFailed);
   onPlayFailedRef.current = onPlayFailed;
+  /** 被夺用通知：身份每帧变，放 ref 不进内核 effect 依赖。 */
+  const onDisplacedRef = useRef(onDisplaced);
+  onDisplacedRef.current = onDisplaced;
   /** 「打开自定义片头片尾弹窗」回调放 ref：身份每帧都变，绝不进内核 effect 依赖。 */
   const openSkipSettingsRef = useRef(onOpenSkipSettings);
   openSkipSettingsRef.current = onOpenSkipSettings;
@@ -879,7 +891,7 @@ export function usePlayerEngine({
       teardownDecoders?.();
       art.destroy();
     };
-    const unregister = registerPlayer(hardStop);
+    const unregister = registerPlayer(hardStop, () => onDisplacedRef.current?.());
 
     /**
      * 续播：再次打开同一影片时从历史记录里的 positionMs 直接跳过去。
@@ -1389,7 +1401,7 @@ export function usePlayerEngine({
       // 顺序：先停 <video>（pause + 清 src + load 冲掉缓冲），再销毁解码器，
       // 最后销毁 ArtPlayer（它的 destroy 事件会幂等兜底再调一次 teardown）。
       hardStop();
-      unregister();
+      unregister.unregister();
     };
     // `resolving` 必须进依赖：新一轮解析开始时要立刻卸载旧内核，不能等
     // `setResolved(null)` 落地（两者都是 effect 阶段的 setState，晚一帧）。

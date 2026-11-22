@@ -323,17 +323,11 @@ export default function LivePage({
   };
 
   /**
-   * 与点播页对齐的 revive：从点播回直播时，点播播放器创建前的全局唯一守卫
-   * （`lib/playerRegistry`）会硬停「非本容器」的 `<video>`。直播常驻层不卸载，
-   * 但里面的 ArtPlayer 可能已经被摘掉 src / 销毁，而 `resolved` 没变 → 引擎
-   * effect 不会重跑，于是 `.live-host` 可见、选台列表都在，唯独画面黑屏、控件
-   * 一个都没有（实测）。这里在回到直播页后轮询确认：实例还活着就不动；被摘掉
-   * 就重新解析同一条流，用户看到的是原地恢复，不是空白页。
+   * 被点播播放器夺用后原地复活：直播是常驻层，被夺用时组件不卸载但 video
+   * 被摘掉 src、引擎 effect 不重跑。registry 硬停时明确通知，这里就地重解析。
    */
-  usePlayerRevive({
+  const { onDisplaced } = usePlayerRevive({
     active: liveActive,
-    hasResolved: Boolean(resolved),
-    containerRef,
     revive: () => reloadRef.current?.(),
   });
 
@@ -574,6 +568,7 @@ export default function LivePage({
     lineSwitchStarted,
     liveLineRef,
     reloadRef,
+    onDisplaced,
     resolved,
     resolving,
     siteKey: "live",

@@ -13,25 +13,27 @@ const root = resolve(__dirname, "../..");
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
 
 describe("live handoff revives a hard-stopped player", () => {
-  it("shares one revive implementation across both pages", () => {
+  it("drives revive from the registry's explicit displacement signal", () => {
     const live = read("src/pages/LivePage.tsx");
     const vod = read("src/pages/PlayerPage.tsx");
     const hook = read("src/hooks/usePlayerRevive.ts");
+    const registry = read("src/lib/playerRegistry.ts");
+    const engine = read("src/hooks/usePlayerEngine.ts");
 
-    // 判定只留一份：两页不再各自复制轮询，避免一边改了另一边忘了。
-    expect(hook).toContain('video.getAttribute("src") || video.currentSrc');
-    expect(hook).toContain("const killed = Boolean(video) || tries >= MAX_PROBE_TRIES;");
-    expect(hook).toContain("REVIVE_COOLDOWN_MS");
+    // 状态源是守卫的明确通知，不是轮询 DOM 猜 src。
+    expect(registry).toContain("previous.onDisplaced?.()");
+    expect(engine).toContain("registerPlayer(hardStop, () => onDisplacedRef.current?.())");
+    expect(hook).toContain("onDisplaced");
+    expect(hook).not.toContain("querySelector");
+    expect(hook).not.toContain("setTimeout");
     for (const source of [live, vod]) {
       expect(source).toContain('import { usePlayerRevive } from "../hooks/usePlayerRevive"');
       expect(source).toContain("usePlayerRevive({");
+      expect(source).toContain("onDisplaced,");
       expect(source).not.toContain("const lastReviveAt = useRef(0);");
     }
-    // 直播用 liveActive / reloadRef，点播用 active / reload，入口条件与恢复动作
-    // 必须与各自页面的活跃信号一致，不能照抄错变量。
-    expect(live).toContain("active: liveActive");
+    // 恢复动作各页不同：直播重解析当前频道，点播带进度快照重载。
     expect(live).toContain("revive: () => reloadRef.current?.()");
-    expect(vod).toContain("active,");
     expect(vod).toContain("lastMediaRef.current.positionMs");
   });
 

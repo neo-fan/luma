@@ -51,7 +51,7 @@ describe("player lifecycle contract", () => {
     expect(cleanup).toContain("hardStop()");
     expect(cleanup).toContain("unregister()");
     expect(engine).toContain("stopActivePlayer(container)");
-    expect(engine).toContain("registerPlayer(hardStop)");
+    expect(engine).toContain("registerPlayer(hardStop, () => onDisplacedRef.current?.())");
     const hardStop = engine.slice(engine.indexOf("const hardStop = () => {"));
     expect(hardStop.slice(0, 700)).toContain("video.pause()");
     expect(hardStop.slice(0, 700)).toContain('video.removeAttribute("src")');

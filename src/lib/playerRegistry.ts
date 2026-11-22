@@ -8,14 +8,24 @@
  * 模块级变量也会一起被重置，所以它必须挂在 `globalThis` 上跨 HMR 存活。
  *
  * 约定：创建 ArtPlayer **之前**先 `stopActivePlayer()` 硬停上一个实例；创建
- * 完成后 `registerPlayer(hardStop)` 登记新实例的硬停函数；cleanup 里注销。
+ * 完成后 `registerPlayer(hardStop)` 登记新实例；cleanup 里注销。
  * 硬停函数必须幂等（React cleanup 与下次 claim 都可能调到它）。
+ *
+ * 被夺用的实例会收到 `onDisplaced` 通知：常驻层（直播）和后台点播页据此
+ * 决定立即恢复还是记账待切回前台，不必轮询 DOM 猜 src 是否还在。
  */
 
 type HardStop = () => void;
 
+interface Entry {
+  id: number;
+  stop: HardStop;
+  /** 被夺用瞬间的通知；页面据此决定立即恢复还是记账待前台。 */
+  onDisplaced?: () => void;
+}
+
 interface Registry {
-  active: { id: number; stop: HardStop } | null;
+  active: Entry | null;
   seq: number;
 }
 
@@ -39,6 +49,12 @@ export function stopActivePlayer(container?: HTMLElement | null): void {
   const previous = reg.active;
   reg.active = null;
   if (previous) {
+    // 先通知再硬停：页面据此决定立即恢复或记账待切回前台。
+    try {
+      previous.onDisplaced?.();
+    } catch {
+      // 通知失败不影响硬停与新实例创建。
+    }
     try {
       previous.stop();
     } catch {
@@ -60,14 +76,23 @@ export function stopActivePlayer(container?: HTMLElement | null): void {
   }
 }
 
-/** 实例创建完成后登记；返回注销函数（只注销自己，不误伤后来者）。 */
-export function registerPlayer(stop: HardStop): () => void {
+/**
+ * 实例创建完成后登记；返回注销函数（只注销自己，不误伤后来者）。
+ * 返回的 id 用于稍后查询「我是否被夺用过」。
+ */
+export function registerPlayer(
+  stop: HardStop,
+  onDisplaced?: () => void,
+): { id: number; unregister: () => void } {
   const reg = registry();
   const id = ++reg.seq;
-  reg.active = { id, stop };
-  return () => {
-    if (reg.active?.id === id) {
-      reg.active = null;
-    }
+  reg.active = { id, stop, onDisplaced };
+  return {
+    id,
+    unregister: () => {
+      if (reg.active?.id === id) {
+        reg.active = null;
+      }
+    },
   };
 }
