@@ -44,9 +44,9 @@ cargo check  --manifest-path src-tauri/Cargo.toml
 cargo test   --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-> 测试放哪、四层各自跑到什么程度，见 `docs/TESTING.md`。日常最低门槛就是 `python tools/check.py`。
+> 测试放哪、四层各自跑到什么程度，见 `docs/TESTING.md`。日常只需 `python tools/affected.py --run`（按改动半径挑测试）；完整 `python tools/check.py` 留到发版前跑一次。
 
-**交付节奏**：改完**停在 debug 模式**（`pnpm dev:app`）确认即可，**不要每次都 `tauri build` 打包**；`tauri build` 编译 + 打包约 3~4 分钟、反馈回路过长，只在发版时打。发版统一用官方 `tauri build`，不手搓打包脚本。
+**交付节奏**：改完**停在 debug 模式**（`pnpm dev:app`）确认即可，**不要每次都 `tauri build` 打包**；`tauri build` 编译 + 打包约 3~4 分钟、反馈回路过长，只在发版时打。发版统一用官方 `tauri build`，不手搓打包脚本。**出包由 CI 负责**：本地不重复构建安装包，需要冒烟时才例外。
 
 ### 2.1 三通道：stable / beta / dev
 

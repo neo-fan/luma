@@ -77,6 +77,8 @@ python tools/version_check.py
 python tools/check.py
 ```
 
+**这是发版前的唯一一次全量回归。** 日常改动按 `docs/TESTING.md` §1.1 用 `python tools/affected.py --run` 只跑受影响的部分；本地不要为发版之外的场合重复跑全量，也不要和 CI 重复跑同一套门禁。
+
 `check.py` 默认串行执行并汇总（11 项）：契约校验、版本一致性、发布收口、Python 兼容、py 框架、适配层健壮性、qjs 引擎帧校验（要求预构建二进制，缺失即 FAIL）、`py_compile`、`tsc --noEmit`、前端单测、`cargo test --lib`。任一失败即非零退出。qjs-runner 单测只在 `--full` 跑；运行时产物体检在 `--artifacts` 跑，属于发布产物核对而非回归门禁。`.github/workflows/checks.yml` 在 main push / PR 上跑 `--ci` 便携子集（6 项）。
 
 **当前基线（2.0.7）**：`python tools/check.py` **11/11 全绿**；其中 `pnpm test` 745（92 个文件）、`cargo test --lib` 309 passed / 2 ignored、`qjs-runner cargo test` 7 passed（`--full`，GBK 编解码纯函数）、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底，缺二进制即 FAIL）。`tsc --noEmit` 零错误（已并入默认门禁）。随包资源由 `--artifacts` 在发布时核对，不占回归门禁名额。
@@ -92,6 +94,10 @@ node tools/run_probes.mjs --with-ui
 > 顺序约束见脚本头注释。`probe_search_ui` 最前、`probe_ui` 最后且默认跳过、`probe_sidebar` 靠后。探针自清理，不污染真实配置。外网抖动（chips=0 / 播放无画面且无报错）先看日志是否成片 SSL EOF，别当回归改代码。
 
 ### 2.3 构建安装器（官方 `tauri build`）
+
+> **常规发布不需要在本地构建。** 出包由 `release.yml` 在 tag 上完成，本地再跑一遍 `build:app` 只是重复劳动（约 2 分钟编译 + 7 分钟打包），除非你要做安装冒烟，否则跳过本节直接在 §2.5 之后打 tag 推送。
+>
+> 下面两条命令是**CI 的链路**，也是本地需要冒烟时的等价做法：
 
 ```bash
 # 1) 先准备随包运行时（python-embed / qjs-runner 二进制 / qjs 资源校验；JVM 运行时已移除）

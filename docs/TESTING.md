@@ -7,13 +7,25 @@
 
 | 层 | 放哪 | 入口 | 什么时候跑 |
 |---|---|---|---|
-| 单测（前端） | 被测模块同目录 `*.test.ts` | `corepack pnpm test` | 每次改前端 |
-| 单测（Rust） | 同文件 `#[cfg(test)] mod tests` | `cargo test --manifest-path src-tauri/Cargo.toml --lib` | 每次改 Rust |
-| 离线检查 | `tests/offline/` | `python tools/check.py` | **每次改动的最低门槛** |
+| 单测（前端） | 被测模块同目录 `*.test.ts` | `python tools/affected.py --run`（只跑受影响的） | 改前端后 |
+| 单测（Rust） | 同文件 `#[cfg(test)] mod tests` | 同上（按模块名过滤，如 `--lib live`） | 改 Rust 后 |
+| 离线检查 | `tests/offline/` | `python tools/check.py` | **发版前一次**；跨模块/改契约时 |
 | 阶段验收 | `tests/acceptance/p0.py~p3.py` | 单独执行（可带 `--offline`） | 改 sidecar / 打包前 |
-| 窗口探针 | `tools/{probes,verify,diag,audit}/` | `node tools/run_probes.mjs` | 改 UI / 播放 / 配置链路后 |
+| 窗口探针 | `tools/{probes,verify,diag,audit}/` | `node tools/probes/probe_x.mjs`（单支） | 改对应链路后，只跑那一支 |
 
 一句话边界：**能离线判定对错的进 `tests/`，必须靠真实窗口才能取证的进 `tools/`。**
+
+### 1.1 按改动半径选回归（默认姿势）
+
+```bash
+python tools/affected.py            # 看工作区改动该跑什么（只打印）
+python tools/affected.py --run      # 真的跑
+python tools/affected.py --full     # 发版前：跑完整 check.py
+```
+
+映射规则：Rust 单文件 → 该模块的 `cargo test --lib <module>`；前端单文件 → 同目录测试 + 引用它的测试 + `tsc`；探针 → `node --check` + 那一支；文档/CI 配置 → 不跑。**只有改动跨多个模块、或动了 `Cargo.toml` 依赖时，全量单测才是合理选择。**
+
+不要做的事：改一支探针就把 26 支全跑一遍；改一行日志级别就跑全量单测；CI 已经跑过的同一套门禁在本地再跑一遍。
 
 ## 2. 目录约定
 
