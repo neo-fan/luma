@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { SHORT_UI_TICK_MS } from "../../lib/constants";
 import type { RefObject } from "react";
 import { EXTERNAL_PLAY_FALLBACK } from "../../lib/features";
 
@@ -86,7 +87,7 @@ export default function PlayerStage({
     if (!startedAt.current) startedAt.current = Date.now();
     const timer = setInterval(() => {
       setWaited(Math.floor((Date.now() - startedAt.current) / 1000));
-    }, 500);
+    }, SHORT_UI_TICK_MS);
     return () => clearInterval(timer);
   }, [busy]);
 

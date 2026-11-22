@@ -10,6 +10,7 @@
 
 use super::deproxy;
 use crate::error::{code, AppError};
+use crate::spider::DEFAULT_TIMEOUT_MS;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
@@ -760,8 +761,10 @@ fn int_of(value: &Value) -> Option<i64> {
 /// `timeout` 是秒（社区配置里常写成 `"15"`），坏值退回 15s。
 fn parse_timeout(value: Option<&Value>) -> i64 {
     match value {
-        Some(value) if truthy(Some(value)) => int_of(value).map(|n| n * 1000).unwrap_or(15000),
-        _ => 15000,
+        Some(value) if truthy(Some(value)) => int_of(value)
+            .map(|n| n * 1000)
+            .unwrap_or(DEFAULT_TIMEOUT_MS as i64),
+        _ => DEFAULT_TIMEOUT_MS as i64,
     }
 }
 

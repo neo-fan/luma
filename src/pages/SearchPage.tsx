@@ -1,4 +1,5 @@
 import { FolderOpen, Search, SearchX } from "lucide-react";
+import { SHORT_UI_TICK_MS } from "../lib/constants";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Navigate } from "../lib/nav";
@@ -171,7 +172,7 @@ export default function SearchPage({
     const startedAt = Date.now();
     const timer = window.setInterval(() => {
       setElapsed(Math.round((Date.now() - startedAt) / 1000));
-    }, 500);
+    }, SHORT_UI_TICK_MS);
     return () => window.clearInterval(timer);
     // loading 进依赖仅为「结束即停 / 取消即停」；重搜由 timerEpoch 触发重起。
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -27,6 +27,8 @@
  * 播放页的「线路卡住要不要换」只认 `dead`；`unknown` 一律继续等，把决定权
  * 留给用户（实测「走马上任」某些 4K 线路冷启 18 秒，被 12 秒定时器误杀）。
  */
+
+import { PROBE_DEFAULT_TIMEOUT_MS } from "./constants";
 export type LineVerdict = "ok" | "dead" | "unknown";
 
 const BAD_SEGMENT_TYPE = /^(?:image\/|text\/html)/i;
@@ -81,7 +83,7 @@ async function firstSegmentVerdict(
 export async function probeLineVerdict(
   proxyUrl: string,
   kind: string,
-  timeoutMs = 5000,
+  timeoutMs = PROBE_DEFAULT_TIMEOUT_MS,
 ): Promise<LineVerdict> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -121,7 +123,7 @@ export async function probeLineVerdict(
 export async function probePlayable(
   proxyUrl: string,
   kind: string,
-  timeoutMs = 5000,
+  timeoutMs = PROBE_DEFAULT_TIMEOUT_MS,
 ): Promise<boolean> {
   return (await probeLineVerdict(proxyUrl, kind, timeoutMs)) === "ok";
 }

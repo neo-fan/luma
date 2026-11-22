@@ -19,7 +19,7 @@ use std::sync::Mutex;
 
 pub(crate) const DB_FILE: &str = "luma.db";
 const META_ACTIVE: &str = "active_config_id";
-pub const MAX_HISTORY: usize = 500;
+pub use crate::constants::MAX_HISTORY;
 
 /// A row of `configs`. `runtime_json` is written on every import; an empty
 /// value still triggers a derivation pass in `ConfigStore::load` so a policy

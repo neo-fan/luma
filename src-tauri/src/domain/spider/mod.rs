@@ -24,8 +24,11 @@ use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
-pub const DEFAULT_TIMEOUT_MS: u64 = 15_000;
-pub const MAX_FANOUT: usize = 20;
+// 超时 / 扇出常量统一在 infra::constants 定义，这里重导出以保持既有引用路径。
+pub use crate::constants::{
+    DEFAULT_TIMEOUT_MS, HEALTH_BUDGET_MAX_MS, HEALTH_DEFAULT_TIMEOUT_MS, MAX_FANOUT,
+    SEARCH_BUDGET_MAX_MS, SEARCH_BUDGET_MIN_MS, SITE_TIMEOUT_MAX_MS, SITE_TIMEOUT_MIN_MS,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -545,7 +548,10 @@ async fn aggregate(
     let budget = if is_streaming {
         streaming_total
     } else {
-        timeout.clamp(Duration::from_millis(8_000), Duration::from_millis(30_000))
+        timeout.clamp(
+            Duration::from_millis(SEARCH_BUDGET_MIN_MS),
+            Duration::from_millis(SEARCH_BUDGET_MAX_MS),
+        )
     };
     loop {
         let remaining = budget.saturating_sub(started.elapsed());
@@ -718,7 +724,9 @@ pub async fn site_health(
         });
     }
 
-    let per_ms = req.timeout_ms.unwrap_or(8_000).clamp(2_000, 15_000);
+    let per_ms = req.timeout_ms
+        .unwrap_or(HEALTH_DEFAULT_TIMEOUT_MS)
+        .clamp(SITE_TIMEOUT_MIN_MS, SITE_TIMEOUT_MAX_MS);
     let per = Duration::from_millis(per_ms);
     // 体检是诊断动作，要尽量覆盖**全部**站点，不能像聚合搜索那样只给一个
     // `per` 墙钟：67 站 / 并发 20 ≈ 4 轮，每轮最坏 per，4×8s=32s 才跑得完，
@@ -726,7 +734,10 @@ pub async fn site_health(
     // 但留 45s 硬上限，避免一堆死源让体检页一直转。
     let rounds = (sites.len() + MAX_FANOUT - 1) / MAX_FANOUT;
     let budget = Duration::from_millis(per_ms.saturating_mul(rounds as u64))
-        .clamp(Duration::from_millis(8_000), Duration::from_millis(45_000));
+        .clamp(
+            Duration::from_millis(SEARCH_BUDGET_MIN_MS),
+            Duration::from_millis(HEALTH_BUDGET_MAX_MS),
+        );
     let started = Instant::now();
     let semaphore = std::sync::Arc::new(Semaphore::new(MAX_FANOUT));
     let mut set = tokio::task::JoinSet::new();

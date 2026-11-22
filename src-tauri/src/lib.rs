@@ -20,6 +20,8 @@
 pub mod bridge;
 #[path = "infra/channel.rs"]
 pub mod channel;
+#[path = "infra/constants.rs"]
+pub mod constants;
 #[path = "infra/db/mod.rs"]
 pub mod db;
 #[path = "infra/env.rs"]

@@ -135,9 +135,10 @@ export function useAutoSkipPrompt({
       const durMs = Number.isFinite(video.duration) ? video.duration * 1000 : 0;
       const pendingKind = pendingRef.current?.kind;
       if (pendingKind) {
-        // 倒计时还在跑，但播放头已经不在那个窗口里了——最常见的是「历史续播
-        // 落在片头之后」：`playing` 先在 0 秒触发，随后续播 seek 才落到位。
-        // 此时必须撤掉倒计时，否则 5 秒后会把用户从续播点拽回片头末尾。
+        // 倒计时还在跑，但播放头已经不在那个窗口里了——典型是用户自己拖动
+        // 了进度条。此时必须撤掉倒计时，否则 5 秒后会把用户拽回片头/片尾。
+        // （续播 seek 晚到曾造成同一现象；现在续播点是播放器创建的前置条件，
+        //  历史就绪前不建实例，所以那条时序已经不存在。）
         if (pendingKind === "intro" && !shouldSkipIntro(curMs, introMs)) {
           cancel();
         } else if (pendingKind === "outro" && !shouldSkipOutro(curMs, durMs, outroMs)) {

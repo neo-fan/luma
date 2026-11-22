@@ -11,6 +11,8 @@
  * 所有回调都过 `isCurrent()`：已失格的旧元素不得覆盖当前偏好。
  */
 
+import { SHORT_UI_TICK_MS } from "../lib/constants";
+
 /** 写入器要能纠正 ArtPlayer 的噪声回写，所以三个字段都可写（真实 `<video>` 也是如此）。 */
 export interface PrefsVideoView {
   volume: number;
@@ -69,7 +71,7 @@ export function createPrefsWriter(options: PrefsWriterOptions): PrefsWriter {
   const timer = options.timer ?? ((cb, ms) => window.setTimeout(cb, ms));
   const clearTimer = options.clearTimer ?? ((handle) => window.clearTimeout(handle));
   const silenceMs = options.silenceMs ?? 2000;
-  const throttleMs = options.throttleMs ?? 500;
+  const throttleMs = options.throttleMs ?? SHORT_UI_TICK_MS;
   const replayMs = options.replayMs ?? 1200;
 
   let silenceUntil = now() + silenceMs;
