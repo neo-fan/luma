@@ -32,7 +32,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: pnpm
 
       - uses: actions/setup-python@v7
@@ -58,6 +58,15 @@ jobs:
           }
           "TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Output "release tag: $tag"
+
+      - name: Verify release tag
+        shell: pwsh
+        # tag 必须指向发布收口提交，且 tag 内的版本三处与 CHANGELOG 段自洽。
+        # 防的是「收口之后又落了几个提交、标签却在新 HEAD 上重打」：那种 tag 里的
+        # CHANGELOG 落后于真实内容，latest.json 的 notes 会永久缺条目。
+        run: |
+          git fetch --depth=1 origin "+refs/tags/$($env:TAG):refs/tags/$($env:TAG)"
+          python tools/release_prep.py --verify $env:TAG
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile

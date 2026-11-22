@@ -1,7 +1,7 @@
 name: checks
 
 # 每次推到 main 与 PR 都跑可移植的离线门禁；发布 tag 仍由 release.yml 负责出包。
-# 只跑 check.py --ci：契约 / 版本 / 发布工具 / Python 语法 / 前端类型 / 前端单测。
+# 只跑 check.py --ci：契约 / 版本 / 发布工具 / 文档一致性 / Python 语法 / 前端类型 / 前端单测。
 # 需要随包运行时或 Rust 工具链的检查留给本地默认门禁与发版流程。
 
 on:
@@ -32,7 +32,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: pnpm
 
       - uses: actions/setup-python@v7
