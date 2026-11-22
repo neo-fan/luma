@@ -96,7 +96,7 @@ luma/
 │   ├── binaries/                          # [产物] externalBin 暂存（qjs-runner-<triple>.exe），gitignore
 │   └── src/
 │       ├── main.rs                        # 只调 luma_lib::run()
-│       ├── lib.rs                         # #[path] 分层映射 + run() + 40 个 command 注册
+│       ├── lib.rs                         # #[path] 分层映射 + run() + 43 个 command 注册
 │       ├── infra/                         # 底座：error/env/paths/process/netrules/http/pct/
 │       │                                  #   textio/started/db/{mod,schema,meta,configs,playback}/
 │       │                                  #   bridge/store/window
@@ -144,7 +144,7 @@ luma/
 
 27 个 `.rs` 原先 21 个平铺在 `src-tauri/src/` 根，`lib.rs` 一屏 `pub mod`。现按技术层归入两目录，用 `#[path = "…"]` 映射：
 
-- **逻辑模块名不变**：仍是 `crate::error`、`crate::config`……所有 `use crate::foo` 与 `generate_handler!` 的 40 个 command 路径零改动 → 不会引发运行时 "command not found"（这是 Rust 分层最大的隐性雷区，编译期抓不到）。
+- **逻辑模块名不变**：仍是 `crate::error`、`crate::config`……所有 `use crate::foo` 与 `generate_handler!` 的 43 个 command 路径零改动 → 不会引发运行时 "command not found"（这是 Rust 分层最大的隐性雷区，编译期抓不到）。
 - **分层规避双向依赖环**：`db ↔ store` 同放 `infra/`，`proxy ↔ spider` 同放 `domain/`，两组真实双向引用都不跨层。
 - **这是物理分层，非依赖方向硬约束**。后续阶段再把 `crate::` 路径前缀化为 `crate::infra::*` / `crate::domain::*`，并把 command 与私有 helper 分离到 `commands/`（需逐个提升 helper 为 `pub(crate)`）。详见 `docs/ARCHITECTURE.md` 与 git history。
 
@@ -161,7 +161,7 @@ luma/
 | Rust 宿主源码 | `src-tauri/src/{infra,domain}/` | 命令、进程管理、proxy、运行时，按层归档 |
 | sidecar 源码 | `sidecars/{py,qjs-runner}/` | 入库；二进制产物目录见 §1 |
 | 离线检查脚本 | `tests/offline/` | 契约、版本一致性、py 兼容、适配层协议等确定性检查，全部接进 `tools/check.py` |
-| 阶段验收脚本 | `tests/acceptance/p0.py~p3.py` | 规格书 12.2 累积断言；stub 在 `tests/stub_server.py` |
+| 阶段验收脚本 | `tests/acceptance/p0.py` / `p1.py` / `p3.py` | 规格书 12.2 累积断言；p2（jar/JVM）已随运行时移除；stub 在 `tests/stub_server.py` |
 | 前端单测 | 与被测模块同目录 `*.test.ts`（`src/lib`、`src/pages`、`src/stores`） | 只测本模块；不为了放测试而新建目录 |
 | 跨文件约定测试 | `tests/frontend/` | 读源码文本断言「哪些文件里必须出现什么」，不属于任何单模块 |
 | 窗口探针 | `tools/{probes,verify,diag,audit}/` | 靠 CDP 9222 取证的脚本，统一入口 `tools/run_probes.mjs` |

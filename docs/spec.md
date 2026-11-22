@@ -43,7 +43,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
   不执行第三方代码。Python 侧超时由宿主墙钟判定并发 `cancel` 帧，连接判死则重启适配层
   （`bridge.rs`）；`qjs-runner` 按进程级强杀，不依赖 future 取消。
 - Rust 进程内只跑自研逻辑：配置链、CMS 采集与解析、直播解析、parse 池、反代、豆瓣。
-- `infra/` 与 `domain/` 是物理分层（`#[path]` 映射），40 个 command 的路径因此零改动；
+- `infra/` 与 `domain/` 是物理分层（`#[path]` 映射），43 个 command 的路径因此零改动；
   `db↔store`、`proxy↔spider` 各自同层以规避环。
 
 ## 4. 源类型：执行与解析位置
@@ -84,7 +84,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
 
 ## 6. 宿主 IPC 与前端路由
 
-- **40 个 command 闭集**（`src-tauri/src/lib.rs` 注册）：config 13
+- **43 个 command 闭集**（`src-tauri/src/lib.rs` 注册）：config 13
   （`config_import` / `config_list` / `config_active` / `config_activate` /
   `config_edit` / `config_remove` / `config_refresh` / `config_refresh_settings` /
   `config_set_refresh_interval`、`gh_proxy_state` / `gh_proxy_set` / `gh_proxy_test`、
@@ -92,8 +92,9 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
   http 1、spider 2（`spider_invoke` / `site_health`）、live 3（`live_parse` /
   `live_epg` / `live_epg_warm`）、proxy 1、play 2（`resolve_play` / `open_external`）、
   parse 1（`parse_resolve`）、douban 2（`douban_meta` / `douban_request`）、
-  store 8（收藏 3 + 播放记录 5，单表实现）、logging 4、
-  storage 2（`storage_usage` / `storage_clear`）、clipboard 1。
+  store 8（收藏 3 + 播放记录 5，单表实现）、logging 4（`log_write` / `open_log_dir` +
+  `diagnostics` / `export_report`）、storage 2（`storage_usage` / `storage_clear`）、
+  clipboard 1（`copy_text`）、updater 3（`update_check` / `update_download` / `update_install`）。
 - 前端不得绕过 `src/lib/invoke.ts`；detail / player 的大字段走 `history.state`，
   不进 URL。
 - **8 条路由**（`src/routes.tsx`，`createHashRouter`）：首页、收藏、历史、搜索、

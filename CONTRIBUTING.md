@@ -85,7 +85,7 @@ schema → `src/types/luma.ts` → Rust 序列化（`src-tauri/src/domain/spider
 **前端**
 
 - 状态：跨页共享态放 `src/stores/appStore.ts`（zustand），页面局部态与查询缓存（`lib/queryClient.ts`）不进 store。
-- 样式：全站一套设计 token（`src/styles.css` 顶部），不要在组件里写字面量颜色 / 圆角。
+- 样式：全站一套设计 token（`src/styles/base.css` 的 `:root`）；级联顺序由 `src/styles/index.css` 的 `@import` 决定（`polish.css` 必须最后），不要在组件里写字面量颜色 / 圆角。
 - 提示分层：事件 → toast；需要用户决策的错误 → `ErrorBar`；长期说明 → `.tip`。
 
 ## 5. 提交与 PR

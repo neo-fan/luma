@@ -39,7 +39,7 @@ dev 与安装交付版统一用随包 `sidecars/python-embed/python.exe`（`brid
 ```powershell
 corepack pnpm dev:app          # 出窗口，前端热更新 + Rust 重编译
 corepack pnpm build            # 仅前端产物（验证打包无误）
-corepack pnpm test             # 前端单测：src 下与被测模块同目录 33 个 + tests/frontend 6 个跨文件约定
+corepack pnpm test             # 前端单测：src 下与被测模块同目录 64 个 + tests/frontend 28 个跨文件约定
 cargo check  --manifest-path src-tauri/Cargo.toml
 cargo test   --manifest-path src-tauri/Cargo.toml --lib
 ```
@@ -255,7 +255,7 @@ node tools/run_probes.mjs --only=flv,history
 node tools/run_probes.mjs --list          # 列出全部探针及其标签
 ```
 
-探针按用途分目录（都在 `tools/` 下）：`probes/` 50 个功能探针、`verify/` 8 个严格验收、`diag/` 7 个一次性排障、`audit/` 4 个（DOM/布局取证 + 全站扫描）。多数依赖 `run_probes.mjs` 拉起的应用 + Vite；`tools/run_probes.mjs` 是唯一入口，其余脚本顶部有 usage 头注释。
+探针按用途分目录（都在 `tools/` 下）：`probes/` 31 个功能探针（注册 27 支 + `ui` 按需）、`verify/` 6 个严格验收、`diag/` 21 个排障与取样、`audit/` 3 个（DOM/布局取证 + 全站扫描）。多数依赖 `run_probes.mjs` 拉起的应用 + Vite；`tools/run_probes.mjs` 是唯一入口，其余脚本顶部有 usage 头注释。
 
 > 探针依赖桩服务 fixture（`strict_home` / `header_probe` 等）与临时内联配置，会自清理、不污染真实配置；`probe_ui` 会切到桩配置，默认不跑。
 >
@@ -282,7 +282,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 3. **Vite 转换缓存让探针连跑旧代码** → 误判"修复无效"。探针开头已加 `Network.setCacheDisabled` + reload `ignoreCache:true` + 拉 `PlayerPage.tsx` 自检特征，确保不把 stale 模块当产品 bug。
 4. **CDP 9222 被残留 luma 占用** → WebView2 起不来；按 §2.3 的 `STALE` 处理。
 5. **嗅探窗口冲突**：dev 的 `--remote-debugging-port=9222` 会让第二个 WebView2 返 `0x8007139F`；嗅探窗口必须给独立 `data_directory` 且覆盖 `--remote-debugging-port=0`。
-6. **F 盘空间不足** → cargo 链接报 `os error 112`。曾用 junction 把 `src-tauri/target`、`release` 指到 `E:\luma-build`，**现在已不使用**（两者都是本仓库内的普通目录，`release/` 旧便携产物也已删除）。再遇到空间问题优先清回收站，或临时 `CARGO_TARGET_DIR=<另一块盘>`，不要手搓 junction 掩盖问题。
+6. **F 盘空间不足** → cargo 链接报 `os error 112`。曾用 junction 把 `src-tauri/target`、`release` 指到 `E:\luma-build`，**现在已不使用**（两者都是本仓库内的普通目录，`release/` 旧便携产物也已删除）。再遇到空间问题优先清回收站或挪走其它大文件；**不要**用 junction、也**不要**用 `CARGO_TARGET_DIR` 指向别的盘（铁律 11 无例外条款），清理产物只用 `cargo clean`。
 
 ## 8. 相关文档
 

@@ -10,7 +10,7 @@
 │   routes → AppShell → pages → hooks/lib → stores              │
 │   唯一 IPC 入口: src/lib/invoke.ts                            │
 └───────────────┬──────────────────────────────────────────────┘
-                │ Tauri invoke（40 个 command）
+                │ Tauri invoke（43 个 command）
 ┌───────────────▼──────────────────────────────────────────────┐
 │ 主进程 Rust/Tauri (src-tauri/src, cargo)                      │
 │   infra/  底座: error/env/paths/process/netrules/http/pct/    │
@@ -31,7 +31,7 @@
 
 ## 2. IPC 与数据流
 
-- 前端唯一出口 `src/lib/invoke.ts` → Tauri `invoke(cmd, args)` → Rust `generate_handler!` 注册的 40 个 command。禁止前端 `import` Node 内置模块。
+- 前端唯一出口 `src/lib/invoke.ts` → Tauri `invoke(cmd, args)` → Rust `generate_handler!` 注册的 43 个 command。禁止前端 `import` Node 内置模块。
 - 主进程 ↔ sidecar：通用 `spawn_stdio` / `call_on` / `kill_conn`（`bridge.rs`）；每行 stdout 是一帧 JSON-RPC，主循环线程池 `max_workers=8`。
 - 归一化契约 `contracts/luma.schema.json` 是 TS / Rust 两端唯一真源；`tests/offline/contract_check.py` 校验 TS 侧字段。
 
@@ -144,7 +144,7 @@ src/types/luma.ts  归一化契约 TS 侧
 
 ## 9. Rust 分层（`src-tauri/src`）
 
-- `infra/` 底座、`domain/` 业务；`lib.rs` 用 `#[path = "infra/foo.rs"] pub mod foo;` 映射，**逻辑模块名与 40 个 command 路径不变**（物理分层，未做 `crate::infra::*` 前缀化）。
+- `infra/` 底座、`domain/` 业务；`lib.rs` 用 `#[path = "infra/foo.rs"] pub mod foo;` 映射，**逻辑模块名与 43 个 command 路径不变**（物理分层，未做 `crate::infra::*` 前缀化）。
 - `db↔store`、`proxy↔spider` 各同层规避环；生产路径一律 `Result<T, AppError>`，禁 `unwrap()`。
 - 编译：`cargo check --manifest-path src-tauri/Cargo.toml`；debug 默认开 CDP `:9222`（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`）。
 

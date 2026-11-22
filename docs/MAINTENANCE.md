@@ -51,7 +51,7 @@
 
 1. 规格先行：新增 command 或错误码需改 `docs/spec.md`。
 2. Rust 侧一律 `Result<T, AppError>`，生产路径禁 `unwrap()`；错误码走 `code::*`。
-3. `src-tauri/src/lib.rs` 的 `generate_handler!` 注册（当前 40 个）。
+3. `src-tauri/src/lib.rs` 的 `generate_handler!` 注册（当前 43 个）。
 4. 前端唯一出口 `src/lib/invoke.ts`，禁止 `import` Node 内置模块。
 5. 评估 `capabilities/default.json` 权限白名单（嗅探窗口**故意**不在 `windows: ["main"]` 内，零 command 权限）。
 6. 探针卫生：会切换后端 active 配置的探针，cleanup 必须 `location.reload()`，否则前端残留 stub 站点让后续假失败。
