@@ -19,10 +19,21 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 use tokio::sync::Semaphore;
 
-const SOURCE_TTL: Duration = Duration::from_secs(600);
+/// 脚本快照 / 内存条目的新鲜期。
+///
+/// 曾经是 10 分钟：一次冷启动、一次重启、或十分钟后再打开应用，就要把配置里
+/// 几十个 py 脚本全部重下一遍。它们都托管在同一个 GitHub 加速域名上，集中拉取
+/// 会被镜像按 IP 限流（实测 47 个脚本并发 → `ghfast.top` 429，只能靠过期快照
+/// 顶着）。脚本本身几乎不变（配置多数直接钉 commit hash），6 小时足够及时，
+/// 也把日常请求量压到原来的 1/36。
+const SOURCE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const MAX_SOURCES: usize = 64;
 /// Caps how many py child processes one fan-out may start at once.
 static PY_CONCURRENCY: OnceLock<Semaphore> = OnceLock::new();
+/// 脚本下载闸门：与 `PY_CONCURRENCY`（子进程）分开，这里限的是**取脚本文本**的
+/// 并发数。一次全站搜索会同时打到几十个 py 源，不设闸门就是几十个请求同时冲
+/// 同一个加速域名，必然被限流。
+static SOURCE_FETCH: OnceLock<Semaphore> = OnceLock::new();
 
 /// 一条脚本的来源结论。
 ///
@@ -53,12 +64,27 @@ fn concurrency() -> &'static Semaphore {
     PY_CONCURRENCY.get_or_init(|| Semaphore::new(4))
 }
 
+fn source_fetch_gate() -> &'static Semaphore {
+    SOURCE_FETCH.get_or_init(|| Semaphore::new(4))
+}
+
 /// 脚本快照落盘目录。源脚本托管在 GitHub raw，冷启动每次都要重新下载，网络
 /// 一抖就是十几秒甚至直接失败；有磁盘快照就能把「重启后第一次点播」压到本地
 /// 读文件的时间。
+///
+/// 单测里固定到自己的临时根：`DATA_DIR` 是进程级环境变量，`config` 的测试会
+/// 把它改成各自的临时目录，并行跑时快照会被写到别人的目录里、甚至写到已被删掉的
+/// 目录（表现为 `open snapshot: NotFound` 的假失败，2026-11-22 实测）。
 fn snapshot_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(dir) = TEST_SNAPSHOT_DIR.get() {
+        return dir.clone();
+    }
     crate::store::data_dir().join("spider-src")
 }
+
+#[cfg(test)]
+static TEST_SNAPSHOT_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// URL → 稳定文件名：XXH3（`xxhash-rust`，主流、快，非加密用途足够）。只用于映射
 /// 磁盘快照文件名，不承担安全职责。
@@ -141,21 +167,43 @@ async fn cold_source(site: Value) -> Result<Source, AppError> {
         return Ok(Source::Fresh(text));
     }
 
-    let response = match http::fetch(http::FetchRequest {
-        url: api.clone(),
-        method: None,
-        headers: site.get("headers").and_then(Value::as_object).map(|map| {
-            map.iter()
-                .filter_map(|(key, value)| {
-                    value.as_str().map(|text| (key.clone(), text.to_string()))
-                })
-                .collect::<HashMap<String, String>>()
-        }),
-        body: None,
-        timeout_ms: Some(10_000),
-    })
-    .await
-    {
+    let headers = site.get("headers").and_then(Value::as_object).map(|map| {
+        map.iter()
+            .filter_map(|(key, value)| value.as_str().map(|text| (key.clone(), text.to_string())))
+            .collect::<HashMap<String, String>>()
+    });
+    // 闸门只罩住网络这一段：快照命中/本地读文件不该排在限流后面。
+    let fetched = {
+        let _permit = source_fetch_gate().acquire().await.map_err(|err| {
+            AppError::new(code::INTERNAL, "py source fetch gate closed").with_cause(err.to_string())
+        })?;
+        let mut throttled = false;
+        loop {
+            let attempt = http::fetch(http::FetchRequest {
+                url: api.clone(),
+                method: None,
+                headers: headers.clone(),
+                body: None,
+                timeout_ms: Some(10_000),
+            })
+            .await;
+            match attempt {
+                // 429/503 = 镜像限流/过载。原样重试只会更糟，退避一次足够穿过
+                // 瞬时限流；仍失败就走快照兜底。
+                Ok(response) if !throttled && matches!(response.status, 429 | 503) => {
+                    throttled = true;
+                    tracing::warn!(
+                        url = %api,
+                        status = response.status,
+                        "py source fetch throttled, retrying once after backoff"
+                    );
+                    tokio::time::sleep(Duration::from_millis(600)).await;
+                }
+                other => break other,
+            }
+        }
+    };
+    let response = match fetched {
         Ok(response) => response,
         Err(err) => {
             // 脚本托管在 GitHub raw，网络抖动/代理不可用是常态。此时手里有
@@ -163,19 +211,40 @@ async fn cold_source(site: Value) -> Result<Source, AppError> {
             // 一次 `fetch bubuzhuiju.py failed` 会让详情和播放同时失败）。
             // 兜底来源从「内存表」改成「磁盘」：moka 里过期的条目读不到了，
             // 而磁盘快照的覆盖面至少等价（写内存的路径都同时写盘）。
-            if let Some((text, _)) = snapshot {
+            if let Some((text, _)) = &snapshot {
                 tracing::warn!(url = %api, error = %err, "py source fetch failed, using stale snapshot");
-                return Ok(Source::Stale(text));
+                return Ok(Source::Stale(text.clone()));
             }
             return Err(err);
         }
     };
 
+    // 非 2xx 不能当脚本文本：镜像/网关会用 403/502 的纯文本指错页回话
+    // （`gh-proxy.com` 现在就这样），送进 `looks_like_spider` 只会得到
+    // 「does not define a Spider class」这种假诊断，还会丢掉过期快照兜底。
+    if !(200..300).contains(&response.status) {
+        if let Some((text, _)) = &snapshot {
+            tracing::warn!(
+                url = %api,
+                status = response.status,
+                "py source fetch returned non-2xx, using stale snapshot"
+            );
+            return Ok(Source::Stale(text.clone()));
+        }
+        return Err(AppError::new(
+            code::CONFIG_FETCH_FAIL,
+            format!("py source fetch failed: HTTP {}", response.status),
+        )
+        .with_cause(response.body.chars().take(160).collect::<String>()));
+    }
+
     if !looks_like_spider(&response.body) {
+        let head: String = response.body.chars().take(160).collect();
         return Err(AppError::new(
             code::RUNTIME_UNAVAILABLE,
             "py source does not define a Spider class",
-        ));
+        )
+        .with_cause(format!("body starts with: {head}")));
     }
 
     write_snapshot(&api, &response.body);
@@ -291,8 +360,9 @@ mod tests {
     use std::sync::Arc;
 
     /// 起一个本地桩：返回什么由 `mode` 决定（`ok` 给合法 Spider 脚本，
-    /// `junk` 给不是脚本的内容）。命中次数记在**调用方传入的计数器**上——
-    /// 用全局静态会被并行测试互相污染（第一版就因此得到 3 次命中的假阴性）。
+    /// `junk` 给不是脚本的内容，`gate` 给 403 + 指错页文本）。命中次数记在
+    /// **调用方传入的计数器**上——用全局静态会被并行测试互相污染（第一版
+    /// 就因此得到 3 次命中的假阴性）。
     async fn stub(
         mode: &'static str,
         hits: Arc<AtomicUsize>,
@@ -304,13 +374,24 @@ mod tests {
                 let hits = counter.clone();
                 async move {
                     hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let body = if mode == "ok" {
-                        "class Spider:\n    pass\n"
-                    } else {
-                        "<!doctype html><html>gate page</html>"
+                    let (status, body) = match mode {
+                        "ok" => (StatusCode::OK, "class Spider:\n    pass\n"),
+                        "gate" => (
+                            StatusCode::FORBIDDEN,
+                            "Access to proxy rules is forbidden on this hostname",
+                        ),
+                        // 第一次 429、之后正常：用来验证「被限流时退避重试一次」。
+                        "throttle" => {
+                            if hits.load(std::sync::atomic::Ordering::SeqCst) == 1 {
+                                (StatusCode::TOO_MANY_REQUESTS, "rate limited")
+                            } else {
+                                (StatusCode::OK, "class Spider:\n    pass\n")
+                            }
+                        }
+                        _ => (StatusCode::OK, "<!doctype html><html>gate page</html>"),
                     };
                     Response::builder()
-                        .status(StatusCode::OK)
+                        .status(status)
                         .header("content-type", "text/plain; charset=utf-8")
                         .body(Body::from(body))
                         .unwrap()
@@ -327,9 +408,50 @@ mod tests {
         (format!("http://{addr}/"), task)
     }
 
+    /// 把快照目录钉在本进程的临时根上（只在本模块测试里用）。
+    fn isolate_snapshot_dir() {
+        TEST_SNAPSHOT_DIR.get_or_init(|| {
+            let dir = std::env::temp_dir().join(format!("luma-spider-src-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            dir
+        });
+    }
+
+    /// 把快照写成「已过期」，这样 `source_for` 不会在 TTL 内提前返回 Fresh。
+    fn write_stale_snapshot(url: &str, text: &str) {
+        isolate_snapshot_dir();
+        write_snapshot(url, text);
+        let path = snapshot_dir().join(format!("{}.py", snapshot_key(url)));
+        let file = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open snapshot");
+        let aged = SystemTime::now() - (SOURCE_TTL + Duration::from_secs(60));
+        file.set_modified(aged).expect("age snapshot");
+    }
+
     fn forget_snapshot(url: &str) {
+        isolate_snapshot_dir();
         let path = snapshot_dir().join(format!("{}.py", snapshot_key(url)));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn throttled_fetch_retries_once_then_succeeds() {
+        // 镜像对集中拉取会回 429。退避一次就能穿过瞬时限流，不该直接把整个源
+        // 判死（429 也没有磁盘快照可兜底时就是用户点哪都失败）。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (url, task) = stub("throttle", hits.clone()).await;
+        let site = json!({ "api": url.clone() });
+        let source = source_for(&site).await.expect("429 后应退避重试成功");
+        assert!(source.contains("class Spider"), "{source}");
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "429 只该重试一次"
+        );
+        task.abort();
+        forget_snapshot(&url);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -371,6 +493,43 @@ mod tests {
         assert!(
             hits.load(std::sync::atomic::Ordering::SeqCst) >= 2,
             "失败后必须重新回源"
+        );
+        task.abort();
+        forget_snapshot(&url);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn non_2xx_body_is_not_treated_as_script() {
+        // 镜像/网关的 403 指错页（`gh-proxy.com` 现状）既不是脚本，也不能
+        // 当「源里没有 Spider 类」上报——那是诊断误导。没有快照时必须给出
+        // 带状态码的取数失败，而不是 RUNTIME_UNAVAILABLE。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (url, task) = stub("gate", hits.clone()).await;
+        let site = json!({ "api": url.clone() });
+        let err = source_for(&site).await.expect_err("403 must fail");
+        assert_eq!(err.code, code::CONFIG_FETCH_FAIL);
+        assert!(
+            err.message.contains("403"),
+            "错误要带上状态码，实际：{}",
+            err.message
+        );
+        task.abort();
+        forget_snapshot(&url);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn non_2xx_falls_back_to_stale_snapshot() {
+        // 过期快照的兜底此前只在「网络层报错」时生效；403 是 Ok 响应，
+        // 于是明明手里有可用脚本却整源不可用（首页/详情一起挂）。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (url, task) = stub("gate", hits.clone()).await;
+        write_stale_snapshot(&url, "class Spider:\n    pass\n");
+        let site = json!({ "api": url.clone() });
+        let source = source_for(&site).await.expect("stale snapshot must rescue");
+        assert!(source.contains("class Spider"));
+        assert!(
+            hits.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+            "应先尝试回源"
         );
         task.abort();
         forget_snapshot(&url);

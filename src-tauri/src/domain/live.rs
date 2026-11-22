@@ -49,6 +49,16 @@ pub async fn live_parse(url: String, ua: Option<String>) -> Result<Value, AppErr
     })
     .await?;
 
+    // 非 2xx 不能当 m3u 解析：加速前缀被封时会回一段 65 字节的指错页，
+    // 解析结果就是「0 个频道」，UI 只能显示空列表，用户完全看不出原因
+    // （2026-11-22 实测：`gh-proxy.com` 403 → count=0，直连同一地址 count=2875）。
+    if response.status >= 400 {
+        return Err(AppError::new(
+            code::CONFIG_FETCH_FAIL,
+            format!("live list fetch {url} -> HTTP {}", response.status),
+        ));
+    }
+
     Ok(m3u::parse(&response.body, &url))
 }
 
@@ -155,26 +165,82 @@ async fn load_epg_raw(state: &ConfigStore, epg_url: &str) -> Result<Arc<String>,
     }
 }
 
-/// `load_epg_raw` 的实际取数链（磁盘快照 → 网络）。只在 moka 里没有有效条目
-/// 时才会被跑到。
-async fn cold_epg_raw(epg_url: String, prefix: String) -> Result<Arc<String>, AppError> {
-    if let Some(raw) = read_epg_disk(&epg_url) {
-        return Ok(Arc::new(raw));
-    }
-    let url = ghproxy::apply(&epg_url, &prefix).into_owned();
-    let response = http::fetch(http::FetchRequest {
+/// 取数失败后的短冷却（url → 失败时间占位）。
+///
+/// EPG 是「进直播页预热 + 每次换台都取」的路径，一旦地址持续失败，一分钟内能
+/// 触发十几次（实测 84 次 403 分布在一小时内）。对同一个已经明确失败的地址
+/// 反复回源既没有新信息，也会把镜像打成限流。60s 内直接返回同一个错误，
+/// 过期后自动重试，不改变「恢复后能自愈」。
+static EPG_FAIL_CACHE: OnceLock<Cache<String, ()>> = OnceLock::new();
+
+fn epg_fail_cache() -> &'static Cache<String, ()> {
+    EPG_FAIL_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(16)
+            .time_to_live(Duration::from_secs(60))
+            .build()
+    })
+}
+
+async fn fetch_epg(url: String) -> Result<http::FetchResponse, AppError> {
+    http::fetch(http::FetchRequest {
         url,
         method: None,
         headers: None,
         body: None,
         timeout_ms: Some(30_000),
     })
-    .await?;
+    .await
+}
+
+/// 取一次 XMLTV：先走加速前缀，非 2xx 再直连一次。
+///
+/// 之前只有「走前缀」一条路：前缀一 403（2026-11-22 实测 84 次），节目单就整晚
+/// 为空，而且每两分钟还会重试一次。直连是同一个文件在 GitHub raw 上的原始地址，
+/// 前缀挂了它通常还通。
+async fn fetch_epg_with_fallback(
+    proxied: String,
+    direct: Option<String>,
+) -> Result<http::FetchResponse, AppError> {
+    let mut response = fetch_epg(proxied.clone()).await?;
+    if response.status >= 400 {
+        if let Some(direct) = direct.filter(|url| *url != proxied) {
+            tracing::warn!(
+                url = %direct,
+                status = response.status,
+                "epg proxy failed, retrying direct"
+            );
+            if let Ok(ok) = fetch_epg(direct).await {
+                if ok.status < 400 {
+                    response = ok;
+                }
+            }
+        }
+    }
+    Ok(response)
+}
+
+/// `load_epg_raw` 的实际取数链（磁盘快照 → 网络）。只在 moka 里没有有效条目
+/// 时才会被跑到。
+async fn cold_epg_raw(epg_url: String, prefix: String) -> Result<Arc<String>, AppError> {
+    if let Some(raw) = read_epg_disk(&epg_url) {
+        return Ok(Arc::new(raw));
+    }
+    if epg_fail_cache().get(epg_url.as_str()).await.is_some() {
+        return Err(AppError::new(
+            code::CONFIG_FETCH_FAIL,
+            format!("epg fetch {epg_url} -> recent failure, retry later"),
+        ));
+    }
+
+    let proxied = ghproxy::apply(&epg_url, &prefix).into_owned();
+    let response = fetch_epg_with_fallback(proxied, Some(epg_url.clone())).await?;
     // http::fetch 对 HTTP 错误状态仍返回 Ok(body)，由调用方自行判断。这里若把
     // 5xx/限流页当成功：错误体会被写盘并被内存缓存（求值失败才不缓存），
     // parse 出空节目单后再缓存 30 分钟——一次瞬态故障变成半小时「今天没节目」。
-    // 非成功状态直接 Err：try_get_with 不缓存失败，下一轮仍会回源重试。
+    // 非成功状态直接 Err：try_with 不缓存失败，下一轮仍会回源重试。
     if response.status >= 400 {
+        epg_fail_cache().insert(epg_url.clone(), ()).await;
         return Err(AppError::new(
             code::CONFIG_FETCH_FAIL,
             format!("epg fetch {epg_url} -> HTTP {}", response.status),
@@ -360,6 +426,104 @@ mod tests {
 
     fn forget_epg_disk(url: &str) {
         let _ = std::fs::remove_file(epg_disk_path(url));
+    }
+
+    /// 前缀路径（`/blocked…`）一律 403、其余路径 200 的桩：模拟「加速前缀被
+    /// 封，但源地址本身可取」，用来验证直连兜底与失败冷却。
+    async fn blocked_prefix_stub(hits: Arc<AtomicUsize>) -> (String, tokio::task::JoinHandle<()>) {
+        let counter = hits.clone();
+        let router = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+            let hits = counter.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                if uri.path().starts_with("/blocked") {
+                    Response::builder()
+                        .status(StatusCode::FORBIDDEN)
+                        .body(Body::from(
+                            "Access to proxy rules is forbidden on this hostname",
+                        ))
+                        .unwrap()
+                } else {
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "application/xml")
+                        .body(Body::from("<tv>\n  <programme/>\n</tv>\n"))
+                        .unwrap()
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        (format!("http://{addr}/"), task)
+    }
+
+    #[tokio::test]
+    async fn epg_falls_back_to_direct_when_proxy_rejects() {
+        // 加速前缀是唯一取数路径时，一旦它 403，节目单就整晚为空（2026-11-22
+        // 实测 84 次 `epg fetch … -> HTTP 403`）。前缀失败必须直连再试一次。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (base, task) = blocked_prefix_stub(hits.clone()).await;
+
+        let response =
+            fetch_epg_with_fallback(format!("{base}blocked/e.xml"), Some(format!("{base}e.xml")))
+                .await
+                .expect("前缀 403 不该直接失败");
+        assert_eq!(response.status, 200);
+        assert!(response.body.contains("<programme/>"), "{}", response.body);
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            2,
+            "应先打前缀（403）再直连（200）"
+        );
+
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn epg_failure_cools_down_instead_of_hammering() {
+        // 失败地址一分钟内会被「进直播页预热 + 每次换台」反复触发；不冷却就是
+        // 对同一个 403 地址持续回源，还容易被镜像升级成限流。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (base, task) = blocked_prefix_stub(hits.clone()).await;
+        let epg = format!("{base}blocked/e.xml");
+        forget_epg_disk(&epg);
+
+        let first = cold_epg_raw(epg.clone(), String::new())
+            .await
+            .expect_err("403 应报错");
+        assert_eq!(first.code, code::CONFIG_FETCH_FAIL);
+        let second = cold_epg_raw(epg.clone(), String::new())
+            .await
+            .expect_err("冷却期内应直接失败");
+        assert!(
+            second.message.contains("recent failure"),
+            "{}",
+            second.message
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "冷却期内不得再回源");
+
+        task.abort();
+        forget_epg_disk(&epg);
+    }
+
+    #[tokio::test]
+    async fn live_parse_rejects_non_2xx_instead_of_empty_list() {
+        // 403 指错页被当 m3u 解析时返回 0 个频道，UI 只显示空列表——用户看不
+        // 出任何原因（`gh-proxy.com` 被封那次就是这样）。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let (base, task) = blocked_prefix_stub(hits).await;
+        let err = live_parse(format!("{base}blocked/iptv.m3u"), None)
+            .await
+            .expect_err("非 2xx 不能当空列表");
+        assert_eq!(err.code, code::CONFIG_FETCH_FAIL);
+        assert!(err.message.contains("HTTP 403"), "{}", err.message);
+
+        task.abort();
     }
 
     /// 与生产同构的本地缓存（同 weigher/TTL），测试用它避免污染全局 static。

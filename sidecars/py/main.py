@@ -139,6 +139,9 @@ _cancelled: set[str] = set()
 _executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="spider")
 # 超过这个耗时就记一条 adapter_latency，慢调用不必再靠猜。
 SLOW_CALL_MS = 3000
+# 但「3 秒的慢」在真实源上是常态（实测中位 5.2 秒），全按 WARN 记一天能刷出
+# 近千条，WARN 就失去意义了。只有超过这个数才升级为 WARN，其余记 INFO 留档。
+SLOW_CALL_WARN_MS = 10_000
 # 帧解析失败时用来抢救 request id：有 id 才能回一帧，否则宿主只能干等。
 _ID_HINT = re.compile(r'"id"\s*:\s*(\d{1,20})')
 
@@ -175,7 +178,8 @@ def note_latency(method: str, started: float, params: dict, failed: bool) -> Non
     raw = params.get("source") or params.get("raw")
     _log_event(
         {
-            "level": "WARN",
+            # 3~10 秒只是「今天网络一般」，不是告警；超过 10 秒才值得看。
+            "level": "WARN" if elapsed_ms >= SLOW_CALL_WARN_MS else "INFO",
             "kind": "adapter_latency",
             "method": method,
             "elapsedMs": elapsed_ms,

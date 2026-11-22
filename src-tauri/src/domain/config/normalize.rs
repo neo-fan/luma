@@ -513,14 +513,14 @@ pub fn repair_snapshot(snapshot: &mut crate::config::ConfigSnapshot) -> usize {
     }
     if let Some(spider) = snapshot.spider.as_mut() {
         if let Some(repaired) = repair_url(spider) {
-            tracing::warn!(from = %spider, to = %repaired, "config url repaired");
+            tracing::info!(from = %spider, to = %repaired, "config url repaired");
             *spider = repaired;
             changed += 1;
         }
     }
     if let Some(wallpaper) = snapshot.wallpaper.as_mut() {
         if let Some(repaired) = repair_url(wallpaper) {
-            tracing::warn!(from = %wallpaper, to = %repaired, "config url repaired");
+            tracing::info!(from = %wallpaper, to = %repaired, "config url repaired");
             *wallpaper = repaired;
             changed += 1;
         }
@@ -532,10 +532,13 @@ pub fn repair_snapshot(snapshot: &mut crate::config::ConfigSnapshot) -> usize {
 /// 递归形状与 `ghproxy::rewrite_value` 保持一致：那里按主机改写，这里按笔误纠正，
 /// 两条规则各自独立、都不依赖对方先跑过。
 pub fn repair_value(value: &mut Value) -> usize {
+    // 修的是**上游订阅里的手误**（`https://https://…`，cluntop 的 box.json 就有），
+    // app 自己不会再产生这种形状（`normalize_prefix` 拒绝无主机前缀）。既然每次
+    // 都能确定性修好，它属于「信息」而不是「告警」——按 WARN 记会在每次导入时刷屏。
     match value {
         Value::String(text) => match repair_url(text) {
             Some(repaired) => {
-                tracing::warn!(from = %text, to = %repaired, "config url repaired");
+                tracing::info!(from = %text, to = %repaired, "config url repaired");
                 *text = repaired;
                 1
             }

@@ -441,7 +441,32 @@ export default function HomePage({
           }
           if (attempt === 1) {
             rememberHome({ siteKey, data: null, storedAt: Date.now() });
-            setError(errorMessage(err));
+            const message = errorMessage(err);
+            // 默认站「自己坏了」（脚本源 403、宿主超时等）和「成功但没内容」
+            // 一样要顺延：否则用户只看到「首页内容加载失败」，后面几十个能用
+            // 的站一次都不试。用户手动选过的站仍只报错，不擅自换站。
+            if (
+              isDefaultSite &&
+              !userActedRef.current &&
+              !fallbackTriedRef.current.has(siteKey)
+            ) {
+              fallbackTriedRef.current.add(siteKey);
+              const next = await findHomeSiteWithList(
+                usableHomeSites(sites),
+                siteKey,
+                (key) => api.home(key),
+                () => alive,
+              );
+              if (!alive) {
+                return;
+              }
+              if (next && !userActedRef.current) {
+                // 切站后 effect 会带着新 siteKey 重跑，这里保持 loading 态。
+                onSiteChange(next);
+                return;
+              }
+            }
+            setError(message);
             setLoading(false);
             return;
           }
