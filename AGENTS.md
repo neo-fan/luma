@@ -18,7 +18,7 @@ Luma 是 Windows 11 x64 的配置兼容播放框架（空壳框架，兼容 TVBo
 |---|---|
 | 版本 | `2.0.7`（`package.json` 唯一来源；`tauri.conf.json` 直接指向它，`build.rs` 断言 Cargo 版本，`python tools/version_check.py` 一键核对） |
 | 交付物 | `src-tauri/target/release/bundle/nsis/Luma_<version>_x64-setup.exe` |
-| 回归基线 | `python tools/check.py` 12/12；`pnpm test` 749（93 个文件）；`cargo test --lib` 298 passed / 2 ignored；`qjs-runner` cargo test 7 passed |
+| 回归基线 | `python tools/check.py` 11/11；`pnpm test` 745（92 个文件）；`cargo test --lib` 309 passed / 2 ignored；`qjs-runner` cargo test 7 passed（`--full`） |
 | 窗口探针 | `node tools/run_probes.mjs --list`（需要 debug 窗口 + CDP 9222） |
 | 发布状态 | `LICENSE` 为 **GPL-3.0-or-later**；仓库已公开并推送至 `neo-fan/luma`；发布记录见 [GitHub Releases](https://github.com/neo-fan/luma/releases) 与 `git tag`，安装包只由 CI 出、本地 `target/` 不保留；升版本用 `python tools/release_prep.py X.Y.Z` 一笔提交收口，推 tag 即触发 `release.yml` 出包 |
 
@@ -91,10 +91,12 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 
 ```powershell
 # 离线回归（无窗口、无外网；改动的最低门槛）
-python tools/check.py                 # 12 项：契约 / 版本一致性 / 发布收口 / py 兼容 / py 框架 / 适配层健壮性 / py 语法 / 前端单测 / cargo test / 运行时候检 / qjs-runner 单测 / qjs 引擎(GBK+ds)
+python tools/check.py                 # 11 项：契约 / 版本一致性 / 发布收口 / py 兼容 / py 框架 / 适配层健壮性 / qjs 引擎 / py 语法 / 前端类型 / 前端单测 / cargo test
 python tools/check.py --quick         # 跳过 cargo test
-python tools/check.py --full          # 追加 pnpm build
-python tools/check.py --ci            # 便携子集（5 项，不依赖随包 python-embed）
+python tools/check.py --full          # 追加 qjs-runner 单测 + pnpm build
+python tools/check.py --ci            # 便携子集（6 项：契约/版本/发布工具/py 语法/前端类型/前端单测）
+python tools/check.py --artifacts     # 追加运行时候检（发布时查产物，不是回归门禁）
+# .github/workflows/checks.yml 在 main push / PR 上跑 --ci（前端依赖由 pnpm install 提供）
 
 # Tauri 官方工具链
 corepack pnpm install

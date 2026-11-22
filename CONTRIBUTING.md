@@ -34,10 +34,10 @@ corepack pnpm build:app      # stable 安装包：嵌前端 + 打包 NSIS（发�
 ## 3. 提交前必须跑
 
 ```powershell
-python tools/check.py        # 11 项离线门禁：契约 / 版本一致性 / py 兼容 / py 框架 / py 语法 / 前端单测 / Rust 单测 / 运行时候检 / qjs-runner 单测 / qjs 引擎(GBK+ds)
+python tools/check.py        # 11 项离线门禁：契约 / 版本一致性 / 发布收口 / py 兼容 / py 框架 / 适配层健壮性 / qjs 引擎 / py 语法 / 前端类型 / 前端单测 / Rust 单测
 ```
 
-`--quick` 跳过 Rust 单测、`--full` 追加 `pnpm build`、`--ci` 只跑干净机器能跑的便携子集。
+`--quick` 跳过 Rust 单测；`--full` 追加 qjs-runner 单测与 `pnpm build`；`--ci` 只跑干净机器能跑的 6 项便携子集（也是 `checks.yml` 的内容）；`--artifacts` 把运行时候检加回来（发布时查产物，不是回归门禁）。
 
 改动涉及 UI / 播放 / 配置链路时，另外跑窗口探针（需要 debug 窗口 + CDP 9222）：
 

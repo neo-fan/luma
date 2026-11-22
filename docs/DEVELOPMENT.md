@@ -232,7 +232,7 @@ $env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（安装版�
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 corepack pnpm test
-python tools/check.py                          # 12 项一键（契约 / 版本 / 发布收口 / py 兼容 / py 框架 / 适配层 / 语法 / 前端 / cargo / 运行时 / qjs-runner 单测 / qjs 引擎）
+python tools/check.py                          # 11 项一键（契约 / 版本 / 发布收口 / py 兼容 / py 框架 / 适配层 / qjs 引擎 / 语法 / 前端类型 / 前端单测 / cargo）
 python tests/offline/py_compat_check.py        # TVBox py 脚本通用兼容 / 子进程信封
 python tests/offline/py_base_spider_check.py   # py 框架与原生对齐
 python tools/prepare_runtime.py --check        # 随包 Python 依赖齐全度（JVM 运行时已移除，不再检查 JRE）
@@ -259,7 +259,7 @@ node tools/run_probes.mjs --list          # 列出全部探针及其标签
 
 > 探针依赖桩服务 fixture（`strict_home` / `header_probe` 等）与临时内联配置，会自清理、不污染真实配置；`probe_ui` 会切到桩配置，默认不跑。
 >
-> 少数「真实源」探针（`probe_search_ui` / `probe_playability` / `probe_coverage` 等）默认指向一个**公开示例配置**；要测自己的配置，把它们顶部的 `CONFIG` 换成你的地址，或设 `LUMA_CONFIG`（支持的探针会优先读它）。仓库不内置任何配置地址。
+> 少数「真实源」探针（`probe_search_ui` 等）默认指向一个**公开示例配置**；要测自己的配置，把它们顶部的 `CONFIG` 换成你的地址，或设 `LUMA_CONFIG`（支持的探针会优先读它）。仓库不内置任何配置地址。源可达性采样工具已移到 `tools/diag/diag_coverage.mjs` / `diag_playability.mjs`，不再混进默认探针。
 
 ## 6. 环境变量速查（统一 `LUMA_*` 前缀）
 

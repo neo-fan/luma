@@ -27,7 +27,7 @@ src-tauri/tests/           # 目前为空（没有跨 crate 集成测试就不�
 tests/
   stub_server.py           # 共享桩服务（离线检查与阶段验收共用）
   fixtures/                # 测试输入：configs / spiders / media / manual
-  frontend/                # 跨文件约定测试（readFileSync 读源码文本，断言"哪些文件里必须出现什么"）
+  frontend/                # 跨文件约定测试（readFileSync 读源码文本；readSource.ts 统一锚点校验，避免 slice(-1) 伪守卫）
   offline/                 # 离线确定性检查，全部进 tools/check.py
     contract_check.py      #   schema ↔ TS ↔ Rust 字段对齐
     capabilities_check.py  #   Tauri 权限闭集
@@ -39,9 +39,9 @@ tests/
     p0.py p1.py p3.py      # p2.py（jar/JVM 回归）已随 JVM 运行时移除
 
 tools/
-  probes/                  # 窗口回归探针（每个文件自己断言，失败 exit 1）
+  probes/                  # 窗口回归探针（31 个；每个文件自己断言，失败 exit 1）
     lib/cdp.mjs            #   新探针共用的最小 CDP 客户端（连接/求值/真实点击/截图）
-  verify/  diag/  audit/   # 一次性验收 / 证据打印 / 静态走查（diag 不断言）
+  verify/  diag/  audit/   # 一次性验收（6 个）/ 证据打印 / 静态走查（diag 不断言）
 ```
 
 窗口探针的两种写法：早期 49 个探针各自内联一份 `Cdp` 类（自包含、复制粘贴）；
@@ -76,11 +76,12 @@ corepack pnpm dev:app
 3. **阶段验收不进 CI**：它依赖运行中的应用与 stub，留在发版手工清单。
 4. **探针会切后端 active 配置的，cleanup 必须 `location.reload()`**（见 `AGENTS.md` 工程铁律 7）。
 5. 跑 `cargo test` / `cargo check` 前先停 dev（`docs/DEVELOPMENT.md` §2.3）：`target` 锁被 dev 持有，且残留的 `qjs-runner` / `Luma_dev.exe` 会让 `tauri-build` 覆盖 `target/debug/qjs-runner.exe` 时报 `os error 5 拒绝访问`。停 dev 用 `Stop-Process -Name Luma_dev`。
-6. 若本会话的 `TEMP` 指向仓库内目录，Rust 单测里建子目录会因 ACL 失败（`create data dir failed`），改用系统临时目录（`$env:TEMP`）或仓库外的可写目录；**不要把临时目录建进仓库**。
+6. **SKIP 不算 PASS**：探针打印 `[SKIP]` / `[n-a]` / `[N/A]` 且 exit 0 时，`run_probes.mjs` 汇总单独列 skip；全部跳过时退出码 2，不报「全部通过」。新增探针不得用「环境不满足就 exit 0」掩盖真实回归。
+7. 若本会话的 `TEMP` 指向仓库内目录，Rust 单测里建子目录会因 ACL 失败（`create data dir failed`），改用系统临时目录（`$env:TEMP`）或仓库外的可写目录；**不要把临时目录建进仓库**。
 
 ## 5. 现状基线
 
-`python tools/check.py` 11/11、`pnpm test` 724（89 个文件）、`cargo test --lib` 279 passed / 2 ignored；sidecar `cargo test` 7 passed（GBK 编解码纯函数）。
+`python tools/check.py` 11/11、`pnpm test` 745（92 个文件）、`cargo test --lib` 309 passed / 2 ignored；`--full` 下 qjs-runner `cargo test` 7 passed（GBK 编解码纯函数）。
 数字随提交变化，以 `AGENTS.md`「当前状态」为准。
 
 ## 6. 探针依赖的 DOM 契约

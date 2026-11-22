@@ -131,12 +131,12 @@ luma/
     ├── prepare_runtime.py                 # 重建 python-embed 等产物；含 Python 依赖安装 + .pth 修正
     ├── python-requirements.txt            # 随包 Python 第三方依赖固定清单（Crypto/requests/lxml…）
     ├── inspect_config.py                  # 离线解码配置（图种 / 方言），只读不发网络
-    ├── check.py                           # 离线一键回归（12 项）
+    ├── check.py                           # 离线一键回归（11 项；--ci 6 项，--artifacts 追加产物体检）
     ├── run_probes.mjs                     # 窗口探针一键回归（唯一入口）
     ├── bundle_report.mjs                  # 前端体积对比
-    ├── probes/                            # 窗口探针：probe_*.mjs（56 个，按功能命名）
+    ├── probes/                            # 窗口探针：probe_*.mjs（31 个，按功能命名；注册 27 + optIn ui）
     ├── diag/                              # 一次性排障：diag_*.mjs + dump_state.mjs
-    ├── verify/                            # 严格验收：verify_*.mjs（带断言与截图）
+    ├── verify/                            # 严格验收：verify_*.mjs（6 个，带断言与截图）
     └── audit/                             # DOM/布局取证与全站扫描：audit_*.mjs、scan_*.mjs、scan_sources.py
 ```
 
