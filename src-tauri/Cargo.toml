@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "2.0.6"
+version = "2.0.7"
 license = "GPL-3.0-or-later"
 description = "Luma - config-compatible desktop player framework"
 edition = "2021"
