@@ -45,10 +45,10 @@ python tools/affected.py --run    # 再执行
 改动跨多个模块、动了 `Cargo.toml` 依赖、或改了契约字段时，才跑全量门禁：
 
 ```powershell
-python tools/check.py        # 11 项离线门禁：契约 / 版本一致性 / 发布收口 / py 兼容 / py 框架 / 适配层健壮性 / qjs 引擎 / py 语法 / 前端类型 / 前端单测 / Rust 单测
+python tools/check.py        # 12 项离线门禁：契约 / 版本一致性 / 发布收口 / 文档一致性 / py 兼容 / py 框架 / 适配层健壮性 / qjs 引擎 / py 语法 / 前端类型 / 前端单测 / Rust 单测
 ```
 
-`--quick` 跳过 Rust 单测；`--full` 追加 qjs-runner 单测与 `pnpm build`；`--ci` 只跑干净机器能跑的 6 项便携子集（也是 `checks.yml` 的内容）；`--artifacts` 把运行时候检加回来（发布时查产物，不是回归门禁）。
+`--quick` 跳过 Rust 单测；`--full` 追加 qjs-runner 单测与 `pnpm build`；`--ci` 只跑干净机器能跑的 7 项便携子集（也是 `checks.yml` 的内容）；`--artifacts` 把运行时候检加回来（发布时查产物，不是回归门禁）。
 
 `cargo test` / `cargo check` / `check.py` 要独占 `target`，跑之前先停 dev（`Stop-Process -Name Luma_dev`）。
 

@@ -42,6 +42,7 @@ tests/
   frontend/                # 跨文件约定测试（readFileSync 读源码文本；readSource.ts 统一锚点校验，避免 slice(-1) 伪守卫）
   offline/                 # 离线确定性检查，全部进 tools/check.py
     contract_check.py      #   schema ↔ TS ↔ Rust 字段对齐
+    docs_check.py          #   文档里的 command / 探针 / 测试文件 / 门禁项数对代码事实源
     capabilities_check.py  #   Tauri 权限闭集
     py_compat_check.py     #   TVBox py 脚本通用兼容 / 子进程信封
     py_base_spider_check.py#   py 框架与 base.spider 原生行为对齐
@@ -93,7 +94,7 @@ corepack pnpm dev:app
 
 ## 5. 现状基线
 
-`python tools/check.py` 11/11、`pnpm test` 745（92 个文件）、`cargo test --lib` 309 passed / 2 ignored；`--full` 下 qjs-runner `cargo test` 7 passed（GBK 编解码纯函数）。
+`python tools/check.py` 12/12、`pnpm test` 745（92 个文件）、`cargo test --lib` 309 passed / 2 ignored；`--full` 下 qjs-runner `cargo test` 7 passed（GBK 编解码纯函数）。
 数字随提交变化，以 `AGENTS.md`「当前状态」为准。
 
 ## 6. 探针依赖的 DOM 契约

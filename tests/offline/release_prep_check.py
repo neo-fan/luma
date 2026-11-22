@@ -289,6 +289,65 @@ check("AGENTS.md 脏改动被拦截", blocked == [" M AGENTS.md"], str(blocked))
 check("AGENTS.md 不落到无关文件里", others == [], str(others))
 
 # --------------------------------------------------------------------------- #
+# tag 校验（纯函数：tag 必须指向发布收口提交）
+# --------------------------------------------------------------------------- #
+
+GOOD_SECTION = """## [1.1.0] - 2026-02-02
+
+### 新增
+- 已发布内容
+"""
+
+TAG_BASE = dict(
+    version="1.1.0",
+    tag_kind="tag",
+    subject="chore(release): 版本升至 1.1.0",
+    pkg_version="1.1.0",
+    cargo_version="1.1.0",
+    changelog_text=GOOD_SECTION,
+)
+
+check("合格 tag 无问题", rp.tag_problems(**TAG_BASE) == [], str(rp.tag_problems(**TAG_BASE)))
+check(
+    "tag 指向非收口提交时拒绝",
+    any("收口提交" in item for item in rp.tag_problems(**{**TAG_BASE, "subject": "feat(tools): 收口后又落了一个提交"})),
+    "tag 后续提交没被发现",
+)
+check(
+    "lightweight tag 拒绝",
+    any("annotated" in item for item in rp.tag_problems(**{**TAG_BASE, "tag_kind": "commit"})),
+    "非 annotated tag 没被发现",
+)
+check(
+    "tag 内 package.json 版本漂移时拒绝",
+    any("package.json" in item for item in rp.tag_problems(**{**TAG_BASE, "pkg_version": "1.1.1"})),
+    "版本漂移没被发现",
+)
+check(
+    "tag 内 Cargo.toml 版本漂移时拒绝",
+    any("Cargo.toml" in item for item in rp.tag_problems(**{**TAG_BASE, "cargo_version": "1.0.9"})),
+    "Cargo 版本漂移没被发现",
+)
+check(
+    "tag 内缺版本段时拒绝",
+    any("没有 [1.1.0] 段" in item for item in rp.tag_problems(**{**TAG_BASE, "changelog_text": "## [1.0.0] - 2026-01-01\n\n- 旧\n"})),
+    "缺版本段没被发现",
+)
+check(
+    "tag 内版本段为空时拒绝",
+    any(
+        "正文为空" in item
+        for item in rp.tag_problems(
+            **{
+                **TAG_BASE,
+                "changelog_text": "## [1.1.0] - 2026-02-02\n\n## [1.0.0] - 2026-01-01\n\n- 旧\n",
+            }
+        )
+    ),
+    "空版本段没被发现",
+)
+
+# --------------------------------------------------------------------------- #
 # 结果
 # --------------------------------------------------------------------------- #
 

@@ -2,10 +2,10 @@
 """One-shot offline regression gate (no window, no network).
 
 Usage:
-    python tools/check.py            # default gate (11 checks)
+    python tools/check.py            # default gate (12 checks)
     python tools/check.py --full     # also run qjs-runner unit tests and `pnpm build`
     python tools/check.py --quick    # skip cargo test (useful while iterating on TS)
-    python tools/check.py --ci       # portable subset (6 checks, no sidecar/runtime deps)
+    python tools/check.py --ci       # portable subset (7 checks, no sidecar/runtime deps)
     python tools/check.py --artifacts # additionally verify prepared runtime artifacts
     python tools/check.py --list     # show the checks and exit
 
@@ -80,6 +80,7 @@ def checks(full: bool, quick: bool, ci: bool = False, artifacts: bool = False) -
         ("contract (schema <-> TS)", [py, "tests/offline/contract_check.py"]),
         ("version consistency", [py, "tools/version_check.py"]),
         ("release prep", [py, "tests/offline/release_prep_check.py"]),
+        ("docs consistency", [py, "tests/offline/docs_check.py"]),
     ]
     if not ci:
         items += [
@@ -114,8 +115,9 @@ def main() -> int:
     ap.add_argument(
         "--ci",
         action="store_true",
-        help="portable subset for CI: contract + version + release prep + python "
-        "syntax + frontend types/tests (no sidecar, runtime or cargo deps)",
+        help="portable subset for CI: contract + version + release prep + docs "
+        "consistency + python syntax + frontend types/tests (no sidecar, runtime "
+        "or cargo deps)",
     )
     ap.add_argument(
         "--artifacts",

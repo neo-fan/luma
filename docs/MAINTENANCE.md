@@ -23,11 +23,11 @@
 | 阶段断言 | `python tests/acceptance/p0.py` ~ `p3.py` | stub + 运行中的应用 | 改 sidecar / 打包后 |
 | 真实配置 | 导入 → 搜索 → 详情 → 播放 | 外网 | 源兼容结论（外网抖动不算回归） |
 
-`check.py` 默认覆盖（11 项）：契约、版本一致性、发布收口、Python 兼容、py 框架、适配层健壮性、qjs 引擎（GBK + ds，要求预构建二进制，缺失即 FAIL）、Python 语法、前端类型、前端单测、Rust 单测。`--full` 追加 qjs-runner 单测与 `pnpm build`；`--artifacts` 把「运行时产物体检」加回来——它是发布时的产物核对，不是回归门禁。
+`check.py` 默认覆盖（12 项）：契约、版本一致性、发布收口、文档一致性（command / 探针 / 测试文件 / 门禁项数对代码事实源）、Python 兼容、py 框架、适配层健壮性、qjs 引擎（GBK + ds，要求预构建二进制，缺失即 FAIL）、Python 语法、前端类型、前端单测、Rust 单测。`--full` 追加 qjs-runner 单测与 `pnpm build`；`--artifacts` 把「运行时产物体检」加回来——它是发布时的产物核对，不是回归门禁。
 
 新增/调整用例前先看 `docs/TESTING.md`：单测（`src/**`、Rust 内联）/ 离线检查（`tests/offline/`）/ 阶段验收（`tests/acceptance/`）/ 窗口探针（`tools/`）的边界与命令都在那一份里，加进 `check.py` 要同步本表与那里的清单。
 
-`--ci` 是**便携子集**（6 项：契约 + 版本 + 发布收口 + Python 语法 + 前端类型 + 前端单测）：只挑「任何干净机器都能跑」的检查，给没有构建产物、没有 pip 依赖的环境用。`.github/workflows/checks.yml` 在 main push / PR 上跑这个子集。
+`--ci` 是**便携子集**（7 项：契约 + 版本 + 发布收口 + 文档一致性 + Python 语法 + 前端类型 + 前端单测）：只挑「任何干净机器都能跑」的检查，给没有构建产物、没有 pip 依赖的环境用。`.github/workflows/checks.yml` 在 main push / PR 上跑这个子集。
 
 - py 适配层断言要 pip 依赖（lxml / pyquery / pycryptodome），装了 `tools/python-requirements.txt` 才跑；
 - Rust 单测需要 `dist/` 与 `bundle.resources` 路径（`tauri-build` 每次构建都复制，缺路径直接失败），要先 `pnpm build`；

@@ -232,7 +232,7 @@ $env:LUMA_SELFCHECK = "1"   # 启动自检并写 data/selfcheck.log（安装版�
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 corepack pnpm test
-python tools/check.py                          # 11 项一键（契约 / 版本 / 发布收口 / py 兼容 / py 框架 / 适配层 / qjs 引擎 / 语法 / 前端类型 / 前端单测 / cargo）
+python tools/check.py                          # 12 项一键（契约 / 版本 / 发布收口 / 文档一致性 / py 兼容 / py 框架 / 适配层 / qjs 引擎 / 语法 / 前端类型 / 前端单测 / cargo）
 python tests/offline/py_compat_check.py        # TVBox py 脚本通用兼容 / 子进程信封
 python tests/offline/py_base_spider_check.py   # py 框架与原生对齐
 python tools/prepare_runtime.py --check        # 随包 Python 依赖齐全度（JVM 运行时已移除，不再检查 JRE）
@@ -255,7 +255,7 @@ node tools/run_probes.mjs --only=flv,history
 node tools/run_probes.mjs --list          # 列出全部探针及其标签
 ```
 
-探针按用途分目录（都在 `tools/` 下）：`probes/` 31 个功能探针（注册 27 支 + `ui` 按需）、`verify/` 6 个严格验收、`diag/` 21 个排障与取样、`audit/` 3 个（DOM/布局取证 + 全站扫描）。多数依赖 `run_probes.mjs` 拉起的应用 + Vite；`tools/run_probes.mjs` 是唯一入口，其余脚本顶部有 usage 头注释。
+探针按用途分目录（都在 `tools/` 下）：`probes/` 31 个功能探针（注册 27 支，`ui` 为 optIn、默认跳过）、`verify/` 6 个严格验收、`diag/` 21 个排障与取样、`audit/` 3 个取证脚本（DOM/布局 + 全站扫描）+ 4 个 py 解析参考实现。多数依赖 `run_probes.mjs` 拉起的应用 + Vite；`tools/run_probes.mjs` 是唯一入口，其余脚本顶部有 usage 头注释。
 
 > 探针依赖桩服务 fixture（`strict_home` / `header_probe` 等）与临时内联配置，会自清理、不污染真实配置；`probe_ui` 会切到桩配置，默认不跑。
 >
