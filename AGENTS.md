@@ -73,6 +73,12 @@ jar 走不通是硬事实（父类 `com.github.catvod.crawler.Spider` 不在 jar
 11. **清理与构建只走官方命令，禁止绕过、禁止手搓**：清理编译产物一律 `cargo clean`（可用 `--release` / `--dry-run` / `-p` 等官方选项），**严禁 `rm -rf` / `del` 手删 `target/`**；构建、启动、打包一律 `pnpm dev:app` / `tauri build` / `tauri icon`，**严禁用裸 `cargo build` 绕过**，也**禁止用 `CARGO_TARGET_DIR` 指向新目录、复制预编译产物、关调试信息（D8050 之类）等手搓命令绕开构建锁或环境限制**。锁被占用只有一条正路：先停 dev（第 12 条），再跑官方命令——**`CARGO_TARGET_DIR` 没有例外条款**，包括 agent 与 CI（`.gitignore` 里的根 `/target/` 仅为兜底忽略，不代表允许产生）。
 12. **dev 后台常驻、CDP 探活、按名收尾**：`pnpm dev:app` 放后台跑并落盘日志，用 CDP `:9222` 探测状态，**禁止前台死等**（命令与五态判定见 `docs/DEVELOPMENT.md` §2.3）。**启动命令照抄 §2.3 的 `Start-Process pwsh …`，禁止 `cmd &` / `nohup` / `setsid`**：父 shell 退出会连带结束 Vite 与编译进程，表现为日志已打印 `VITE ready`、端口却无人监听。dev 进程名是 `Luma_dev.exe`、安装版是 `Luma.exe`，停止直接 `Stop-Process -Name Luma_dev`；`cargo test` / `cargo check` / `check.py` 前必须先停 dev——`target` 锁与 `Luma_dev.exe`/`qjs-runner.exe` 的产物占用都会让构建失败，不等锁、不绕行。**同一时刻只允许一棵源码树跑 dev**：`app.luma.dev` 数据目录、9979 反代、1420 Vite、9222 CDP 与 `Luma_dev` 单实例互斥体都是全局单值，复制工作树必然互抢；需要并行验证就换通道（`build:beta`），不要复制工作树。
 
+13. **时限判断只用于「等外部事件」，不用于协调自己的模块顺序**：
+    - **允许**：网络请求超时、媒体首帧 / stall 看门狗、缓存 TTL、限流窗口、补偿性兜底（`playing` 不来时的 fallback）。这些是在等一个**可能永远不来的外部信号**，没有时限就是永久挂死。
+    - **禁止**：用 `sleep(N)` / `setTimeout(N)` / `Date.now() < deadline` 去猜「另一个 effect 跑完了没」「第三方库初始化结束了没」「数据晚到了没」。这类时序必须由**显式事件或前置条件**表达：异步数据用 `ready` 门控（见 `usePlaybackHistory.historyReady`），跨组件状态用事件通知（见 `playerRegistry.onDisplaced`），状态转移用 XState（`vodSessionMachine` / `liveSessionMachine`）。
+    - **判据**：问自己「如果这个事件永远不来，系统该挂死还是该超时？」答案是「挂死 unacceptable」→ 时限合理；答案是「本来就不该等它」→ 是补丁，删掉并改用事件。
+    - 跨模块共享的时限常量一律进 `src/lib/constants.ts` / `src-tauri/src/infra/constants.rs`；**同值不同义不得合并**（历史写入节流 5000ms 与线路探活超时 5000ms 是两个常量）。
+
 ## 编码与 Git 约定
 
 - 文本文件 **UTF-8 无 BOM**、**LF**（`core.autocrlf=false`、`core.safecrlf=true`）；禁止用 `-c core.safecrlf=false` 绕过提交失败，应先转 LF 再 `git add --renormalize .`。
