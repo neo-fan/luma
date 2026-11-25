@@ -649,3 +649,17 @@
      静态 scale/blur——动画 filter 每帧全屏重绘，红线禁止）。 */
   animation: overlay-in var(--dur) var(--ease);
 }
+
+/* ---- 首帧前的海报（ArtPlayer 自带的 .art-poster）---------------------------
+   `playerPosterHold` 会把这张 poster 一直盖到首帧（`playing` / readyState>=3）
+   再渐隐，所以它就是「加载中」那几秒的整屏画面。原来它是一张清晰封面：一块
+   满屏、高饱和的剧照压在转圈和 00:00 控制条后面，看着像页面没做完，也和解析期
+   那张模糊背景不是一套语言。
+
+   同一套处理：放大一圈吃掉 blur 的透明边，高斯模糊 + 压暗当氛围层。首帧到达时
+   它本来就带着 opacity 渐隐（见 playerPosterHold 的 CSS_FADE），模糊 → 清晰的
+   过渡正好读作「对上焦了」，不需要额外动画（动画 filter 每帧全屏重绘，禁止）。 */
+.player-stage .art-poster {
+  transform: scale(1.06);
+  filter: blur(18px) brightness(0.42);
+}

@@ -94,7 +94,7 @@ corepack pnpm dev:app
 
 ## 5. 现状基线
 
-`python tools/check.py` 12/12、`pnpm test` 792（98 个文件）、`cargo test --lib` 310 passed / 2 ignored；`--full` 下 qjs-runner `cargo test` 7 passed（GBK 编解码纯函数）。
+`python tools/check.py` 12/12、`pnpm test` 797（99 个文件）、`cargo test --lib` 310 passed / 2 ignored；`--full` 下 qjs-runner `cargo test` 7 passed（GBK 编解码纯函数）。
 数字随提交变化，以 `AGENTS.md`「当前状态」为准。
 
 ## 6. 探针依赖的 DOM 契约
