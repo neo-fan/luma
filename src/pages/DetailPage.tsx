@@ -6,6 +6,7 @@ import {
 } from "react";
 import type { Navigate } from "../lib/nav";
 import { useProxiedImage } from "../hooks/useProxiedImage";
+import { useDoubanEnrichment } from "../hooks/useDoubanMeta";
 import Empty from "../components/Empty";
 import EpisodeButton from "../components/EpisodeButton";
 import EpisodeGroups from "../components/EpisodeGroups";
@@ -14,7 +15,7 @@ import FavStar from "../components/FavStar";
 import Icon from "../components/Icon";
 import IconButton from "../components/IconButton";
 import SourcePicker from "../components/SourcePicker";
-import DetailSkeleton from "../components/DetailSkeleton";
+import DetailSkeleton, { LinesSkeleton } from "../components/DetailSkeleton";
 import VodMetaHero from "../components/VodMetaHero";
 import {
   formatDuration,
@@ -25,8 +26,6 @@ import {
 } from "../lib/format";
 import type { Episode, PlayLine } from "../lib/format";
 import { findPlayableSource } from "../lib/crossSourceRecovery";
-import { fetchDoubanMeta } from "../lib/douban";
-import type { DoubanMeta } from "../lib/douban";
 import { api, cacheKeys, errorMessage } from "../lib/invoke";
 import { ageCached, CACHE_TTL, peekFresh } from "../lib/queryClient";
 import { notify } from "../lib/notify";
@@ -176,8 +175,26 @@ export default function DetailPage({
   /**
    * 豆瓣补全结果。`null` = 没有（未开启 / 没匹配上 / 请求失败），
    * 三者对界面是同一种状态：整块不渲染。
+   *
+   * 取数状态（订阅、去重、在途标记）都在 `useDoubanEnrichment` 里，页面只消费
+   * 两个值：`doubanMeta` 决定用谁的字段，`doubanPending` 决定要不要提示还在补。
+   * 之前页面自己 `useState` + `fetchDoubanMeta`，结果是「到货前一片安静、到货后
+   * 整屏文字硬切」——用户既不知道在等，也不知道为什么变了。
+   *
+   * 片名一到位就并行去拉豆瓣，**不等详情加载完**：源站详情慢的时候（布布追剧
+   * 实测 9s）先按源站字段把这一屏画出来，豆瓣到了再升级。`title` 必须是兜底
+   * 之一，否则只靠路由/卡片带名字的入口永远等不到富化。
    */
-  const [doubanMeta, setDoubanMeta] = useState<DoubanMeta | null>(null);
+  const doubanTitle = (vod?.vod_name || emptyCard?.vod_name || title || "").trim();
+  // 源自带豆瓣 subject id 时按 id 直取（实测 62% 的 CMS 条目有），省掉搜索那一跳。
+  const doubanYear = (vod?.vod_year || emptyCard?.vod_year || "").trim();
+  const doubanSubjectId = (vod?.vod_douban_id || emptyCard?.vod_douban_id || "").trim();
+  const { meta: doubanMeta, pending: doubanPending } = useDoubanEnrichment({
+    title: doubanTitle,
+    year: doubanYear || undefined,
+    subjectId: doubanSubjectId || undefined,
+    priority: true,
+  });
 
   /** 重新问一次源（错误页与「有内容但刷新失败」共用）。 */
   const retryDetail = () => {
@@ -377,40 +394,10 @@ export default function DetailPage({
   }, [siteKey, vodId, title]);
 
   /**
-   * 豆瓣补全：进详情页自动问一次，等详情落地后再发（`vod_year` 到位时能避免
-   * 同名片认错，也保证一次访问只发一次请求）。不预取首页、不在列表里发。
-   * 拿不到就是 `null`——不渲染区块、不弹提示、不占位，详情照旧显示源站信息。
-   * 同一片名+年份的去重与并发合并都在 `src/lib/douban.ts` 里，从播放页返回
-   * 详情（组件重新挂载）不会重复打豆瓣。设置关闭时该函数直接返回 null。
+   * 豆瓣补全：进详情页自动问一次（`useDoubanEnrichment` 内部按 key 去重）。
+   * 不预取首页、不在列表里发。拿不到就是 `null`——不渲染区块、不弹提示、不占位，
+   * 详情照旧显示源站信息；`doubanPending` 只驱动元信息行尾的一句「补全中」。
    */
-  const doubanTitle = (vod?.vod_name || emptyCard?.vod_name || title || "").trim();
-  const doubanYear = (vod?.vod_year || emptyCard?.vod_year || "").trim();
-  // 源自带豆瓣 subject id 时按 id 直取（实测 62% 的 CMS 条目有），省掉搜索那一跳。
-  const doubanSubjectId = (vod?.vod_douban_id || emptyCard?.vod_douban_id || "").trim();
-  useEffect(() => {
-    // 片名/年份变了先清空：详情页在同一条路由上换片时组件不卸载，
-    // 不清会出现「上一部片的评分挂在新片下面」。
-    setDoubanMeta(null);
-    // 片名一到位就并行去拉豆瓣，**不等详情加载完**：源站详情慢的时候
-    // （布布追剧实测 9s）先按源站字段把这一屏画出来，豆瓣到了再升级，
-    // 而不是「豆瓣没回来就一直空着 / 等详情回来才发豆瓣」。
-    if (!doubanTitle) {
-      return;
-    }
-    let alive = true;
-    void (async () => {
-      const meta = await fetchDoubanMeta(doubanTitle, doubanYear || undefined, {
-        priority: true,
-        subjectId: doubanSubjectId || undefined,
-      });
-      if (alive && meta) {
-        setDoubanMeta(meta);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [doubanTitle, doubanYear, doubanSubjectId]);
 
   // 简介的溢出测量、展开/收起都在 `VodMetaHero` 里做：详情页与播放页共用
   // 同一份实现，避免两处口径漂移。
@@ -640,6 +627,8 @@ export default function DetailPage({
     // 这个源已被证实「详情空 + 按名也搜不到」（含本次请求刚判定的）：直接
     // 说明它是榜单/推荐源，不让用户以为是客户端坏了。
     const known = !error && empty && noDetailSources.has(siteKey);
+    /** 归因只算一次：标题下的归因行与处置说明共用同一次分类。 */
+    const reason = classifyFailure(undefined, error ?? "");
     // 卡片回填后，标题优先用卡片片名（`title` 只在从列表点进来时才有，
     // 收藏/历史直链进详情时只剩卡片这一条线索）。
     const cardTitle = (emptyCard?.vod_name || title || "").trim();
@@ -672,12 +661,41 @@ export default function DetailPage({
         </header>
         <div className="page-body">
           {error ? (
-            <ErrorBar
-              message="详情加载失败"
-              hint={classifyFailure(undefined, error).label}
-              detail={error}
-              onRetry={retry}
-            />
+            /* 页级失败：这一屏没有别的内容可留，所以错误本身就是内容。套
+               `.detail-empty-wrap` 与空态共用同一套居中容器，`panel` 版把横幅
+               换成卡片——贴顶红条 + 下面一整片黑，读起来像「页面没渲染完」。 */
+            <div className="detail-empty-wrap">
+              <ErrorBar
+                size="panel"
+                message="详情加载失败"
+                hint={reason.label}
+                description={`${reason.hint}。可以先重试；一直不稳的话，换一个有片源的站点。`}
+                detail={error}
+                onRetry={retry}
+                actions={
+                  <>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={openSources}
+                    >
+                      换源
+                    </button>
+                    {cardTitle ? (
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() =>
+                          navigate({ name: "search", keyword: cardTitle })
+                        }
+                      >
+                        全站搜索此片
+                      </button>
+                    ) : null}
+                  </>
+                }
+              />
+            </div>
           ) : doubanMeta ? (
             /* 豆瓣命中、但源站没有详情与播放地址（发现/榜单型源）：直接用豆瓣
                资料渲染这一屏——用户要看的是「这部片是什么」，和一个「怎么把它
@@ -688,6 +706,7 @@ export default function DetailPage({
                 variant="detail"
                 vod={emptyCard}
                 douban={doubanMeta}
+                doubanPending={doubanPending}
                 fallbackName={cardTitle}
                 posterPlaceholder="无封面"
                 descriptionFallback="暂未获取到剧情简介。"
@@ -904,6 +923,7 @@ export default function DetailPage({
           variant="detail"
           vod={vod}
           douban={doubanMeta}
+          doubanPending={doubanPending}
           // 源站片名可能为空（见 withKnownName）：路由/卡片带过来的片名是这一屏
           // 唯一的「叫什么」证据，必须传下去，否则整页标题是「未命名」。
           fallbackName={knownName || emptyCard?.vod_name || ""}
@@ -932,8 +952,24 @@ export default function DetailPage({
                   : undefined
               }
             >
-              <Icon name="play" />
-              {resume && quickPlay ? "继续播放" : "播放第 1 集"}
+              {quickPlay ? (
+                <>
+                  <Icon name="play" />
+                  {resume ? "继续播放" : "播放第 1 集"}
+                </>
+              ) : loading ? (
+                /* 还在等播放串：与其给一个灰着的「播放第 1 集」（看起来像坏了），
+                   不如直接说在等什么——下面线路区同步在放骨架。 */
+                <>
+                  <Icon name="refresh" className="icon-spin" />
+                  正在获取剧集…
+                </>
+              ) : (
+                <>
+                  <Icon name="play" />
+                  播放第 1 集
+                </>
+              )}
             </button>
           }
         />
@@ -945,17 +981,21 @@ export default function DetailPage({
             <h2 className="section-title">播放线路</h2>
             <span className="page-meta">
               {/* 与播放页选集面板同口径：各线路是独立剧集表，不做跨线路累加。
-                  还没有目录时不占位，下面的正文只给一句「正在获取剧集…」。 */}
+                  等待期在这里报「正在获取剧集…」——它和到货后的「N 条线路 ·
+                  当前线路 M 集」占同一行，替换时版面不动。 */}
               {lines.length === 0
-                ? null
+                ? loading
+                  ? "正在获取剧集…"
+                  : null
                 : `${lines.length} 条线路 · 当前线路 ${line?.episodes.length ?? 0} 集`}
             </span>
           </div>
           {lines.length === 0 ? (
             loading ? (
-              // 交接实体只有片名/海报，没有播放串：这里必须说清在等什么，
-              // 否则「暂无可播放剧集」会把人误判成这个源没有片。
-              <p className="page-meta">正在获取剧集…</p>
+              // 交接实体只有片名/海报，没有播放串：用骨架占住「线路 chip +
+              // 剧集格」的实际尺寸，而不是留一行灰字。省掉的是「到货那一刻
+              // 下方内容整体下跳」——慢源 9s 时这一跳非常明显。
+              <LinesSkeleton />
             ) : (
               <Empty
                 title="暂无可播放剧集"

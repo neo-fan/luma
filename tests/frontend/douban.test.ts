@@ -47,6 +47,7 @@ import {
   fetchDoubanMeta,
   getDoubanFullSnapshot,
   getDoubanSnapshot,
+  isDoubanPending,
   normalizeDoubanMeta,
   requestDouban,
 } from "../../src/lib/douban";
@@ -234,8 +235,38 @@ describe("douban push/store behavior", () => {
     expect(doubanRequest).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the coarse cover away from consumers that wait for the full payload", async () => {
+  it("marks the slot in-flight from the request until a terminal push", () => {
     writeDoubanPrefs({ enabled: true, proxyType: "direct" });
+    const key = doubanKey("霸王别姬", "1993");
+    expect(isDoubanPending(key)).toBe(false);
+
+    requestDouban("霸王别姬", "1993");
+    // 发请求即刻为真：等第一个事件才置真的话，慢网下提示等于没有。
+    expect(isDoubanPending(key)).toBe(true);
+
+    // cover 不是终态：封面上屏了但评分/简介还在路上，提示得继续挂着。
+    push(key, "cover", coverPayload);
+    expect(isDoubanPending(key)).toBe(true);
+
+    push(key, "full", fullPayload);
+    expect(isDoubanPending(key)).toBe(false);
+    // 终态后再次请求不会重新置真（已有资料，无需再问）。
+    requestDouban("霸王别姬", "1993");
+    expect(isDoubanPending(key)).toBe(false);
+  });
+
+  it("clears the in-flight flag when the request itself fails", async () => {
+    writeDoubanPrefs({ enabled: true, proxyType: "direct" });
+    const key = doubanKey("霸王别姬", "1993");
+    doubanRequest.mockRejectedValueOnce(new Error("boom"));
+    requestDouban("霸王别姬", "1993");
+    expect(isDoubanPending(key)).toBe(true);
+    // 传输失败不会推终态事件，只能由 catch 自己清；不清就是永久「补全中」。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(isDoubanPending(key)).toBe(false);
+  });
+
+  it("keeps the coarse cover away from consumers that wait for the full payload", async () => {    writeDoubanPrefs({ enabled: true, proxyType: "direct" });
     const key = doubanKey("霸王别姬", "1993");
     const pending = fetchDoubanMeta("霸王别姬", "1993");
 
@@ -479,10 +510,14 @@ describe("douban ui contract", () => {
     // 所以用源码契约钉住「取值 + 传参」，真源出数时另有探针补实测。
     const detail = read("src/pages/DetailPage.tsx");
     const player = read("src/pages/PlayerPage.tsx");
+    const hook = read("src/hooks/useDoubanMeta.ts");
     expect(detail).toContain("vod?.vod_douban_id || emptyCard?.vod_douban_id");
     expect(detail).toContain("subjectId: doubanSubjectId || undefined");
     // 派生值必须进 effect 依赖：详情是异步到的，不依赖它就只会用标题发一次。
-    expect(detail).toContain("[doubanTitle, doubanYear, doubanSubjectId]");
+    // 取数搬进 `useDoubanSlot` 后这条依赖在 hook 里，页面只负责把三个值传进去。
+    expect(detail).toContain("title: doubanTitle");
+    expect(detail).toContain("year: doubanYear || undefined");
+    expect(hook).toContain("[enabled, name, yearText, priority, subjectId]");
     expect(player).toContain("subjectId: vod?.vod_douban_id?.trim() || undefined");
     expect(player).toContain("vod?.vod_douban_id, vodName]");
   });
@@ -500,7 +535,11 @@ describe("douban ui contract", () => {
     expect(detail).toContain('variant="detail"');
     expect(detail).toContain("douban={doubanMeta}");
     expect(detail).toContain('descriptionFallback="暂无简介"');
-    expect(detail).toContain("if (!doubanTitle) {");
+    // 空片名不发请求：页面侧不再有 `if (!doubanTitle)`，守卫下沉到槽位键
+    // （name 为空则 key 为空，requestDouban 也不发）——仍是同一条不变式。
+    expect(read("src/hooks/useDoubanMeta.ts")).toContain(
+      'const key = name ? doubanKey(name, yearText, subjectId) : "";',
+    );
     expect(detail).not.toContain("doubanReady");
     expect(detail).not.toContain("DoubanMetaBlock");
     expect(detail).not.toContain("douban-meta");

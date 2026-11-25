@@ -33,15 +33,36 @@ export default function DetailSkeleton() {
         </div>
       </div>
 
+      <LinesSkeleton />
+    </div>
+  );
+}
+
+/**
+ * 只有「播放线路 + 剧集格」的骨架，给**已有交接实体**的详情页用。
+ *
+ * 从列表/收藏点进来时，片名和海报立刻就有，真正在等的是播放串——这时整页骨架
+ * 会把已知信息也擦掉，只剩一行「正在获取剧集…」又会让下面整块内容凭空长出来。
+ * 单独抽出来，等待期的版面和到货后的版面是同一套尺寸，页面不再整体跳一次。
+ *
+ * 外层仍套 `sk-detail`：呼吸动画的选择器挂在它下面，也保证探针不会把骨架
+ * 误认成真实的 `.chip-row--lines` / `.episode`。
+ */
+export function LinesSkeleton() {
+  return (
+    <div className="sk-detail" role="status" aria-label="正在获取剧集">
       <div className="sk-detail__section">
-        <div className="sk-line sk-line--subtitle" />
         <div className="sk-detail__lines">
           <span className="sk-pill" />
           <span className="sk-pill" />
           <span className="sk-pill" />
         </div>
+        {/* 过滤/排序那一行也占位：少了它，到货瞬间剧集格会整体上移 ~46px。 */}
+        <div className="sk-detail__tools">
+          <span className="sk-pill sk-pill--input" />
+        </div>
         <div className="sk-detail__episodes">
-          {Array.from({ length: 16 }, (_, index) => (
+          {Array.from({ length: 12 }, (_, index) => (
             <span className="sk-episode" key={index} />
           ))}
         </div>

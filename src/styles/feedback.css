@@ -315,6 +315,22 @@
   padding: 0 2px;
 }
 
+/* 剧集筛选行：与 `.detail-episode-tools` 同高同宽（--h-control / 260px），
+   等待期把它也占住，到货时剧集格不会整体上移。 */
+.sk-detail__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.sk-pill--input {
+  width: 260px;
+  max-width: 100%;
+  height: var(--h-control);
+  border-radius: var(--r-sm);
+}
+
 .sk-detail__episodes {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
@@ -414,6 +430,14 @@
   line-height: 1.45;
 }
 
+/* 处置说明（下一步能做什么）：条状里与归因同级，面板态才放大成正文。 */
+.error-bar__desc {
+  margin: 2px 0 0;
+  color: rgba(255, 176, 181, 0.8);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+
 /* 原始报错折叠：给需要反馈问题的人，不给只想继续用的人。 */
 .error-bar__detail {
   margin-top: 2px;
@@ -482,6 +506,125 @@
 .error-bar--compact .error-bar__icon {
   transform: scale(0.88);
   transform-origin: left top;
+}
+
+/**
+ * 页级错误（`size="panel"`）：错误**就是这一屏的内容**，不是压在内容上的横幅。
+ *
+ * 详情页整页失败时，条状横幅贴在左上角、下面留一整片黑，看起来像「页面没渲染
+ * 完」而不是「这个源这次不行」。所以同一套解剖结构换一张居中卡片：宽度与详情
+ * 空态同档（900px），标题提到 h1，归因用错误色，处置说明给正文级字号与 62ch
+ * 行宽，动作给真按钮。底色取中性面板（不是红色大块）——一百多像素高的红块会
+ * 把「源站波动」渲染成「客户端崩了」。
+ */
+.error-bar--panel {
+  width: 100%;
+  /* 640 而不是详情空态的 900：错误卡片里没有海报这一列，撑到 900 会让
+     左边一列文字孤零零地贴着一条 900px 的边，右半张卡全是空的；再窄下去
+     （试过 600）处置说明会折成两行、末尾留一个孤零零的「点。」。 */
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 26px;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+
+/* 图标装进淡红圆环：保留「这是错误」的色相，但不让整张卡片变红。 */
+.error-bar--panel .error-bar__icon {
+  box-sizing: content-box;
+  margin-top: 1px;
+  padding: 10px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 123, 131, 0.12);
+}
+
+.error-bar--panel .error-bar__body {
+  gap: 8px;
+}
+
+.error-bar--panel .error-bar__text {
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+/* 归因用错误色标出来：用户第一个问题是「哪种失败」，答案要给得快。 */
+.error-bar--panel .error-bar__hint {
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
+
+.error-bar--panel .error-bar__desc {
+  /* 不套 62ch：640 的卡片里 62ch 会把一句话提前折断，留下「点。」这种孤字行。 */
+  max-width: none;
+  margin-top: 0;
+  color: var(--text-soft);
+  font-size: var(--fs-body);
+  line-height: 1.75;
+}
+
+/* 技术详情与「复制错误」同一行、紧挨着：两者都是诊断动作，凑成一个小簇，
+   不各占一头——拉开的空档会让这张卡片显得散。展开时原始报错仍占满整行。 */
+.error-bar--panel .error-bar__tech {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 2px;
+}
+
+/* 收起时按内容宽度排：诊断簇紧凑，不把「复制错误」推到整行最右端。
+   展开后原始报错要占满整行（否则代码块会被挤成一个窄方块），此时才让它
+   吃掉剩余宽度，「复制错误」退到行尾当工具条。 */
+.error-bar--panel .error-bar__detail {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.error-bar--panel .error-bar__detail[open] {
+  flex: 1;
+}
+
+.error-bar--panel .error-bar__detail > summary {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.error-bar--panel .error-bar__raw {
+  width: 100%;
+  background: var(--panel-sunken);
+  color: var(--muted);
+}
+
+/* 动作与详情页主按钮同规格：这一屏的重试是主目标动作。 */
+.error-bar--panel .error-bar__extra {
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.error-bar--panel .error-bar__extra .btn {
+  height: 40px;
+  padding: 0 20px;
+  font-size: var(--fs-body);
+}
+
+/* 诊断动作比处置动作轻一档：26px 的小字按钮，不与「换源」抢视觉重量。 */
+.error-bar--panel .error-bar__copy {
+  flex: none;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.error-bar--panel .error-bar__actions {
+  margin-top: 1px;
 }
 
 

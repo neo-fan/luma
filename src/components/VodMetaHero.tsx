@@ -14,6 +14,13 @@ export interface VodMetaHeroProps {
   /** 豆瓣补全结果：命中时评分 / 年份 / 类型 / 导演 / 主演 / 简介都用豆瓣。 */
   douban?: DoubanMeta | null;
   /**
+   * 豆瓣资料还在路上。
+   *
+   * 只用来说明「这一屏还会变」，所以提示放在元信息行尾（横向增删），
+   * 不新增行、不占位——失败时它直接消失，版面不回收。
+   */
+  doubanPending?: boolean;
+  /**
    * 片名兜底（路由片名 / 列表卡片片名）。
    *
    * 有些源把 `vod_name` 恒写成空串（detailContent 只回播放串），只认
@@ -73,6 +80,7 @@ export default function VodMetaHero({
   variant,
   vod,
   douban,
+  doubanPending,
   fallbackName,
   titleExtra,
   titleActions,
@@ -122,8 +130,25 @@ export default function VodMetaHero({
   const actors = douban?.actors.length
     ? douban.actors.join(" / ")
     : plainText(vod?.vod_actor);
+  /** 只在「还没有豆瓣资料、但请求已经在路上」时提示，资料到货即消失。 */
+  const filling = Boolean(doubanPending) && !douban;
+  /**
+   * 简介取值：豆瓣 → 源站 → 占位。
+   *
+   * 正在补全且两边都没有正文时不能报「暂无简介」——那是在断言「这部片没有简介」，
+   * 而事实只是还没拿到。换一句进行中的话，避免用户把等待读成缺失。
+   */
   const description =
-    plainText(douban?.intro) || plainText(vod?.vod_content) || descriptionFallback || "";
+    plainText(douban?.intro) ||
+    plainText(vod?.vod_content) ||
+    (filling && descriptionFallback ? "正在获取简介…" : descriptionFallback) ||
+    "";
+  /**
+   * 资料源标记：`data-douban` 从 source 翻成 full 时，CSS 让这几块淡入一次。
+   * 不换 key、不重挂载——重挂载会把「展开全文」的展开态和溢出测量一起清掉，
+   * 用户正在读的简介会当场收起。
+   */
+  const source = douban ? "full" : "source";
 
   useLayoutEffect(() => {
     // 展开态不重新测量，否则「已展开」时 scrollHeight === clientHeight，
@@ -157,7 +182,7 @@ export default function VodMetaHero({
     ) : null;
 
   return (
-    <div className={style.root}>
+    <div className={style.root} data-douban={source}>
       <div className={style.poster}>
         {hasPoster ? (
           <img
@@ -187,13 +212,18 @@ export default function VodMetaHero({
 
         {meta ? <p className={style.meta}>{meta}</p> : null}
 
-        {chips.length > 0 ? (
+        {chips.length > 0 || filling ? (
           <div className="chip-row chip-row--static">
             {chips.map((chip, index) => (
               <span className="chip chip--static" key={`${chip}-${index}`}>
                 {chip}
               </span>
             ))}
+            {filling ? (
+              <span className="chip chip--static chip--pending" role="status">
+                豆瓣资料补全中…
+              </span>
+            ) : null}
           </div>
         ) : null}
 

@@ -175,6 +175,20 @@
   }
 }
 
+/* 按钮内联的加载图标（如详情页「正在获取剧集…」）：与图标按钮同一套旋转，
+   图标按钮之外也要能用，所以单独给一个类而不是靠 `.is-busy` 祖先。 */
+.icon-spin {
+  animation: icon-spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn.is-busy svg,
+  .icon-spin {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* 悬浮提示：CSS 气泡，比原生 title 快（0.24s 后出现）且配色跟随主题。
    靠近容器边缘时由调用方传 tip="none" 退回原生 title，避免被裁切。 */
 .icon-btn[data-tip]::after {
@@ -713,6 +727,45 @@
   cursor: default;
   color: var(--text-soft);
   background: var(--panel-raised);
+}
+
+/**
+ * 「豆瓣资料补全中」：虚线边 + 呼吸点。
+ *
+ * 它是一个**过程提示**而不是数据，所以刻意不用实底芯片——读起来像占位而不是
+ * 又一个分类标签；虚线边也在暗示「这块还会变」。消失时不改行高，版面不回收。
+ */
+.chip--pending {
+  color: var(--muted);
+  background: transparent;
+  border-style: dashed;
+}
+
+.chip--pending::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: chip-pending 1.2s var(--ease) infinite;
+}
+
+@keyframes chip-pending {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip--pending::before {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 
 /* ---------- 筛选面板（TVBox homeContent filters） ---------- */

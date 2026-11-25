@@ -21,6 +21,14 @@ interface ErrorBarProps {
    */
   detail?: string;
   onRetry?: () => void;
+  /**
+   * 给人看的补充说明（下一步能做什么）。
+   *
+   * 与 `hint` 分工：`hint` 是**归因**（一句话说这是什么错，如「源站未响应」），
+   * `description` 是**处置**（重试 / 换源）。只在页级错误（`size="panel"`）
+   * 里放大成正文；条状里它与 hint 同级，够用就好。
+   */
+  description?: string;
   /** 额外动作（如「换一个直播源」），走 `.btn` 视觉层级，与图标动作区分。 */
   actions?: ReactNode;
   /** 隐藏复制按钮的场景（默认显示，错误可复制便于反馈）。 */
@@ -38,7 +46,16 @@ interface ErrorBarProps {
   /** 覆盖时长（毫秒）；0 = 常驻。一般不用传。 */
   ttlMs?: number;
   /** `compact` 用于窄面板（直播左栏 272px）：同一套解剖结构，去掉留白。 */
-  size?: "bar" | "compact";
+  /**
+   * 呈现尺寸：
+   *
+   * - `bar`（默认）＝页内横幅，压在当前内容之上，不接管版面；
+   * - `compact` ＝ 窄面板（直播左栏 272px）里的一小条，同一套解剖结构去留白；
+   * - `panel` ＝ **错误就是这一屏的内容**（详情页整页失败）：同一套解剖结构
+   *   装进一张居中卡片，由页面套 `.detail-empty-wrap` 垂直居中。贴顶横幅
+   *   在整页失败时会留下「一条红字 + 一大片黑」，看起来像页面没渲染完。
+   */
+  size?: "bar" | "compact" | "panel";
 }
 
 type CopyState = "idle" | "ok" | "failed";
@@ -62,6 +79,7 @@ type CopyState = "idle" | "ok" | "failed";
 export default function ErrorBar({
   message,
   hint,
+  description,
   detail,
   onRetry,
   actions,
@@ -123,32 +141,83 @@ export default function ErrorBar({
     return null;
   }
 
+  const isPanel = size === "panel";
+
   return (
     <div
       className={
-        (size === "compact" ? "error-bar error-bar--compact" : "error-bar") +
-        (leaving ? " is-leaving" : "")
+        (isPanel
+          ? "error-bar error-bar--panel"
+          : size === "compact"
+            ? "error-bar error-bar--compact"
+            : "error-bar") + (leaving ? " is-leaving" : "")
       }
       role="alert"
       data-lifetime={lifetime}
       onMouseEnter={countdown.hold}
       onMouseLeave={countdown.release}
     >
-      <Icon name="alert" size={16} className="error-bar__icon" />
+      <Icon
+        name="alert"
+        size={isPanel ? 20 : 16}
+        className="error-bar__icon"
+      />
       <div className="error-bar__body">
         <p className="error-bar__text">{message}</p>
         {hint ? <p className="error-bar__hint">{hint}</p> : null}
-        {detail ? (
-          <details className="error-bar__detail">
-            <summary>技术详情</summary>
-            <pre className="error-bar__raw">{detail}</pre>
-          </details>
+        {description ? (
+          <p className="error-bar__desc">{description}</p>
         ) : null}
-        {actions ? <div className="error-bar__extra">{actions}</div> : null}
+        {detail || (isPanel && copyable) ? (
+          <div className="error-bar__tech">
+            {detail ? (
+              <details className="error-bar__detail">
+                <summary>技术详情</summary>
+                <pre className="error-bar__raw">{detail}</pre>
+              </details>
+            ) : null}
+            {/* 面板态把「复制错误」挂在技术详情同一行：两者都是诊断动作，
+                塞进动作行会让人以为它和「换源」是一类；也不钉在行尾——那样
+                拉出长长一条空档，卡片看着散。 */}
+            {isPanel && copyable ? (
+              <button
+                type="button"
+                className="btn btn--ghost error-bar__copy"
+                onClick={onCopy}
+                data-copy-state={copyState}
+              >
+                <Icon name={copyState === "ok" ? "check" : "copy"} />
+                {copyState === "ok"
+                  ? "已复制"
+                  : copyState === "failed"
+                    ? "复制失败"
+                    : "复制错误"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {actions || (isPanel && onRetry) ? (
+          <div className="error-bar__extra">
+            {/* 页级错误里「重试」是主目标动作：给文字按钮，不用只有图标的
+                小按钮——整页都在等这一个决定，别让人去猜图标含义。 */}
+            {isPanel && onRetry ? (
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={onRetry}
+              >
+                <Icon name="refresh" />
+                重试
+              </button>
+            ) : null}
+            {actions}
+          </div>
+        ) : null}
       </div>
       <div className="error-bar__actions">
         <NoticeLife left={countdown.left} progress={countdown.progress} />
-        {copyable ? (
+        {/* 图标复制的入口只服务条状/窄面板；面板态已把复制换成文字按钮。 */}
+        {copyable && !isPanel ? (
           <IconButton
             name={copyState === "ok" ? "check" : "copy"}
             label={
@@ -164,7 +233,8 @@ export default function ErrorBar({
             data-copy-state={copyState}
           />
         ) : null}
-        {onRetry ? (
+        {/* 面板态的重试已经在正文里，这里不再放第二个入口。 */}
+        {onRetry && !isPanel ? (
           <IconButton name="refresh" label="重试" size="sm" onClick={onRetry} />
         ) : null}
       </div>

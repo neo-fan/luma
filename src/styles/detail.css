@@ -32,6 +32,36 @@
   min-width: 0;
 }
 
+/**
+ * 豆瓣资料到货：这几块淡入一次，读作「补全」而不是「重绘」。
+ *
+ * 触发条件是 hero 上的 `data-douban` 从 source 翻成 full。刻意不用换 key 重挂载：
+ * 重挂载会清掉简介的展开态与溢出测量，用户正在读的那一段会当场收起。
+ * 只有 opacity 变化，不动布局，也不触发下面内容的重新排版。
+ */
+[data-douban="full"] .chip-row--static,
+[data-douban="full"] .detail-line,
+[data-douban="full"] .detail-content {
+  animation: hero-fill-in 220ms var(--ease) both;
+}
+
+@keyframes hero-fill-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-douban="full"] .chip-row--static,
+  [data-douban="full"] .detail-line,
+  [data-douban="full"] .detail-content {
+    animation: none;
+  }
+}
+
 /* 剧名 + 收藏星同一行：星紧贴片名右侧，垂直居中于标题行。 */
 .detail-title-row {
   display: flex;

@@ -122,7 +122,7 @@ src/components/     ErrorBar / Spinner / SourcePicker / player/* / settings/*
 src/types/luma.ts  归一化契约 TS 侧
 ```
 - hash 路由下 `pathname` 恒为 `/`，探针按 URL 选 target 不受影响。
-- 提示分层：事件→toast；需决策错误→`ErrorBar`（图标+主文案+归因+折叠技术详情+复制/重试+倒计时）；说明→`.tip`。
+- 提示分层：事件→toast；需决策错误→`ErrorBar`（图标+主文案+归因+折叠技术详情+复制/重试+倒计时）；说明→`.tip`。`ErrorBar` 有三种身材：`bar` 压在内容上、`compact` 进窄面板、`panel` 用于**整页失败**（错误就是这一屏的内容，卡片居中，与详情空态同一套容器）。
 
 ### 8.1 数据分层与失效契约
 
@@ -177,6 +177,7 @@ src/types/luma.ts  归一化契约 TS 侧
 
 - **调试**：`docs/DEVELOPMENT.md` —— 环境准备、四端调试（前端 CDP 9222、Rust cargo check、Python `logs/spider`、qjs-runner 重编）、日志（`LUMA_LOG=debug`，三个通道 `logs/{app,ui,spider}`）、环境变量速查、常见坑 6 条。
 - **回归**：`python tools/check.py`（离线一键）/ `node tools/run_probes.mjs`（窗口探针）。
+- **性能**：`docs/PERFORMANCE.md`（三层链路模型）/ `node tools/perf/analyse.mjs`（CDP + IPC + 业务 trace 合成时间线）。
 - **维护与升级**：`docs/MAINTENANCE.md`；**发布**：`docs/RELEASING.md`；**变更记录**：`CHANGELOG.md`。
 
 ## 13. ADR：随包运行时优先于宿主环境（2026-11-14）

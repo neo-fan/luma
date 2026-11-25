@@ -173,6 +173,9 @@ export function requestDouban(
   if (entry?.phase === "full" || entry?.phase === "none") return;
   if (requested.has(key)) return;
   requested.add(key);
+  // 立刻广播一次「在途」：订阅方据此显示补全提示。少了这步，提示要等下一个
+  // 事件才出现（而下一个事件可能就是终态），慢网下等于没有提示。
+  dispatch(key);
   const { proxyType, custom } = proxyArgs();
   api
     .doubanRequest(
@@ -186,8 +189,19 @@ export function requestDouban(
     )
     .catch((err) => {
       requested.delete(key);
+      dispatch(key);
       log.info("douban request failed", { title: word, message: String(err) });
     });
+}
+
+/**
+ * 槽位是否还在途中（已发请求、未到终态）。
+ *
+ * 只用于「补全中」这类**过程提示**：不等它也能出页面，所以它绝不能影响布局——
+ * 提示消失时不能把下面的内容整体上移。返回 false 不等于失败（可能只是没发请求）。
+ */
+export function isDoubanPending(key: string): boolean {
+  return requested.has(key);
 }
 
 /** 读快照（供 useSyncExternalStore）：未到货返回 null。返回引用稳定。 */
