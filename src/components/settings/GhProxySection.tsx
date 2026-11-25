@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import ErrorBar from "../ErrorBar";
+import { useAsyncAction } from "../../hooks/useAsyncAction";
 import { api, errorMessage } from "../../lib/invoke";
 import type { ConfigSnapshot, GhProbeResult, GhProxyState } from "../../types/luma";
 
@@ -37,7 +38,7 @@ export default function GhProxySection({
 }: GhProxySectionProps) {
   const [state, setState] = useState<GhProxyState | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [busy, setBusy] = useState("");
+  const { busy, run: runAction } = useAsyncAction<string>();
   const [probes, setProbes] = useState<Record<string, GhProbeResult>>({});
   const [custom, setCustom] = useState("");
 
@@ -63,11 +64,9 @@ export default function GhProxySection({
   }, [reload]);
 
   const apply = async (prefix: string, label: string) => {
-    if (busy) return;
     // 不能直接用 prefix 当忙标志：「直连」的前缀是空串，会和「空闲」撞车，
     // 表现为直连行永远显示「切换中…」。加前缀区分两类忙状态。
-    setBusy(`switch:${prefix}`);
-    try {
+    await runAction(`switch:${prefix}`, async () => {
       const next = await api.ghProxySet(prefix);
       setState(next);
       if (next.snapshot) {
@@ -79,17 +78,13 @@ export default function GhProxySection({
           ? `已切到 ${label}：改写 ${next.changed} 个配置、共 ${next.links} 条 GitHub 链接`
           : `已切到 ${label}：链接本来就是目标地址，无需改写`,
       );
-    } catch (err) {
+    }).catch((err) => {
       onError(`切换加速代理失败：${errorMessage(err)}`);
-    } finally {
-      setBusy("");
-    }
+    });
   };
 
   const probeAll = async () => {
-    if (busy) return;
-    setBusy("probe");
-    try {
+    await runAction("probe", async () => {
       const results = await api.ghProxyTest();
       const map: Record<string, GhProbeResult> = {};
       for (const result of results) {
@@ -97,11 +92,9 @@ export default function GhProxySection({
       }
       setProbes(map);
       onError("");
-    } catch (err) {
+    }).catch((err) => {
       onError(`测速失败：${errorMessage(err)}`);
-    } finally {
-      setBusy("");
-    }
+    });
   };
 
   const choices = state?.choices ?? [];
@@ -132,7 +125,7 @@ export default function GhProxySection({
                 type="radio"
                 name="gh-proxy"
                 checked={active}
-                disabled={busy !== ""}
+                disabled={busy !== null}
                 onChange={() => void apply(choice.prefix, choice.label)}
               />
               <span className="gh-proxy__main">
@@ -170,7 +163,7 @@ export default function GhProxySection({
         <button
           type="button"
           className="btn"
-          disabled={busy !== "" || custom.trim() === "" || custom.trim() === current}
+          disabled={busy !== null || custom.trim() === "" || custom.trim() === current}
           onClick={() => void apply(custom.trim(), "自定义前缀")}
         >
           应用
@@ -178,7 +171,7 @@ export default function GhProxySection({
       </div>
 
       <div className="gh-proxy-foot">
-        <button type="button" className="btn" disabled={busy !== ""} onClick={() => void probeAll()}>
+        <button type="button" className="btn" disabled={busy !== null} onClick={() => void probeAll()}>
           {busy === "probe" ? "测速中…" : "测速全部"}
         </button>
         <span className="gh-proxy-foot__stat">

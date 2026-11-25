@@ -644,15 +644,17 @@ fn pick<'a>(active: Option<&str>, entries: &'a [StoredConfig]) -> Option<&'a Sto
         .or_else(|| entries.last())
 }
 
+/// async：列表会读刷新状态表，主线程同步执行时会被其它长 command 阻塞。
 #[tauri::command]
-pub fn config_list(state: tauri::State<'_, ConfigStore>) -> Result<Vec<ConfigMeta>, AppError> {
+pub async fn config_list(state: tauri::State<'_, ConfigStore>) -> Result<Vec<ConfigMeta>, AppError> {
     Ok(state.list())
 }
 
 /// Switch the active config without re-importing it. Returns the runtime
 /// snapshot (blocked sites already disabled) so the UI can replace its cache.
+/// async：`activate` 写 active_config_id 到 sqlite，别占主线程等锁。
 #[tauri::command]
-pub fn config_activate(
+pub async fn config_activate(
     state: tauri::State<'_, ConfigStore>,
     id: String,
 ) -> Result<ConfigSnapshot, AppError> {
@@ -682,8 +684,9 @@ pub struct SiteSetEnabledRequest {
 }
 
 /// 站点体检里手动启用 / 禁用单站；返回改后的运行快照供前端换缓存。
+/// async：`set_site_enabled` 持 entries 写锁写库，别占主线程。
 #[tauri::command]
-pub fn site_set_enabled(
+pub async fn site_set_enabled(
     state: tauri::State<'_, ConfigStore>,
     req: SiteSetEnabledRequest,
 ) -> Result<ConfigSnapshot, AppError> {
@@ -697,20 +700,26 @@ pub fn config_active(state: tauri::State<'_, ConfigStore>) -> Option<ConfigSnaps
     state.active_snapshot()
 }
 
+/// async：`remove` 删配置行 + meta 孤儿键，两处 sqlite 写入。
 #[tauri::command]
-pub fn config_remove(state: tauri::State<'_, ConfigStore>, id: String) -> Result<(), AppError> {
+pub async fn config_remove(state: tauri::State<'_, ConfigStore>, id: String) -> Result<(), AppError> {
     state.remove(&id)
 }
 
 /// 订阅自动刷新的全局设置 + active 配置的检查狀態。
+/// async：读 meta 表，与写路径共用 sqlite 连接。
+/// Tauri 约束：带 `State` 引用的 async command 必须返回 Result（Ok 会被解包，前端无感）。
 #[tauri::command]
-pub fn config_refresh_settings(state: tauri::State<'_, ConfigStore>) -> RefreshSettings {
-    state.refresh_settings()
+pub async fn config_refresh_settings(
+    state: tauri::State<'_, ConfigStore>,
+) -> Result<RefreshSettings, AppError> {
+    Ok(state.refresh_settings())
 }
 
 /// 设置自动刷新间隔（小时，0 = 关闭；上限一周）。返回聚合视图，UI 直接覆盖显示。
+/// async：写 meta 表，别占主线程。
 #[tauri::command]
-pub fn config_set_refresh_interval(
+pub async fn config_set_refresh_interval(
     state: tauri::State<'_, ConfigStore>,
     hours: u32,
 ) -> Result<RefreshSettings, AppError> {
@@ -726,15 +735,19 @@ pub async fn config_refresh(
     state.refresh(id.as_deref()).await
 }
 
+/// async：读 meta 表。Result 包装同上（Tauri async command 约束）。
 #[tauri::command]
-pub fn gh_proxy_state(state: tauri::State<'_, ConfigStore>) -> GhProxyState {
-    read_gh_state(&state, 0)
+pub async fn gh_proxy_state(
+    state: tauri::State<'_, ConfigStore>,
+) -> Result<GhProxyState, AppError> {
+    Ok(read_gh_state(&state, 0))
 }
 
 /// 切换加速代理。会重写**所有**已存配置里的 GitHub 链接（不只是 active），
 /// 否则老配置会继续打旧代理。
+/// async：`set_github_proxy` 重写所有已存配置的 sqlite 行，最重的同步写路径。
 #[tauri::command]
-pub fn gh_proxy_set(
+pub async fn gh_proxy_set(
     state: tauri::State<'_, ConfigStore>,
     prefix: String,
 ) -> Result<GhProxyState, AppError> {

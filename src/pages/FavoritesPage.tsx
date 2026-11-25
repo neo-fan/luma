@@ -10,6 +10,7 @@ import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { detailTargetFor, vodSeedFromRef } from "../lib/playbackTarget";
 import { putDetailSeed } from "../lib/handoff";
 import { usePageState } from "../lib/usePageState";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 import { sameTitle } from "../lib/format";
 import { notify } from "../lib/notify";
 import type { FavoriteItem, HistoryItem, VodRef } from "../types/luma";
@@ -37,7 +38,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [busyKey, setBusyKey] = useState("");
+  const { busy: busyKey, run: runAction } = useAsyncAction<string>();
   const [reload, setReload] = useState(0);
 
   /** 进详情前把收藏行的片名/封面交出去，详情页首帧不用等 detailContent。 */
@@ -117,10 +118,6 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
 
   const remove = async (item: FavoriteItem) => {
     const key = `${item.siteKey}-${item.vodId}`;
-    if (busyKey) {
-      return;
-    }
-    setBusyKey(key);
     setError("");
     const ref: VodRef = {
       siteKey: item.siteKey,
@@ -130,7 +127,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
       remarks: item.remarks,
       siteName: item.siteName,
     };
-    try {
+    await runAction(key, async () => {
       await api.favoritesToggle(ref);
       setItems((list) =>
         list.filter(
@@ -142,11 +139,9 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
         ),
       );
       notify.info("已取消收藏");
-    } catch (err) {
+    }).catch((err) => {
       setError(`取消收藏失败：${errorMessage(err)}`);
-    } finally {
-      setBusyKey("");
-    }
+    });
   };
 
   return (

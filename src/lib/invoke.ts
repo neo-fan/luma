@@ -14,6 +14,7 @@ import { noDetailSources } from "./noDetailSource";
 import { loadCategoryPage } from "./categoryLoad";
 import { extendCacheSuffix } from "./categoryFilters";
 import { log } from "./logger";
+import { recordIpcSample, recordSiteTiming } from "./perfTrace";
 // type-only：sources.ts 运行时反向依赖本模块，这里只借类型不引运行时代码。
 import type { AggregateRow } from "./sources";
 import type { DoubanMeta, DoubanMetaEvent } from "./douban";
@@ -84,11 +85,93 @@ export function errorMessage(err: unknown): string {
   return toAppError(err).message;
 }
 
-async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+/**
+ * 本应瞬时完成的 command 的 IPC 兜底时限。
+ *
+ * 这些 command 只做内存 / sqlite / 本地文件操作，正常 < 100ms。但 Tauri 把同步
+ * command 放在主线程，一旦被慢命令（spider_invoke 15s、repair 任务）占住，请求就在
+ * IPC 队列里排队，前端 `await` 永不 resolve——表现为「按钮点了没反应、永久禁用」。
+ * 单点设超时后，任何调用方都不必自己写 Promise.race，busy 状态也一定能释放。
+ *
+ * 网络 / 子进程 / 解析类 command 自身已有业务超时，**不在此列**（见下）：给它们套
+ * 短超时只会把慢源误判成 IPC 故障，且真实错误被超时掩盖。
+ */
+export const FAST_IPC_TIMEOUT_MS = 10_000;
+
+const SLOW_COMMANDS = new Set([
+  // 子进程 / 网络扇出：自身有 15s~50s 的业务超时。
+  "spider_invoke",
+  "http_fetch",
+  "site_health",
+  "douban_meta",
+  "douban_request",
+  "live_parse",
+  "live_epg",
+  "live_epg_warm",
+  "gh_proxy_test",
+  "config_import",
+  "config_refresh",
+  "update_check",
+  "update_download",
+  "update_install",
+  // 诊断 / 大文件扫描，慢是预期。
+  "diagnostics",
+  "export_report",
+  "storage_usage",
+  "storage_clear",
+]);
+
+/** 纯函数：这个 command 是否套 IPC 兜底超时。 */
+export function hasFastIpcTimeout(cmd: string): boolean {
+  return !SLOW_COMMANDS.has(cmd);
+}
+
+/**
+ * 带超时的 IPC 调用。超时不是「业务失败」而是「宿主没回应」，用独立 code 便于
+ * 日志与 UI 区分；绝不让 promise 悬挂。timer 在 finally 清理，不泄漏定时器。
+ */
+export async function callWithTimeout<T>(
+  invokeFn: (cmd: string, args?: Record<string, unknown>) => Promise<T>,
+  cmd: string,
+  args?: Record<string, unknown>,
+  timeoutMs = FAST_IPC_TIMEOUT_MS,
+): Promise<T> {
+  const useTimeout = hasFastIpcTimeout(cmd);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await invoke<T>(cmd, args);
+    const work = invokeFn(cmd, args);
+    if (!useTimeout) {
+      return await work;
+    }
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject({
+            code: "IPC_TIMEOUT",
+            message: `${cmd} 超时（${timeoutMs}ms）`,
+          }),
+        timeoutMs,
+      );
+    });
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  // 性能采样只在 dev 生效（perfTrace 内部守卫）；计时起点放在超时包装之前，
+  // 于是 IPC_TIMEOUT 也会被如实记成一次长耗时，而不是被超时截断后消失。
+  const startedAt = performance.now();
+  try {
+    const result = await callWithTimeout<T>(invoke, cmd, args);
+    recordIpcSample(cmd, startedAt, "ok");
+    return result;
   } catch (err) {
     const appError = toAppError(err);
+    recordIpcSample(cmd, startedAt, "err", appError.code);
     // 只记失败：成功的 IPC 太吵，且错误才是试运行反馈需要的上下文。
     // 不记录 args —— 里面可能有播放直链 / 配置地址。
     log.error("ipc failed", { cmd, code: appError.code, message: appError.message });
@@ -384,7 +467,11 @@ export const api = {
    * 返回值仍是完整聚合（真相源），前端用它做对账。
    */
   onSearchChunk(handler: (row: AggregateRow) => void): Promise<UnlistenFn> {
-    return listen<AggregateRow>("search-chunk", (event) => handler(event.payload));
+    return listen<AggregateRow>("search-chunk", (event) => {
+      // 耗时分解在这里单点采集：页面只关心结果，诊断面不该散在各消费方。
+      recordSiteTiming(event.payload);
+      handler(event.payload);
+    });
   },
 
   /**

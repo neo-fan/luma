@@ -535,8 +535,10 @@ fn local_date() -> String {
 // `#[tauri::command]` 生成的 `__cmd__*` 需要跨模块再导出。
 
 /// 前端统一日志入口（`src/lib/logger.ts` 批量调用）。
+/// async：批量日志每 300ms 一次，写文件不该占主线程（主线程被长 command 占住时
+/// 会连带拖慢所有其它同步 IPC）。
 #[tauri::command]
-pub fn log_write(entries: Vec<UiLogEntry>) -> Result<(), AppError> {
+pub async fn log_write(entries: Vec<UiLogEntry>) -> Result<(), AppError> {
     ui::write_entries(entries)
 }
 

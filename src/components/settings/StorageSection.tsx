@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import ConfirmDialog from "../ConfirmDialog";
 import ErrorBar from "../ErrorBar";
+import { useAsyncAction } from "../../hooks/useAsyncAction";
 import { api, errorMessage } from "../../lib/invoke";
 import { log } from "../../lib/logger";
 import { clearDataCache } from "../../lib/queryClient";
@@ -44,7 +45,7 @@ const ROWS: Row[] = [
 export default function StorageSection({ onError, onNotice }: StorageSectionProps) {
   const [usage, setUsage] = useState<StorageUsage | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [busy, setBusy] = useState<StorageTarget | "">("");
+  const { busy, run: runAction } = useAsyncAction<StorageTarget>();
   const [pending, setPending] = useState<StorageTarget | "">("");
 
   const load = useCallback(async () => {
@@ -69,10 +70,9 @@ export default function StorageSection({ onError, onNotice }: StorageSectionProp
 
   const doClear = async (target: StorageTarget) => {
     setPending("");
-    setBusy(target);
     onError("");
     onNotice("");
-    try {
+    await runAction(target, async () => {
       const outcome = await api.storageClear(target);
       if (target === "imageCache") {
         // 内存里的页面数据缓存与磁盘副本同源，一起丢掉才不会「清了又显示旧的」。
@@ -92,11 +92,9 @@ export default function StorageSection({ onError, onNotice }: StorageSectionProp
         skipped: String(outcome.skipped),
       });
       await load();
-    } catch (err) {
+    }).catch((err) => {
       onError(`清理失败：${errorMessage(err)}`);
-    } finally {
-      setBusy("");
-    }
+    });
   };
 
   const total = usage
@@ -129,7 +127,7 @@ export default function StorageSection({ onError, onNotice }: StorageSectionProp
               <button
                 type="button"
                 className="btn btn--sm"
-                disabled={empty || busy !== ""}
+                disabled={empty || busy !== null}
                 onClick={() => setPending(row.target)}
               >
                 {busy === row.target ? "清理中…" : "清理"}

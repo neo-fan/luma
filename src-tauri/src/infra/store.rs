@@ -434,8 +434,12 @@ pub async fn history_clear(state: tauri::State<'_, LibraryStore>) -> Result<(), 
     state.clear_history()
 }
 
+/// 与 `history_upsert` / `history_clear` 同为 async：同步 command 会跑在 Tauri 主线程，
+/// 播放中每 5s 一次的历史写入或慢源 `spider_invoke` 占住主线程时，删除请求会在 IPC
+/// 队列里排队，前端 `await` 挂起 → `busyKey` 永不释放 → 删除按钮永久 disabled（表现为
+/// 「点了没反应」）。async 命令由 runtime 调度，不再被主线程上的长任务阻塞。
 #[tauri::command(rename_all = "camelCase")]
-pub fn history_remove(
+pub async fn history_remove(
     state: tauri::State<'_, LibraryStore>,
     site_key: String,
     vod_id: String,

@@ -14,6 +14,7 @@ import { detailTargetFor, vodSeedFromRef } from "../lib/playbackTarget";
 import { putDetailSeed } from "../lib/handoff";
 import { log } from "../lib/logger";
 import { usePageState } from "../lib/usePageState";
+import { useAsyncAction } from "../hooks/useAsyncAction";
 import type { HistoryItem } from "../types/luma";
 
 interface HistoryPageProps {
@@ -26,7 +27,7 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
   const [items, setItems] = usePageState<HistoryItem[]>("history:items", []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [busyKey, setBusyKey] = useState("");
+  const { busy: busyKey, run: runAction } = useAsyncAction<string>();
   const [reload, setReload] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
 
@@ -90,12 +91,8 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
 
   const remove = async (item: HistoryItem) => {
     const key = `${item.siteKey}-${item.vodId}`;
-    if (busyKey) {
-      return;
-    }
-    setBusyKey(key);
     setError("");
-    try {
+    await runAction(key, async () => {
       await api.historyRemove(item.siteKey, item.vodId);
       setItems((list) =>
         list.filter(
@@ -103,11 +100,9 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
         ),
       );
       log.info("history removed", { siteKey: item.siteKey, vodId: item.vodId });
-    } catch (err) {
+    }).catch((err) => {
       setError(`删除历史失败：${errorMessage(err)}`);
-    } finally {
-      setBusyKey("");
-    }
+    });
   };
 
   /**
