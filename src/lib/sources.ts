@@ -12,6 +12,21 @@ import { api } from "./invoke";
 import type { ResultPage, Site, SpiderRequest } from "../types/luma";
 
 /** `spider_invoke({ siteKey: "all" })` 返回的单站结果行。 */
+/**
+ * 单站耗时分解（后端 `aggregate` 扇出时测量，三段共用同一时间原点）。
+ *
+ * 拆这三段是为了分清「长尾是我的问题还是源站的问题」：
+ * - `queueMs` 长 → 并发许可不够（扇出排队），改并发度或减站点；
+ * - `runMs` 长 → 源站慢/死，接近单站超时即 `timeout`，是屏蔽候选；
+ * - `doneMs` → 相对本次聚合起点的完成时刻，瀑布图 X 坐标。
+ */
+export interface SiteTiming {
+  queueMs: number;
+  runMs: number;
+  doneMs: number;
+  status: "ok" | "failed" | "timeout";
+}
+
 export interface AggregateRow {
   /** 由 `SpiderRequest.streamId` 回带；缺省 = 旧后端/其它来源，调用方按代次过滤。 */
   streamId?: string;
@@ -19,6 +34,8 @@ export interface AggregateRow {
   ok: boolean;
   data?: ResultPage;
   error?: { code?: string; message?: string };
+  /** 本行站点的耗时分解；缺失 = 旧后端或非聚合调用。 */
+  timing?: SiteTiming;
 }
 
 /** 派生候选只需要这几个字段；缓存里保存精简行，避免整份 ResultPage 常驻。 */
@@ -42,6 +59,8 @@ export interface AggregateResult {
   skipped?: number;
   total?: number;
   tookMs?: number;
+  /** 总预算耗尽被 abort、连回包都没来得及的站点 key（配置层屏蔽的候选）。 */
+  dropped?: string[];
 }
 
 /** 一个可切换的片源：站点 + 该站里的影片条目。 */

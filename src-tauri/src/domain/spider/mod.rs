@@ -442,6 +442,26 @@ fn streaming_budget_ms(per_site_ms: u64, site_count: usize, fanout: usize) -> u6
     raw.clamp(45_000, 120_000)
 }
 
+/// 单站耗时分解：把「一站的墙钟」拆成来源不同的三段。
+///
+/// - `queueMs` = 拿到并发许可 − 入队。这段长说明**扇出并发度不够**（我的问题，
+///   调 `MAX_FANOUT` / 减小站点数），跟源站快慢无关。
+/// - `runMs` = 执行完 − 拿到许可。这段长才是**源站问题**（慢 / 死），
+///   与单站超时对齐即判定为超时站。
+/// - `doneMs` = 执行完 − 本次聚合起点。瀑布图的 X 坐标，也是判断「这一波
+///   拖了总预算多久」的直接读数。
+///
+/// 三段共用 `aggregate` 里的同一个 `Instant` 原点，因此
+/// `doneMs ≈ queueMs + runMs`，差值是任务调度延迟。
+fn site_timing(queued_ms: u64, acquired_ms: u64, done_ms: u64, status: &str) -> Value {
+    json!({
+        "queueMs": acquired_ms.saturating_sub(queued_ms),
+        "runMs": done_ms.saturating_sub(acquired_ms),
+        "doneMs": done_ms,
+        "status": status,
+    })
+}
+
 async fn aggregate(
     state: &ConfigStore,
     method: SpiderMethod,
@@ -493,6 +513,7 @@ async fn aggregate(
             "skipped": penalized,
             "total": penalized,
             "tookMs": 0,
+            "dropped": [],
         }));
     }
 
@@ -507,33 +528,49 @@ async fn aggregate(
         let site = site.clone();
         let semaphore = semaphore.clone();
         let args = args.to_vec();
+        // 统一时间原点：三段耗时（排队 / 执行 / 完成）必须同一把尺子量，否则
+        // 各任务自己取 Instant 会因调度延迟把排队时间算到别人的执行段里。
+        let origin = started;
         set.spawn(async move {
             let key = site
                 .get("key")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let outcome = match semaphore.acquire_owned().await {
+            // 入队时刻：所有站点在同一轮 spawn，这里反映的是「本轮调度 + 排队起点」。
+            let queued_ms = origin.elapsed().as_millis() as u64;
+            let (outcome, acquired_ms) = match semaphore.acquire_owned().await {
                 Ok(_permit) => {
-                    tokio::time::timeout(timeout, invoke_one(&site, method, &args, timeout))
-                        .await
-                        .unwrap_or_else(|_| {
-                            Err(AppError::new(
-                                code::SITE_TIMEOUT,
-                                format!("site {key} exceeded {}ms", timeout.as_millis()),
-                            ))
-                        })
+                    // 拿到并发许可的时刻 = 排队段与执行段的分界。
+                    let acquired_ms = origin.elapsed().as_millis() as u64;
+                    let outcome =
+                        tokio::time::timeout(timeout, invoke_one(&site, method, &args, timeout))
+                            .await
+                            .unwrap_or_else(|_| {
+                                Err(AppError::new(
+                                    code::SITE_TIMEOUT,
+                                    format!("site {key} exceeded {}ms", timeout.as_millis()),
+                                ))
+                            });
+                    (outcome, acquired_ms)
                 }
-                Err(err) => Err(AppError::new(code::INTERNAL, "fan-out semaphore closed")
-                    .with_cause(err.to_string())),
+                Err(err) => (
+                    Err(AppError::new(code::INTERNAL, "fan-out semaphore closed")
+                        .with_cause(err.to_string())),
+                    queued_ms,
+                ),
             };
-            (key, outcome)
+            let done_ms = origin.elapsed().as_millis() as u64;
+            (key, outcome, queued_ms, acquired_ms, done_ms)
         });
     }
 
     let mut results = Vec::new();
     let mut ok = 0usize;
     let mut failed = 0usize;
+    // 已回包（成功或失败）的站点。预算耗尽时被 abort 的站点不在其中，
+    // 用差集算出 `dropped`——「谁被丢了」是判断要不要在配置层屏蔽的直接依据。
+    let mut answered: HashSet<String> = HashSet::new();
     // 非流式（首页聚合）：按调用方墙钟截断慢尾巴，clamp 防极值。
     // 流式搜索：总预算取「波次 × 单站超时 + 一波松弛」，clamp 到 45~120s。把超时
     // 挂在**每一次** `join_next` 迭代上等于没有总时限（N 个任务每轮都重置，慢网尾段
@@ -561,8 +598,9 @@ async fn aggregate(
         }
         match tokio::time::timeout(remaining, set.join_next()).await {
             Ok(Some(joined)) => match joined {
-                Ok((site_key, Ok(data))) => {
+                Ok((site_key, Ok(data), queued_ms, acquired_ms, done_ms)) => {
                     ok += 1;
+                    answered.insert(site_key.clone());
                     if search_streaming {
                         if let Ok(mut guard) = search_penalty().lock() {
                             guard.on_success(&site_key);
@@ -573,14 +611,16 @@ async fn aggregate(
                         "ok": true,
                         "data": data,
                         "streamId": stream_id,
+                        "timing": site_timing(queued_ms, acquired_ms, done_ms, "ok"),
                     });
                     if let Some(app) = streaming {
                         let _ = tauri::Emitter::emit(app, "search-chunk", &row);
                     }
                     results.push(row);
                 }
-                Ok((site_key, Err(err))) => {
+                Ok((site_key, Err(err), queued_ms, acquired_ms, done_ms)) => {
                     failed += 1;
+                    answered.insert(site_key.clone());
                     // 只有流式搜索记账；非超时类失败（解析/屏蔽）不惩罚——
                     // 它们快、不拖墙钟，拉黑反而会让下次能用的站被跳过。
                     if search_streaming && err.code == code::SITE_TIMEOUT {
@@ -593,6 +633,14 @@ async fn aggregate(
                         "ok": false,
                         "error": { "code": err.code, "message": err.message },
                         "streamId": stream_id,
+                        // 超时与业务失败分开标：前者是源/网问题，后者是配置/解析问题，
+                        // 处置方式完全不同（前者屏蔽源站，后者改配置）。
+                        "timing": site_timing(
+                            queued_ms,
+                            acquired_ms,
+                            done_ms,
+                            if err.code == code::SITE_TIMEOUT { "timeout" } else { "failed" },
+                        ),
                     });
                     if let Some(app) = streaming {
                         let _ = tauri::Emitter::emit(app, "search-chunk", &row);
@@ -616,6 +664,13 @@ async fn aggregate(
         }
     }
 
+    // 预算耗尽 / 总超时被 abort 的站点：只留 key，不留假耗时。
+    let dropped: Vec<&str> = sites
+        .iter()
+        .filter_map(|site| site.get("key").and_then(Value::as_str))
+        .filter(|key| !answered.contains(*key))
+        .collect();
+
     Ok(json!({
         "results": results,
         "ok": ok,
@@ -624,6 +679,7 @@ async fn aggregate(
         "skipped": sites.len().saturating_sub(ok + failed).saturating_add(penalized),
         "total": sites.len().saturating_add(penalized),
         "tookMs": started.elapsed().as_millis() as u64,
+        "dropped": dropped,
     }))
 }
 
@@ -929,6 +985,27 @@ mod tests {
         assert_eq!(streaming_budget_ms(15_000, 200, 20), 120_000);
         // 零站不除零：至少一波。
         assert_eq!(streaming_budget_ms(15_000, 0, 20), 45_000);
+    }
+
+    #[test]
+    fn site_timing_splits_queue_from_execution_on_one_clock() {
+        // 第 3 波才拿到许可：排队 30s，自己只跑了 860ms——不是坏源。
+        let t = site_timing(12, 30_012, 30_872, "ok");
+        assert_eq!(t["queueMs"], 30_000);
+        assert_eq!(t["runMs"], 860);
+        assert_eq!(t["doneMs"], 30_872);
+        assert_eq!(t["status"], "ok");
+
+        // 第一波、跑满单站超时：排队 0，runMs = 超时值，是源站问题。
+        let slow = site_timing(0, 0, 15_000, "timeout");
+        assert_eq!(slow["queueMs"], 0);
+        assert_eq!(slow["runMs"], 15_000);
+        assert_eq!(slow["status"], "timeout");
+
+        // 时钟回退 / 异常取值不能让 saturating 算出负数或 panic。
+        let broken = site_timing(900, 100, 50, "failed");
+        assert_eq!(broken["queueMs"], 0);
+        assert_eq!(broken["runMs"], 0);
     }
 
     #[test]
