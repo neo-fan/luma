@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-24
+
+### 优化
+
+- **详情页「填充」不再无声跳变（豆瓣资料 + 播放线路）**：这两处都是「先出源站信息、后补全」，原先的做法是到货前一片安静、到货后整块硬切——用户既不知道在等什么，也不知道为什么变了。现在：① 豆瓣请求在途时，信息行尾挂一枚虚线「豆瓣资料补全中…」（横向增删，失败时消失不回收版面），到货后字段淡入一次而不是重绘（不换 key 重挂载，避免清掉简介的展开态）；② 简介还没拿到时不再断言「暂无简介」，改说「正在获取简介…」；③ 播放线路等待期用与真实版式同尺寸的骨架（线路 chip + 筛选行 + 剧集格）代替一行灰字，section 标题行同步报「正在获取剧集…」，到货时版面不重排；④ 等待期的播放按钮从灰着的「播放第 1 集」改为带转圈的「正在获取剧集…」，说清为什么按不了。
+- **详情页整页失败不再是一条红横幅压着一片空白**：详情请求失败时原先只渲染一条件状错误条，贴在左上角、下面几百像素全空，读起来像「页面没渲染完」而不是「这个源这次不行」。现在错误本身成为这一屏的内容：与详情空态共用同一套居中容器，装进一张 640px 卡片——淡红圆环图标、h1 标题、错误色归因、一句处置说明，「重试 / 换源 / 全站搜索此片」都是有描边的真按钮（重试为实心主按钮），「技术详情 + 复制错误」收成行内小簇（展开时原始报错占满整行）。探针依赖的 `.error-bar__text` 等类名未变，条状与窄面板形态不受影响。
+- **豆瓣取数收敛到 `useDoubanEnrichment`**：详情页原先自己 `useState` + `fetchDoubanMeta`，页面要管清空、竞态、在途；现在由 hook 统一给 `{ meta, pending }`，订阅/去重/在途标记与卡片、播放页走同一份实现（`isDoubanPending` 由 `requestDouban` 主动广播，不依赖事件先到）。
+
+### 修复
+
+- **历史页删除按钮点了没反应**：`history_remove` 原是同步 command（跑 Tauri 主线程），被 `spider_invoke` 等长任务或播放中的 5s 历史写入占住主线程时，删除 IPC 排队、前端 await 悬挂，`busyKey` 永久残留 → 按钮一直 disabled。改为 async command 脱离主线程；同时在 IPC 单点加统一超时兜底（fast command 10s，网络/子进程/诊断类走白名单不套短超时），任何 command 都不会让调用方永久等待。
+- **原地换源/换集后 CTRL+R 回落到原来的源**：原地切换只更新 controller 内存态与历史库，URL 的 `siteKey/vodId` 和 `history.state.usr` 没跟上；刷新时按旧路由重建会话，又跳回旧源。改为在切换的唯一提交口 `applySwitch` 落地后静默 `replaceState` 当前条目（只换 `usr` 与 hash，保留 router 的 key/idx/masked），不用 `navigate`——后者会重挂载播放器、毁掉原地切流。路由载荷收敛到 `playerRoute` 的单一字段映射，fallback 整页跳转与原地同步共用，不再各写一遍漏字段。
+- **片头跳过提示播到一半还挂着**：倒计时起跑后只靠 `playing` / `timeupdate` 事件撤销，而续播 seek 落位、HLS 缓冲期间这两个事件可能不触发；叠加 paused 时 deadline 顺延，提示就冻结在「5 秒后跳过片头」。改为 200ms tick 每拍用同一个 `pendingStillValid` 核对播放头是否仍在窗口，离开即撤销；暂停/未出画（`readyState < 2`）时不起跑，避免 loading 画面配一个假的跳过提示。
+- **反代失败静默，日志无法解释「不能播」**：`stale_or_deny` 只在命中过期清单时写字，没有可回退清单就直接返回 502/504 且不留痕。hls.js 拿到非 2xx 只报 `manifestLoadError`，于是宿主日志里一行证据都没有（实测 `https://play.xluuss.com/…/index.m3u8` 上游 RST，反代 502，日志全空）。现在拒绝前统一记 WARN，带状态码与上游原因（`reqwest` 的 error Display 自带目标地址）。
+
 ## [2.1.0] - 2026-11-22
 
 ### 修复
@@ -20,7 +35,14 @@
 - **加速前缀缺主机名会自造死链**：`normalize_prefix` 原本只校验协议头，`https://` 这种「只有协议」的值能存进去，随后 `apply` 拼出 `https://https://raw.githubusercontent.com/...`（日志里 `config url repaired` 修复的就是这个形状）。现在要求前缀必须带主机名并给出明确报错。
 - **日志降噪（从日志审计里发现的）**：`adapter_latency` 原本 3 秒以上一律记 WARN，真实源上中位数就是 5.2 秒，一天能刷出 958 条，WARN 等于失效——改为 3~10 秒记 INFO、10 秒以上才 WARN；`config url repaired` 修的是上游订阅的手误（cluntop 的 `box.json` 自带 `https://https://…`），每次导入都按 WARN 刷屏，降为 INFO。
 
+### 新增
+
+- **性能链路分析工具（`tools/perf/analyse.mjs` + `docs/PERFORMANCE.md`）**：此前性能观测是点状的——`switchTrace` 只覆盖解析/切台，`diag_resolve_timing` 只计时单个 command，CDP 面板又和日志对不上。新工具用 CDP 把「前端主线程（Performance 增量 + longtask）→ IPC command 耗时 → 业务 trace 阶段」合成一条时间线，支持空闲/首页/搜索/播放/换集等场景，输出 JSON 报告。IPC 埋点（`src/lib/perfTrace.ts`）仅 dev 生效、500 条有界缓冲、不记 args。
+
 ### 重构
+
+- **异步操作 busy 状态收口为 `useAsyncAction`**：历史 / 收藏 / GitHub 加速 / 存储清理四处各写一遍 `if (busy) return; setBusy(key); try/finally`——用 state 判等挡不住同帧连点，`finally` 又依赖 IPC 不悬挂。统一 hook 用 ref 判等、异常照抛、释放由 finally 保证；调用方不再自己管 busy 生命周期。
+- **配置与日志写命令改 async**：`config_list` / `config_activate` / `config_remove` / `site_set_enabled` / `config_set_refresh_interval` / `gh_proxy_set` / `config_refresh_settings` / `gh_proxy_state` / `log_write` 涉及 sqlite 或文件 IO，原同步执行占主线程、会被其它长 command 连带阻塞；改为 async 由 Tauri runtime 调度。纯内存读（`config_active` / `favorites_list` / `history_list`）保持同步。
 - **revive 从轮询 DOM 改为守卫的明确通知**：原先点播/直播两页靠 500ms×3 轮询 `<video>` 的 src 判断「是否被另一个播放器硬停」，再 4s 节流重解析——这是用轮询补状态丢失。`playerRegistry` 硬停旧实例时现在直接发 `onDisplaced`；前台被夺用立即 revive，后台被夺用记账待切回前台时 revive，两条路径都由事件与 active 事实驱动，无 setTimeout / querySelector。dev 实测直播→点播→切回直播：video 保有有效 MSE 源、readyState=4、进度延续，不再黑屏。新增 5 条契约测试锁死「不回退到轮询」。
 
 

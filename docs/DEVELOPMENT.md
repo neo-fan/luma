@@ -39,7 +39,7 @@ dev 与安装交付版统一用随包 `sidecars/python-embed/python.exe`（`brid
 ```powershell
 corepack pnpm dev:app          # 出窗口，前端热更新 + Rust 重编译
 corepack pnpm build            # 仅前端产物（验证打包无误）
-corepack pnpm test             # 前端单测：src 下与被测模块同目录 64 个 + tests/frontend 28 个跨文件约定
+corepack pnpm test             # 前端单测：src 下与被测模块同目录 68 个 + tests/frontend 30 个跨文件约定
 cargo check  --manifest-path src-tauri/Cargo.toml
 cargo test   --manifest-path src-tauri/Cargo.toml --lib
 ```
