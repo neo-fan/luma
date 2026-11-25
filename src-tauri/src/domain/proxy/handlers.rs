@@ -508,6 +508,15 @@ fn stale_or_deny(playlist_key: Option<&str>, reason: &str, status: StatusCode) -
                 .unwrap_or_else(|_| deny(StatusCode::BAD_GATEWAY, "stale response build failed"));
         }
     }
+    // 没有可回退清单时必须留痕。hls.js 拿到非 2xx 只会报 `manifestLoadError`，
+    // 前端日志里也只有这个 details；如果这里静默返回 502/504，日志里就查不到
+    // 「哪条地址、什么原因」——用户侧表现为「怎么都无法播」，档案里却一行证据
+    // 都没有（`reason` 通常自带目标 URL，见 reqwest 的 error Display）。
+    tracing::warn!(
+        status = status.as_u16(),
+        reason,
+        "proxy denied request after upstream failure"
+    );
     deny(status, reason)
 }
 
