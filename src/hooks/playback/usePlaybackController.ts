@@ -34,7 +34,8 @@ import type { CatalogStatus } from "../../lib/catalogState";
 import { invalidateEpisodePlayCache } from "../../lib/episodePlayCache";
 import { peekPlaySeed } from "../../lib/handoff";
 import { resolveEpisodePlay } from "./episodePlayResolve";
-import { playerRoute } from "./playerRoute";
+import { playerRoute, playTargetFromSwitch } from "./playerRoute";
+import { replacePlayTarget } from "../../lib/nav";
 import { log } from "../../lib/logger";
 import { notify } from "../../lib/notify";
 import type { Navigate } from "../../lib/nav";
@@ -443,6 +444,10 @@ export function usePlaybackController(
         switchedUrlRef.current = play.proxyUrl;
         playingEpisodeRef.current = identity;
         dispatch({ type: "commit", target });
+        // 原地切换成功：静默改写当前历史条目，使 CTRL+R 刷新按新源 / 新集重建。
+        // 放在 commit 之后——失败路径走 fallback 的整页 navigate，不到这里。
+        // 载荷与 fallback 共用 playTargetFromSwitch，字段不会各写一遍而漏项。
+        replacePlayTarget(playTargetFromSwitch(target, identity.url, identity.playFrom));
       });
     },
     [],
@@ -509,14 +514,7 @@ export function usePlaybackController(
         d.setSwitchTip("");
         videoRef.current = null;
         d.navigate(
-          playerRoute({
-            siteKey: current.siteKey,
-            vodId: current.vodId,
-            vodName: current.vodName,
-            playUrl: episode.url,
-            episodeName: episode.name,
-            playFrom: line.name,
-          }),
+          playerRoute(playTargetFromSwitch(target, episode.url, line.name)),
           true,
         );
       };
@@ -643,14 +641,7 @@ export function usePlaybackController(
         d.setSwitchTip("");
         videoRef.current = null;
         d.navigate(
-          playerRoute({
-            siteKey: option.siteKey,
-            vodId: option.vodId,
-            vodName: nextVodName,
-            playUrl: match.episode.url,
-            episodeName: match.episode.name,
-            playFrom: match.line.name,
-          }),
+          playerRoute(playTargetFromSwitch(nextTarget, match.episode.url, match.line.name)),
           true,
         );
       };

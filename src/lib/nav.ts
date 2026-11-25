@@ -102,6 +102,41 @@ export function viewToLocation(view: View): AppLocation {
 }
 
 /**
+ * 原地换集 / 换源 / 换线落地后，刷新要能重建到**新**会话，所以当前历史条目的
+ * URL 与 state 必须跟上真源。但这里只能 `replaceState`，不能 `navigate`：
+ * 后者会让 `PlayerPageRoute` 重跑 → `openPlaySession` → `PlayerHost` 的 key 变化
+ * → 整页重挂载 = 黑屏重播，恰好毁掉「原地切流」的意义。
+ *
+ * 只改 `usr`（router 刷新时从这里读 state）与 hash 路径；`key` / `idx` 原样保留，
+ * 于是栈深与前进后退语义不变，下一次正常 navigate 仍接着当前条目往下压。
+ *
+ * `playTargetHistoryPatch` 是纯函数，测试直接钉它的输出；`replacePlayTarget`
+ * 只负责把输出交给 `window.history`，在 SSR / 无 window 下静默跳过。
+ */
+export function playTargetHistoryPatch(
+  target: PlayTarget,
+  currentState: unknown,
+): { state: Record<string, unknown>; url: string } {
+  const loc = viewToLocation({ name: "player", ...target });
+  const base =
+    currentState && typeof currentState === "object"
+      ? (currentState as Record<string, unknown>)
+      : {};
+  return {
+    state: { ...base, usr: loc.state },
+    url: `#${loc.pathname}${loc.search}`,
+  };
+}
+
+export function replacePlayTarget(target: PlayTarget): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const patch = playTargetHistoryPatch(target, window.history.state);
+  window.history.replaceState(patch.state, "", patch.url);
+}
+
+/**
  * 导航桥：AppShell 挂载后注册真实实现（保存滚动 → router navigate）。
  * 路由包装组件统一走这里，保证所有入口（页面 props / 失败换线自动跳转 /
  * 命令面板）都过同一套滚动保存逻辑。

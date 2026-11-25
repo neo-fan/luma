@@ -6,7 +6,7 @@
  * 「没有就真的没有」，避免调用点各自写对象字面量时把空串塞进去。
  */
 import { describe, expect, it } from "vitest";
-import { playerRoute } from "./playerRoute";
+import { playerRoute, playTargetFromSwitch } from "./playerRoute";
 
 describe("playerRoute", () => {
   it("keeps the required fields and drops empty optional ones", () => {
@@ -43,5 +43,47 @@ describe("playerRoute", () => {
     expect(route.playFrom).toBe("线路二");
     expect(route.failoverKey).toBe("庆余年");
     expect(route.name).toBe("player");
+  });
+});
+
+describe("playTargetFromSwitch: refresh identity follows the landed target", () => {
+  const target = {
+    siteKey: "py_bubuzhuiju",
+    siteName: "步步剧集",
+    vodId: "117650",
+    vodName: "信号",
+    lines: [
+      {
+        name: "线路一",
+        episodes: [{ name: "第01集", url: "https://cdn.example/1.m3u8" }],
+      },
+      {
+        name: "线路二",
+        episodes: [
+          { name: "第03集", url: "https://cdn.example/3.m3u8" },
+          { name: "第04集", url: "https://cdn.example/4.m3u8" },
+        ],
+      },
+    ],
+    lineIndex: 1,
+    episodeIndex: 1,
+  };
+
+  it("uses the landed site/vod and the landed episode name", () => {
+    expect(
+      playTargetFromSwitch(target, "https://cdn.example/4.m3u8", "线路二"),
+    ).toEqual({
+      siteKey: "py_bubuzhuiju",
+      vodId: "117650",
+      vodName: "信号",
+      playUrl: "https://cdn.example/4.m3u8",
+      episodeName: "第04集",
+      playFrom: "线路二",
+    });
+  });
+
+  it("keeps both playerRoute and the sync path on one field mapping", () => {
+    const t = playTargetFromSwitch(target, "https://cdn.example/4.m3u8", "线路二");
+    expect(playerRoute(t)).toEqual({ name: "player", ...t });
   });
 });
