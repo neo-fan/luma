@@ -31,7 +31,7 @@
 ```bash
 python tools/release_prep.py 2.1.0 --dry-run   # 预览 diff 与将要改动的文件
 python tools/release_prep.py 2.1.0             # 落盘 + commit + tag（不 push）
-python tools/release_prep.py --verify 2.1.0    # 复核 tag：必须是收口提交 + 版本三处 + CHANGELOG 段
+python tools/release_prep.py --verify 2.1.0    # 复核 tag：必须落在版本提交上 + 版本三处 + CHANGELOG 段
 ```
 
 发布前先往 `## [Unreleased]` 写条目：脚本只搬运、不生成内容（中文条目的根因与取舍是人写的）。`CHANGELOG` 已有该版本段时脚本原样沿用并校验正文非空——`latest.json` 的 `notes` 正是从这一段截取的。
@@ -82,7 +82,7 @@ python tools/check.py
 
 `check.py` 默认串行执行并汇总（12 项）：契约校验、版本一致性、发布收口、文档一致性（command / 探针 / 测试文件 / 门禁项数与代码事实源对齐）、Python 兼容、py 框架、适配层健壮性、qjs 引擎帧校验（要求预构建二进制，缺失即 FAIL）、`py_compile`、`tsc --noEmit`、前端单测、`cargo test --lib`。任一失败即非零退出。qjs-runner 单测只在 `--full` 跑；运行时产物体检在 `--artifacts` 跑，属于发布产物核对而非回归门禁。`.github/workflows/checks.yml` 在 main push / PR 上跑 `--ci` 便携子集（7 项）。
 
-**当前基线（2.1.1）**：`python tools/check.py` **12/12 全绿**；其中 `pnpm test` 792（98 个文件）、`cargo test --lib` 310 passed / 2 ignored、`qjs-runner cargo test` 7 passed（`--full`，GBK 编解码纯函数）、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底，缺二进制即 FAIL）。`tsc --noEmit` 零错误（已并入默认门禁）。随包资源由 `--artifacts` 在发布时核对，不占回归门禁名额。
+**当前基线（2.1.1）**：`python tools/check.py` **12/12 全绿**；其中 `pnpm test` 794（98 个文件）、`cargo test --lib` 310 passed / 2 ignored、`qjs-runner cargo test` 7 passed（`--full`，GBK 编解码纯函数）、`qjs engine` 13/13（GBK 编解码 + ds 真实现 + STUBS 兜底，缺二进制即 FAIL）。`tsc --noEmit` 零错误（已并入默认门禁）。随包资源由 `--artifacts` 在发布时核对，不占回归门禁名额。
 
 ### 2.2 窗口回归（需要 dev 窗口）
 
@@ -160,14 +160,14 @@ python tools/check.py
 # 3) 一条命令收口：版本三处 + AGENTS.md 版本行 + CHANGELOG 提升 → 一笔提交 → tag
 python tools/release_prep.py X.Y.Z
 
-# 3.5) 复核标签：tag 必须指向刚才那笔收口提交（脚本收口后会自动跑一次，这里可手工再验）
+# 3.5) 复核标签：tag 必须落在刚才那笔版本提交上（脚本收口后会自动跑一次，这里可手工再验）
 python tools/release_prep.py --verify X.Y.Z
 
 # 4) 推提交与 tag，release.yml 出包并挂 Release
 git push --follow-tags origin main
 ```
 
-- **tag 与收口提交必须同源**：`--verify` 断言 tag 指向 `chore(release): 版本升至 X`、annotated、tag 内 `package.json` / `Cargo.toml` 版本一致、`CHANGELOG` 该版本段非空。收口后又落了提交、却把标签重打到新 HEAD，会让 tag 内的 CHANGELOG 落后于真实内容——`latest.json` 的 notes 永久缺条目，而产物看起来完全正常。`release.yml` 在构建前也会跑同一校验，不合格直接拒绝出包。
+- **tag 必须落在版本提交上**：`--verify` 按内容定位「最后一次把 `package.json` 版本改成 X 的提交」，断言 tag 就指向它（**不看提交消息**，同一笔提交换个措辞照样合格），再加 annotated、tag 内 `package.json` / `Cargo.toml` 版本一致、`CHANGELOG` 该版本段非空。版本提交之后又落了改动、却把标签重打到新 HEAD，会让 tag 内的 CHANGELOG 落后于真实内容——`latest.json` 的 notes 永久缺条目，而产物看起来完全正常。`release.yml` 在构建前也会跑同一校验，不合格直接拒绝出包。
 - 脚本**不 push**：tag 一落地 CI 就开始出包，这一步留给人工确认。
 - 只想做其中一段时用 `--dry-run`（预览 diff）/ `--no-commit`（只改文件）/ `--no-tag`（只提交）。
 - 手工等价步骤：`git add` 只本次改动的文件；`git commit` 用 `chore(release): 版本升至 X.Y.Z`；本地 `git tag -a vX.Y.Z -m "release X.Y.Z"`；`git push --follow-tags origin main`。
@@ -186,4 +186,4 @@ git push --follow-tags origin main
 | 构建时 `resource path ... doesn't exist` | `bundle.externalBin` 指向的二进制未按 `<name>-<triple>.exe` 命名 | 先跑 `prepare_runtime.py` 把 sidecar 二进制 staging 到 `src-tauri/binaries/` |
 | 窗口 `ERR_CONNECTION_REFUSED` | 前端没嵌入 exe（手搓 `cargo build` 不会嵌入） | 一律用 `tauri build`，不要 `cargo build --release` 直接打包 |
 | `cargo` 等待 target 锁 | dev 进程在跑 | 编译/打包前先停干净 `tauri dev` |
-| `RELEASE TAG INVALID` | tag 打在收口提交之后的某个提交上（收口后又落了改动） | tag 不移动；改正只能发下一个版本。本地用 `python tools/release_prep.py --verify X.Y.Z` 复核 |
+| `RELEASE TAG INVALID` | tag 没落在版本提交上（打在它后面的 HEAD，或 tag 内没有对应版本的改动） | tag 不移动；改正只能发下一个版本。本地用 `python tools/release_prep.py --verify X.Y.Z` 复核 |

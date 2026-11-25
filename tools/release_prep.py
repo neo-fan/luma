@@ -16,11 +16,11 @@ commit 与 tag，中间不留人工窗口——一次发版只有一笔提交。
     python tools/release_prep.py --verify           # 校验 package.json 版本对应的 tag
     python tools/release_prep.py --verify 2.1.0     # 校验指定版本的 tag（CI 用）
 
-`--verify` 的口径：tag 必须指向发布收口提交（`chore(release): 版本升至 X`）、
-annotated、tag 内 `package.json` / `Cargo.toml` 版本一致、`CHANGELOG` 该版本段非空。
-它防的是「收口提交之后又落了几个提交，标签在新 HEAD 上重打」——那种 tag 里的
-CHANGELOG 落后于 tag 的真实内容，`latest.json` 的 notes 会永久缺条目，而产物看起来正常。
-tag 一旦推送就不再移动；发现不合格只能发下一个版本。
+`--verify` 的口径：tag 必须落在**版本号最后被改动的那一个提交**上（按内容定位，
+不看提交消息）、annotated、tag 内 `package.json` / `Cargo.toml` 版本一致、
+`CHANGELOG` 该版本段非空。它防的是「版本提交之后又落了几个提交，标签在新 HEAD 上
+重打」——那种 tag 里的 CHANGELOG 落后于 tag 的真实内容，`latest.json` 的 notes
+会永久缺条目，而产物看起来正常。tag 一旦推送就不再移动；发现不合格只能发下一个版本。
 
 前置条件（不满足直接退出，不写任何文件）：
 - 版本载体干净（`package.json` / `Cargo.toml` / `Cargo.lock` / `AGENTS.md` 的版本行）
@@ -433,35 +433,76 @@ def remote_tag_exists(tag: str) -> bool | None:
     return bool(result.stdout.strip())
 
 
+def version_bump_commit(tag: str, version: str) -> str | None:
+    """`tag` 之内，最后一次把 `package.json` 版本写成 `version` 的提交。
+
+    按内容定位（`-S` 统计 `"version": "X"` 的出现次数变化），不看提交消息：
+    同一个版本提交换个措辞也该照样合格，而消息写对了、内容却混进别的改动的情况，
+    靠消息根本判断不出来。
+    """
+    result = git(
+        "log",
+        "-1",
+        "--format=%H",
+        tag,
+        "-S",
+        f'"version": "{version}"',
+        "--",
+        "package.json",
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def tag_problems(
     *,
     version: str,
     tag_kind: str,
-    subject: str,
+    tag_commit: str,
+    tag_subject: str,
+    bump_commit: str | None,
+    bump_subject: str | None,
+    commits_after: int,
     pkg_version: str | None,
     cargo_version: str | None,
     changelog_text: str,
 ) -> list[str]:
     """纯函数：给定 tag 的事实，列出它为什么不是一个合格的发布标签。
 
-    「tag 打在发布收口提交上」是这里唯一能自动判定的口径。它防的是这类事故：
-    `chore(release)` 提交之后又落了几个提交，标签却在新的 HEAD 上重打，于是
-    tag 里的 CHANGELOG 版本段落后于 tag 的真实内容——`latest.json` 的 notes
-    会永久缺条目，而产物看起来完全正常。
+    与「哪一笔提交」有关的判据只有一条：**tag 必须落在版本号最后被改动的那个提交
+    上**。它防的是这类事故：版本提交之后又落了几个提交，标签却在新的 HEAD 上重打，
+    于是 tag 里的 CHANGELOG 落后于 tag 的真实内容——`latest.json` 的 notes 会永久
+    缺条目，而产物看起来完全正常。
+
+    这里刻意不看提交消息（曾经要求 subject 恰为 `chore(release): 版本升至 X`）：
+    消息是人写的约定，绑定一个中文字符串只会让换个措辞的发版被拦下；而且它证明
+    不了自己想证明的事——消息写对、内容里夹带别的改动，这条规则一样放行。用提交
+    身份判断，是事实而非约定，也不再逼着人去背一条字符串。
     """
     problems: list[str] = []
-    expected_subject = f"chore(release): 版本升至 {version}"
-
     if tag_kind != "tag":
         problems.append(f"v{version} 不是 annotated tag（git cat-file 类型为 {tag_kind!r}）")
-    if subject != expected_subject:
+    if bump_commit is None:
         problems.append(
-            f"tag 指向的提交是「{subject}」，不是发布收口提交「{expected_subject}」"
+            f"tag 里找不到把 package.json 版本写成 {version} 的提交——tag 没有落在版本提交上"
+        )
+    elif bump_commit != tag_commit:
+        problems.append(
+            f"tag 指向 {tag_commit[:7]}「{tag_subject}」，但 {version} 是在 "
+            f"{bump_commit[:7]}「{bump_subject or '（无消息）'}」上改的，"
+            f"那之后还有 {commits_after} 个提交：tag 里的 CHANGELOG 会落后于它的真实内容"
+            f"（latest.json 的 notes 会永久缺条目）。把 tag 打在版本提交上再推"
         )
     if pkg_version != version:
-        problems.append(f"tag 内 package.json 版本是 {pkg_version!r}，不是 {version!r}")
+        problems.append(
+            f"tag 内 package.json 版本是 {pkg_version!r}，不是 {version!r}"
+        )
     if cargo_version != version:
-        problems.append(f"tag 内 Cargo.toml 版本是 {cargo_version!r}，不是 {version!r}")
+        problems.append(
+            f"tag 内 Cargo.toml 版本是 {cargo_version!r}，不是 {version!r}"
+        )
 
     lines = changelog_text.splitlines()
     section = next(
@@ -485,6 +526,15 @@ def verify_release(version: str) -> list[str]:
 
     commit = git("rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}").stdout.strip()
     subject = git("log", "-1", "--format=%s", commit).stdout.strip()
+    bump = version_bump_commit(tag, version)
+    bump_subject = (
+        git("log", "-1", "--format=%s", bump).stdout.strip() if bump else None
+    )
+    commits_after = 0
+    if bump:
+        ahead = git("rev-list", "--count", f"{bump}..{commit}", check=False)
+        if ahead.returncode == 0:
+            commits_after = int(ahead.stdout.strip() or 0)
     pkg = package_version(git("show", f"{tag}:package.json").stdout)
     cargo = cargo_package_version(git("show", f"{tag}:src-tauri/Cargo.toml").stdout)
     log_text = git("show", f"{tag}:CHANGELOG.md").stdout
@@ -492,7 +542,11 @@ def verify_release(version: str) -> list[str]:
     return tag_problems(
         version=version,
         tag_kind=kind.stdout.strip(),
-        subject=subject,
+        tag_commit=commit,
+        tag_subject=subject,
+        bump_commit=bump,
+        bump_subject=bump_subject,
+        commits_after=commits_after,
         pkg_version=pkg,
         cargo_version=cargo,
         changelog_text=log_text,
@@ -637,7 +691,7 @@ def run(args: argparse.Namespace) -> int:
             f"tag {tag} 刚创建就没通过发布校验（删掉重来：git tag -d {tag}）：\n"
             + "\n".join(f"  - {item}" for item in problems)
         )
-    print(f"verify  {tag} -> 收口提交 / 版本三处 / CHANGELOG 段")
+    print(f"verify  {tag} -> 版本提交 / 版本三处 / CHANGELOG 段")
     print()
     print("下一步（确认无误后手动推送，tag 会触发 release 工作流出包）：")
     print(f"  git push --follow-tags origin main     # 提交与 tag v{version} 一起推")
@@ -656,7 +710,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--verify",
         action="store_true",
-        help="只校验已有 tag：必须是发布收口提交、版本三处一致、CHANGELOG 段非空",
+        help="只校验已有 tag：必须落在版本提交上、版本三处一致、CHANGELOG 段非空",
     )
     parser.add_argument("--dry-run", action="store_true", help="只打印将要发生的改动")
     parser.add_argument("--no-commit", action="store_true", help="改文件但不提交")
@@ -681,12 +735,12 @@ def main(argv: list[str] | None = None) -> int:
                 for item in problems:
                     print(f"  - {item}", file=sys.stderr)
                 print(
-                    "修法：tag 只能在 release_prep 收口后立刻打；已推的 tag 不要移动，"
-                    "改为发下一个版本。",
+                    "修法：tag 要打在版本号那一笔提交上（别打在它后面的 HEAD 上）；"
+                    "已推的 tag 不要移动，直接发下一个版本。",
                     file=sys.stderr,
                 )
                 return 1
-            print(f"RELEASE OK: v{version}（收口提交 / 版本三处 / CHANGELOG 段）")
+            print(f"RELEASE OK: v{version}（版本提交 / 版本三处 / CHANGELOG 段）")
             return 0
         if not args.version:
             raise ReleaseError("缺少目标版本：python tools/release_prep.py X.Y.Z")

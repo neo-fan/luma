@@ -289,7 +289,7 @@ check("AGENTS.md 脏改动被拦截", blocked == [" M AGENTS.md"], str(blocked))
 check("AGENTS.md 不落到无关文件里", others == [], str(others))
 
 # --------------------------------------------------------------------------- #
-# tag 校验（纯函数：tag 必须指向发布收口提交）
+# tag 校验（纯函数：tag 必须落在版本号最后被改动的那个提交上）
 # --------------------------------------------------------------------------- #
 
 GOOD_SECTION = """## [1.1.0] - 2026-02-02
@@ -301,7 +301,11 @@ GOOD_SECTION = """## [1.1.0] - 2026-02-02
 TAG_BASE = dict(
     version="1.1.0",
     tag_kind="tag",
-    subject="chore(release): 版本升至 1.1.0",
+    tag_commit="a" * 40,
+    tag_subject="chore(release): 版本升至 1.1.0",
+    bump_commit="a" * 40,
+    bump_subject="chore(release): 版本升至 1.1.0",
+    commits_after=0,
     pkg_version="1.1.0",
     cargo_version="1.1.0",
     changelog_text=GOOD_SECTION,
@@ -309,9 +313,29 @@ TAG_BASE = dict(
 
 check("合格 tag 无问题", rp.tag_problems(**TAG_BASE) == [], str(rp.tag_problems(**TAG_BASE)))
 check(
-    "tag 指向非收口提交时拒绝",
-    any("收口提交" in item for item in rp.tag_problems(**{**TAG_BASE, "subject": "feat(tools): 收口后又落了一个提交"})),
-    "tag 后续提交没被发现",
+    "tag 打在版本提交之后的提交上时拒绝",
+    any(
+        "之后还有 3 个提交" in item
+        for item in rp.tag_problems(
+            **{
+                **TAG_BASE,
+                "tag_commit": "b" * 40,
+                "tag_subject": "feat(tools): 收口后又落了一个提交",
+                "commits_after": 3,
+            }
+        )
+    ),
+    "tag 落在版本提交之后没被发现",
+)
+check(
+    "提交消息换个说法照样合格（只看内容，不看措辞）",
+    rp.tag_problems(**{**TAG_BASE, "tag_subject": "release 1.1.0"}) == [],
+    "换个措辞就被拦下了：说明校验还在依赖提交消息",
+)
+check(
+    "tag 里找不到版本提交时拒绝",
+    any("没有落在版本提交上" in item for item in rp.tag_problems(**{**TAG_BASE, "bump_commit": None})),
+    "找不到版本提交没被发现",
 )
 check(
     "lightweight tag 拒绝",
