@@ -9,6 +9,7 @@ import {
   introMs,
   outroMs,
   outroStartMs,
+  pendingStillValid,
   parseSkipConfig,
   parseSkipEnabled,
   serializeSkipConfig,
@@ -203,6 +204,26 @@ describe("countdownSeconds", () => {
   it("到点与透支都归零，不出现负数", () => {
     expect(countdownSeconds(0)).toBe(0);
     expect(countdownSeconds(-50)).toBe(0);
+  });
+});
+
+describe("pendingStillValid：在跑的倒计时跟着播放头走", () => {
+  const intro = 60_000;
+  const outro = 30_000;
+  const duration = 600_000;
+
+  it("片头：播放头越出窗口即失效（续播 seek / 拖动 / HLS 重建）", () => {
+    expect(pendingStillValid("intro", 0, duration, intro, outro)).toBe(true);
+    expect(pendingStillValid("intro", 59_999, duration, intro, outro)).toBe(true);
+    expect(pendingStillValid("intro", 60_000, duration, intro, outro)).toBe(false);
+    // 播到一半还挂着跳过片头，就是这一条没被 tick 核对。
+    expect(pendingStillValid("intro", 300_000, duration, intro, outro)).toBe(false);
+  });
+
+  it("片尾：进入窗口才有效，duration 未就绪时失效", () => {
+    expect(pendingStillValid("outro", 570_000, duration, intro, outro)).toBe(true);
+    expect(pendingStillValid("outro", 100_000, duration, intro, outro)).toBe(false);
+    expect(pendingStillValid("outro", 0, 0, intro, outro)).toBe(false);
   });
 });
 

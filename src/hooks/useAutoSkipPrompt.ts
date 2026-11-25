@@ -3,6 +3,7 @@ import type { RefObject } from "react";
 import {
   AUTO_SKIP_COUNTDOWN_S,
   countdownSeconds,
+  pendingStillValid,
   shouldSkipIntro,
   shouldSkipOutro,
   type SkipKind,
@@ -99,6 +100,15 @@ export function useAutoSkipPrompt({
         const now = Date.now();
         const elapsed = now - lastTickRef.current;
         lastTickRef.current = now;
+        // 每拍核对播放头是否还在窗口内：续播 seek 落位、缓冲期间用户拖动、
+        // HLS 重建重置 currentTime，这些都不保证有 timeupdate / playing 事件。
+        // 只靠事件撤销会留下「播到一半还挂着跳过片头」（实测第 03 集）。
+        const curMs = video.currentTime * 1000;
+        const durMs = Number.isFinite(video.duration) ? video.duration * 1000 : 0;
+        if (!pendingStillValid(kind, curMs, durMs, introMs, outroMs)) {
+          cancel();
+          return;
+        }
         if (video.paused) {
           // 暂停期间把 deadline 往后推，恢复播放后仍是原来的剩余秒数。
           deadlineRef.current += elapsed;
@@ -116,7 +126,7 @@ export function useAutoSkipPrompt({
         }
       }, TICK_MS);
     },
-    [clearTimer, commit],
+    [cancel, clearTimer, commit, introMs, outroMs],
   );
 
   // 换集 / 换源 / 实例重建：本集的「提示过没有」清零，旧倒计时收掉。
@@ -137,13 +147,14 @@ export function useAutoSkipPrompt({
       if (pendingKind) {
         // 倒计时还在跑，但播放头已经不在那个窗口里了——典型是用户自己拖动
         // 了进度条。此时必须撤掉倒计时，否则 5 秒后会把用户拽回片头/片尾。
-        // （续播 seek 晚到曾造成同一现象；现在续播点是播放器创建的前置条件，
-        //  历史就绪前不建实例，所以那条时序已经不存在。）
-        if (pendingKind === "intro" && !shouldSkipIntro(curMs, introMs)) {
-          cancel();
-        } else if (pendingKind === "outro" && !shouldSkipOutro(curMs, durMs, outroMs)) {
+        if (!pendingStillValid(pendingKind, curMs, durMs, introMs, outroMs)) {
           cancel();
         }
+        return;
+      }
+      // 暂停 / 还没出画时不起跑：截图里 loading 状态挂着一个冻结在 5 秒的
+      // 「跳过片头」，而画面根本没开始播。等 playing 事件（真的出画）再判。
+      if (video.paused || video.readyState < 2) {
         return;
       }
       if (!doneRef.current.intro && shouldSkipIntro(curMs, introMs)) {

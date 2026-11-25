@@ -81,9 +81,20 @@ describe("intro countdown is driven by the video, not by state edges", () => {
   it("drops the countdown when playback leaves the segment (resume seek)", () => {
     // `playing` 可能在历史续播 seek 之前于第 0 秒触发；若只判断「有 pending 就 return」，
     // 5 秒后会把用户从续播点拽回片头末尾。倒计时要跟着播放头走。
-    expect(hook).toContain('if (pendingKind === "intro" && !shouldSkipIntro(curMs, introMs)) {');
-    expect(hook).toContain('if (pendingKind === "outro" && !shouldSkipOutro(curMs, durMs, outroMs)) {');
+    expect(hook).toContain("if (!pendingStillValid(pendingKind, curMs, durMs, introMs, outroMs)) {");
     expect(page).toContain("if (v && intro > 0 && v.currentTime * 1000 < intro) {");
+  });
+
+  it("rechecks the playhead every tick, not only on media events", () => {
+    // 截图实证：播到一半仍挂着「5 秒后跳过片头」且数字冻结。缓冲期 timeupdate /
+    // playing 不触发，撤销必须靠 200ms tick 自愈；paused 时 deadline 顺延但窗口判定照跑。
+    const timerAt = hook.indexOf("timerRef.current = window.setInterval");
+    expect(timerAt).toBeGreaterThan(-1);
+    const body = hook.slice(timerAt, timerAt + 900);
+    expect(body).toContain("pendingStillValid(kind, curMs, durMs, introMs, outroMs)");
+    expect(body.indexOf("pendingStillValid")).toBeLessThan(body.indexOf("video.paused"));
+    // 暂停 / 未出画时不起跑，避免 loading 画面配一个冻结的跳过提示。
+    expect(hook).toContain("if (video.paused || video.readyState < 2) {");
   });
 });
 
@@ -92,5 +103,29 @@ describe("auto next never overrides a pending pick", () => {
     const at = page.indexOf("const advanceToNext = useCallback");
     expect(at).toBeGreaterThan(-1);
     expect(page.slice(at, at + 400)).toContain("if (display !== committed) {");
+  });
+});
+
+describe("in-place switch keeps the refresh identity in sync", () => {
+  const controllerFile = readFileSync(
+    resolve(here, "../../src/hooks/playback/usePlaybackController.ts"),
+    "utf8",
+  );
+
+  it("updates the history entry at the single commit point", () => {
+    // 原地换集 / 换源 / 换线都经 applySwitch 落地。刷新身份必须在这里同步，
+    // 不能散回页面层——否则新增落地路径时会再漏一次回调，重现 CTRL+R 回落。
+    const at = controllerFile.indexOf("const applySwitch = useCallback");
+    expect(at).toBeGreaterThan(-1);
+    const body = controllerFile.slice(at, at + 1400);
+    expect(body).toContain("dispatch({ type: \"commit\", target })");
+    expect(body).toContain("replacePlayTarget(playTargetFromSwitch(");
+  });
+
+  it("builds fallback routes from the same landed-target mapping", () => {
+    // fallback 走整页 navigate、成功路径走 replaceState；两条路径必须用同一份
+    // 字段映射，少一个 playFrom 就让刷新后的线路 headers 丢失。
+    const calls = controllerFile.match(/playerRoute\(playTargetFromSwitch\(/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
   });
 });

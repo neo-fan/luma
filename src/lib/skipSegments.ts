@@ -209,6 +209,26 @@ export function shouldSkipOutro(currentMs: number, durationMs: number, outro: nu
 }
 
 /**
+ * 一次在跑的倒计时是否仍有效：播放头必须还在它对应的窗口内。
+ *
+ * 供 `useAutoSkipPrompt` 的事件回调与 200ms tick 共用一份判定。tick 那条不可省：
+ * 续播 seek 落位、HLS 缓冲期间 `timeupdate` / `playing` 都可能不触发，只靠事件
+ * 撤销会留下「播到一半还挂着 5 秒后跳过片头」的幽灵提示；paused 还会让 deadline
+ * 一直顺延，提示永久停在 5 秒。
+ */
+export function pendingStillValid(
+  kind: SkipKind,
+  currentMs: number,
+  durationMs: number,
+  intro: number,
+  outro: number,
+): boolean {
+  return kind === "intro"
+    ? shouldSkipIntro(currentMs, intro)
+    : shouldSkipOutro(currentMs, durationMs, outro);
+}
+
+/**
  * 自动跳过的提示倒计时秒数：配置了片头/片尾后，进入窗口时不立刻跳，而是给
  * 这么多秒的「即将自动跳过 · 可取消」提示，到点才跳。避免「没看清就被瞬移」。
  *
