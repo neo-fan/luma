@@ -128,6 +128,15 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
   剥掉外壳直连。带 `do=` / `siteKey=` 的是 spider 回调（含本应用自己的
   `?do=py`），一律不动；还原目标只接受公网 http(s)；直播 `/c/…` 剥完内层仍是
   本机转码服务，保持原样。
+- **CMS 方言容忍**：`cms.rs::build` 按苹果 CMS `provide/vod` 拼 `ac` / `t` / `pg` /
+  `wd`，分类的 `extend`（筛选条件）作为额外 query 原样透传，保留键 `ac` / `t` /
+  `pg` / `wd` 不允许被覆盖；`cms_parse.rs` 同时认 JSON 与 XML，JSONP / `data`
+  包裹先剥壳，分页键兼容 `pagecount|pageCount|totalPage` 与 `limit|pagesize|page_size`，
+  XML 的 `<class>` 分类与扩展字段（年份 / 地区 / 主演 / 导演 / 备注）一并归一。
+- **`playerContent` 能力边界**：苹果 CMS 没有 `ac=play`，播放地址随 `detailContent`
+  的 `vod_play_url` 下发。`cms.rs::player_content` 不请求网络：绝对 http(s) 原样、
+  路径形态基于站点 api 补全、私有 token 与空串回 `{}` 由前端沿用详情地址并按既有
+  规则判 unresolvable / rejected，不臆造解析接口。
 - 契约单一真源：`contracts/luma.schema.json` → `src/types/luma.ts` → Rust 序列化，
   `python tests/offline/contract_check.py` 必须 `CONTRACT OK`。
 

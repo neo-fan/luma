@@ -267,8 +267,9 @@ export default function HomePage({
     ? draftSite
     : siteKey;
 
-  // 当前分类的筛选定义（豆瓣[py] 等 py/js 源在 homeContent(filter=true) 里
-  // 顺带返回；CMS 源没有）。定义与选中值一起算出 extend。两层都要 memo：
+  // 当前分类的筛选定义（py/js 源在 homeContent(filter=true) 里顺带返回；
+  // CMS 源若自家提供 filters 也会解析）。定义与选中值一起算出 extend。
+  // 两层都要 memo：
   // filterDefs 不 memo 的话每次渲染都是新数组，activeExtend 的 useMemo
   // 依赖失效、分类加载 effect 每帧重跑（请求风暴，2026-11-20 实测）。
   const filterMap = homeForSite?.filters ?? null;

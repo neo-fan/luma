@@ -9,6 +9,7 @@
 ### 新增
 
 - **JS 源 `action` 方法路由接通**：drpy2 用它做换线路 / 清缓存 / 登录，此前只有 `proxy` 接通。契约 `SpiderMethod` 增加 `action`（schema / TS / Rust 三端对齐），前端可经 `spider_invoke({ siteKey, method: "action", args: [action] })` 传入单个字符串；qjs-runner 的通用派发按长名 `action` 调脚本同名函数，不误走 proxy 分支，返回值照常 JSON 化。CMS / Python 源没有该方法仍按能力缺口报错。`p1.py` T-16 模板用例扩到 9 个方法，新增 action 参数与 ext 透传断言。
+- **CMS 源方言与筛选补齐**：① `cms_parse.rs` 补 JSONP / `data` 包裹剥壳、分页键别名（`pageCount` / `totalPage` / `pagesize` / `recordcount`）、XML 的 `<class>` 分类与年份 / 地区 / 主演 / 导演 / 备注字段，字段别名与审计工具逐项对齐（`director` 不再丢）；② `categoryContent` 的第 4 参 `extend`（前端早已传）不再被丢弃，作为额外 query 透传，`ac` / `t` / `pg` / `wd` 保留键防覆盖；③ `playerContent` 从恒空对象改为「不请求网络的地址规范化」——绝对 http(s) 原样、路径基于站点 api 补全、私有 token 仍回 `{}` 由前端沿用详情地址按既有规则判 unresolvable / rejected，不臆造 CMS 不存在的 `ac=play`。
 
 ### 修复
 

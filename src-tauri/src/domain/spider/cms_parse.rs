@@ -38,7 +38,9 @@ const VOD_FIELDS: [&str; 13] = [
 ];
 
 /// CMS 字段别名：不同采集站同一语义用不同的键名。
-const JSON_ALIASES: [(&str, &str); 9] = [
+/// 与 `tools/audit/cms.py::JSON_ALIASES` 逐项对齐（含 director）——审计工具
+/// 与运行时 parser 各抄一份，漏一项就会在真实配置上表现成「详情页缺字段」。
+const JSON_ALIASES: [(&str, &str); 10] = [
     ("id", "vod_id"),
     ("name", "vod_name"),
     ("pic", "vod_pic"),
@@ -48,6 +50,7 @@ const JSON_ALIASES: [(&str, &str); 9] = [
     ("year", "vod_year"),
     ("area", "vod_area"),
     ("actor", "vod_actor"),
+    ("director", "vod_director"),
 ];
 
 /// 一条采集结果 → 契约字段。缺的字段补空串，契约不允许 undefined。
@@ -149,13 +152,20 @@ pub(crate) fn page_from_json(payload: &Map<String, Value>) -> Value {
         Some(Value::Object(map)) => Value::Object(map.clone()),
         _ => json!({}),
     };
+    // 采集站分页键名不一：pagecount/pageCount/totalPage、limit/pagesize 混用。
+    // 按优先级取第一个出现的，缺省值保持不变。
+    let pick_int = |keys: &[&str], default: i64| {
+        keys.iter()
+            .find_map(|key| payload.get(*key).map(|value| as_int(Some(value), default)))
+            .unwrap_or(default)
+    };
     json!({
         "list": items,
         "filters": filters,
-        "pagecount": as_int(payload.get("pagecount"), 1),
+        "pagecount": pick_int(&["pagecount", "pageCount", "totalPage"], 1),
         "page": as_int(payload.get("page"), 1),
-        "limit": as_int(payload.get("limit"), 20),
-        "total": as_int(payload.get("total"), items.len() as i64),
+        "limit": pick_int(&["limit", "pagesize", "page_size"], 20),
+        "total": pick_int(&["total", "recordcount", "count"], items.len() as i64),
         "classes": classes,
     })
 }
@@ -169,6 +179,10 @@ fn page_from_xml(raw: &str) -> Result<Value, AppError> {
     let mut in_list = false;
     let mut list_attrs: HashMap<String, String> = HashMap::new();
     let mut videos: Vec<Value> = Vec::new();
+    let mut classes: Vec<Value> = Vec::new();
+    let mut in_class = false;
+    let mut class_type_id = String::new();
+    let mut class_type_name = String::new();
     let mut video: Option<Map<String, Value>> = None;
     let mut field: Option<&'static str> = None;
     let mut text = String::new();
@@ -182,6 +196,22 @@ fn page_from_xml(raw: &str) -> Result<Value, AppError> {
                 b"list" => {
                     in_list = true;
                     list_attrs = attributes(&start);
+                }
+                // 苹果 CMS 的 XML 在 `<list>` 下与 `<video>` 平级输出
+                // `<class><id>1</id><name>电影</name></class>`；此前被当成
+                // video 字段读了但没地方落，首页分类永远是空的。
+                b"class" => {
+                    in_class = true;
+                    class_type_id.clear();
+                    class_type_name.clear();
+                    // 兼容 `<class id="1">电影</class>` 的属性写法。
+                    let attrs = attributes(&start);
+                    if let Some(id) = attrs.get("id") {
+                        class_type_id = id.clone();
+                    }
+                    if let Some(name) = attrs.get("name") {
+                        class_type_name = name.clone();
+                    }
                 }
                 b"video" => {
                     video = Some(Map::new());
@@ -199,11 +229,17 @@ fn page_from_xml(raw: &str) -> Result<Value, AppError> {
                     }
                 }
             },
-            Ok(Event::Empty(start)) => {
-                if start.name().as_ref() == b"video" {
-                    videos.push(vod(&Map::new()));
+            Ok(Event::Empty(start)) => match start.name().as_ref() {
+                b"video" => videos.push(vod(&Map::new())),
+                b"class" => {
+                    let attrs = attributes(&start);
+                    classes.push(json!({
+                        "type_id": attrs.get("id").cloned().unwrap_or_default(),
+                        "type_name": attrs.get("name").cloned().unwrap_or_default(),
+                    }));
                 }
-            }
+                _ => {}
+            },
             Ok(Event::Text(chunk)) => {
                 if field.is_some() || dd_flag.is_some() {
                     if let Ok(value) = chunk.unescape() {
@@ -218,6 +254,15 @@ fn page_from_xml(raw: &str) -> Result<Value, AppError> {
             }
             Ok(Event::End(end)) => match end.name().as_ref() {
                 b"list" => in_list = false,
+                b"class" => {
+                    if !class_type_id.is_empty() || !class_type_name.is_empty() {
+                        classes.push(json!({
+                            "type_id": class_type_id,
+                            "type_name": class_type_name,
+                        }));
+                    }
+                    in_class = false;
+                }
                 b"dd" => {
                     flags.push(dd_flag.take().unwrap_or_default());
                     urls.push(text.trim().to_string());
@@ -232,8 +277,15 @@ fn page_from_xml(raw: &str) -> Result<Value, AppError> {
                 }
                 name => {
                     if let Some(key) = known_field(name) {
-                        if let Some(item) = video.as_mut() {
-                            item.insert(key.to_string(), json!(text.trim()));
+                        let value = text.trim();
+                        if in_class {
+                            match key {
+                                "vod_id" => class_type_id = value.to_string(),
+                                "vod_name" => class_type_name = value.to_string(),
+                                _ => {}
+                            }
+                        } else if let Some(item) = video.as_mut() {
+                            item.insert(key.to_string(), json!(value));
                         }
                         field = None;
                         text.clear();
@@ -262,7 +314,7 @@ fn page_from_xml(raw: &str) -> Result<Value, AppError> {
         "page": attr_int(&list_attrs, "page", 1),
         "limit": attr_int(&list_attrs, "pagesize", 20),
         "total": attr_int(&list_attrs, "recordcount", videos.len() as i64),
-        "classes": [],
+        "classes": classes,
     }))
 }
 
@@ -288,15 +340,62 @@ fn attributes(start: &BytesStart<'_>) -> HashMap<String, String> {
         .collect()
 }
 
+/// XML 字段名 → 契约字段。苹果 CMS 的 XML 输出与 JSON 用同一套字段，
+/// 但历史上这里只认 5 个，导致 XML 站点的年份 / 地区 / 主演 / 导演全丢。
+/// 与 `JSON_ALIASES` 对齐后两条解析链给出一致详情。
 fn known_field(name: &[u8]) -> Option<&'static str> {
     Some(match name {
         b"id" => "vod_id",
         b"name" => "vod_name",
         b"pic" => "vod_pic",
-        b"des" => "vod_content",
+        b"des" | b"content" => "vod_content",
         b"type" => "type_name",
+        b"remarks" => "vod_remarks",
+        b"year" => "vod_year",
+        b"area" => "vod_area",
+        b"actor" => "vod_actor",
+        b"director" => "vod_director",
+        b"douban_id" => "vod_douban_id",
         _ => return None,
     })
+}
+
+/// JSONP / API 包裹的 JSON → CMS 页对象。
+///
+/// 少数采集站在 `provide/vod` 外再包一层：JSONP（`cb({...})`）或
+/// `{"code":0,"data":{"list":[...]}}`。标准响应（`{"list":[...]}`）优先，
+/// 只有顶层拿不到 `list` / `class` 时才剥包裹，避免改变已工作的站点行为。
+fn unwrap_page_object(payload: &Value) -> Option<&Map<String, Value>> {
+    let object = payload.as_object()?;
+    if object.contains_key("list") || object.contains_key("class") || object.contains_key("classes") {
+        return Some(object);
+    }
+    for key in ["data", "result", "vod"] {
+        let Some(inner) = object.get(key) else {
+            continue;
+        };
+        if let Some(inner) = inner.as_object() {
+            if inner.contains_key("list") || inner.contains_key("class") {
+                return Some(inner);
+            }
+        }
+    }
+    Some(object)
+}
+
+/// 从 JSONP / 带前后噪声的正文里截出 JSON 对象。XML 以 `<` 开头，不会误命中。
+fn json_object_from(raw: &str) -> Option<&str> {
+    let text = raw.trim();
+    if text.starts_with('{') {
+        return Some(text);
+    }
+    let open = text.find('(')?;
+    let close = text.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let inner = text[open + 1..close].trim();
+    inner.starts_with('{').then_some(inner)
 }
 
 pub(crate) fn parse_page(raw: &str) -> Result<Value, AppError> {
@@ -304,20 +403,22 @@ pub(crate) fn parse_page(raw: &str) -> Result<Value, AppError> {
     if text.is_empty() {
         return Err(AppError::new(code::INVALID_ARGUMENT, "empty CMS response"));
     }
-    if text.starts_with('{') {
-        let payload: Value = serde_json::from_str(text).map_err(|error| {
-            AppError::new(
-                code::INVALID_ARGUMENT,
-                format!("CMS json is not an object: {error}"),
-            )
-        })?;
-        let Some(object) = payload.as_object() else {
-            return Err(AppError::new(
-                code::INVALID_ARGUMENT,
-                "CMS json must be an object",
-            ));
-        };
-        return Ok(page_from_json(object));
+    if text.starts_with('{') || text.contains('(') {
+        if let Some(json_text) = json_object_from(text) {
+            let payload: Value = serde_json::from_str(json_text).map_err(|error| {
+                AppError::new(
+                    code::INVALID_ARGUMENT,
+                    format!("CMS json is not an object: {error}"),
+                )
+            })?;
+            let Some(object) = unwrap_page_object(&payload) else {
+                return Err(AppError::new(
+                    code::INVALID_ARGUMENT,
+                    "CMS json must be an object",
+                ));
+            };
+            return Ok(page_from_json(object));
+        }
     }
     page_from_xml(text)
 }
@@ -453,6 +554,15 @@ mod tests {
     }
 
     #[test]
+    fn pagination_aliases_are_normalized() {
+        let raw = r#"{"pageCount":7,"pagesize":50,"recordcount":333,"list":[]}"#;
+        let page = parse_page(raw).unwrap();
+        assert_eq!(page["pagecount"], 7);
+        assert_eq!(page["limit"], 50);
+        assert_eq!(page["total"], 333);
+    }
+
+    #[test]
     fn classes_object_becomes_a_list() {
         let raw = r#"{"class":{"1":"电影","2":"剧集"},"list":[]}"#;
         let page = parse_page(raw).unwrap();
@@ -485,6 +595,38 @@ mod tests {
         assert!(parse_page("   ").is_err());
         let page = parse_page(r#"{"list":"oops"}"#).unwrap();
         assert_eq!(page["list"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn jsonp_and_wrapped_pages_unwrap_to_standard_envelope() {
+        let jsonp = parse_page("cb({\"list\":[{\"id\":1,\"name\":\"A\"}],\"page\":2})").unwrap();
+        assert_eq!(jsonp["list"][0]["vod_id"], "1");
+        assert_eq!(jsonp["page"], 2);
+
+        let wrapped = parse_page(r#"{"code":1,"data":{"list":[{"id":2,"name":"B"}]}}"#).unwrap();
+        assert_eq!(wrapped["list"][0]["vod_name"], "B");
+    }
+
+    #[test]
+    fn xml_classes_and_extended_fields_survive() {
+        let raw = r#"<rss><list page="1"><class><id>1</id><name>电影</name></class>
+            <class id="2" name="剧集" />
+            <video><id>7</id><name>片</name><year>2024</year><area>内地</area>
+            <actor>甲</actor><director>乙</director><remarks>更新至2集</remarks>
+            <dl><dd flag="m3u8">第1集$http://a/1.m3u8</dd></dl></video></list></rss>"#;
+        let page = parse_page(raw).unwrap();
+        assert_eq!(page["classes"][0]["type_id"], "1");
+        assert_eq!(page["classes"][0]["type_name"], "电影");
+        assert_eq!(page["classes"][1]["type_id"], "2");
+        assert_eq!(page["classes"][1]["type_name"], "剧集");
+        let item = &page["list"][0];
+        assert_eq!(item["vod_year"], "2024");
+        assert_eq!(item["vod_area"], "内地");
+        assert_eq!(item["vod_actor"], "甲");
+        assert_eq!(item["vod_director"], "乙");
+        assert_eq!(item["vod_remarks"], "更新至2集");
+        // class 的 id/name 不能被误当成 video 字段。
+        assert_eq!(item["vod_id"], "7");
     }
 
     #[test]
