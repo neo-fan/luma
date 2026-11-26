@@ -92,7 +92,7 @@
 
 ## 9. 已知工程债（按优先级）
 
-1. **没有 CI 门禁（刻意取舍）**：`.github/workflows/` 只有 `release.yml` 与 `pages.yml`，回归靠本地 `check.py`。代价是推送前不跑检查没有任何拦截，全凭提交习惯；要加回来就得接受每次推送都等 runner。
+1. **CI 只跑便携子集，完整门禁仍靠本地**：`.github/workflows/checks.yml` 在 main push / PR 跑 `check.py --ci` 的 7 项便携子集（契约、版本、发布收口、文档一致性、Python 语法、前端类型、前端单测）；默认 12 项里的 py 适配层、qjs 引擎与 Rust 单测依赖本机 pip / 预构建 sidecar / `bundle.resources`，CI 不跑。代价是这部分回归在推送前没有自动拦截，仍靠本地 `check.py` 与发版门禁——不是「没有 CI」。
 2. Rust `#[path]` 是物理分层，逻辑模块名仍是 `crate::config`，依赖方向不受编译器约束（刻意取舍，第二阶段再做前缀化）。
 3. 超长文件：`usePlayerEngine.ts`（1391）、`hooks/playback/usePlaybackController.ts`（672）、`PlayerPage.tsx`（917）、`domain/spider/mod.rs`（1086）、`domain/spider/quickjs.rs`（771）。
    2.0.0 从 `usePlayerEngine` 拆出五个模块：`playerVolumeFade` / `playerPosterHold` / `playerPrefsWriter` /

@@ -57,7 +57,7 @@
 
 ### 测试与门禁
 
-- **回归门禁去掉假绿**：`check.py` 默认 12 项收敛为 11 项——qjs 引擎检查不再在缺二进制时静默 N/A 报绿，也不再偷偷触发 `cargo build`；运行时候检移到 `--artifacts`（发布时查产物），qjs-runner 单测移到 `--full`；`tsc --noEmit` 进入默认门禁。新增 `.github/workflows/checks.yml`，main push / PR 跑 6 项便携子集，发布门禁不再只靠本地手动。
+- **回归门禁去掉假绿**：`check.py` 默认 12 项收敛为 11 项——qjs 引擎检查不再在缺二进制时静默 N/A 报绿，也不再偷偷触发 `cargo build`；运行时候检移到 `--artifacts`（发布时查产物），qjs-runner 单测移到 `--full`；`tsc --noEmit` 进入默认门禁。新增 `.github/workflows/checks.yml`，main push / PR 跑 6 项便携子集，发布门禁不再只靠本地手动。（同轮稍后的 `d4e7c33` 又加入 `docs_check.py`，默认门禁回到 **12** 项、CI 子集 **7** 项；本节数字是当时的历史口径，当前以 `docs_check.py` 与 `tools/check.py --list` 为准。）
 - **前端源码契约去重**：合并封面缓存与兜底两组文本锁，删除与行为测试重复的断言、写死像素/控件索引/JSX 计数与 `slice(-1)` 伪锚点；新增 `readSource.ts` 统一要求锚点存在。测试 749（93 文件）→ 745（92 文件），类型与单测全绿。
 - **窗口探针收紧判据**：汇总把 SKIP 与 PASS 分列，全部跳过时退出码 2；`live_audio` 补出画下限，`episode_switch` / `session_machine` 不再把「在播却缺下一集按钮」当环境跳过；删除 2 支常态空跑的外网探针与 2 支无断言/纯重复 verify，2 支可达性采样移到 `tools/diag/`。
 - **探针自身失效修复**（跑全套暴露的「探针烂掉」而非产品回归）：`search_ui` 的选站断言还在找早已不存在的原生 `<select>`，改按 `AppSelect` 的 `data-value` + 菜单项；`source_picker` 换源后点到重建前的旧 `.episode`，改为以路由真的进 `#/player/` 为准并允许重试，切换目标也跳过当前源；`settings_logs` 从上一支留下的播放页（沉浸态无侧栏）开始，补一次归位首页；`sidebar` 的动画采样由 CDP 往返（~70ms/帧）改为页内 rAF（~16ms/帧），能采到 280ms 过渡的中间帧；`live_audio` 先在轨道里扫出「src 真的换了且在推进」的台再切，不再拿占位台/解析超时台判产品黑屏。

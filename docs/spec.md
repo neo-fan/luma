@@ -192,7 +192,7 @@ sidecar：Python 适配层（只执行第三方 spider 脚本） · qjs-runner�
   桩类符号守恒、jar 跑通率、`tests/fixtures/jars/`、JDK 17 / `jlink` 已全部删除；
   规格里的「Spider API 12 方法」随之作废。站点仍识别为 `jvm` 并导入即屏蔽。
 - **适配层旧方法**：11 → 2（`ping` + `spider.py`），见 §5。
-- **命令面**：7 → 39，见 §6。
+- **命令面**：7 → 43（当前闭集），见 §6。
 - **`externalBin`**：只剩 `binaries/qjs-runner`；Python 以 `resources` 随包
   （`sidecars/python-embed`、`sidecars/py`、`sidecars/qjs-assets`）。
 - **测试分层**：`tests/acceptance/p2.py` 与 `tests/offline/` 里与 Python 解析链重复的
