@@ -77,6 +77,15 @@ describe("classifyLiveFailure 原因判定", () => {
     expect(info.hint).toContain("网络");
   });
 
+  it("纯音频线路归到 audioOnly，动作指向换线而不是解码", () => {
+    const info = classifyLiveFailure({
+      message: "该线路是纯音频流，没有视频画面",
+    });
+    expect(info.reason).toBe("audioOnly");
+    expect(info.message).toContain("只有声音");
+    expect(info.hint).toContain("切换线路");
+  });
+
   it("解码失败 / 内核不支持该封装 → decode", () => {
     expect(
       classifyLiveFailure({ message: "HLS 播放失败：视频分片解码失败" }).reason,
@@ -156,6 +165,14 @@ describe("LivePage 接入分类文案", () => {
     expect(page).toContain('lifetime="timed"');
     expect(page).toContain('lifetime={resolveError ? "timed" : "sticky"}');
     expect(page).toContain("resolveFailure?.message");
+  });
+
+  it("纯音频线路由 HLS 实际轨道判定，只提示不自动换线", () => {
+    const decoder = read("src/hooks/playerDecoders.ts");
+    expect(decoder).toContain("Hls.Events.BUFFER_CODECS");
+    expect(decoder).toContain('seenTracks.add("video")');
+    expect(decoder).toContain('host.ui.error("该线路是纯音频流，没有视频画面")');
+    expect(decoder).not.toContain('host.session.failover("audioOnly"');
   });
 });
 

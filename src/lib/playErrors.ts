@@ -79,6 +79,7 @@ export type LiveFailureReason =
   | "plugin" // 需要源侧插件解析（网盘 token、私有 scheme）
   | "sniff" // 页面型地址，嗅探不到播放源
   | "lines" // 该频道所有线路都试过且失败
+  | "audioOnly" // 线路本身只有音频轨，没有视频轨
   | "network" // 网络不可达
   | "decode" // 解码失败 / 内核不支持该编码
   | "unknown"; // 兜底
@@ -129,6 +130,10 @@ const LIVE_FAILURE_TEXT: Record<
   lines: {
     message: "该频道的所有线路都无法播放。",
     hint: "已经自动试过这个频道的全部线路；请在左侧换一个频道，或换一个直播源。",
+  },
+  audioOnly: {
+    message: "这条线路只有声音，没有画面。",
+    hint: "源站给的是纯音频流，不是解码问题；请切换线路或换一个直播源。",
   },
   network: {
     message: "网络不可达，连不上源站。",
@@ -184,6 +189,7 @@ const LIVE_MESSAGE_PATTERNS: Array<[RegExp, LiveFailureReason]> = [
     "sniff",
   ],
   [/网盘|token|源侧插件|插件解析|解析器|parsers?\b|scheme|解析接口/iu, "plugin"],
+  [/纯音频|只有声音|没有视频画面|无视频轨/iu, "audioOnly"],
   [
     /解码|codec|不支持该视频编码|不支持\s*(?:HLS|FLV)|MEDIA_ERR|SRC_NOT_SUPPORTED|解码组件/iu,
     "decode",

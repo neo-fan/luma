@@ -10,6 +10,7 @@
  * host 回调回给内核 —— 那些状态本来就归内核。
  */
 import Hls from "hls.js";
+import type { BufferCodecsData } from "hls.js";
 import { describeHlsError, isTimingFailure } from "../lib/playErrors";
 import { hlsLoadBudget } from "../lib/hlsBudget";
 import { hasMediaStopped } from "../lib/mediaMeasure";
@@ -109,6 +110,13 @@ interface FlvPlayerLike {
 const RETRY_DELAYS_MS = [800, 1_600, 3_200, 6_400] as const;
 
 /**
+ * 纯音频线路的确认窗：只等「视频轨会不会随后出现」这个外部信号，
+ * 不是用时间猜自己的 effect 有没有跑完。TS 源可能先报音轨、后报视频轨
+ * （独立音轨尤其常见），仅凭第一次 `BUFFER_CODECS` 就下结论会误杀正常流。
+ */
+const AUDIO_ONLY_CONFIRM_MS = 5_000;
+
+/**
  * HLS：清单/层级/分片三级超时都按「首个分片可能要下 20 秒」设定（见 hlsBudget）。
  *
  * WebView2 的 canPlayType 对 mpegurl 返回 "maybe"，但真把 m3u8 塞给 <video> 会以
@@ -143,12 +151,23 @@ export function attachHlsDecoder(host: DecoderHost, url: string): void {
       retryTimer = null;
     }
   };
+  /** 纯音频判定用的轨道观察：等得到视频轨就撤销，等不到才报结论。 */
+  const seenTracks = new Set<"audio" | "video">();
+  let audioOnlyTimer: number | null = null;
+  let audioOnlyReported = false;
+  const cancelAudioOnlyCheck = () => {
+    if (audioOnlyTimer !== null) {
+      window.clearTimeout(audioOnlyTimer);
+      audioOnlyTimer = null;
+    }
+  };
   const destroy = () => {
     if (disposed) {
       return;
     }
     disposed = true;
     cancelRetry();
+    cancelAudioOnlyCheck();
     hls.destroy();
   };
   host.lifecycle.setTeardown(destroy);
@@ -179,6 +198,43 @@ export function attachHlsDecoder(host: DecoderHost, url: string): void {
     host.signals.bitrate((bytes * 8) / seconds / 1000);
   });
   hls.on(Hls.Events.FRAG_BUFFERED, noteAlive);
+  /**
+   * 直播纯音频线路：hls.js 不会报错（音轨正常在走），<video> 也只是
+   * `videoWidth=0`，用户看到的就是「有声音、一直黑屏」。这里按实际解出的
+   * 编码轨道判定，不按 URL 关键字猜——否则每换一份带 `/audio/` 路径的
+   * 订阅都要改代码。观察窗只用来等「视频轨是否随后出现」这个外部信号。
+   */
+  hls.on(Hls.Events.BUFFER_CODECS, (_event, data: BufferCodecsData) => {
+    if (disposed || audioOnlyReported || !host.media.isLive) {
+      return;
+    }
+    if (data.video || data.audiovideo) {
+      seenTracks.add("video");
+      cancelAudioOnlyCheck();
+      return;
+    }
+    if (!data.audio || seenTracks.has("video")) {
+      return;
+    }
+    seenTracks.add("audio");
+    if (audioOnlyTimer !== null) {
+      return;
+    }
+    audioOnlyTimer = window.setTimeout(() => {
+      audioOnlyTimer = null;
+      if (disposed || seenTracks.has("video") || !seenTracks.has("audio")) {
+        return;
+      }
+      audioOnlyReported = true;
+      host.log("hls audio-only line", {
+        siteKey: host.identity.siteKey,
+        vodId: host.identity.vodId,
+      });
+      // 明确交给用户换线：线路本身是纯音频，刷新 / 重连都救不回画面。
+      host.ui.error("该线路是纯音频流，没有视频画面");
+      host.ui.notice("这条线路只有声音，请切换线路");
+    }, AUDIO_ONLY_CONFIRM_MS);
+  });
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     if (disposed) {
       return;
