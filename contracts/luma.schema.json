@@ -18,7 +18,8 @@
         "searchContent",
         "playerContent",
         "liveContent",
-        "proxy"
+        "proxy",
+        "action"
       ]
     },
     "AppError": {

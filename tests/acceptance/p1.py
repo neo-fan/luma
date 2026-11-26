@@ -301,6 +301,7 @@ def qjs_phase() -> None:
         ("playerContent", ["js", "x", []], "url"),
         ("liveContent", ["http://127.0.0.1:8787/live/list.m3u"], "list"),
         ("proxy", [{"do": "js", "url": "http://127.0.0.1:8787/seg.ts"}], "text"),
+        ("action", ["switch:line2"], "action"),
     ]
     lines = [
         json.dumps(
@@ -342,6 +343,20 @@ def qjs_phase() -> None:
     )
     player = player_frame.get("result", {}) if isinstance(player_frame, dict) else {}
     check(player.get("ext") == "stub-ext-js", "T-16 qjs", "ext passthrough", str(player.get("ext")))
+
+    # `Spider.action(String)` must receive the single action string unchanged;
+    # the generic CALL_JS dispatcher must not mistake it for a proxy call.
+    action_frame = next(
+        (f for (m, _a, _k), f in zip(calls, frames, strict=False) if m == "action"),
+        {},
+    )
+    action_result = action_frame.get("result", {}) if isinstance(action_frame, dict) else {}
+    check(
+        action_result.get("action") == "switch:line2" and action_result.get("ext") == "stub-ext-js",
+        "T-16 qjs",
+        "action arg + ext passthrough",
+        json.dumps(action_result, ensure_ascii=False),
+    )
 
     # `/proxy?do=js`: [contentType, headers, body] must survive the JSON frame
     # as text (playlists are text; b64 is only for real byte bodies).

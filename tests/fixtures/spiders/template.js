@@ -84,6 +84,13 @@ var spider = {
       "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:2,\n" + target + "\n",
     ];
   },
+  /**
+   * TVBox/FongMi `Spider.action(String)`: drpy2 uses it for line switching,
+   * cache clearing and login. One string argument, JSON-shaped answer.
+   */
+  action: function (name) {
+    return { action: name || "", ext: this.ext };
+  },
 };
 
 globalThis.spider = spider;

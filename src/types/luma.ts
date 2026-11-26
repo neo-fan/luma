@@ -96,7 +96,7 @@ export interface ResultPage {
   classes?: CategoryClass[];
 }
 
-/** 对外暴露的 7 个 spider 方法（6.2；与 8.4 的 12 个 jar 反射方法不是同一集合） */
+/** 对外暴露的 9 个 spider 方法（6.2；与 8.4 的 12 个 jar 反射方法不是同一集合） */
 export type SpiderMethod =
   | "homeContent"
   | "homeVideoContent"
@@ -106,7 +106,9 @@ export type SpiderMethod =
   | "playerContent"
   | "liveContent"
   /** TVBox 本地代理方法（`Spider.proxy(Map)`）：Rust/py 适配层都实现了，前端不直接调。 */
-  | "proxy";
+  | "proxy"
+  /** TVBox/FongMi `Spider.action(String)`：drpy2 用它换线路 / 清缓存 / 登录；仅 JS 源实现。 */
+  | "action";
 
 /** 播放目标（6.2） */
 export interface PlayTarget {

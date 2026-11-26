@@ -45,6 +45,10 @@ pub enum SpiderMethod {
     /// TVBox `Spider.proxy(Map)`: serves `/proxy?do=py|jar|js`. Not a
     /// browse method — `proxy()` on the trait is the only caller.
     Proxy,
+    /// TVBox/FongMi `Spider.action(String action)`: drpy2 uses it for line
+    /// switching, cache clearing and login. Routed like any other method via
+    /// `spider_invoke`; only JS sources implement it today.
+    Action,
 }
 
 impl SpiderMethod {
@@ -59,6 +63,7 @@ impl SpiderMethod {
             SpiderMethod::PlayerContent => "playerContent",
             SpiderMethod::LiveContent => "liveContent",
             SpiderMethod::Proxy => "proxy",
+            SpiderMethod::Action => "action",
         }
     }
 }
@@ -1149,7 +1154,7 @@ mod tests {
 
     #[test]
     fn home_video_content_wire_and_serde() {
-        // 8 个 SpiderMethod 的 wire 名必须与契约（schema / TS / py adapter）逐字一致。
+        // 9 个 SpiderMethod 的 wire 名必须与契约（schema / TS / py adapter）逐字一致。
         let variants = [
             (SpiderMethod::HomeContent, "homeContent"),
             (SpiderMethod::HomeVideoContent, "homeVideoContent"),
@@ -1159,8 +1164,9 @@ mod tests {
             (SpiderMethod::PlayerContent, "playerContent"),
             (SpiderMethod::LiveContent, "liveContent"),
             (SpiderMethod::Proxy, "proxy"),
+            (SpiderMethod::Action, "action"),
         ];
-        assert_eq!(variants.len(), 8);
+        assert_eq!(variants.len(), 9);
         for (variant, wire) in variants {
             assert_eq!(variant.as_str(), wire);
         }

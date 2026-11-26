@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **JS 源 `action` 方法路由接通**：drpy2 用它做换线路 / 清缓存 / 登录，此前只有 `proxy` 接通。契约 `SpiderMethod` 增加 `action`（schema / TS / Rust 三端对齐），前端可经 `spider_invoke({ siteKey, method: "action", args: [action] })` 传入单个字符串；qjs-runner 的通用派发按长名 `action` 调脚本同名函数，不误走 proxy 分支，返回值照常 JSON 化。CMS / Python 源没有该方法仍按能力缺口报错。`p1.py` T-16 模板用例扩到 9 个方法，新增 action 参数与 ext 透传断言。
+
 ### 修复
 
 - **播放器加载期的封面不再是一张清晰剧照**：`playerPosterHold` 会把 ArtPlayer 的 `.art-poster` 一直盖到首帧才渐隐，所以它就是「加载中」那几秒的整屏画面；原先这张封面清晰、高饱和地压在转圈和 00:00 控制条后面，看着像页面没做完，也跟解析期那张模糊背景不是一套语言。现在与解析期背景层同一套处理（放大 6% 吃掉 blur 透明边 + 高斯模糊 + 压暗），首帧到达时按原有 opacity 渐隐过渡，读作「对上焦了」。

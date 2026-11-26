@@ -73,6 +73,7 @@ TVBox 标准方法名（长名）与 JS0 / drpy2 源里常用的短名并存。�
 | `homeVideoContent` | `homeVod` | `searchContent` | `search` |
 | `categoryContent` | `category` | `playerContent` | `play` |
 | `liveContent` | `live` | | |
+| `action` | —（无短名，始终按 `action` 派发） | | |
 
 `detailContent` / `playerContent` 的首参若为数组会先拆成单元素（TVBox 传 `[id]`）。方法返回值
 统一 `await Promise.resolve(...)` 后 `JSON.stringify` 回传给 Rust 侧。
@@ -388,10 +389,9 @@ json5 / jinja / template）外，还有 **`drpy2.min.js`（67,385 B）引擎本�
 
 ---
 
-## 6. 仍需补齐
+## 6. 补齐进度（action 已接，其余待办）
 
-1. **`action` 方法路由**：drpy2 用 `action` 做换线路/清缓存/登录，目前只接了 `proxy`（§5.4），
-   `action` 未接。`initEnv` 已不再是缺口——见 §5.5 的实测结论。
+1. **`action` 方法路由（已接）**：drpy2 用 `action` 做换线路 / 清缓存 / 登录。契约 `SpiderMethod` 增加 `action`，前端经 `spider_invoke({ siteKey, method: "action", args: [action] })` 传入**单个字符串**；qjs-runner 的通用派发按长名 `action` 调脚本同名函数（无短名映射），返回值照常 JSON 化。CMS / Python 源没有该方法，会按能力缺口报错；仅 JS 源可用。`p1.py` 的 T-16 模板用例已覆盖 `action` 参数与 `ext` 透传。`initEnv` 也不是缺口——见 §5.5。
 2. **真实规则文件的上游缺失**：`js_KTV歌厅` 的 `ext` 指向 `./js/drpy2.js`，该文件在
    `cluntop/tvbox` 上游 404。引擎侧已能跑真实规则（§5.5），这条属于站点资源缺失；按既有
    边界**不硬编码规则**，报告里如实标注即可。
