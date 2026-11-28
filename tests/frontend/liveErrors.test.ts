@@ -163,8 +163,22 @@ describe("LivePage 接入分类文案", () => {
     expect(page).toContain("engine.notice(text)");
     expect(page).toContain("const text = switchTip || slowNotice;");
     expect(page).toContain('lifetime="timed"');
-    expect(page).toContain('lifetime={resolveError ? "timed" : "sticky"}');
     expect(page).toContain("resolveFailure?.message");
+  });
+
+  it("解析失败的结论只说一次：没画面归卡片，画面还在旧流上才用横幅", () => {
+    // 横幅 + 卡片各写一句同义结论（「源站响应超时，暂时没拿到播放地址」），
+    // 用户要对「该等还是该换」判断两次；而且横幅 8s 后自己消失，把唯一的
+    // 出口藏起来（2026-11-28 用户要求合成一处）。
+    //
+    // 但也不能无条件删横幅：换线失败时旧实例被刻意保留（`resolved` 不销毁），
+    // 卡片根本不渲染——横幅在那时是唯一落点。所以按「有没有画面」二选一。
+    expect(page).toContain("const failureShownOnStage = resolveFailure && !playable");
+    expect(page).toContain("const failureShownInBanner = resolveFailure && playable");
+    expect(page).toContain("resolveFailure={");
+    expect(page).toContain("message={failureShownInBanner.message}");
+    // 同义旧写法必须消失：旧横幅不看画面，只要 resolveFailure 就挂出来。
+    expect(page).not.toContain("resolveFailure && channel && !recovering");
   });
 
   it("纯音频线路由 HLS 实际轨道判定，只提示不自动换线", () => {

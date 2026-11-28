@@ -2,7 +2,6 @@ import { Suspense, lazy } from "react";
 import Spinner from "../Spinner";
 import { navBack, navNavigate } from "../../lib/nav";
 import { canFailover } from "../../lib/format";
-import { loadWithRetry } from "../../lib/lazyRetry";
 import { useSiteState } from "../../stores/appStore";
 import type { PlaySession } from "../../stores/appStore";
 
@@ -14,9 +13,9 @@ import type { PlaySession } from "../../stores/appStore";
  * 走 display:none 或卸载都会让 hls.js 重新拉流、进度归零，切换回来就是重播。
  * 所以隐藏用 `visibility: hidden`（媒体继续解码），见 `.player-host.is-idle`。
  */
-const PlayerPage = lazy(() =>
-  loadWithRetry("PlayerPage", () => import("../../pages/PlayerPage")),
-);
+import { loadPlayerPage } from "./playerPageLoader";
+
+const PlayerPage = lazy(loadPlayerPage);
 
 interface PlayerHostProps {
   session: PlaySession;
@@ -31,8 +30,9 @@ export default function PlayerHost({ session, active }: PlayerHostProps) {
     <div className={active ? "player-host" : "player-host is-idle"} aria-hidden={!active}>
       <Suspense
         fallback={
-          <section className="page">
-            <Spinner label="正在打开播放页…" />
+          <section className="page player-boot">
+            <Spinner center label="正在打开播放页…" />
+            {session.vodName ? <p className="player-boot__name">{session.vodName}</p> : null}
           </section>
         }
       >

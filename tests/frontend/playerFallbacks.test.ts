@@ -26,15 +26,49 @@ describe("player stage fallback action", () => {
 
   it("offers a next-line button on failure and after a short wait", () => {
     expect(stage).toContain("onNextLine?: () => void;");
+    expect(stage).toContain("hasNextLine?: boolean;");
     expect(stage).toContain("nextLineBusy?: boolean;");
     // busy / error 两条出路缺一不可：转圈等待超过阈值给出口、失败立即给出口。
     // 之前是一条 `overlay.kind === "error" || waited >= 5` 的合并条件，重构后
     // 拆进两个分支（busy 用 waited >= 4、error 无条件），两处都要钉住。
-    expect(stage).toContain("{onNextLine && waited >= 4 ? (");
-    expect(stage).toContain("{onNextLine ? (");
+    // 两处都必须带 `hasNextLine`：单线路频道上摆出这个按钮是假出口——点下去
+    // 只有一句「该频道只有一条线路」，而那句话会被归类成「播放失败」盖在还在
+    // 解析的画面上（2026-11-27 用户截图）。出口应该是左侧换频道。
+    expect(stage).toContain("{onNextLine && hasNextLine && waited >= 4 ? (");
+    expect(stage).toContain("{onNextLine && hasNextLine ? (");
     expect(stage).toContain("换下一条线路");
     expect(stage).toContain("正在切换线路…");
     expect(stage).toContain("player-status__action");
+  });
+
+  it("restarts the wait clock when the attempt changes, not when busy flips", () => {
+    // 「已等待 Ns」是这一次尝试的时长。换台/换线时 busy 一直是 true，只看 busy
+    // 会把上一个台的 9s 带过来——刚点下去就写「已等待 9s」（2026-11-27 截图）。
+    expect(stage).toContain("attemptKey?: string;");
+    expect(stage).toContain("}, [busy, attemptKey]);");
+    expect(stage).toContain("startedAt.current = Date.now();");
+  });
+
+  it("renders the caller's classified failure once, instead of a second synonym title", () => {
+    // 调用方（直播页）已经用 classifyLiveFailure 给出「主文案 + 归因」，卡片
+    // 直接用它：标题＝主文案、副行＝归因。若这里再套一句「无法解析播放地址」，
+    // 同一件事就被说了两遍，而且两句话都没有下一步动作。
+    expect(stage).toContain("resolveFailure?: { message: string; hint: string } | null;");
+    expect(stage).toContain("title: resolveFailure.message,");
+    expect(stage).toContain("desc: resolveFailure.hint || EXTERNAL_PLAY_FALLBACK.desc,");
+    // 没有归类结论时才回落到通用标题。
+    expect(stage).toContain("const fallbackTitle = resolveError");
+  });
+
+  it("never lets a layout squeeze the error bar (half-visible message)", () => {
+    // `.error-bar` 为了裁倒计时线用了 `overflow: hidden`，这会把 flex 自动
+    // 最小高度归零；直播页 `.live-main` 是定高列，于是这条被压成 26px，用户
+    // 只看到半行「错误信息」（2026-11-27）。必须显式禁止被压缩。
+    const css = styles("feedback.css");
+    const anchor = css.indexOf(".error-bar {");
+    expect(anchor, "锚点丢失：.error-bar 基础规则改名/挪走了？").toBeGreaterThanOrEqual(0);
+    const block = css.slice(anchor);
+    expect(block.slice(0, block.indexOf("}"))).toContain("flex: none;");
   });
 
   it("keeps the control bar visible while the line is broken or slow", () => {
@@ -80,6 +114,30 @@ describe("player stage fallback action", () => {
   });
 });
 
+describe("live page never shows two contradicting conclusions", () => {
+  const live = source("pages/LivePage.tsx");
+
+  it("hides the stale failure bar while a new attempt is still connecting", () => {
+    // 画面中央写「正在连接播放地址… 已等待 Ns」，顶上再挂一条上一轮的「播放失败」
+    // 就是两个互相否决的结论同屏（2026-11-27 用户截图）。
+    expect(live).toContain("const attemptInFlight = resolving || reloading;");
+    expect(live).toContain("!attemptInFlight && (videoError || videoStage === \"single-line\")");
+  });
+
+  it("routes a single-line channel to a toast, never to a failure bar", () => {
+    const start = live.indexOf("const selectNextLine = useCallback(");
+    expect(start, "锚点丢失：selectNextLine 改名/挪走了？").toBeGreaterThanOrEqual(0);
+    const body = live.slice(start, live.indexOf("switchOrFailoverRef.current", start));
+    // 「只有一条线路」不是播放失败：写进 videoError 会被归类成
+    // 「播放失败，原因未能确定」，压在仍在解析的画面上。
+    expect(body).not.toContain('setVideoError("该频道只有一条线路。")');
+    expect(body).toContain("notify.warn(");
+    // 舞台上也不给假出口。
+    expect(live).toContain("hasNextLine={channel.lines.length > 1}");
+    expect(live).toContain("attemptKey={playUrl}");
+  });
+});
+
 describe("live page takes the sound back when it becomes visible", () => {
   const live = source("pages/LivePage.tsx");
 
@@ -106,6 +164,52 @@ describe("live page takes the sound back when it becomes visible", () => {
   it("gets the live route flag from the shell", () => {
     const shell = source("AppShell.tsx");
     expect(shell).toContain("liveActive={isLiveRoute}");
+  });
+});
+
+describe("first-open player chunk preload", () => {
+  it("warms PlayerPage from the detail page, not from app boot", () => {
+    const loader = source("components/player/playerPageLoader.ts");
+    const host = source("components/player/PlayerHost.tsx");
+    const detail = source("pages/DetailPage.tsx");
+    const shell = source("AppShell.tsx");
+    // 单一 import 点：路由层与预热方共用同一个 loader，Vite 才会去重。
+    expect(loader).toContain("export const loadPlayerPage");
+    expect(loader).toContain('import("../../pages/PlayerPage")');
+    expect(host).toContain('from "./playerPageLoader"');
+    expect(host).toContain("lazy(loadPlayerPage)");
+    // 详情页是进播放页的必经之路，在这里预热：读简介的几秒足够拉完 chunk。
+    expect(detail).toContain("loadPlayerPage()");
+    // 启动时就预热会让从不点播的人白付 835 KiB 的解析，必须是详情页触发。
+    expect(shell).not.toContain("loadPlayerPage");
+    // 预热失败不能变成未捕获异常：真正进播放页时 loadWithRetry 会再试。
+    expect(detail).toContain("void loadPlayerPage().catch");
+  });
+
+  it("holds the route switch until the player chunk is in memory", () => {
+    const detail = source("pages/DetailPage.tsx");
+    const start = detail.indexOf("const playEpisode = (");
+    expect(start, "锚点丢失：playEpisode 改名/挪走了？").toBeGreaterThanOrEqual(0);
+    const body = detail.slice(start, detail.indexOf("const toggleFavorite"));
+    // 顺序是契约：先拿内核、再 navigate。反过来就是先切路由、由 PlayerHost 的
+    // Suspense 兜一块黑底 spinner——那正是用户反馈的「播放页首次 loading」。
+    const goAt = body.indexOf("const go = () =>");
+    const loadAt = body.indexOf("void loadPlayerPage().then(go, go);");
+    expect(goAt).toBeGreaterThanOrEqual(0);
+    expect(loadAt).toBeGreaterThan(goAt);
+    // 等内核期间要留在详情页，并明确在等什么；重复点击只认第一次。
+    expect(detail).toContain("正在打开播放器…");
+    expect(body).toContain("bootPlayingRef.current");
+  });
+
+  it("fallback is centered with the film name, not a bare spinner in the corner", () => {
+    const host = source("components/player/PlayerHost.tsx");
+    expect(host).toContain('className="page player-boot"');
+    expect(host).toContain("<Spinner center");
+    expect(host).toContain("player-boot__name");
+    const css = styles("player.css");
+    expect(css).toContain(".player-boot {");
+    expect(css).toContain(".player-boot__name {");
   });
 });
 

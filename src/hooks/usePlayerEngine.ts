@@ -53,7 +53,7 @@ import {
 import { createActor } from "xstate";
 import { vodSessionMachine } from "../lib/vodSessionMachine";
 import { liveSessionMachine } from "../lib/liveSessionMachine";
-import { RESUME_MIN_POSITION_MS, SWITCH_SOURCE_CAP_MS } from "../lib/constants";
+import { RESUME_MIN_POSITION_MS, SWITCH_SOURCE_CAP_MS, SWITCH_URL_ATTACH_CAP_MS } from "../lib/constants";
 import type { VideoMeta } from "../lib/resolution";
 import type { PosterElement } from "./playerPosterHold";
 import type { PlayResolved } from "../types/luma";
@@ -274,6 +274,12 @@ export interface UsePlayerEngineHandle {
    */
   switching: boolean;
   /**
+   * 会话判死文案（机器 `failed` 时非空，其余为空）。由机器状态派生，不经过
+   * 交棒副作用——实例重建窗口里那条路会静默丢失，界面就剩一个永远转的圈。
+   * 调用方应当把它并入错误条：`playbackError={videoError || sessionFailure}`。
+   */
+  sessionFailure: string;
+  /**
    * 直接驱动 ArtPlayer 原生 loading 组件（`art.loading.show/hide`）。切换在途时
    * 用它显示画面转圈，比自绘加载动画更与播放器一致；实例未就绪 / 销毁后静默。
    */
@@ -318,6 +324,16 @@ export function usePlayerEngine({
   const nextButtonRef = useRef<HTMLElement | null>(null);
   /** 「切换中」真源：机器 matches("switching")，由 actor 订阅更新（带兜底超时）。 */
   const [machineSwitching, setMachineSwitching] = useState(false);
+  /**
+   * 会话判死文案：**从机器状态派生**，不是一次性回调的产物。
+   *
+   * `failed` 态的常规出口是交棒副作用（`handOverLine` → `setVideoError`），但那条
+   * 路要经过 `sessionEffectsRef`——实例重建窗口里它是 null，副作用按设计静默
+   * no-op，于是机器已经 `failed`、界面却既没错误也没画面，只剩一个永远转的圈
+   * （实测死链上就是这个死态）。状态驱动 UI 不会有这个缺口：只要机器在 `failed`
+   * 就有文案，离开 `failed`（重新加载 / 切线路）自动消失。
+   */
+  const [sessionFailure, setSessionFailure] = useState("");
   /** 软提示回调放 ref：它的身份每次渲染都会变，不能进内核 effect 的依赖。 */
   const slowNoticeRef = useRef(onSlowNotice);
   slowNoticeRef.current = onSlowNotice;
@@ -407,6 +423,16 @@ export function usePlayerEngine({
       // 解释器化：按钮「切换中」转环改由机器的 switching 状态驱动（带 15s 兜底超时，
       // 见 vodSessionMachine），不再依赖外部传入的 switching prop。
       setMachineSwitching(snap.matches("switching"));
+      // 判死文案同样按机器状态派生（见 `sessionFailure` 的注释）：机器每帧都会推，
+      // 同值 setState 由 React bail out，不会多渲染。
+      setSessionFailure(
+        snap.matches("failed")
+          ? failoverCopy(
+              snap.context.failoverCause ?? "linesExhausted",
+              snap.context.failoverDetail,
+            ).message
+          : "",
+      );
     });
     actor.start();
     return () => {
@@ -719,6 +745,7 @@ export function usePlayerEngine({
       },
       session: {
         hasPlayed: sessionHasPlayed,
+        isFailed: () => sessionActorRef.current?.getSnapshot().matches("failed") ?? false,
         failover: (cause: FailoverCause, detail: string) => {
           sessionActorRef.current?.send({ type: "FAILED", cause, detail });
         },
@@ -1282,7 +1309,23 @@ export function usePlayerEngine({
         art.poster = frozen;
         posterHold.hold();
       }
-      await art.switchUrl(url);
+      /**
+       * `art.switchUrl` 自己会等新地址的 `loadedmetadata` 才 resolve。死链
+       * （清单恒 502）上它**永不 resolve**，整条切换协程就挂在这里：串行队列的
+       * running 永不释放，后续每次换集 / 换线只进 pending、永不执行——实测就是
+       * 「判死后点『换下一条线路』毫无反应，错误卡也不消失」。
+       *
+       * 这一段只确认「新地址已挂上」（art.url 已切、解码器已挂），真正等画面的是
+       * 下面的 `SWITCH_SOURCE_CAP_MS` 等待段，所以宁可提前收口。reject 仍照原样
+       * 抛出，交给上层的整页重建兜底。
+       */
+      await Promise.race([
+        art.switchUrl(url),
+        new Promise<void>((resolve) => {
+          const timer = window.setTimeout(resolve, SWITCH_URL_ATTACH_CAP_MS);
+          trackSwitchDisposer(() => window.clearTimeout(timer));
+        }),
+      ]);
       // 倍速先立起来：ratechange 在静默期内只会「纠正回切换前的倍速」，
       // 顺带把 ArtPlayer 稍后恢复的默认 1 也一并压掉。
       if (Math.abs(video.playbackRate - swRate) > 0.01) {
@@ -1421,9 +1464,10 @@ export function usePlayerEngine({
         Promise.reject(new Error("播放器尚未就绪，暂时不能原地换集")),
       notice: (text: string | null) => noticeRef.current?.(text),
       switching: machineSwitching,
+      sessionFailure,
       setSkipSettingTooltip: (text: string) => skipSettingTooltipRef.current?.(text),
       setLoading: (show: boolean) => loadingRef.current?.(show),
     }),
-    [machineSwitching],
+    [machineSwitching, sessionFailure],
   );
 }

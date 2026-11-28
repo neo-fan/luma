@@ -34,7 +34,7 @@ describe("episode button", () => {
     expect(source).toContain('className="episode__pending"');
     const panel = read("src/components/player/EpisodePanel.tsx");
     // 排队与在播互斥：同一格同时命中时以在播为准。
-    expect(panel).toContain("const pending = ");
+    expect(panel).toContain("const pending =");
     expect(panel).toContain("!active &&");
   });
 

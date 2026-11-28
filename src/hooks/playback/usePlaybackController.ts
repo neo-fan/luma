@@ -19,8 +19,8 @@ import { createCommitGate, createSwitchToken, createManualHold } from "../../lib
 import type { CommitGate, SwitchToken, ManualHold } from "../../lib/switchToken";
 import { createSwitchQueue } from "../../lib/switchQueue";
 import type { SwitchQueue } from "../../lib/switchQueue";
-import { playbackReducer, displayTarget } from "./playbackTarget";
-import type { PlaybackState, PlaybackTarget } from "./playbackTarget";
+import { playbackReducer, displayTarget, resolvePanelLine } from "./playbackTarget";
+import type { PanelBrowse, PlaybackState, PlaybackTarget } from "./playbackTarget";
 import { api, cacheKeys } from "../../lib/invoke";
 import { errorMessage } from "../../lib/invoke";
 import { CACHE_TTL, peekFresh } from "../../lib/queryClient";
@@ -189,7 +189,11 @@ export function usePlaybackController(
     seed ? "ready" : "loading",
   );
   const [catalogError, setCatalogError] = useState("");
-  const [panelLine, setPanelLineState] = useState(seed?.locus.line ?? 0);
+  /**
+   * 面板浏览态（可空）：用户点了线路 chip 只想看那条线路的剧集，不动播放。
+   * 它是**派生输入**而不是第二份显示真源——见下方 `panelLine`。
+   */
+  const [browse, setBrowse] = useState<PanelBrowse | null>(null);
   const [phase, setPhase] = useState<PlaybackPhase>("idle");
   const [nextLineBusy, setNextLineBusy] = useState(false);
 
@@ -228,6 +232,15 @@ export function usePlaybackController(
     committedLine && committed.episodeIndex + 1 < committedLine.episodes.length,
   );
 
+  /**
+   * 面板线路：**从显示目标派生**，不是独立 state。
+   *
+   * 换线 / 换集 / 换源落地时 `display.lineIndex` 变了，浏览覆盖的锚就对不上、
+   * 自动失效，面板随之跟过去——不需要任何地方再补一次同步。浏览态只在
+   * `setPanelLine` 里写入，且只在「用户翻线路不换流」这一种场景发生。
+   */
+  const panelLine = resolvePanelLine(browse, display);
+
   /** 统一切换态：state + 控制栏镜像一起动。 */
   const markPhase = useCallback(
     (next: PlaybackPhase) => {
@@ -239,9 +252,14 @@ export function usePlaybackController(
     [episodeNavRef],
   );
 
-  /** 面板线路浏览：只换下方剧集表，不换流。 */
+  /**
+   * 面板线路浏览：只换下方剧集表，不换流。
+   *
+   * 只记下「相对当前播放线路」的覆盖与锚点，显示仍旧从 `panelLine` 派生。
+   * 换线 / 换源 / 目录重建都不需要再各自调一次——那正是这里删掉的四处补丁。
+   */
   const setPanelLine = useCallback((value: number) => {
-    setPanelLineState(value);
+    setBrowse({ line: value, anchor: displayRef.current.lineIndex });
   }, []);
 
   /**
@@ -327,7 +345,6 @@ export function usePlaybackController(
           episodeIndex: locus.episode,
         },
       });
-      setPanelLineState(locus.line);
       if (first && lines.length > 0) {
         setCatalogStatus("ready");
         return;
@@ -626,9 +643,6 @@ export function usePlaybackController(
       setVod(nextVod);
       setCatalogStatus("ready");
       setCatalogError("");
-      // 面板线路立即跟到新源：display 已换新源 lines，panelLine 若仍是旧索引
-      // 会越界（面板显示空或错线）。落地 commit 时再写一次，幂等。
-      setPanelLineState(lineIndex);
       log.info("manual source switch", {
         from: current.siteKey,
         to: option.siteKey,
@@ -665,9 +679,6 @@ export function usePlaybackController(
           nextTarget,
           resumeIntentRef.current,
         );
-        // 内部线路索引随整份 target 落地，panel 天然跟随，这里只是让面板
-        // 在落地前也不会停在越界的旧索引上。
-        setPanelLineState(lineIndex);
         d.setSwitchTip("");
       } catch (err) {
         invalidateEpisodePlayCache(option.siteKey, match.line.name, match.episode.url);

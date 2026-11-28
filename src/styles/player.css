@@ -663,3 +663,29 @@
   transform: scale(1.06);
   filter: blur(18px) brightness(0.42);
 }
+
+/* ---- chunk 首次加载的 fallback -------------------------------------------
+   `PlayerPage` 是懒加载的大 chunk（ArtPlayer + hls.js）。首次点播在它下载
+   完成前由 PlayerHost 的 Suspense fallback 顶着：原来就是一个左上角小圈 +
+   小字，整屏黑得像没做完。这里给同播放页一致的暗底，spinner 居中放大，
+   影片名压在下面——即便真撞上冷加载，读起来也是「正在为你打开这部片」，
+   而不是一个孤零零的 loading。 */
+.player-boot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.player-boot .spinner--center {
+  flex: 1;
+}
+
+.player-boot__name {
+  margin: -4px 0 0;
+  text-align: center;
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.02em;
+}

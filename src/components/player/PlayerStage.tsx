@@ -14,6 +14,14 @@ interface PlayerStageProps {
   playable: boolean;
   resolveError: string;
   /**
+   * 解析失败的**归类结论**（主文案 + 归因），由调用方按自己的场景给出。
+   *
+   * 有了它，失败结论只在画面中央说一次：卡片标题用 `message`、副行用
+   * `hint`，页面顶部不再另挂一条写着同一句话的横幅（2026-11-28 用户要求
+   * 「合成一起」——两条同义结论同屏，等于让用户做两次判断）。
+   */
+  resolveFailure?: { message: string; hint: string } | null;
+  /**
    * 播放期错误（hls fatal / 解码失败 / 看门狗判死）：只写在播放器里，不占页面
    * 顶部红条；错误卡片给出的出口仍是「换下一条线路」。
    */
@@ -36,8 +44,24 @@ interface PlayerStageProps {
   poster?: string;
   /** 换下一条线路：播放失败、或等待超过 5s 时给用户一个「别干等」的出口。 */
   onNextLine?: () => void;
+  /**
+   * 是否真的还有下一条线路可换。
+   *
+   * 单线路频道上摆出「换下一条线路」是个假出口：点下去只能得到一句
+   * 「该频道只有一条线路」，而这句话会被归类成「播放失败」压在还在解析的
+   * 画面上（2026-11-27 用户截图）。没有目标就不给按钮，出口是左侧换频道。
+   */
+  hasNextLine?: boolean;
   /** 正在切换线路：按钮置灰并换成进行中文案，防连点。 */
   nextLineBusy?: boolean;
+  /**
+   * 本次「尝试地址」的标识（直播传当前线路地址）。
+   *
+   * 等待秒数是「这一次尝试等了多久」，不是「这个小部件忙了多久」：换台/换线
+   * 后 busy 一直是 true，只看 busy 会把上一个台的 9s 带过来，刚点下去就显示
+   * 「已等待 9s」（2026-11-27 用户截图）。
+   */
+  attemptKey?: string;
   /**
    * 原地换集进行中：控制栏钉住不自动收起（等待期唯一常驻的「还在动」证据）。
    * 与 busy 区分——换集时播放实例还活着，不该盖状态卡、也不该铺海报。
@@ -64,13 +88,16 @@ export default function PlayerStage({
   recovering = false,
   playable,
   resolveError,
+  resolveFailure = null,
   playbackError = "",
   pending = false,
   retryable = false,
   containerRef,
   poster,
   onNextLine,
+  hasNextLine = true,
   nextLineBusy = false,
+  attemptKey,
   switching = false,
 }: PlayerStageProps) {
   // 统一的「忙」（仅无实例的解析类状态走自绘卡片）：解析 / 重新获取 / 无结果但已请求。
@@ -84,12 +111,14 @@ export default function PlayerStage({
       setWaited(0);
       return;
     }
-    if (!startedAt.current) startedAt.current = Date.now();
+    // 换地址（attemptKey 变化）＝ 新一次尝试：秒数从 0 重新数，不继承上一个台。
+    startedAt.current = Date.now();
+    setWaited(0);
     const timer = setInterval(() => {
       setWaited(Math.floor((Date.now() - startedAt.current) / 1000));
     }, SHORT_UI_TICK_MS);
     return () => clearInterval(timer);
-  }, [busy]);
+  }, [busy, attemptKey]);
 
   /**
    * 自绘覆盖层只服务「还没有播放实例」的解析态（拿直链 / 建连 / 重新获取 / 无结果
@@ -101,6 +130,16 @@ export default function PlayerStage({
     | { kind: "busy"; title: string; hint?: string }
     | { kind: "error"; title: string; desc: string }
     | null = null;
+
+  /**
+   * 没有归类结论时的兜底标题：至少区分「源慢还在重试」与「确实解析不出来」，
+   * 别把「还在等」写成结论。
+   */
+  const fallbackTitle = resolveError
+    ? retryable
+      ? "源响应较慢，暂未拿到播放地址"
+      : "无法解析播放地址"
+    : EXTERNAL_PLAY_FALLBACK.title;
 
   if (playbackError) {
     // 已经拿到过可播地址、播放中/播放后才失败：错误压在画面上，不再转圈。
@@ -114,17 +153,22 @@ export default function PlayerStage({
   } else if (reloading) {
     overlay = { kind: "busy", title: "正在重新获取播放地址…" };
   } else if (!playable) {
+    // 结论只有一处：调用方给了归类文案就直接用它的主文案 + 归因，不再在卡片
+    // 里另写一句同义结论（「无法解析播放地址」＋「源站响应超时…」＝两句话
+    // 说同一件事，且都没有下一步）。
     overlay = pendingBusy
       ? { kind: "busy", title: "正在解析播放源…" }
-      : {
-          kind: "error",
-          title: resolveError
-            ? retryable
-              ? "源响应较慢，暂未拿到播放地址"
-              : "无法解析播放地址"
-            : EXTERNAL_PLAY_FALLBACK.title,
-          desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
-        };
+      : resolveFailure
+        ? {
+            kind: "error",
+            title: resolveFailure.message,
+            desc: resolveFailure.hint || EXTERNAL_PLAY_FALLBACK.desc,
+          }
+        : {
+            kind: "error",
+            title: fallbackTitle,
+            desc: resolveError || EXTERNAL_PLAY_FALLBACK.desc,
+          };
   }
 
   const waiting = overlay?.kind === "busy" && (resolving || reloading || pendingBusy);
@@ -169,7 +213,7 @@ export default function PlayerStage({
               {/* 等待也要有出口：直播换线按钮长在播放器控制栏里，而这一层正是
                   「还没有播放实例」的状态——控制栏根本不存在。等到 4s 仍没结果
                   就把「换下一条线路」摆出来，用户不必干等 50s 的解析上限。 */}
-              {onNextLine && waited >= 4 ? (
+              {onNextLine && hasNextLine && waited >= 4 ? (
                 <button
                   type="button"
                   className="player-status__action"
@@ -184,7 +228,7 @@ export default function PlayerStage({
             <div className="player-status is-error">
               <p className="player-status__title">{overlay.title}</p>
               <p className="player-status__desc">{overlay.desc}</p>
-              {onNextLine ? (
+              {onNextLine && hasNextLine ? (
                 <button
                   type="button"
                   className="player-status__action"

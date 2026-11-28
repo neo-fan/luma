@@ -32,6 +32,20 @@ describe("automatic failover is disabled", () => {
     expect(orchestration).toMatch(/selectEpisode\(targetLine, index, "正在切换线路…"\)/);
   });
 
+  it("the episode panel follows the line through derivation, not manual patching", () => {
+    // 面板线路必须**派生自播放目标**（`resolvePanelLine(browse, display)`），
+    // 而不是一份独立 state 由每个切换路径手动同步。历史上这里靠四处
+    // `setPanelLineState(...)` 补：漏一处就退化成「播放器切了线路、下面选集区
+    // 还列着旧线路的剧集」——「换下一条线路」正是这么漏的。
+    expect(orchestration).toContain("const panelLine = resolvePanelLine(browse, display);");
+    // 反向断言：控制器里不允许再出现手动同步的写法。
+    expect(orchestration).not.toContain("setPanelLineState");
+    // 浏览覆盖只在用户点 chip 时写入，且必须带锚（目标线路），否则不会过期。
+    expect(orchestration).toContain(
+      "setBrowse({ line: value, anchor: displayRef.current.lineIndex });",
+    );
+  });
+
   it("vod page never calls an auto switch on resolve/playback failure", () => {
     expect(playerPage).not.toContain("switchOrFailoverRef");
     expect(playerPage).not.toContain("正在尝试其它线路");

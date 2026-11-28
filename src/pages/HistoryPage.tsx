@@ -12,6 +12,7 @@ import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
 import { historyCoverMeta, historySubtitle } from "../lib/history";
 import { detailTargetFor, vodSeedFromRef } from "../lib/playbackTarget";
 import { putDetailSeed } from "../lib/handoff";
+import { notify } from "../lib/notify";
 import { log } from "../lib/logger";
 import { usePageState } from "../lib/usePageState";
 import { useAsyncAction } from "../hooks/useAsyncAction";
@@ -114,6 +115,12 @@ export default function HistoryPage({ navigate }: HistoryPageProps) {
   /** 进详情前把这一行的片名/封面交出去，详情页首帧不用等 detailContent。 */
   const openDetail = (item: HistoryItem) => {
     const target = detailTargetFor(item, items);
+    // 同收藏页：缺 siteKey / vodId 拼出的地址匹配不上，会被兜底送到首页，
+    // 表现成「点播放跳首页」。残缺数据直接挡住并说明原因。
+    if (!target.siteKey || !target.vodId) {
+      notify.error("这条记录缺少片源信息，无法打开");
+      return;
+    }
     putDetailSeed(target.siteKey, vodSeedFromRef(item, target));
     navigate(target);
   };

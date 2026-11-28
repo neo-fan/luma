@@ -5,8 +5,10 @@
  *
  * **显示恒为 `intent ?? committed`**，没有第三层覆盖。换集 / 换源 / 换线都只是
  * 「产生一个新的 intent」，落地时整体替换 committed——线路索引本身就是 target
- * 的字段，选集面板因此天然跟随，不需要事后打补丁。控制器另有一个 `setPanelLine`
- * 只服务于「在面板里翻线路看看、但不换流」的浏览态，与播放目标无关。
+ * 的字段，选集面板因此天然跟随，不需要事后打补丁。
+ *
+ * 面板的线路高亮也走这条原则：它是**从 target 派生**的，而非另一个独立 state
+ * （见 `resolvePanelLine`）。
  *
  * 真源必须收成一份 reducer 状态，而不是「当前播哪一集」散在路由参数 / 组件索引 /
  * 手动选中 / 换源结果多处各自覆盖——分散时显示只能靠优先级链缝合，每加一个异步
@@ -47,6 +49,43 @@ export type PlaybackAction =
 /** 显示真源：乐观意图优先，否则已落地。 */
 export function displayTarget(state: PlaybackState): PlaybackTarget {
   return state.intent ?? state.committed;
+}
+
+/**
+ * 选集面板的「浏览态」：用户点了线路 chip，只想看那条线路的剧集表，不动播放。
+ *
+ * 它**不是第二份真源**，只是一个相对播放目标的覆盖，并带上发起时的目标线路
+ * 作为锚（`anchor`）。播放目标线路一变（换线 / 换集跨线 / 换源 / 目录重建），
+ * 锚就对不上，覆盖自动失效。
+ *
+ * 这样「面板必须跟着播放线路走」不需要任何 effect、也不需要四处在切换动作里
+ * 补 `setPanelLine(...)`——谁改了播放目标，面板自己就跟过去。
+ */
+export interface PanelBrowse {
+  /** 用户正在浏览的线路索引。 */
+  line: number;
+  /** 发起浏览时播放目标所在的线路；与当前目标不一致即视为过期。 */
+  anchor: number;
+}
+
+/**
+ * 面板当前显示的线路：有效浏览覆盖优先，否则跟随播放目标。
+ *
+ * 有效期判定纯靠锚对比，没有时钟、没有 effect：
+ * - 无浏览 / 锚过期（目标线路已换）→ 跟随 `target.lineIndex`；
+ * - 浏览到播放线路本身 / 越界（换源后剧集表变短）→ 同样跟随目标。
+ */
+export function resolvePanelLine(
+  browse: PanelBrowse | null,
+  target: PlaybackTarget,
+): number {
+  if (!browse || browse.anchor !== target.lineIndex) {
+    return target.lineIndex;
+  }
+  if (browse.line === target.lineIndex || !target.lines[browse.line]) {
+    return target.lineIndex;
+  }
+  return browse.line;
 }
 
 /** 索引钳制到合法范围：lines / episodes 异步到达或换源后长度变化都靠它收口。 */

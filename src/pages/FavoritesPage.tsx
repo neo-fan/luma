@@ -7,7 +7,7 @@ import PlayButton from "../components/PlayButton";
 import VodCard from "../components/VodCard";
 import { api, errorMessage } from "../lib/invoke";
 import { backfillCovers, mergeMeta } from "../lib/coverBackfill";
-import { detailTargetFor, vodSeedFromRef } from "../lib/playbackTarget";
+import { detailTargetFor, resolvePlayRecord, vodSeedFromRef } from "../lib/playbackTarget";
 import { putDetailSeed } from "../lib/handoff";
 import { usePageState } from "../lib/usePageState";
 import { useAsyncAction } from "../hooks/useAsyncAction";
@@ -44,8 +44,46 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
   /** 进详情前把收藏行的片名/封面交出去，详情页首帧不用等 detailContent。 */
   const openDetail = (item: FavoriteItem) => {
     const target = detailTargetFor(item, historyRows);
+    // 缺 siteKey / vodId 会拼出 `#/detail//123` 这种路由匹配不上的地址，以前会被
+    // 兜底静默送回首页（看起来就是「点播放跳首页」）。残缺数据不交给路由。
+    if (!target.siteKey || !target.vodId) {
+      notify.error("这条收藏缺少片源信息，无法打开");
+      return;
+    }
     putDetailSeed(target.siteKey, vodSeedFromRef(item, target));
     navigate(target);
+  };
+
+  /**
+   * 卡片上的「播放」按钮：**能续播就直接进播放页**，不再绕一道详情页。
+   *
+   * 收藏行只有片名/海报（书签语义），真正的播放数据在历史里——按同一套
+   * `resolvePlayRecord` 规则找到那部剧的历史行，带 `playUrl` 就照「播放」页
+   * 的继续播放一样直接开播（同一个载荷形状，播放页首帧直接成型）；从没看过
+   * 才回落到详情页选集。
+   */
+  const playNow = (item: FavoriteItem) => {
+    const identity = resolvePlayRecord(item, historyRows);
+    if (!identity.siteKey || !identity.vodId) {
+      notify.error("这条收藏缺少片源信息，无法播放");
+      return;
+    }
+    const record = historyRows.find(
+      (row) => row.siteKey === identity.siteKey && row.vodId === identity.vodId,
+    );
+    if (!record?.playUrl) {
+      openDetail(item);
+      return;
+    }
+    navigate({
+      name: "player",
+      siteKey: record.siteKey,
+      vodId: record.vodId,
+      vodName: record.name || item.name,
+      playUrl: record.playUrl,
+      episodeName: record.episodeName ?? "",
+      playFrom: record.playFrom,
+    });
   };
 
   useEffect(() => {
@@ -62,10 +100,13 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
           api.historyList().catch(() => [] as HistoryItem[]),
         ]);
         if (alive) {
+          // 直播历史（siteKey="live"）不是「一部片」：拿去解析收藏会造成
+          // `#/player/live/…` 这种看不懂的落点，历史页同样把它挡在外面。
+          const rows = history.filter((row) => row.siteKey !== "live");
           setItems(list);
-          setHistoryRows(history);
+          setHistoryRows(rows);
           setResolutions(
-            history.reduce<Record<string, string>>((acc, one) => {
+            rows.reduce<Record<string, string>>((acc, one) => {
               if (one.resolution) {
                 acc[`${one.siteKey}:${one.vodId}`] = one.resolution;
               }
@@ -175,7 +216,7 @@ export default function FavoritesPage({ navigate }: FavoritesPageProps) {
               <div className="fav-item" key={`${item.siteKey}-${item.vodId}`}>
                 <PlayButton
                   label="播放"
-                  onPlay={() => openDetail(item)}
+                  onPlay={() => playNow(item)}
                 />
                 <VodCard
                   title={item.name}

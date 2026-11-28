@@ -407,7 +407,10 @@ export default function LivePage({
     }
     const total = channel.lines.length;
     if (total <= 1) {
-      setVideoError("该频道只有一条线路。");
+      // 没有可换的目标。这里**不能**写 videoError：它不是「播放失败」，而是
+      // 「这个台只有一条线」，写进去就会被归类成「播放失败，原因未能确定」
+      // 压在仍在解析的画面上（2026-11-27 用户截图）。用事件型提示说清出口。
+      notify.warn("这个频道只有一条线路，换一个频道或换一个直播源再试。");
       return;
     }
     selectLine(channel.name, (lineIdx + 1) % total, total);
@@ -702,25 +705,44 @@ export default function LivePage({
    * 播放内核失败 / 单线路判死的统一归类。主文案与归因都只从
    * `classifyLiveFailure` 出，原始报错降级到 ErrorBar 的「技术详情」，
    * 界面不再把 `HLS 播放失败：manifestParsingError` 这类内部名当正文。
+   *
+   * 正在解析 / 重新获取地址时不出这条：那一刻画面中央写的是「正在连接播放
+   * 地址… 已等待 Ns」，顶上再挂一条上一轮的「播放失败」就是两个互相否决的
+   * 结论同屏（2026-11-27 用户截图）。新一轮开始就意味着旧结论过期。
    */
+  const attemptInFlight = resolving || reloading;
   const videoFailure =
-    videoError || videoStage === "single-line"
+    !attemptInFlight && (videoError || videoStage === "single-line")
       ? classifyLiveFailure({ message: videoError, stage: videoStage })
       : null;
 
   /**
-   * 解析失败 / 页面型地址的统一归类。
+   * 解析失败 / 页面型地址的统一归类。结论落点见下面的
+   * `failureShownOnStage` / `failureShownInBanner`：**同一句话只说一次**。
    *
    * `resolved.kind === "page"` 表示 `resolve_play` 的第 4 级嗅探也没拿到媒体
    * 流（`domain/play.rs` 的 page 分支）：地址本身是网页，播放器无从下手。
-   * 这是「该换频道/换源」的结论，所以用常驻横幅；普通解析失败仍是时效性
-   * 结论，保持 8s 自动收起。
+   * 这也是「该换频道/换源」的结论，同样只在上面选定的那一个落点表述。
    */
   const resolveFailure = resolveError
     ? classifyLiveFailure({ message: resolveError, stage: "resolve" })
     : resolved !== null && !playable && !reloading && !resolving
       ? classifyLiveFailure({ stage: "sniff" })
       : null;
+
+  /**
+   * 解析失败的结论**只允许出现一处**，位置由「有没有画面」决定：
+   *
+   * · 没有可播画面（首进频道 / 旧实例已卸载）→ 播放舞台中央的卡片：主文案 +
+   *   归因，出口是卡片里的「换下一条线路」；
+   * · 旧流还在播（换线失败时 `resolved` 被刻意保留，控制栏也还在）→ 才用顶部
+   *   横幅：卡片会盖住正在播的画面，而这条结论不能不说。
+   *
+   * 两处同时出现就是同一句话说两遍，用户要对「该等还是该换」判断两次，而且
+   * 横幅还会在 8s 后自己消失、把唯一的出口藏起来（2026-11-28 用户要求合并）。
+   */
+  const failureShownOnStage = resolveFailure && !playable ? resolveFailure : null;
+  const failureShownInBanner = resolveFailure && playable ? resolveFailure : null;
 
   // 进页面就预热节目单：默认 7.6MB XMLTV，点开才发现「加载节目单…」像坏了。
   useEffect(() => {
@@ -789,11 +811,13 @@ export default function LivePage({
           />
 
           <div className="live-main">
-            {/* 两类错误分开：
-          · lifetime="timed"＝「此刻这条线路这一下不行」，画面可能已在别的
+            {/* 顶部横幅的三条来源：
+          · videoFailure（timed）＝「此刻这条线路这一下不行」，画面可能已在别的
             线路上播着，8s 带倒计时自动收起（时长见 lib/notice.ts）；
-          · 默认 sticky＝「该频道所有线路都试过了」或「地址是网页、嗅探不到
-            播放源」，这是要用户动手的结论，常驻到换台为止。
+          · fatalError（sticky）＝「该频道所有线路都试过了」，常驻到换台为止；
+          · failureShownInBanner＝解析失败但**旧画面还在播**（换线失败时旧实例
+            被刻意保留）：结论不能不说，又不能用卡片盖住活画面。
+          其余情况的解析失败由舞台卡片承载，同一句话不会说两遍。
           主文案与归因由 lib/playErrors 的 classifyLiveFailure 统一给出，
           原始报错折叠进「技术详情」。 */}
             {videoFailure && !recovering && !catalog.loading ? (
@@ -808,12 +832,12 @@ export default function LivePage({
             lifetime="timed"
           />
         ) : null}
-            {resolveFailure && channel && !recovering && !catalog.loading ? (
+            {failureShownInBanner && !recovering && !catalog.loading ? (
           <ErrorBar
-            message={resolveFailure.message}
-            hint={resolveFailure.hint}
+            message={failureShownInBanner.message}
+            hint={failureShownInBanner.hint}
             detail={resolveError || undefined}
-            lifetime={resolveError ? "timed" : "sticky"}
+            lifetime="timed"
           />
         ) : null}
             {fatalError && !recovering && !catalog.loading ? (
@@ -833,8 +857,13 @@ export default function LivePage({
                   resolveError={
                     resolveError ? (resolveFailure?.message ?? resolveError) : ""
                   }
+                  resolveFailure={
+                    !recovering && !catalog.loading ? failureShownOnStage : null
+                  }
                   retryable={resolveRetryable}
                   containerRef={containerRef}
+                  attemptKey={playUrl}
+                  hasNextLine={channel.lines.length > 1}
                   onNextLine={() => {
                     selectNextLine();
                   }}

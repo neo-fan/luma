@@ -36,6 +36,7 @@ import { usePageState } from "../lib/usePageState";
 import { useAppStore } from "../stores/appStore";
 import { peekDetailSeed, putPlaySeed } from "../lib/handoff";
 import { prefetchEpisodePlay } from "../hooks/playback/episodePlayResolve";
+import { loadPlayerPage } from "../components/player/playerPageLoader";
 import { prefetchSources } from "../lib/sourceCache";
 import { log } from "../lib/logger";
 import type { SourceOption } from "../lib/sources";
@@ -346,6 +347,25 @@ export default function DetailPage({
     return () => window.clearTimeout(timer);
   }, [prefetchTitle, sites]);
 
+  /**
+   * 预热播放器页 chunk：详情页是进播放页的必经之路（首页 / 搜索 / 收藏 / 历史
+   * 都先落到这里），用户看简介、挑线路的这几秒足够把 835 KiB 的播放器内核拉完。
+   *
+   * 预热只负责「点下去不用等」：真正拦住跳转的是 playEpisode 里的 await，两者
+   * 叠加后点播放到出画之间不会出现 Suspense 的中间态。不放在应用启动时空闲
+   * 预热：那样从不点播的人也要为这段解析付费，而直达播放页只有深链 / 刷新恢复
+   * 两种，那种情况 PlayerHost 自己会 import。延迟 800 ms 是为了不和
+   * detailContent 抢首个请求。
+   */
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadPlayerPage().catch(() => {
+        // 预热失败不是错误：真进播放页时 lazy() 还会经 loadWithRetry 再试一次。
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   // 收藏与观看进度都是「看一眼就走」的旁路数据，失败不阻断详情浏览。
   const [resumeReady, setResumeReady] = useState(false);
   useEffect(() => {
@@ -542,21 +562,45 @@ export default function DetailPage({
     void prefetchEpisodePlay(siteKey, quickPlay.line.name, episode.url);
   }, [resume, quickPlay, siteKey]);
 
+  /**
+   * 点播放时先等播放器内核就位，再切路由——**加载这件事留在详情页上完成**。
+   *
+   * 之前是「详情页挂载 800 ms 后预热，点击立刻跳」：预热还没跑完就点（详情页刚
+   * 打开、或直达详情页的深链）会先切到播放路由，由 PlayerHost 的 Suspense 兜
+   * 一块「正在打开播放页…」的黑底 spinner。用户看到的是一次画面跳变 + 空等。
+   * 现在倒过来：加载期间人还站在详情页（按钮转成「正在打开播放器…」），内核
+   * 到位再跳，路由切过去时 `lazy()` 同步命中，首帧直接是播放页。
+   *
+   * 上面的预热让绝大多数情况这里是微任务级返回，点击到跳转的间隔感知不到；
+   * 失败也放行——PlayerHost 的 `lazy()` 走 loadWithRetry，会自己再试一次。
+   */
+  const [bootPlaying, setBootPlaying] = useState(false);
+  const bootPlayingRef = useRef(false);
+
   const playEpisode = (target: PlayLine, episode: Episode) => {
+    // 等内核期间重复点击（按钮 + 剧集格）只认第一次，避免连跳两次路由。
+    if (bootPlayingRef.current) {
+      return;
+    }
+    bootPlayingRef.current = true;
+    setBootPlaying(true);
     // 详情页已经握着完整实体（含播放串）：交给播放页算线路与集定位，首帧直接成型，
     // 只剩「问源要地址」这一步真正需要等网络。
     if (vod) {
       putPlaySeed(siteKey, vod, episode.url);
     }
-    navigate({
-      name: "player",
-      siteKey,
-      vodId,
-      vodName: vod?.vod_name ?? "",
-      playUrl: episode.url,
-      episodeName: episode.name,
-      playFrom: target.name,
-    });
+    const go = () => {
+      navigate({
+        name: "player",
+        siteKey,
+        vodId,
+        vodName: vod?.vod_name ?? "",
+        playUrl: episode.url,
+        episodeName: episode.name,
+        playFrom: target.name,
+      });
+    };
+    void loadPlayerPage().then(go, go);
   };
 
   const toggleFavorite = async () => {
@@ -942,7 +986,7 @@ export default function DetailPage({
             <button
               type="button"
               className="btn btn--primary"
-              disabled={!quickPlay}
+              disabled={!quickPlay || bootPlaying}
               onClick={() =>
                 quickPlay && playEpisode(quickPlay.line, quickPlay.episode)
               }
@@ -952,7 +996,14 @@ export default function DetailPage({
                   : undefined
               }
             >
-              {quickPlay ? (
+              {bootPlaying ? (
+                /* 内核还没到位：这段时间留在详情页，按钮说明在等什么，
+                   而不是先切到播放路由再让 Suspense 兜一块黑屏。 */
+                <>
+                  <Icon name="refresh" className="icon-spin" />
+                  正在打开播放器…
+                </>
+              ) : quickPlay ? (
                 <>
                   <Icon name="play" />
                   {resume ? "继续播放" : "播放第 1 集"}

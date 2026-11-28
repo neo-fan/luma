@@ -136,7 +136,7 @@ luma/
     ├── bundle_report.mjs                  # 前端体积对比
     ├── probes/                            # 窗口探针：probe_*.mjs（31 个，按功能命名；注册 27 支，`ui` 为 optIn）
     ├── diag/                              # 一次性排障：diag_*.mjs + dump_state.mjs
-    ├── verify/                            # 严格验收：verify_*.mjs（6 个，带断言与截图）
+    ├── verify/                            # 严格验收：verify_*.mjs（7 个，带断言与截图）
     └── audit/                             # DOM/布局取证与全站扫描：audit_*.mjs、scan_*.mjs、scan_sources.py
 ```
 

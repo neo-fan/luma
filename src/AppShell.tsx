@@ -21,7 +21,7 @@ import { notify } from "./lib/notify";
 import { NOTICE_TTL } from "./lib/notice";
 import { usableHomeSites } from "./lib/format";
 import { api, errorMessage } from "./lib/invoke";
-import { clearDataCache, resetCacheForScope } from "./lib/queryClient";
+import { adoptCacheScope, clearDataCache, resetCacheForScope } from "./lib/queryClient";
 import { clearSourceCache, setSourceCacheScope } from "./lib/sourceCache";
 import { noDetailSources } from "./lib/noDetailSource";
 import { forgetCards } from "./lib/cardIndex";
@@ -50,7 +50,7 @@ import { useAppStore, useSiteState, selectLives } from "./stores/appStore";
 import type { ConfigSnapshot, LiveSource, UpdateInfo } from "./types/luma";
 
 /**
- * 直播播放页按需加载（ArtPlayer + hls.js 约 750 kB，不能挂在启动路径上），
+ * 直播播放页按需加载（hls.js + artplayer 等播放器内核约 835 KiB / gzip 257 KiB，不能挂在启动路径上），
  * 但**渲染位置在 AppShell 的常驻层**而不是路由里：切到别的页面时只切
  * visibility，ArtPlayer / hls.js 实例与那条流继续活着（后台播放）。
  */
@@ -155,8 +155,9 @@ export default function AppShell() {
   const lives = useAppStore(selectLives);
   const isLiveRoute = location.pathname === "/live";
   /**
-   * 首次进入直播页之后才把常驻层挂上：没进过直播的人不该为它加载
-   * ArtPlayer + hls.js 的 750 kB。挂上之后不再卸载——卸载就等于停播。
+   * 首次进入直播页之后才把常驻层挂上：没进过直播的人不该为它加载播放器内核
+   * （hls.js 582 KiB + artplayer 138 KiB 等，合计约 835 KiB / gzip 257 KiB）。
+   * 挂上之后不再卸载——卸载就等于停播。
    */
   const [liveMounted, setLiveMounted] = useState(false);
   useEffect(() => {
@@ -410,7 +411,10 @@ export default function AppShell() {
           return;
         }
         // 后端 active 配置是唯一真源；换过配置就让旧 scope 的缓存整体失效。
-      resetCacheForScope(snapshot.id);
+        // 但**启动对齐不走 clear**：clear 会把刚发出的首批请求 cancel 成
+        // CancelledError（刷新详情页必现「源站未响应」）。冷启动的
+        // QueryClient 本来就是空的，这里只需记账，见 `adoptCacheScope`。
+        adoptCacheScope(snapshot.id);
         setSourceCacheScope(snapshot.id);
         noDetailSources.setScope(snapshot.id);
         // 后端是唯一真源：即使 configId 相同，运行策略升级（例如导入时屏蔽

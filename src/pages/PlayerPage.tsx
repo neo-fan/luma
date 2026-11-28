@@ -517,6 +517,15 @@ export default function PlayerPage({
   });
   engineRef.current = engine;
 
+  /**
+   * 舞台上的「播放失败」唯一来源。
+   *
+   * 两处并集：`videoError` 是显式错误（解析失败 / 解码失败 / 交棒文案），
+   * `engine.sessionFailure` 是机器 `failed` 状态派生出来的——后者兜住「交棒副作用
+   * 在实例重建窗口里静默丢失」那种情况，否则机器已判死、界面却只有一个转圈。
+   */
+  const playbackError = videoError || engine.sessionFailure;
+
   // 常驻层切页不卸载播放器：播放状态进全局 store，侧栏图标才能亮小圆点。
   usePlaybackIndicator(videoRef, "vod", resolved);
 
@@ -690,17 +699,16 @@ export default function PlayerPage({
   }, [resolved, siteKey, runPreResolve]);
 
   useEffect(() => {
-    const text = switchTip || slowNotice;
-    if (!text) {
-      return;
-    }
-    engine.notice(text);
+    // 已经有结论（错误卡）时不能同时压一句「源侧响应较慢，正在等待」——两条
+    // 相反的判断叠在一起，用户不知道该等还是该换。判死即撤慢提示。
+    const text = playbackError ? "" : switchTip || slowNotice;
+    engine.notice(text || null);
     if (!switchTip) {
       return;
     }
     const timer = window.setInterval(() => engine.notice(text), 1500);
     return () => window.clearInterval(timer);
-  }, [engine, switchTip, slowNotice]);
+  }, [engine, switchTip, slowNotice, playbackError]);
 
   /** 当前集名：剧集列表到达后用列表里的名字，否则用路由参数。 */
   const nowEpisode = activeEpisode?.name || episodeName;
@@ -804,7 +812,7 @@ export default function PlayerPage({
         recovering={false}
         pending={resolved === null}
         resolveError={switchedUrlRef.current ? "" : resolveError}
-        playbackError={videoError}
+        playbackError={playbackError}
         retryable={resolveRetryable}
         containerRef={containerRef}
         poster={posterUrl ?? undefined}

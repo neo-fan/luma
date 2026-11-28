@@ -17,6 +17,14 @@ export const RESUME_MIN_POSITION_MS = 3_000;
 export const HISTORY_WRITE_THROTTLE_MS = 5_000;
 /** 原地换源（等首帧）的封顶超时，与 vodSessionMachine 的 after 对齐。 */
 export const SWITCH_SOURCE_CAP_MS = 15_000;
+/**
+ * 原地换集时「新地址挂上」的封顶超时（ArtPlayer `switchUrl` 的 resolve）。
+ *
+ * 它内部等新地址的 `loadedmetadata`：死链上永不 resolve，整条切换协程会挂住、
+ * 串行队列的 running 永不释放，之后的换集 / 换线只进 pending 不执行。比出画
+ * 封顶短——这一段只确认「地址已挂上」，真正等画面的是 `SWITCH_SOURCE_CAP_MS`。
+ */
+export const SWITCH_URL_ATTACH_CAP_MS = 8_000;
 /** 播放器 / 搜索页的短周期 UI 轮询间隔。 */
 export const SHORT_UI_TICK_MS = 500;
 

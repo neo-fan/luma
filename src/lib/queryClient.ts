@@ -118,11 +118,30 @@ export function clearDataCache(): void {
 }
 
 /**
- * 当前缓存归属的配置 id。仅用于让 `resetCacheForScope` 在 id 未变时保持幂等——
- * 对齐旧 `pageCache.setScope`：启动时周期性用 active 配置「对齐」scope，同 id
- * 不应把已攒热的缓存整体洗掉。
+ * 当前缓存归属的配置 id。让 scope 对齐保持幂等：同 id 不该把已攒热的缓存洗掉。
+ *
+ * 两条路径语义不同，别混用：
+ *   · 启动时对齐（`adoptCacheScope`）——只记账，冷启动缓存本来就空；
+ *   · 换配置（`resetCacheForScope`）——真有一批旧配置的条目，必须整体作废。
  */
 let currentScope = "default";
+
+/**
+ * 启动时对齐 scope：**只记账，不作废任何东西**。
+ *
+ * `resetCacheForScope` 走的是 `queryClient.clear()`，而 clear 会把**在途**查询
+ * 一并 cancel（react-query 把它们 reject 成 `CancelledError`，message 就叫
+ * "CancelledError"）。启动时页面已经挂上、首批详情/首页请求刚发出去，一次
+ * scope 对齐就能把它们全掐断——现场是「刷新详情页必现 详情加载失败 / 源站未响应」，
+ * 日志里 boot → app ready → `detail failed: CancelledError` 挤在同一毫秒。
+ *
+ * 冷启动的 QueryClient 是新建的，本来就是空的：这里 clear 一次没有任何收益，
+ * 只有副作用。真正需要整体作废的是「换配置」（导入 / 自动刷新 / 删除），
+ * 那种情况仍走 `resetCacheForScope`。
+ */
+export function adoptCacheScope(scope: string): void {
+  currentScope = scope || "default";
+}
 
 /** scope 变化则整体清空；相同 scope 不动。 */
 export function resetCacheForScope(scope: string): void {

@@ -62,6 +62,14 @@ export interface DecoderHost {
   };
   session: {
     hasPlayed: () => boolean;
+    /**
+     * 会话是否已经判死（机器停在 `failed`）。
+     *
+     * 判死后**必须停止就地重连**：线路已确认不可用，再 `loadSource` 只是每轮把
+     * 同一份 502 清单重拉一遍——画面不会回来，却持续占带宽、刷日志，用户看到的
+     * 是「速度条在动、画面永远 00:00」。出口在错误卡上的「换线路 / 换源」。
+     */
+    isFailed: () => boolean;
     failover: (cause: FailoverCause, detail: string) => void;
     /**
      * 只作废「这一集解析出来的地址」，不动会话状态。
@@ -326,6 +334,12 @@ export function attachHlsDecoder(host: DecoderHost, url: string): void {
   };
   hls.on(Hls.Events.ERROR, (_event, data) => {
     if (disposed || !data.fatal) {
+      return;
+    }
+    // 会话已判死（错误卡已经给出「换线路 / 换源」）：这里再重拉清单没有任何
+    // 意义——实测死链上每 13~16s 重来一轮 `loadSource`，日志刷满 `hls fatal`，
+    // 界面上「速度」一直在动却永远停在 00:00。重试只在「还没判死」时才有价值。
+    if (host.session.isFailed()) {
       return;
     }
     // `manifestParsingError` 这类枚举名对用户没有意义：它八成意味着

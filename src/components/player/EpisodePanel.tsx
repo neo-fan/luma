@@ -170,10 +170,12 @@ export default function EpisodePanel({
               }
               renderItem={({ episode, index }) => {
                 const active = panelLine === lineIndex && index === episodeIndex;
-                const pending = !active &&
+                const pending =
+                  !active &&
                   pendingPick !== null &&
                   pendingPick.lineIndex === panelLine &&
-                  pendingPick.episodeIndex === index;                // 对应集按**索引位置**判定（不靠集名，源之间集名常对不齐）：其它线路里
+                  pendingPick.episodeIndex === index;
+                // 对应集按**索引位置**判定（不靠集名，源之间集名常对不齐）：其它线路里
                 // 同序号那一集标灰点；该线路集数不够（索引越界）时夹到它的最后一集。
                 // 倒序只换展示顺序，`index` 仍是原索引，对应关系不变。
                 const corresponding =

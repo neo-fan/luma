@@ -9,6 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  adoptCacheScope,
   ageCached,
   clearDataCache,
   dropCached,
@@ -133,6 +134,37 @@ describe("resetCacheForScope：仅在 scope 变化时整体作废", () => {
     resetCacheForScope("cfg2"); // 换 id：整体清空。
     expect(peekFresh("d", 60_000)).toBeUndefined();
     // 复位，避免污染其它 describe（虽然只有本用例改 scope）。
+    resetCacheForScope("default");
+  });
+});
+
+describe("adoptCacheScope：启动对齐不打断在途请求", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    clearDataCache();
+    adoptCacheScope("default");
+  });
+
+  it("启动对齐 scope 不会把刚发出的请求取消成 CancelledError", async () => {
+    // 实测时序（2026-11-27）：刷新详情页 → DetailPage 先发出 detail，AppShell 的
+    // configActive 随后返回并「对齐」scope。旧实现走 queryClient.clear()，这次
+    // 对齐把在途请求 cancel 掉，页面直接落到「详情加载失败 / 源站未响应」。
+    let release!: (value: string) => void;
+    const inflight = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const pending = loadCached("cold-start", TTL, () => inflight);
+    adoptCacheScope("cfg-1");
+    release("ok");
+    await expect(pending).resolves.toBe("ok");
+  });
+
+  it("换配置仍然整体作废：在途请求以 CancelledError 结束", async () => {
+    adoptCacheScope("cfg-1");
+    const pending = loadCached("swap", TTL, () => new Promise<string>(() => {}));
+    pending.catch(() => undefined); // 断言之外再挂一次，避免 unhandled rejection
+    resetCacheForScope("cfg-2");
+    await expect(pending).rejects.toMatchObject({ message: "CancelledError" });
     resetCacheForScope("default");
   });
 });

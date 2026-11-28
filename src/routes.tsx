@@ -1,6 +1,5 @@
 import {
   createHashRouter,
-  Navigate as Redirect,
   useLocation,
   useNavigate,
   useParams,
@@ -22,7 +21,7 @@ import { navBack, navNavigate, type DetailNavState, type PlayerNavState } from "
 import { useAppStore, useSiteState } from "./stores/appStore";
 
 /**
- * 播放页本体走按需加载（ArtPlayer + hls.js 约 750 kB），但**渲染位置挪到了
+ * 播放页本体走按需加载（hls.js + artplayer 等播放器内核约 835 KiB / gzip 257 KiB），但**渲染位置挪到了
  * AppShell 的常驻层**：路由只同步会话，播放器不随路由卸载，切页后继续播。
  */
 
@@ -36,6 +35,50 @@ import { useAppStore, useSiteState } from "./stores/appStore";
  *   · 再给用户可操作的出口（重试 / 回首页 / 复制错误）。
  * 边界只包一层：错误页本身不允许再依赖页面级组件，保持能在任何情况下渲染。
  */
+/**
+ * 未知地址兜底：不静默回首页。
+ *
+ * 这里原来是 `<Redirect to="/" replace />`。问题在于「匹配不上」被吞成了「回到
+ * 首页」：收藏 / 历史行只要缺一段（`siteKey` 或 `vodId` 为空，拼出
+ * `#/detail//123`）就会走到这里，用户看到的是「点了播放却回到首页」，日志里
+ * 一点痕迹都没有，排查时无法区分「用户点错了」和「数据残缺」。
+ * 现在原地给一张能说明白的页面，并把真实地址写进日志。
+ */
+function UnknownRoute() {
+  const location = useLocation();
+  const path = `${location.pathname}${location.search}`;
+
+  useEffect(() => {
+    log.warn("unknown route", { path, hash: window.location.hash });
+  }, [path]);
+
+  return (
+    <section className="page">
+      <header className="page-head">
+        <h1 className="page-title">这个页面不存在</h1>
+      </header>
+      <Empty
+        title="地址不完整或已失效"
+        description={`当前地址 ${path} 没有对应的页面。可能是这条记录缺少片源标识（siteKey / vodId 为空），也可能是链接已经不适用。`}
+        action={
+          <div className="route-error__actions">
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => navNavigate({ name: "home" })}
+            >
+              回到首页
+            </button>
+            <button type="button" className="btn" onClick={navBack}>
+              返回上一页
+            </button>
+          </div>
+        }
+      />
+    </section>
+  );
+}
+
 function RouteError() {
   const error = useRouteError();
   const navigate = useNavigate();
@@ -176,10 +219,15 @@ function PlayerPageRoute() {
       });
       return;
     }
-    // 直接输 URL / WebView 恢复会话导致 state 丢失：没有地址就没法解析，
-    // 有旧会话（内存里还在播）就让它继续，否则回首页兜底，绝不空转。
+    // 直接输 URL / 刷新 / WebView 恢复会话导致 state 丢失：没有地址就没法解析。
+    // 有旧会话（内存里还在播）就让它继续；否则回到这部片的详情页重新选集，
+    // 不要甩回首页——「点了播放却回到首页」看起来就是坏了，而且用户刚看的是
+    // 哪部片这里本来就知道（URL 里就带着 siteKey / vodId）。
     if (!useAppStore.getState().playSession) {
-      nav("/", { replace: true });
+      nav(
+        `/detail/${encodeURIComponent(siteKey)}/${encodeURIComponent(vodId)}`,
+        { replace: true },
+      );
     }
   }, [siteKey, vodId, state, openPlaySession, nav]);
   return null;
@@ -227,8 +275,8 @@ export const router = createHashRouter([
       // 一条历史都没有时是空态，而不是把人送回首页。
       { path: "player", element: <PlayPageRoute /> },
       { path: "player/:siteKey/:vodId", element: <PlayerPageRoute /> },
-      // 未知路径回首页兜底（hash 路由下不会命中，防御性保留）。
-      { path: "*", element: <Redirect to="/" replace /> },
+      // 未知路径：给出可见的错误页，不静默回首页（见 UnknownRoute 注释）。
+      { path: "*", element: <UnknownRoute /> },
     ],
   },
 ]);
