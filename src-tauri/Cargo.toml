@@ -64,7 +64,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # 封面 HTTP 缓存：按 HTTP 语义（Cache-Control / ETag / Vary）自动存取，
 # 磁盘后端用 cacache（npm/cargo 同款），我们不自己算 key / TTL / 淘汰。
 http-cache-reqwest = { version = "0.16", default-features = false, features = ["manager-cacache"] }
-reqwest-middleware = "0.4"
+reqwest-middleware = "0.5"
 # 进程内 TTL 缓存 + 同 key 并发合并（`try_get_with`：并发首次访问同一个 key
 # 只跑一次求值，错误不进缓存、条目过期由后台任务淘汰）。按「优先用主流库」
 # 的原则取代手搓的 HashMap+Instant 表与自建 single-flight 队列。
