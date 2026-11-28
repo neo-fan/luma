@@ -100,7 +100,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # 自升级：版本比较用 semver、安装包完整性用 SHA256（都是已缓存的标准实现，
 # 不自己手搓版本序与摘要）。
 semver = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 
 [target.'cfg(windows)'.dependencies]
