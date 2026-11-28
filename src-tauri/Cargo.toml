@@ -45,7 +45,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Single-file persistence for configs / favourites / history. `bundled` compiles
 # the SQLite amalgamation into the binary so the shipped exe needs no system DLL.
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 tracing = "0.1"
 # File + stdout logging for the trial run. `fmt` + `registry` let us tee the
 # same event stream to two layers and `env-filter` gives `LUMA_LOG` the usual
